@@ -66,7 +66,7 @@ README 告诉用户需要什么参数
 project.yaml
 model_registry.yaml
 plugins/*/plugin.yaml
-.ml ipflow/state.sqlite3      # 运行状态，由程序管理；实际目录名见下文
+.mlipflow/state.sqlite3      # 运行状态，由程序管理
 ```
 
 实际状态目录是：
