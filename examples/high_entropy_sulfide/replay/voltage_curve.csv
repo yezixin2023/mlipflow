@@ -1,0 +1,6 @@
+li_fraction,average_voltage_v,source_model,evidence_kind
+1.00,0.00,chgnet-demo,synthetic
+0.75,2.18,chgnet-demo,synthetic
+0.50,2.42,chgnet-demo,synthetic
+0.25,2.71,chgnet-demo,synthetic
+

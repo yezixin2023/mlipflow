@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "status": "OK",
+  "result_id": "synthetic-sampling-result-v1",
+  "fixture_kind": "synthetic",
+  "summary": "Metadata-only frame selection; no trajectory or dynamics calculation is included.",
+  "metrics": {"selected_frames": 3, "trajectory_files": 0},
+  "artifacts": [{"path": "sampled_frames.csv", "role": "reference"}]
+}

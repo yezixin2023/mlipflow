@@ -1,0 +1,198 @@
+{
+  "schema_version": 1,
+  "registry_id": "synthetic-high-entropy-sulfide-models",
+  "description": "Schema-valid metadata-only model catalog for synthetic routing fixtures; no executable weights or scientific claims are included.",
+  "models": [
+    {
+      "id": "deepmd-demo",
+      "family": "DeepMD",
+      "version": "fixture-only-1",
+      "artifact": {
+        "uri": "replay/training_models.json#deepmd-demo",
+        "fingerprint": "sha256:9414bccacda3ad4ca1b3dabd22820740ae149b739c0e6ac8aceaebb6314f8ff5",
+        "size_bytes": 580
+      },
+      "elements": ["Li", "Mn", "Fe", "Ni", "Cu", "Zn", "P", "S"],
+      "tasks": ["ionic-transport", "electrochemical-voltage"],
+      "recommended_tasks": ["ionic-transport"],
+      "training_data": {
+        "uri": "replay/dft_labels.csv",
+        "fingerprint": "sha256:6888c753a1c24b679c5b72a23a3b023cc473565b1a6958900d32004a063ead6b",
+        "size_bytes": 245
+      },
+      "benchmarks": [
+        {
+          "run_id": "fixture-benchmark-2026-001",
+          "task": "ionic-transport",
+          "scenario": "synthetic-high-entropy-sulfide-v1",
+          "artifact": {
+            "uri": "replay/model_benchmark.csv",
+            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
+            "size_bytes": 1590
+          },
+          "validation_samples": 24,
+          "metrics": {"force_rmse_ev_a": 0.052, "diffusion_log10_mae": 0.07},
+          "units": {"force_rmse_ev_a": "eV/A", "diffusion_log10_mae": "log10(cm2/s)"}
+        },
+        {
+          "run_id": "fixture-benchmark-2026-001",
+          "task": "electrochemical-voltage",
+          "scenario": "synthetic-high-entropy-sulfide-v1",
+          "artifact": {
+            "uri": "replay/model_benchmark.csv",
+            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
+            "size_bytes": 1590
+          },
+          "validation_samples": 24,
+          "metrics": {"energy_rmse_ev_atom": 0.031, "voltage_mae_v": 0.12},
+          "units": {"energy_rmse_ev_atom": "eV/atom", "voltage_mae_v": "V"}
+        }
+      ],
+      "compatibility": {"environments": ["fixture-only"], "backends": ["replay"]},
+      "limitations": [
+        "The artifact identifies a metadata catalog entry, not an executable model weight.",
+        "All training and benchmark values are synthetic interface fixtures."
+      ]
+    },
+    {
+      "id": "mace-demo",
+      "family": "MACE",
+      "version": "fixture-only-1",
+      "artifact": {
+        "uri": "replay/training_models.json#mace-demo",
+        "fingerprint": "sha256:9414bccacda3ad4ca1b3dabd22820740ae149b739c0e6ac8aceaebb6314f8ff5",
+        "size_bytes": 580
+      },
+      "elements": ["Li", "Mn", "Fe", "Ni", "Cu", "Zn", "P", "S"],
+      "tasks": ["ionic-transport", "electrochemical-voltage"],
+      "recommended_tasks": [],
+      "training_data": {
+        "uri": "replay/dft_labels.csv",
+        "fingerprint": "sha256:6888c753a1c24b679c5b72a23a3b023cc473565b1a6958900d32004a063ead6b",
+        "size_bytes": 245
+      },
+      "benchmarks": [
+        {
+          "run_id": "fixture-benchmark-2026-001",
+          "task": "ionic-transport",
+          "scenario": "synthetic-high-entropy-sulfide-v1",
+          "artifact": {
+            "uri": "replay/model_benchmark.csv",
+            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
+            "size_bytes": 1590
+          },
+          "validation_samples": 24,
+          "metrics": {"force_rmse_ev_a": 0.063, "diffusion_log10_mae": 0.105},
+          "units": {"force_rmse_ev_a": "eV/A", "diffusion_log10_mae": "log10(cm2/s)"}
+        },
+        {
+          "run_id": "fixture-benchmark-2026-001",
+          "task": "electrochemical-voltage",
+          "scenario": "synthetic-high-entropy-sulfide-v1",
+          "artifact": {
+            "uri": "replay/model_benchmark.csv",
+            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
+            "size_bytes": 1590
+          },
+          "validation_samples": 24,
+          "metrics": {"energy_rmse_ev_atom": 0.024, "voltage_mae_v": 0.078},
+          "units": {"energy_rmse_ev_atom": "eV/atom", "voltage_mae_v": "V"}
+        }
+      ],
+      "compatibility": {"environments": ["fixture-only"], "backends": ["replay"]},
+      "limitations": [
+        "The artifact identifies a metadata catalog entry, not an executable model weight.",
+        "All training and benchmark values are synthetic interface fixtures."
+      ]
+    },
+    {
+      "id": "chgnet-demo",
+      "family": "CHGNet",
+      "version": "fixture-only-1",
+      "artifact": {
+        "uri": "replay/training_models.json#chgnet-demo",
+        "fingerprint": "sha256:9414bccacda3ad4ca1b3dabd22820740ae149b739c0e6ac8aceaebb6314f8ff5",
+        "size_bytes": 580
+      },
+      "elements": ["Li", "Mn", "Fe", "Ni", "Cu", "Zn", "P", "S"],
+      "tasks": ["ionic-transport", "electrochemical-voltage"],
+      "recommended_tasks": ["electrochemical-voltage"],
+      "training_data": {
+        "uri": "replay/dft_labels.csv",
+        "fingerprint": "sha256:6888c753a1c24b679c5b72a23a3b023cc473565b1a6958900d32004a063ead6b",
+        "size_bytes": 245
+      },
+      "benchmarks": [
+        {
+          "run_id": "fixture-benchmark-2026-001",
+          "task": "ionic-transport",
+          "scenario": "synthetic-high-entropy-sulfide-v1",
+          "artifact": {
+            "uri": "replay/model_benchmark.csv",
+            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
+            "size_bytes": 1590
+          },
+          "validation_samples": 24,
+          "metrics": {"force_rmse_ev_a": 0.081, "diffusion_log10_mae": 0.16},
+          "units": {"force_rmse_ev_a": "eV/A", "diffusion_log10_mae": "log10(cm2/s)"}
+        },
+        {
+          "run_id": "fixture-benchmark-2026-001",
+          "task": "electrochemical-voltage",
+          "scenario": "synthetic-high-entropy-sulfide-v1",
+          "artifact": {
+            "uri": "replay/model_benchmark.csv",
+            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
+            "size_bytes": 1590
+          },
+          "validation_samples": 24,
+          "metrics": {"energy_rmse_ev_atom": 0.017, "voltage_mae_v": 0.045},
+          "units": {"energy_rmse_ev_atom": "eV/atom", "voltage_mae_v": "V"}
+        }
+      ],
+      "compatibility": {"environments": ["fixture-only"], "backends": ["replay"]},
+      "limitations": [
+        "The artifact identifies a metadata catalog entry, not an executable model weight.",
+        "All training and benchmark values are synthetic interface fixtures."
+      ]
+    },
+    {
+      "id": "m3gnet-unseen-demo",
+      "family": "M3GNet",
+      "version": "fixture-only-1",
+      "artifact": {
+        "uri": "replay/training_models.json#m3gnet-unseen-demo",
+        "fingerprint": "sha256:9414bccacda3ad4ca1b3dabd22820740ae149b739c0e6ac8aceaebb6314f8ff5",
+        "size_bytes": 580
+      },
+      "elements": ["Li", "Mn", "Fe", "Ni", "Cu", "Zn", "P", "S"],
+      "tasks": ["ionic-transport"],
+      "recommended_tasks": [],
+      "training_data": {
+        "uri": "replay/dft_labels.csv",
+        "fingerprint": "sha256:6888c753a1c24b679c5b72a23a3b023cc473565b1a6958900d32004a063ead6b",
+        "size_bytes": 245
+      },
+      "benchmarks": [
+        {
+          "run_id": "fixture-unseen-transfer-2026-001",
+          "task": "ionic-transport",
+          "scenario": "unseen-transfer-probe-v1",
+          "artifact": {
+            "uri": "replay/model_benchmark.csv",
+            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
+            "size_bytes": 1590
+          },
+          "validation_samples": 8,
+          "metrics": {"force_rmse_ev_a": 0.091, "diffusion_log10_mae": 0.21},
+          "units": {"force_rmse_ev_a": "eV/A", "diffusion_log10_mae": "log10(cm2/s)"}
+        }
+      ],
+      "compatibility": {"environments": ["fixture-only"], "backends": ["replay"]},
+      "limitations": [
+        "This entry represents an unseen-transfer family and has no benchmark for the main synthetic scenario.",
+        "The artifact identifies metadata only; no executable model weight is distributed."
+      ]
+    }
+  ]
+}

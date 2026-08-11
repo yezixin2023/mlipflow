@@ -1,0 +1,24 @@
+{
+  "source_table": "Table S9",
+  "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
+  "prototype": "II",
+  "formula": "Li10M7(PS4)8",
+  "elapsed_time_unit": "s",
+  "reported_average_unit": "h",
+  "reported_average_hours": {"deepmd-se_atten_v2": 1.21, "aimd": 137.55},
+  "runs": [
+    {"metal_composition": "MnFeNiCu2Zn2", "temperature_k": 400, "deepmd-se_atten_v2_seconds": 1371, "aimd_seconds": 151341},
+    {"metal_composition": "MnFeNiCu2Zn2", "temperature_k": 600, "deepmd-se_atten_v2_seconds": 1472, "aimd_seconds": 164171},
+    {"metal_composition": "MnFeNiCu2Zn2", "temperature_k": 800, "deepmd-se_atten_v2_seconds": 1571, "aimd_seconds": 166048},
+    {"metal_composition": "MnFeNi2Cu2Zn", "temperature_k": 400, "deepmd-se_atten_v2_seconds": 1457, "aimd_seconds": 155525},
+    {"metal_composition": "MnFeNi2Cu2Zn", "temperature_k": 600, "deepmd-se_atten_v2_seconds": 1389, "aimd_seconds": 163107},
+    {"metal_composition": "MnFeNi2Cu2Zn", "temperature_k": 800, "deepmd-se_atten_v2_seconds": 1510, "aimd_seconds": 168532},
+    {"metal_composition": "MnFe2NiCu2Zn", "temperature_k": 400, "deepmd-se_atten_v2_seconds": 1378, "aimd_seconds": 160745},
+    {"metal_composition": "MnFe2NiCu2Zn", "temperature_k": 600, "deepmd-se_atten_v2_seconds": 1452, "aimd_seconds": 165281},
+    {"metal_composition": "MnFe2NiCu2Zn", "temperature_k": 800, "deepmd-se_atten_v2_seconds": 1519, "aimd_seconds": 174455},
+    {"metal_composition": "Mn2FeNiCuZn2", "temperature_k": 400, "deepmd-se_atten_v2_seconds": 1405, "aimd_seconds": 160207},
+    {"metal_composition": "Mn2FeNiCuZn2", "temperature_k": 600, "deepmd-se_atten_v2_seconds": 1442, "aimd_seconds": 175631},
+    {"metal_composition": "Mn2FeNiCuZn2", "temperature_k": 800, "deepmd-se_atten_v2_seconds": 1519, "aimd_seconds": 175799}
+  ]
+}
+

@@ -1,0 +1,45 @@
+{
+  "$schema": "../../schemas/project.schema.json",
+  "schema_version": 1,
+  "project": {
+    "id": "high-entropy-sulfide-manuscript-reproduction",
+    "name": "High-entropy sulfide manuscript evidence reproduction",
+    "description": "Read-only normalization and task-aware routing from compact evidence transcribed from the supplied manuscript revision. Numerical models are not executed."
+  },
+  "locations": {
+    "evidence": "evidence",
+    "normalized_benchmark": "benchmark",
+    "reports": "reports"
+  },
+  "backend_profiles": {},
+  "model_registry": "model_registry.yaml",
+  "workflow": {"nodes": []},
+  "routing": {
+    "policies": {
+      "static-pes": {
+        "metrics": [
+          {"name": "energy_rmse", "direction": "minimize", "weight": 0.5, "required": true},
+          {"name": "force_rmse", "direction": "minimize", "weight": 0.5, "required": true}
+        ]
+      },
+      "ionic-transport": {
+        "metrics": [
+          {"name": "conductivity_mae", "direction": "minimize", "weight": 1.0, "required": true}
+        ]
+      },
+      "electrochemical-voltage": {
+        "metrics": [
+          {"name": "voltage_mae", "direction": "minimize", "weight": 1.0, "required": true}
+        ]
+      }
+    }
+  },
+  "fingerprints": {"full_hash_max_bytes": 67108864},
+  "safety": {
+    "auto_submit": false,
+    "auto_advance": false,
+    "require_approval_for_expensive": true,
+    "require_approval_for_destructive": true
+  }
+}
+

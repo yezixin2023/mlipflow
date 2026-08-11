@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "report_id": "high-entropy-sulfide-manuscript-reproduction-v1",
+  "status": "REPLAY_VERIFIED",
+  "mode": "evidence-replay",
+  "canonical_report": {
+    "path": "examples/high_entropy_sulfide_reproduction/reports/manuscript_reproduction_summary.json",
+    "sha256": "sha256:959bcdb9644c3897e1520129ceadeeaa5b43673acd36e6c66c33a685f31af0d6",
+    "size_bytes": 36917
+  },
+  "acceptance_test": "tests/test_manuscript_reproduction.py",
+  "selected_models": {
+    "static-pes": "deepmd-dpa2",
+    "ionic-transport": "deepmd-se_atten_v2",
+    "electrochemical-voltage": "chgnet"
+  },
+  "recomputed_evidence": {
+    "static_test_energy_rmse_mev_atom": 6.63,
+    "static_test_force_rmse_mev_angstrom": 151.0,
+    "transport_conductivity_mae_mS_cm": 0.09599531,
+    "voltage_mae_v": 0.182777777777778,
+    "speedup_aimd_over_mlip": {
+      "prototype-I": 115.59219357117627,
+      "prototype-II": 113.28807549327995,
+      "prototype-III": 173.07966457023062
+    }
+  },
+  "acceptance_evidence": {
+    "large_supercell_screening": {
+      "status": "REPLAY_VERIFIED",
+      "candidate_count": 247,
+      "evaluated_count": 247,
+      "top_candidate": "Mn6_Fe3_Ni8_Cu4_Zn7",
+      "top_value_S_m": 18.420176685825222
+    },
+    "top_candidate_transport_link": {
+      "status": "EXACT_NUMERICAL_PARITY",
+      "historical_id": "6_3_8_4_7",
+      "high_fidelity_aimd_dft_status": "EXTERNAL_VALIDATION_PENDING"
+    },
+    "unseen_transfer": {
+      "status": "EXTERNAL_VALIDATION_PENDING",
+      "evidence_level": "CLAIM_LEVEL_DOCUMENT_EVIDENCE",
+      "numerical_parity": "NOT_TESTABLE_WITH_AVAILABLE_DATA"
+    }
+  },
+  "claim_boundary": {
+    "model_execution": false,
+    "md_aimd_dft_execution": false,
+    "training_execution": false,
+    "production_scale_rerun": false,
+    "statement": "The acceptance report reconstructs manuscript evidence, reductions, and routing decisions; it does not independently rerun the underlying predictions."
+  }
+}

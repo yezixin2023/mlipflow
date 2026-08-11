@@ -1,0 +1,40 @@
+{
+  "limitations": [
+    "Replay imports historical metrics and does not claim a fresh model evaluation.",
+    "source-unit-unspecified means the historical source did not declare a reliable unit; it is not a physical unit inference."
+  ],
+  "mode": "replay",
+  "model_execution": false,
+  "network_access": false,
+  "output_artifacts": [
+    {
+      "path": "benchmark_summary.csv",
+      "sha256": "sha256:992064cf3f2cd20e2e2e82fe266df5d2c9301d20b83fb8ea5466ab015c1dfd53",
+      "size_bytes": 14180
+    },
+    {
+      "path": "metrics.json",
+      "sha256": "sha256:4429869a822527955096a6eb1cb246e7c9f2fb4d08d11f2b22298138fa8ac352",
+      "size_bytes": 24808
+    },
+    {
+      "path": "model_ranking.json",
+      "sha256": "sha256:2e2847fbbbe2d7265a0dc6f2f4ad8f093ebe2aaa6e58b5f2f2974cd1c0d114bd",
+      "size_bytes": 10634
+    }
+  ],
+  "plugin_id": "mlip-benchmark",
+  "schema_version": 1,
+  "source_evidence": [
+    {
+      "normalized_record_count": 27,
+      "parser": "prepared-json",
+      "path": "evidence/benchmark_records.json",
+      "read_only_import": true,
+      "sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
+      "sheets": [],
+      "size_bytes": 13240
+    }
+  ],
+  "wrapper_version": "1.0.0"
+}

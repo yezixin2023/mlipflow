@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "fixture_kind": "synthetic",
+  "weights_distributed": false,
+  "training_prototypes": [
+    {"id": "deepmd-demo", "family": "DeepMD", "role": "training-prototype", "status": "metadata-only"},
+    {"id": "mace-demo", "family": "MACE", "role": "training-prototype", "status": "metadata-only"},
+    {"id": "chgnet-demo", "family": "CHGNet", "role": "training-prototype", "status": "metadata-only"}
+  ],
+  "unseen_transfer_families": [
+    {"id": "m3gnet-unseen-demo", "family": "M3GNet", "role": "unseen-transfer-family", "status": "metadata-only"}
+  ]
+}
+

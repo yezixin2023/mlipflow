@@ -1,0 +1,118 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "schema_version": 1,
+  "id": "mlip-benchmark",
+  "name": "MLIP benchmark",
+  "display_name": "MLIP benchmark",
+  "version": "0.4.0",
+  "api_version": 1,
+  "description": "Safe benchmark adapter plus a dependency-free local wrapper for strict execute-from-pairs or replay normalization of manuscript JSON, CSV, and XLSX evidence.",
+  "category": "benchmarking",
+  "contract": {
+    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
+  },
+  "implementation": {
+    "kind": "python-adapter",
+    "entrypoint": "adapter.py:Adapter",
+    "status": "implemented",
+    "source_classification": ["C", "new"],
+    "source_references": [
+      "inventory://remote/MLP/CHGnet/cal_rmse/cal_new.py",
+      "inventory://remote/MLP/M3Gnet/cal_test/cal.py"
+    ],
+    "limitations": [
+      "evaluate-static and collect-existing retain the reviewed external-command/result-manifest contract; normalize-replay and normalize-execute invoke the bundled benchmark_wrapper.py through explicit argv with shell=false.",
+      "Execute mode recomputes MAE, RMSE, and Pearson correlation only from supplied reference/prediction pairs; it does not load or run an MLIP.",
+      "Replay imports historical metrics and never labels them as fresh numerical calculations.",
+      "CHGNet and M3GNet historical workbooks do not reliably declare physical units; absent explicit overrides, normalized records use source-unit-unspecified rather than guessing.",
+      "Scheduler execution, trajectory evaluation, and direct execution of path-hard-coded research scripts are not claimed.",
+      "No model family is treated as globally preferred; routing must consume benchmark artifacts."
+    ]
+  },
+  "execution": {
+    "mode": "external-command",
+    "backends": ["local"],
+    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
+    "operations": ["evaluate-static", "normalize-replay", "normalize-execute"],
+    "shell": false,
+    "executes_external_programs": true,
+    "writes_files": true,
+    "submits_jobs": false
+  },
+  "replay": {
+    "supported": true,
+    "behavior": "parse-existing-artifacts",
+    "accepted_media_types": ["application/json", "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+    "reason": "Adapter replay reads explicit result artifacts; the plugin-local wrapper imports prepared JSON/CSV/XLSX and the real CHGNet/M3GNet summary workbook layouts without invoking a model."
+  },
+  "inputs": [
+    {"name": "executable", "kind": "file", "required": false, "description": "Explicit non-shell executable required only by legacy evaluate-static."},
+    {"name": "script", "kind": "file", "required": false, "description": "User-owned CLI wrapper required only by legacy evaluate-static."},
+    {"name": "model", "kind": "artifact-reference", "required": false, "description": "Model artifact required only by legacy evaluate-static; bundled normalize operations never load it."},
+    {"name": "benchmark-dataset", "kind": "artifact-reference", "required": false, "description": "Dataset required only by legacy evaluate-static."},
+    {"name": "benchmark-config", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Configuration required only by legacy evaluate-static."},
+    {"name": "result-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Legacy evaluate-static output or collect-existing input."},
+    {"name": "evidence-inputs", "kind": "artifact-reference", "required": false, "description": "One or more explicit JSON/CSV/XLSX files for normalize-replay or normalize-execute; runtime context key is evidence_inputs."},
+    {"name": "output-dir", "kind": "directory", "required": false, "description": "Fresh attempt-relative directory receiving exactly the four normalized artifacts; runtime context key is output_dir."},
+    {"name": "source-script", "kind": "file", "required": false, "description": "Optional read-only original implementation pinned by normalize-replay provenance; runtime context key is source_script."}
+  ],
+  "parameters": [
+    {"name": "operation", "type": "string", "required": true, "description": "evaluate-static, collect-existing, normalize-replay, or normalize-execute."},
+    {"name": "model-family", "type": "string", "required": false, "description": "One exact reviewed model; required for legacy operations and usable as the normalize default/expected identity."},
+    {"name": "expected-models", "type": "array", "required": false, "description": "Approved exact model set for multi-model normalized evidence; mutually exclusive with model-family."},
+    {"name": "task", "type": "string", "required": false, "description": "One normalized task identifier; required for legacy operations and usable as the normalize default/expected identity."},
+    {"name": "expected-tasks", "type": "array", "required": false, "description": "Approved task set for normalized evidence; mutually exclusive with task."},
+    {"name": "scenario", "type": "string", "required": false, "description": "One normalized scenario identifier; required for legacy operations and usable as the normalize default/expected identity."},
+    {"name": "expected-scenarios", "type": "array", "required": false, "description": "Approved scenario set for normalized evidence; mutually exclusive with scenario."},
+    {"name": "split", "type": "string", "required": false, "description": "Optional normalized split default passed to the bundled wrapper."},
+    {"name": "units", "type": "object", "required": false, "description": "Optional explicit energy, force, and stress unit defaults passed to the bundled wrapper."},
+    {"name": "source-script-locator", "type": "string", "required": false, "description": "Portable locator for source-script provenance when not embedded in its input reference."},
+    {"name": "metrics", "type": "array", "required": false, "description": "Legacy evaluate-static metric declarations."},
+    {"name": "energy-normalization", "type": "string", "required": false, "description": "Explicit total or per-atom energy convention required by legacy evaluate-static/collect-existing."},
+    {"name": "stress-convention", "type": "string", "required": false, "description": "Explicit sign, tensor order, and unit convention required by legacy evaluate-static/collect-existing."},
+    {"name": "dataset-fingerprint", "type": "string", "required": false, "description": "Approved fingerprint required by legacy evaluate-static/collect-existing."},
+    {"name": "model-fingerprint", "type": "string", "required": false, "description": "Approved model fingerprint required by legacy evaluate-static/collect-existing."}
+  ],
+  "outputs": [
+    {"name": "metrics", "kind": "artifact-reference", "required": true, "media_type": "application/json"},
+    {"name": "benchmark-summary", "kind": "artifact-reference", "required": true, "media_type": "text/csv"},
+    {"name": "model-ranking", "kind": "artifact-reference", "required": true, "media_type": "application/json"},
+    {"name": "provenance", "kind": "manifest", "required": true, "media_type": "application/json"},
+    {"name": "benchmark-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Legacy evaluate-static/collect-existing result contract only; normalized execute/replay emits exactly the four artifacts above."}
+  ],
+  "dependencies": {
+    "upstream_plugins": ["dft-labeling", "mlip-training"],
+    "python_packages": [],
+    "external_programs": [
+      {"name": "user-configured model prediction wrapper", "required": false, "bundled": false, "purpose": "Used only by optional legacy evaluate-static; bundled normalize operations need no external prediction program."}
+    ]
+  },
+  "safety": {
+    "expensive": true,
+    "destructive": false,
+    "network_access": false,
+    "requires_approval_before_execution": true,
+    "notes": ["Plans must disclose model count, structure count, device, metrics, units, and expected prediction volume."]
+  },
+  "completion": {
+    "status": "implemented",
+    "checks": [
+      {"id": "metric-schema-and-finiteness", "implemented": true, "description": "Validate metric names, finite values, units, directions, and sample counts."},
+      {"id": "benchmark-evidence", "implemented": true, "description": "Require dataset/model fingerprints and a versioned metrics artifact before routing can consume results."},
+      {"id": "manuscript-normalization", "implemented": true, "description": "Write metrics.json, benchmark_summary.csv, model_ranking.json, and provenance.json with full source SHA, explicit units/directions/sample counts, and execute/replay labels."},
+      {"id": "adapter-normalization-roundtrip", "implemented": true, "description": "Adapter plan invokes the bundled wrapper with shell=false; check/collect strictly parse all four artifacts and match approved mode, model/task/scenario identities, portable source locators, and source SHA-256 fingerprints."}
+    ],
+    "success_state": "OK",
+    "failure_state": "FAIL"
+  },
+  "retry": {
+    "status": "delegated-to-core",
+    "allowed_from": ["FAIL", "STOPPED"],
+    "creates_new_attempt": true,
+    "reuses_previous_run_directory": false,
+    "requires_approval": true,
+    "max_attempts": null,
+    "limit_enforced": false,
+    "notes": ["A retry creates new benchmark evidence and never overwrites the prior metrics artifact."]
+  }
+}

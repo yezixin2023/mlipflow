@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "evidence_mode": "read-only-manuscript-transcription",
+  "scientific_status": "REPLAY_VERIFIED",
+  "not_a_fresh_calculation": true,
+  "transcription_method": [
+    "Read word/document.xml from each supplied DOCX archive without changing the archive.",
+    "Extract table cells in document order and flatten merged headers into explicit machine-readable columns.",
+    "Preserve every numerical cell used by the reproduction; normalize thousands separators and split paired voltage cells into stage_1/stage_2 fields without changing their numerical values.",
+    "Cross-check conductivity and voltage units against the rendered y-axis labels of main Figure 3 and SI Figure S11, because the corresponding table headers omit those units.",
+    "Recompute only transparent reductions (MAE, RMSE, mean elapsed hours, and AIMD/MLIP elapsed-time ratio); never infer or synthesize model predictions.",
+    "Transcribe the top ten entries and collection-level provenance from pinned, already-completed 247-candidate screening artifacts; preserve only portable locators, SHA-256 digests, sizes, declared units, and implementation versions.",
+    "Represent historical transport replay separately from AIMD/DFT validation, and preserve unseen/transfer statements only at claim level when paired numerical evidence is unavailable."
+  ],
+  "source_documents": [
+    {
+      "id": "manuscript-main",
+      "basename": "Manuscirpt_0510zdl.docx",
+      "sha256": "22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b",
+      "size_bytes": 1671589,
+      "included_in_example": false,
+      "read_only": true,
+      "uses": [
+        "Figure 3 y-axis unit for ionic conductivity: mS cm^-1",
+        "narrative task choices and approximate speedups in the supplied manuscript"
+      ]
+    },
+    {
+      "id": "supporting-information",
+      "basename": "SI_0510zdl.docx",
+      "sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
+      "size_bytes": 2958512,
+      "included_in_example": false,
+      "read_only": true,
+      "uses": [
+        "Table S2",
+        "the table captioned Table 3 in the supplied SI",
+        "Table S3",
+        "Tables S8-S10",
+        "Table S11 and Figure S11 y-axis unit"
+      ]
+    }
+  ],
+  "evidence_files": [
+    {
+      "path": "benchmark_records.json",
+      "sha256": "e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
+      "size_bytes": 13240,
+      "source_document_id": "supporting-information",
+      "source_location": "Derived only from Table 3, Table S3, Tables S8-S10, and Table S11 transcriptions listed below",
+      "records": 27,
+      "transformation": "Prepared long-form input for the real mlip-benchmark replay wrapper. Direct static RMSE cells are retained; conductivity MAE, voltage MAE, and acceleration ratios are transparent reductions whose formula and source table are recorded in each dimensions object."
+    },
+    {
+      "path": "table_s2_model_implementation.csv",
+      "sha256": "2688585970c5064ea9d4a220d2fafbb298dd1617694715af8580b74ce9761b81",
+      "size_bytes": 1081,
+      "source_document_id": "supporting-information",
+      "source_location": "Table S2",
+      "records": 3,
+      "transformation": "One row per reported MLIP family; counts are parsed as integers and training mode/checkpoint are split from the reported description."
+    },
+    {
+      "path": "table_3_pes_rmse.csv",
+      "sha256": "67dfcd85ddf8be6da25d720192a63d4133d72f93c7c4a7b7d69519bd88644fac",
+      "size_bytes": 955,
+      "source_document_id": "supporting-information",
+      "source_location": "Table captioned 'Table 3' immediately after Table S2",
+      "records": 6,
+      "transformation": "Slash-separated train/validation/test cells are split into explicit columns; '-' is represented as an empty field."
+    },
+    {
+      "path": "table_s3_ionic_conductivity.csv",
+      "sha256": "08bdc9ec6f78b1b01f04b1d2670383ad6a35fb8281f5c14c74c53f209deb43a6",
+      "size_bytes": 2603,
+      "source_document_id": "supporting-information",
+      "source_location": "Table S3; unit from main Figure 3 y-axis",
+      "unit_source_document_id": "manuscript-main",
+      "records": 10,
+      "transformation": "Merged prototype labels are filled down; reported wide numerical cells are otherwise preserved."
+    },
+    {
+      "path": "table_s8_runtime.json",
+      "sha256": "633608c6a3b28eef9087b618960d9ce6eff26d57ad50fd839ec42a91d2ac82ee",
+      "size_bytes": 1831,
+      "source_document_id": "supporting-information",
+      "source_location": "Table S8",
+      "records": 12,
+      "transformation": "Each composition/temperature timing is represented as one record; the printed average-hour row is retained separately."
+    },
+    {
+      "path": "table_s9_runtime.json",
+      "sha256": "32c567bb2f49dface2fc4ad1a5c16968289b27f42a2945448724e380749bf7cc",
+      "size_bytes": 1830,
+      "source_document_id": "supporting-information",
+      "source_location": "Table S9",
+      "records": 12,
+      "transformation": "Each composition/temperature timing is represented as one record; the printed average-hour row is retained separately."
+    },
+    {
+      "path": "table_s10_runtime.json",
+      "sha256": "71b222a078e2bab8e3b97ba2c618c7b9914a800b5afb04d93c71eb6319981b45",
+      "size_bytes": 833,
+      "source_document_id": "supporting-information",
+      "source_location": "Table S10",
+      "records": 4,
+      "transformation": "Each composition/temperature timing is represented as one record; the printed average-hour row is retained separately."
+    },
+    {
+      "path": "table_s11_voltage.csv",
+      "sha256": "e0aa693f787fd2289aa40b98c2c937344234ff093dcda36528352d6c2c1f5ad0",
+      "size_bytes": 2076,
+      "source_document_id": "supporting-information",
+      "source_location": "Table S11; unit from SI Figure S11 y-axis",
+      "unit_source_document_id": "supporting-information",
+      "records": 9,
+      "transformation": "Each reported two-value voltage cell is split, in source order, into stage_1 and stage_2."
+    },
+    {
+      "path": "table_s11_voltage_long.csv",
+      "sha256": "21bee1227561f161a439f942db1d31393813cd03bdc2f6579ac6620b66409319",
+      "size_bytes": 3016,
+      "source_document_id": "supporting-information",
+      "source_location": "Deterministic row-wise expansion of the Table S11 wide transcription; unit from SI Figure S11 y-axis",
+      "unit_source_document_id": "supporting-information",
+      "records": 18,
+      "transformation": "Each stage_1/stage_2 pair from table_s11_voltage.csv is expanded into two stage rows for strict voltage-plugin replay; all numerical values and source ordering are unchanged."
+    },
+    {
+      "path": "large_supercell_screening_top10.json",
+      "sha256": "2e3ee482b678de54ee6d37bd80e7058d96b0a3e3e6bcd909bfd80411c9d6803f",
+      "size_bytes": 9391,
+      "source_location": "Compact transcription of pinned ranking.json, candidates.json, transport.json, and 22 legacy source-text fingerprints",
+      "records": 10,
+      "transformation": "Preserve the already-completed 247/247 screening counts, single-metric rule, unit, exact top-10 order and values, composition counts, input-manifest fingerprints, and code provenance; omit personal and cluster absolute paths."
+    },
+    {
+      "path": "top_candidate_transport_link.json",
+      "sha256": "51aa63a70e6ec2d5d03884929cccb64e61f3ccb42f0d9ceacd26ba38e6ca997a",
+      "size_bytes": 5352,
+      "source_location": "Identity mapping and compact result of read-only historical target.msd/stdout post-processing for candidate 6_3_8_4_7",
+      "records": 1,
+      "transformation": "Map the historical underscore ID to canonical Mn/Fe/Ni/Cu/Zn order and retain exact post-processing parity, source hashes, and derivation conventions; explicitly keep AIMD/DFT high-fidelity validation pending."
+    },
+    {
+      "path": "unseen_transfer_claim.json",
+      "sha256": "9e1cd76ca01760f04e08772480d89ba48ac5aed3e02405307668cc1b607128b5",
+      "size_bytes": 2447,
+      "source_document_id": "manuscript-main",
+      "source_location": "Main-manuscript Results narrative describing the unseen Li24M12(PS4)16 system and doped-composition transfer assessment",
+      "records": 1,
+      "transformation": "Structure the qualitative manuscript claim and reported counts without inventing composition identities or numerical pairs; mark numerical parity not testable and enumerate missing evidence."
+    }
+  ],
+  "limitations": [
+    "The source documents are mutable authoring files rather than a published version of record; their SHA-256 digests pin the exact supplied revisions.",
+    "Underlying predictions, trajectories, model weights, and training structures are not distributed, so the replay validates transcription and reductions rather than recomputing predictions.",
+    "The static PES table does not report the underlying test-set sample count; normalized routing treats each published aggregate row as one evidence record and records this limitation explicitly.",
+    "The exact top-candidate transport replay validates historical sampling/post-processing parity only; no matched AIMD trajectory or DFT reference for that candidate is included.",
+    "The unseen/transfer narrative lacks paired raw energy, force, and conductivity values, so it remains claim-level evidence and cannot support numerical parity."
+  ]
+}

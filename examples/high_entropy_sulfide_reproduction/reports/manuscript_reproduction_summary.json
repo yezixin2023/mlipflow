@@ -1,0 +1,1065 @@
+{
+  "benchmark_normalization": {
+    "artifacts": [
+      {
+        "path": "benchmark/benchmark_summary.csv",
+        "sha256": "sha256:992064cf3f2cd20e2e2e82fe266df5d2c9301d20b83fb8ea5466ab015c1dfd53",
+        "size_bytes": 14180
+      },
+      {
+        "path": "benchmark/metrics.json",
+        "sha256": "sha256:4429869a822527955096a6eb1cb246e7c9f2fb4d08d11f2b22298138fa8ac352",
+        "size_bytes": 24808
+      },
+      {
+        "path": "benchmark/model_ranking.json",
+        "sha256": "sha256:2e2847fbbbe2d7265a0dc6f2f4ad8f093ebe2aaa6e58b5f2f2974cd1c0d114bd",
+        "size_bytes": 10634
+      },
+      {
+        "path": "benchmark/provenance.json",
+        "sha256": "sha256:8b3da7bfa4341c0399d41041a3bcbac50c8824a0b0dbc1a5e3d006cd4f7d8131",
+        "size_bytes": 1253
+      }
+    ],
+    "implementation": "plugins/mlip-benchmark/benchmark_wrapper.py",
+    "implementation_files": [
+      {
+        "locator": "plugins/mlip-benchmark/benchmark_wrapper.py",
+        "sha256": "sha256:c922c3bc6d003e5fa54084b1716db1352a76792ab7126dafce7b0fd629c1b51f"
+      },
+      {
+        "locator": "plugins/mlip-benchmark/plugin.yaml",
+        "sha256": "sha256:7830d4b4447b1ae04243410aa295095e38c2c78eda674ad6d9fd075581cf9159"
+      }
+    ],
+    "implementation_sha256": "sha256:c922c3bc6d003e5fa54084b1716db1352a76792ab7126dafce7b0fd629c1b51f",
+    "input": [
+      {
+        "normalized_record_count": 27,
+        "parser": "prepared-json",
+        "path": "evidence/benchmark_records.json",
+        "read_only_import": true,
+        "sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
+        "sheets": [],
+        "size_bytes": 13240
+      }
+    ],
+    "mode": "replay",
+    "model_execution": false,
+    "network_access": false,
+    "wrapper_version": "1.0.0"
+  },
+  "calculation_claim": "No MLIP, MD, AIMD, DFT, training, or structure generation was executed.",
+  "evidence_integrity": {
+    "all_transcriptions_sha256_verified": true,
+    "all_transparent_reductions_recomputed": true,
+    "prepared_benchmark_record_count": 27,
+    "transcription_manifest": "evidence/transcription_provenance.json",
+    "verified_evidence_file_count": 12
+  },
+  "key_numerical_reconstruction": {
+    "electrochemical_voltage": {
+      "paired_voltage_stages": 18,
+      "selected_model": "chgnet",
+      "source": "SI Table S11; unit cross-checked against SI Figure S11 y-axis",
+      "unit": "V",
+      "voltage_mae_against_dft": 0.182777777777778
+    },
+    "ionic_transport": {
+      "conductivity_mae_against_aimd": 0.09599531,
+      "paired_compositions": 10,
+      "selected_model": "deepmd-se_atten_v2",
+      "source": "SI Table S3; unit cross-checked against main Figure 3 y-axis",
+      "unit": "mS/cm"
+    },
+    "simulation_efficiency": [
+      {
+        "acceleration_unit": "dimensionless AIMD_time/MLIP_time",
+        "aimd_mean_hours_per_composition": 136.350625,
+        "aimd_total_seconds": 1963449,
+        "composition_count": 4,
+        "deepmd_mean_hours_per_composition": 1.1795833333333334,
+        "deepmd_total_seconds": 16986,
+        "prototype": "I",
+        "published_approximate_ratio": 116,
+        "recomputed_acceleration_ratio": 115.59219357117627,
+        "reported_aimd_average_hours": 136.35,
+        "reported_deepmd_average_hours": 1.18,
+        "source_table": "Table S8",
+        "timing_pair_count": 12
+      },
+      {
+        "acceleration_unit": "dimensionless AIMD_time/MLIP_time",
+        "aimd_mean_hours_per_composition": 137.55847222222224,
+        "aimd_total_seconds": 1980842,
+        "composition_count": 4,
+        "deepmd_mean_hours_per_composition": 1.214236111111111,
+        "deepmd_total_seconds": 17485,
+        "prototype": "II",
+        "published_approximate_ratio": 114,
+        "recomputed_acceleration_ratio": 113.28807549327995,
+        "reported_aimd_average_hours": 137.55,
+        "reported_deepmd_average_hours": 1.21,
+        "source_table": "Table S9",
+        "timing_pair_count": 12
+      },
+      {
+        "acceleration_unit": "dimensionless AIMD_time/MLIP_time",
+        "aimd_mean_hours_per_composition": 217.86402777777778,
+        "aimd_total_seconds": 1568621,
+        "composition_count": 2,
+        "deepmd_mean_hours_per_composition": 1.25875,
+        "deepmd_total_seconds": 9063,
+        "prototype": "III",
+        "published_approximate_ratio": 173,
+        "recomputed_acceleration_ratio": 173.07966457023062,
+        "reported_aimd_average_hours": 217.86,
+        "reported_deepmd_average_hours": 1.26,
+        "source_table": "Table S10",
+        "timing_pair_count": 4
+      }
+    ],
+    "static_pes": {
+      "selected_model": "deepmd-dpa2",
+      "source": "SI table captioned Table 3",
+      "test_energy_rmse": 6.63,
+      "test_energy_rmse_unit": "meV/atom",
+      "test_force_rmse": 151.0,
+      "test_force_rmse_unit": "meV/angstrom"
+    }
+  },
+  "large_supercell_screening": {
+    "artifact_type": "mlipflow.evidence_replay.large_supercell_screening_top10",
+    "calculation_claim": "This compact artifact transcribes an already-completed deterministic screening result; this example did not generate candidates, run transport simulations, or execute an MLIP.",
+    "evidence_level": "PINNED_LOCAL_RESULT_ARTIFACT",
+    "implementation": {
+      "files": [
+        {
+          "locator": "plugins/composition-screening/screen.py",
+          "sha256": "sha256:18fab4cb37aae5c485277050a8ba0d2df03b27545082e75cd342df495b15d335"
+        },
+        {
+          "locator": "plugins/composition-screening/normalize_legacy.py",
+          "sha256": "sha256:783a6db77ea116e045e4c4ad7a6f56b3a08b5ff5915e673d23389bec84af4d0b"
+        },
+        {
+          "locator": "plugins/composition-screening/adapter.py",
+          "sha256": "sha256:ad43b2a8a12873eb188760ebfaeed4bb018925b3cbbd85890c4d8f9c0002edb5"
+        },
+        {
+          "locator": "plugins/composition-screening/plugin.yaml",
+          "sha256": "sha256:dd127dab0750b3be8d94e338be544a5ad656d6f59c79ba13d3938c7a76f9b5be"
+        }
+      ],
+      "plugin_id": "composition-screening",
+      "plugin_version": "0.3.0",
+      "ranking_implementation": "mlipflow-deterministic-single-metric-screen",
+      "ranking_implementation_version": 1
+    },
+    "input_set": {
+      "candidate_count": 247,
+      "candidate_element_order": [
+        "Zn",
+        "Fe",
+        "Cu",
+        "Ni",
+        "Mn"
+      ],
+      "canonical_element_order": [
+        "Mn",
+        "Fe",
+        "Ni",
+        "Cu",
+        "Zn"
+      ],
+      "evaluated_count": 247,
+      "excluded_missing_count": 0,
+      "expected_metal_sites_per_candidate": 28,
+      "normalizer": "mlipflow-legacy-li10-screening-v1",
+      "portable_locator_note": "Personal and cluster absolute paths are intentionally omitted; full input manifests and every legacy source text are pinned by SHA-256, basename, and byte size.",
+      "source_structure_count": 247,
+      "unique_source_structure_count": 247
+    },
+    "legacy_source_collection": {
+      "candidate_source_file_count": 11,
+      "candidate_sources": [
+        {
+          "basename": "output_Zn2.txt",
+          "sha256": "sha256:136a289a9f5f288873357fb813b09b418a122cdc434861a5985cbbbe98b00c07",
+          "size_bytes": 2670
+        },
+        {
+          "basename": "output_Zn3.txt",
+          "sha256": "sha256:5398fe7632314bed27e2f2050d55cf1a48583c4dab08dad10cd65aee354ac979",
+          "size_bytes": 2670
+        },
+        {
+          "basename": "output_Zn3_add.txt",
+          "sha256": "sha256:23e5b6ff9216ffb2b3f8c853c9f21eb2c3b0d4200356081bfd644bcdb90866c4",
+          "size_bytes": 178
+        },
+        {
+          "basename": "output_Zn4.txt",
+          "sha256": "sha256:7da331d94af6313a46e15f4c5dc6d57b372c875c6a2893704a06eb198185a5c8",
+          "size_bytes": 2670
+        },
+        {
+          "basename": "output_Zn5.txt",
+          "sha256": "sha256:5707cc645d6dcae35d8946b2607adc955c2389bac661130510303b0475712693",
+          "size_bytes": 2670
+        },
+        {
+          "basename": "output_Zn5_add.txt",
+          "sha256": "sha256:376645defc56fecfe16e8b60bec3c79735a9426dc3adca72289d7db475bea4d8",
+          "size_bytes": 267
+        },
+        {
+          "basename": "output_Zn6.txt",
+          "sha256": "sha256:99a09c0685522ede8f75b81adbac073683975e451f5f3722b71f655a8ba56f42",
+          "size_bytes": 2670
+        },
+        {
+          "basename": "output_Zn7.txt",
+          "sha256": "sha256:d5eaf7fad977e9fe355b1d4a62880b232e26ed46133312700d4b734a4f533900",
+          "size_bytes": 2670
+        },
+        {
+          "basename": "output_Zn7_add.txt",
+          "sha256": "sha256:179b2cc658c4085c6b6e61079b285b3528f6e8e7e47e3eae3baaf346c053bf0d",
+          "size_bytes": 178
+        },
+        {
+          "basename": "output_Zn8.txt",
+          "sha256": "sha256:869aa651ccec33231f1d912bb9844dd172011e7c74372d82954ceda2abaa3bec",
+          "size_bytes": 2670
+        },
+        {
+          "basename": "output_Zn9.txt",
+          "sha256": "sha256:8e78ffdfd4fd69528c32313a71865424f67258152f38fe9cb4dc0c57121aaf00",
+          "size_bytes": 2670
+        }
+      ],
+      "metric_source_file_count": 11,
+      "metric_sources": [
+        {
+          "basename": "sigma_Li10_Zn2.txt",
+          "sha256": "sha256:6da424621e15020534a3fe436c72ae75338b45a1835c40cef591d7f9227b5431",
+          "size_bytes": 1143
+        },
+        {
+          "basename": "sigma_Li10_Zn3.txt",
+          "sha256": "sha256:b62d4fbc049a2eb871c4c4e5416183836cdf4cfbef2d26ab54e1e73219a15bf9",
+          "size_bytes": 1143
+        },
+        {
+          "basename": "sigma_Li10_Zn3_add.txt",
+          "sha256": "sha256:d2e40e792972e4d6afa65894dd711a226dfbe3c4f4fab0f74d8a1bbcd6a33e54",
+          "size_bytes": 78
+        },
+        {
+          "basename": "sigma_Li10_Zn4.txt",
+          "sha256": "sha256:4755c358fe63a8d3aeafc53a0b71a71908fafef53f4841b9ce57441192e6177e",
+          "size_bytes": 1142
+        },
+        {
+          "basename": "sigma_Li10_Zn5.txt",
+          "sha256": "sha256:3494fbd7433caf97b4026691b1c291c30dfc22c725b482e82a2184ef490e722c",
+          "size_bytes": 1143
+        },
+        {
+          "basename": "sigma_Li10_Zn5_add.txt",
+          "sha256": "sha256:3e95b4b16b50bfac8be75ca53c851243069f27c88c2ccf30a575cc469da40b5b",
+          "size_bytes": 114
+        },
+        {
+          "basename": "sigma_Li10_Zn6.txt",
+          "sha256": "sha256:5246899ef2c61220b5944386bc28641c51a3bd1e38e0937a5c06bc7750616b8e",
+          "size_bytes": 1143
+        },
+        {
+          "basename": "sigma_Li10_Zn7.txt",
+          "sha256": "sha256:38be4b54170dd1edba276fcdb88e79724ae07d7a998c3ac3400611a4ca42b20d",
+          "size_bytes": 1148
+        },
+        {
+          "basename": "sigma_Li10_Zn7_add.txt",
+          "sha256": "sha256:7737500222a1d2946902375dc7a20aec70298835a26fd16d15d1f02c483014a3",
+          "size_bytes": 75
+        },
+        {
+          "basename": "sigma_Li10_Zn8.txt",
+          "sha256": "sha256:89b54c68998443288b5f707be25637b07c441d889c4bc5420ca467791561c5fd",
+          "size_bytes": 1145
+        },
+        {
+          "basename": "sigma_Li10_Zn9.txt",
+          "sha256": "sha256:88ef008dfd9b16b37cb6795984e2bf31c408b7079fdf29a67cba1987482733c9",
+          "size_bytes": 1147
+        }
+      ]
+    },
+    "metric": {
+      "name": "ionic_conductivity_300k_s_per_m",
+      "source_convention": "legacy-text-value-no-rescaling",
+      "unit": "S/m"
+    },
+    "rule": {
+      "direction": "maximize",
+      "missing_metric_policy": "error",
+      "tie_break": "candidate_id-ascending",
+      "top_k": 10
+    },
+    "schema_version": 1,
+    "source_artifacts": {
+      "candidate_manifest": {
+        "locator": "external-screening-artifact/candidates.json",
+        "read_only": true,
+        "sha256": "sha256:d030d2fdbd9c042b13a1a15c6a124ef2b953d62ca1170e963c272a57b43aa90d",
+        "size_bytes": 76042
+      },
+      "ranking": {
+        "locator": "external-screening-artifact/ranking.json",
+        "read_only": true,
+        "sha256": "sha256:30ada4653684618ab1594b4b428502ba324908b208028910d68b8e4785f5793a",
+        "size_bytes": 1813
+      },
+      "transport_results_manifest": {
+        "locator": "external-screening-artifact/transport.json",
+        "read_only": true,
+        "sha256": "sha256:e3c4f4466b872b575345e4a10560b311fff19a8ed049383a82c18132534cd1c0",
+        "size_bytes": 129776
+      }
+    },
+    "status": "REPLAY_VERIFIED",
+    "top_candidates": [
+      {
+        "candidate_id": "Mn6_Fe3_Ni8_Cu4_Zn7",
+        "composition": {
+          "Cu": 4,
+          "Fe": 3,
+          "Mn": 6,
+          "Ni": 8,
+          "Zn": 7
+        },
+        "rank": 1,
+        "value": 18.420176685825222
+      },
+      {
+        "candidate_id": "Mn2_Fe2_Ni9_Cu9_Zn6",
+        "composition": {
+          "Cu": 9,
+          "Fe": 2,
+          "Mn": 2,
+          "Ni": 9,
+          "Zn": 6
+        },
+        "rank": 2,
+        "value": 17.626045819654934
+      },
+      {
+        "candidate_id": "Mn4_Fe8_Ni7_Cu6_Zn3",
+        "composition": {
+          "Cu": 6,
+          "Fe": 8,
+          "Mn": 4,
+          "Ni": 7,
+          "Zn": 3
+        },
+        "rank": 3,
+        "value": 14.282118728392
+      },
+      {
+        "candidate_id": "Mn7_Fe5_Ni6_Cu8_Zn2",
+        "composition": {
+          "Cu": 8,
+          "Fe": 5,
+          "Mn": 7,
+          "Ni": 6,
+          "Zn": 2
+        },
+        "rank": 4,
+        "value": 14.034032196953927
+      },
+      {
+        "candidate_id": "Mn5_Fe9_Ni8_Cu3_Zn3",
+        "composition": {
+          "Cu": 3,
+          "Fe": 9,
+          "Mn": 5,
+          "Ni": 8,
+          "Zn": 3
+        },
+        "rank": 5,
+        "value": 12.28403894229092
+      },
+      {
+        "candidate_id": "Mn4_Fe9_Ni5_Cu7_Zn3",
+        "composition": {
+          "Cu": 7,
+          "Fe": 9,
+          "Mn": 4,
+          "Ni": 5,
+          "Zn": 3
+        },
+        "rank": 6,
+        "value": 12.145340623018692
+      },
+      {
+        "candidate_id": "Mn7_Fe5_Ni8_Cu2_Zn6",
+        "composition": {
+          "Cu": 2,
+          "Fe": 5,
+          "Mn": 7,
+          "Ni": 8,
+          "Zn": 6
+        },
+        "rank": 7,
+        "value": 12.103564653934505
+      },
+      {
+        "candidate_id": "Mn3_Fe4_Ni7_Cu5_Zn9",
+        "composition": {
+          "Cu": 5,
+          "Fe": 4,
+          "Mn": 3,
+          "Ni": 7,
+          "Zn": 9
+        },
+        "rank": 8,
+        "value": 11.669317033317999
+      },
+      {
+        "candidate_id": "Mn8_Fe2_Ni6_Cu5_Zn7",
+        "composition": {
+          "Cu": 5,
+          "Fe": 2,
+          "Mn": 8,
+          "Ni": 6,
+          "Zn": 7
+        },
+        "rank": 9,
+        "value": 11.368330421666451
+      },
+      {
+        "candidate_id": "Mn6_Fe7_Ni8_Cu4_Zn3",
+        "composition": {
+          "Cu": 4,
+          "Fe": 7,
+          "Mn": 6,
+          "Ni": 8,
+          "Zn": 3
+        },
+        "rank": 10,
+        "value": 11.349884215572143
+      }
+    ]
+  },
+  "mode": "evidence-replay",
+  "reconstructed_conclusions": {
+    "statements": [
+      "deepmd-dpa2 is selected for static PES by the two equally weighted test RMSE metrics.",
+      "deepmd-se_atten_v2 is selected for ionic transport by the lowest Table-S3 conductivity MAE against AIMD.",
+      "chgnet is selected for voltage by the lowest Table-S11 voltage MAE against DFT.",
+      "Tables S8-S10 reconstruct acceleration ratios of 115.592, 113.288, and 173.080 for prototypes I, II, and III."
+    ],
+    "static_and_transport_rankings_are_not_assumed_identical": true,
+    "transport_and_voltage_rankings_are_not_assumed_identical": true
+  },
+  "registered_models": [
+    "chgnet",
+    "deepmd-dpa2",
+    "deepmd-se_atten_v2",
+    "deepmd-se_e2_a",
+    "deepmd-se_e2_r",
+    "m3gnet"
+  ],
+  "report_id": "high-entropy-sulfide-manuscript-reproduction-v1",
+  "routing": {
+    "electrochemical-voltage": {
+      "decision_provenance": {
+        "prepared_benchmark_input": "evidence/benchmark_records.json",
+        "prepared_benchmark_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
+        "source_chain": [
+          {
+            "evidence_file": "evidence/table_s11_voltage.csv",
+            "evidence_file_sha256": "sha256:e0aa693f787fd2289aa40b98c2c937344234ff093dcda36528352d6c2c1f5ad0",
+            "source_document": "SI_0510zdl.docx",
+            "source_document_sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
+            "source_location": "Table S11; unit from SI Figure S11 y-axis",
+            "transcription": "Each reported two-value voltage cell is split, in source order, into stage_1 and stage_2.",
+            "unit_source_document": "SI_0510zdl.docx",
+            "unit_source_document_sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732"
+          }
+        ]
+      },
+      "policy": {
+        "metrics": [
+          {
+            "direction": "minimize",
+            "name": "voltage_mae",
+            "required": true,
+            "weight": 1.0
+          }
+        ]
+      },
+      "policy_digest": "sha256:320eb1522c10136a1030f225df27f64801c227e6f5cd21c2e49b3adc1d11a929",
+      "ranking": [
+        {
+          "contributions": {
+            "voltage_mae": 1.0
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "voltage_mae": 0.182777777777778
+          },
+          "model": "chgnet",
+          "rank": 1,
+          "score": 1.0
+        },
+        {
+          "contributions": {
+            "voltage_mae": 0.8549931600547195
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "voltage_mae": 0.536111111111111
+          },
+          "model": "m3gnet",
+          "rank": 2,
+          "score": 0.854993160055
+        },
+        {
+          "contributions": {
+            "voltage_mae": 0.832877336981304
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "voltage_mae": 0.59
+          },
+          "model": "deepmd-dpa2",
+          "rank": 3,
+          "score": 0.832877336981
+        },
+        {
+          "contributions": {
+            "voltage_mae": 0.8014135886912901
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "voltage_mae": 0.666666666666667
+          },
+          "model": "deepmd-se_atten_v2",
+          "rank": 4,
+          "score": 0.801413588691
+        },
+        {
+          "contributions": {
+            "voltage_mae": 0.5827633378932979
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "voltage_mae": 1.19944444444444
+          },
+          "model": "deepmd-se_e2_r",
+          "rank": 5,
+          "score": 0.582763337893
+        },
+        {
+          "contributions": {
+            "voltage_mae": 0.0
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "voltage_mae": 2.61944444444444
+          },
+          "model": "deepmd-se_e2_a",
+          "rank": 6,
+          "score": 0.0
+        }
+      ],
+      "registry_digest": "sha256:5ef8878d6e2298e4140738d0e9a01ae5e12ca8908f23539ea91fa4a9b8b8aa28",
+      "routing_digest": "sha256:0153d4fc333698d03a46c317974475067a6a0d0162862ed0be0bb56857c5e8b6",
+      "scenario": "high-entropy-sulfide-manuscript-v1",
+      "selected_metric_units": {
+        "voltage_mae": "V"
+      },
+      "selected_metrics": {
+        "voltage_mae": 0.182777777777778
+      },
+      "selected_model": "chgnet"
+    },
+    "ionic-transport": {
+      "decision_provenance": {
+        "prepared_benchmark_input": "evidence/benchmark_records.json",
+        "prepared_benchmark_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
+        "source_chain": [
+          {
+            "evidence_file": "evidence/table_s3_ionic_conductivity.csv",
+            "evidence_file_sha256": "sha256:08bdc9ec6f78b1b01f04b1d2670383ad6a35fb8281f5c14c74c53f209deb43a6",
+            "source_document": "SI_0510zdl.docx",
+            "source_document_sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
+            "source_location": "Table S3; unit from main Figure 3 y-axis",
+            "transcription": "Merged prototype labels are filled down; reported wide numerical cells are otherwise preserved.",
+            "unit_source_document": "Manuscirpt_0510zdl.docx",
+            "unit_source_document_sha256": "sha256:22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b"
+          }
+        ]
+      },
+      "policy": {
+        "metrics": [
+          {
+            "direction": "minimize",
+            "name": "conductivity_mae",
+            "required": true,
+            "weight": 1.0
+          }
+        ]
+      },
+      "policy_digest": "sha256:0fcff56d0ad4f60c5ab2fbc658a0201aacd744c25342971a1583f3e010a973d7",
+      "ranking": [
+        {
+          "contributions": {
+            "conductivity_mae": 1.0
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "conductivity_mae": 0.09599531
+          },
+          "model": "deepmd-se_atten_v2",
+          "rank": 1,
+          "score": 1.0
+        },
+        {
+          "contributions": {
+            "conductivity_mae": 0.8977901748429463
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "conductivity_mae": 0.19909484
+          },
+          "model": "deepmd-se_e2_a",
+          "rank": 2,
+          "score": 0.897790174843
+        },
+        {
+          "contributions": {
+            "conductivity_mae": 0.8639793277852212
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "conductivity_mae": 0.2332
+          },
+          "model": "m3gnet",
+          "rank": 3,
+          "score": 0.863979327785
+        },
+        {
+          "contributions": {
+            "conductivity_mae": 0.7905195563232684
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "conductivity_mae": 0.307299216
+          },
+          "model": "chgnet",
+          "rank": 4,
+          "score": 0.790519556323
+        },
+        {
+          "contributions": {
+            "conductivity_mae": 0.7421460387975394
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "conductivity_mae": 0.35609381
+          },
+          "model": "deepmd-dpa2",
+          "rank": 5,
+          "score": 0.742146038798
+        },
+        {
+          "contributions": {
+            "conductivity_mae": 0.0
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "conductivity_mae": 1.1047
+          },
+          "model": "deepmd-se_e2_r",
+          "rank": 6,
+          "score": 0.0
+        }
+      ],
+      "registry_digest": "sha256:5ef8878d6e2298e4140738d0e9a01ae5e12ca8908f23539ea91fa4a9b8b8aa28",
+      "routing_digest": "sha256:9dcee300e6ec0b1db604c9f7da94e409d944adfef823f55d06b4fca729767de3",
+      "scenario": "high-entropy-sulfide-manuscript-v1",
+      "selected_metric_units": {
+        "conductivity_mae": "mS/cm"
+      },
+      "selected_metrics": {
+        "conductivity_mae": 0.09599531
+      },
+      "selected_model": "deepmd-se_atten_v2"
+    },
+    "static-pes": {
+      "decision_provenance": {
+        "prepared_benchmark_input": "evidence/benchmark_records.json",
+        "prepared_benchmark_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
+        "source_chain": [
+          {
+            "evidence_file": "evidence/table_3_pes_rmse.csv",
+            "evidence_file_sha256": "sha256:67dfcd85ddf8be6da25d720192a63d4133d72f93c7c4a7b7d69519bd88644fac",
+            "source_document": "SI_0510zdl.docx",
+            "source_document_sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
+            "source_location": "Table captioned 'Table 3' immediately after Table S2",
+            "transcription": "Slash-separated train/validation/test cells are split into explicit columns; '-' is represented as an empty field."
+          }
+        ]
+      },
+      "policy": {
+        "metrics": [
+          {
+            "direction": "minimize",
+            "name": "energy_rmse",
+            "required": true,
+            "weight": 0.5
+          },
+          {
+            "direction": "minimize",
+            "name": "force_rmse",
+            "required": true,
+            "weight": 0.5
+          }
+        ]
+      },
+      "policy_digest": "sha256:ab66656228ba1019c651da11d6b02b71f304fa822e11b3e7173ae614be395eb0",
+      "ranking": [
+        {
+          "contributions": {
+            "energy_rmse": 0.5,
+            "force_rmse": 0.5
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "energy_rmse": 6.63,
+            "force_rmse": 151.0
+          },
+          "model": "deepmd-dpa2",
+          "rank": 1,
+          "score": 1.0
+        },
+        {
+          "contributions": {
+            "energy_rmse": 0.46959826275787186,
+            "force_rmse": 0.396
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "energy_rmse": 7.19,
+            "force_rmse": 177.0
+          },
+          "model": "deepmd-se_e2_a",
+          "rank": 2,
+          "score": 0.865598262758
+        },
+        {
+          "contributions": {
+            "energy_rmse": 0.4305103148751357,
+            "force_rmse": 0.36
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "energy_rmse": 7.91,
+            "force_rmse": 186.0
+          },
+          "model": "deepmd-se_atten_v2",
+          "rank": 3,
+          "score": 0.790510314875
+        },
+        {
+          "contributions": {
+            "energy_rmse": 0.41910966340933775,
+            "force_rmse": 0.33999999999999997
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "energy_rmse": 8.12,
+            "force_rmse": 191.0
+          },
+          "model": "chgnet",
+          "rank": 4,
+          "score": 0.759109663409
+        },
+        {
+          "contributions": {
+            "energy_rmse": 0.0,
+            "force_rmse": 0.256
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "energy_rmse": 15.84,
+            "force_rmse": 212.0
+          },
+          "model": "m3gnet",
+          "rank": 5,
+          "score": 0.256
+        },
+        {
+          "contributions": {
+            "energy_rmse": 0.15255157437567868,
+            "force_rmse": 0.0
+          },
+          "evidence_status": "sha256-verified",
+          "metrics": {
+            "energy_rmse": 13.03,
+            "force_rmse": 276.0
+          },
+          "model": "deepmd-se_e2_r",
+          "rank": 6,
+          "score": 0.152551574376
+        }
+      ],
+      "registry_digest": "sha256:5ef8878d6e2298e4140738d0e9a01ae5e12ca8908f23539ea91fa4a9b8b8aa28",
+      "routing_digest": "sha256:6887f083783b9d131ce6e5f9dcb6e1a18a89df92741af57d764ef74fb23d1ae0",
+      "scenario": "high-entropy-sulfide-manuscript-v1",
+      "selected_metric_units": {
+        "energy_rmse": "meV/atom",
+        "force_rmse": "meV/angstrom"
+      },
+      "selected_metrics": {
+        "energy_rmse": 6.63,
+        "force_rmse": 151.0
+      },
+      "selected_model": "deepmd-dpa2"
+    }
+  },
+  "schema_version": 1,
+  "scientific_status": "REPLAY_VERIFIED",
+  "scope_boundaries": {
+    "claim_boundary": "This report reconstructs evidence, reductions, and routing decisions; it does not independently validate the underlying model predictions.",
+    "fresh_model_prediction": "NOT_PERFORMED",
+    "large_supercell_screening": "REPLAY_VERIFIED",
+    "model_training": "NOT_PERFORMED",
+    "production_md_aimd_or_dft": "NOT_PERFORMED",
+    "top_candidate_aimd_dft_high_fidelity": "EXTERNAL_VALIDATION_PENDING",
+    "top_candidate_historical_transport": "EXACT_NUMERICAL_PARITY",
+    "unseen_transfer_evidence_level": "CLAIM_LEVEL_DOCUMENT_EVIDENCE",
+    "unseen_transfer_numerical_parity": "NOT_TESTABLE_WITH_AVAILABLE_DATA",
+    "unseen_transfer_validation": "EXTERNAL_VALIDATION_PENDING"
+  },
+  "source_documents": [
+    {
+      "basename": "Manuscirpt_0510zdl.docx",
+      "id": "manuscript-main",
+      "included_in_example": false,
+      "read_only": true,
+      "sha256": "sha256:22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b",
+      "size_bytes": 1671589
+    },
+    {
+      "basename": "SI_0510zdl.docx",
+      "id": "supporting-information",
+      "included_in_example": false,
+      "read_only": true,
+      "sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
+      "size_bytes": 2958512
+    }
+  ],
+  "top_candidate_validation": {
+    "high_fidelity_validation": {
+      "blockers": [
+        "No matched AIMD trajectory or DFT reference result for Mn6_Fe3_Ni8_Cu4_Zn7 is included in the available evidence.",
+        "The historical target.msd and stdout establish post-processing parity only; they cannot establish MLIP-versus-AIMD/DFT predictive parity."
+      ],
+      "evidence_level": "NO_AIMD_OR_DFT_REFERENCE_ARTIFACT",
+      "numerical_parity": "NOT_TESTABLE_WITH_AVAILABLE_DATA",
+      "reference_artifact": null,
+      "status": "EXTERNAL_VALIDATION_PENDING"
+    },
+    "historical_transport_parity": {
+      "arrhenius": {
+        "convention": "legacy_get_sigma_v1",
+        "linear_msd_fit": {
+          "activation_energy_eV": 0.08615142129107195,
+          "conductivity_S_m": 20.293072148678846,
+          "usage": "secondary comparison under the same transform; not the original get_MSD_Li10.py to get_sigma.py shell path"
+        },
+        "mean_msd_over_time": {
+          "activation_energy_eV": 0.08989329805741647,
+          "conductivity_S_m": 18.420176685825222
+        },
+        "target_temperature_K": 300.0
+      },
+      "carrier_convention": {
+        "conductivity_model": "uncorrected Nernst-Einstein",
+        "constants_convention": "historical rounded q=1.6e-19 C and kB=1.38e-23 J/K",
+        "haven_ratio": 1.0,
+        "n_mobile_ions": 40,
+        "n_mobile_ions_source": "explicit",
+        "name": "composition_corrected",
+        "volume_A3": 4656.206496
+      },
+      "evidence_level": "READ_ONLY_HISTORICAL_POSTPROCESS_PARITY",
+      "execution": {
+        "aimd_executed": false,
+        "dft_executed": false,
+        "md_executed": false,
+        "mode": "read-only-postprocess-existing-msd",
+        "model_executed": false,
+        "network_used": false,
+        "scheduler_used": false
+      },
+      "historical_comparison": {
+        "absolute_tolerance": 1e-20,
+        "conductivity_all_close": true,
+        "dataset_id": "block-1",
+        "diffusivity_all_close": true,
+        "historical_carrier_convention": "same_as_reproduction",
+        "relative_tolerance": 1e-12
+      },
+      "implementation_provenance": {
+        "historical_scripts": [
+          {
+            "locator": "historical-transport/code/get_MSD_Li10.py",
+            "sha256": "sha256:584c8f1f94d072cbd43902ff5d2ec2ec3299bdaa6f5af1340e3ab2dd1ce343a5",
+            "size_bytes": 1134
+          },
+          {
+            "locator": "historical-transport/code/get_sigma.py",
+            "sha256": "sha256:9294764155f5cca395d7d0ba8165543c8cf8e87746ff18c67a89bb721fa96f6d",
+            "size_bytes": 1280
+          }
+        ],
+        "wrapper": "ionic-transport.adapter.reproduce_manuscript_transport",
+        "wrapper_locator": "plugins/ionic-transport/adapter.py",
+        "wrapper_sha256": "sha256:cfea1fd974ef1e568ae9e3aac414ad999588edfa00035d91f8a1c6bd561bf36b",
+        "wrapper_version": "1.0"
+      },
+      "not_high_fidelity_validation": true,
+      "sampling_convention": {
+        "line_modulus": 12,
+        "line_offset": 2,
+        "profile": "deepmd_li10_legacy_v1",
+        "start_line_index": 990,
+        "timestep_fs": 1.0
+      },
+      "scope": "Existing DeepMD target.msd files were replayed with the documented historical sampling and Arrhenius conventions and compared with historical stdout block-1.",
+      "screening_value_match": {
+        "replayed_mean_msd_value_S_m": 18.420176685825222,
+        "screening_value_S_m": 18.420176685825222,
+        "status": "EXACT_NUMERICAL_PARITY"
+      },
+      "source_artifacts": [
+        {
+          "locator": "historical-transport/deepmd_6_3_8_4_7/400K/target.msd",
+          "read_only": true,
+          "role": "target_msd_400K",
+          "sha256": "sha256:bad4a7d15e129fe3426c46a19f561ccabc341240d7dec27c0cd42a6715a2b403",
+          "size_bytes": 366091
+        },
+        {
+          "locator": "historical-transport/deepmd_6_3_8_4_7/600K/target.msd",
+          "read_only": true,
+          "role": "target_msd_600K",
+          "sha256": "sha256:3758bfb7445a311ae937f15c650c48d4582f1404711f7e181cff3168b54b32c1",
+          "size_bytes": 355418
+        },
+        {
+          "locator": "historical-transport/deepmd_6_3_8_4_7/800K/target.msd",
+          "read_only": true,
+          "role": "target_msd_800K",
+          "sha256": "sha256:b1e5e6334ed285b099bcc6e2bbbe3132d6d1aedcae8730762d5f864d8a138442",
+          "size_bytes": 347675
+        },
+        {
+          "locator": "historical-transport/Li10_test.out",
+          "read_only": true,
+          "role": "historical_transport_stdout",
+          "sha256": "sha256:7d822dbb41ca4b0e66ff9070d6274635e1c620aeb92d2b00dea52af824fe671b",
+          "size_bytes": 2281
+        }
+      ],
+      "status": "EXACT_NUMERICAL_PARITY"
+    },
+    "identity_link": {
+      "historical_folder_id": "6_3_8_4_7",
+      "historical_token_order": [
+        "Mn",
+        "Fe",
+        "Ni",
+        "Cu",
+        "Zn"
+      ],
+      "mapping_rule": "Zip underscore-separated integer tokens to the declared historical_token_order and render the canonical candidate ID in that same order.",
+      "parsed_composition": {
+        "Cu": 4,
+        "Fe": 3,
+        "Mn": 6,
+        "Ni": 8,
+        "Zn": 7
+      },
+      "ranked_candidate_id": "Mn6_Fe3_Ni8_Cu4_Zn7",
+      "status": "EXACT_IDENTITY_MAPPING"
+    },
+    "screening_metric": {
+      "method": "mean_msd_over_time",
+      "name": "ionic_conductivity_300k_s_per_m",
+      "unit": "S/m",
+      "value": 18.420176685825222
+    },
+    "status": "REPLAY_VERIFIED"
+  },
+  "unseen_transfer_validation": {
+    "artifact_type": "mlipflow.evidence_replay.unseen_transfer_claim",
+    "blockers": [
+      "No per-configuration reference and predicted energy values are available.",
+      "No per-configuration reference and predicted force values are available.",
+      "The three doped composition identities and their paired DeepMD/AIMD conductivity values are not available in the supplied evidence tables.",
+      "No raw AIMD or MLIP trajectories/output artifacts for this unseen/transfer assessment are included."
+    ],
+    "claim_boundary": "This artifact pins and structures what the manuscript says; it does not promote a qualitative manuscript statement to numerical validation.",
+    "document_claims": {
+      "composition_transfer": {
+        "composition_ids_available_in_supplied_tables": false,
+        "per_composition_values_available_in_supplied_tables": false,
+        "reported_assessment": [
+          "absolute conductivity described qualitatively as slightly overestimated",
+          "relative composition ranking described qualitatively as correctly reproduced"
+        ],
+        "reported_comparison_count": 3,
+        "reported_methods": [
+          "DeepMD",
+          "AIMD"
+        ],
+        "reported_target": "room-temperature ionic conductivity"
+      },
+      "unseen_system": {
+        "expanded_formula": "Li6M3(PS4)4",
+        "reported_aimd_configuration_count": 787,
+        "reported_assessment": [
+          "energy prediction described qualitatively as high accuracy",
+          "force errors described qualitatively as comparable to prototypes I and II"
+        ],
+        "reported_formula": "Li24M12(PS4)16",
+        "training_relation": "reported as not included in training"
+      }
+    },
+    "evidence_level": "CLAIM_LEVEL_DOCUMENT_EVIDENCE",
+    "numerical_parity": {
+      "performed": false,
+      "reason": "The supplied claim gives qualitative outcomes and aggregate counts but no paired raw/reference numerical values needed for an independent parity calculation.",
+      "status": "NOT_TESTABLE_WITH_AVAILABLE_DATA"
+    },
+    "schema_version": 1,
+    "source_document": {
+      "basename": "Manuscirpt_0510zdl.docx",
+      "id": "manuscript-main",
+      "read_only": true,
+      "sha256": "sha256:22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b",
+      "size_bytes": 1671589,
+      "source_location": "Main-manuscript Results narrative describing the unseen Li24M12(PS4)16 system and doped-composition transfer assessment."
+    },
+    "status": "EXTERNAL_VALIDATION_PENDING"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "status": "OK",
+  "result_id": "synthetic-structure-result-v1",
+  "fixture_kind": "synthetic",
+  "summary": "Metadata-only candidate list; no atomic coordinates or SQS calculation are included.",
+  "metrics": {"candidate_count": 2, "m_sublattice": ["Mn", "Fe", "Ni", "Cu", "Zn"]},
+  "artifacts": [{"path": "structure_candidates.csv", "role": "structure"}]
+}

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "status": "OK",
+  "result_id": "synthetic-labeling-result-v1",
+  "fixture_kind": "synthetic",
+  "summary": "Tiny invented label table for interface testing; VASP or other DFT was not run.",
+  "metrics": {"labeled_frames": 3, "failed_frames": 0},
+  "artifacts": [{"path": "dft_labels.csv", "role": "reference"}]
+}

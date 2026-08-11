@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mlipflow"
+version = "0.1.0"
+description = "Deterministic, agent-supervised workflows for machine-learned interatomic potentials"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{name = "MLIPFlow contributors"}]
+dependencies = ["PyYAML>=6.0"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "jsonschema>=4", "ruff>=0.5"]
+science = ["numpy>=1.23", "ase>=3.22", "icet>=2.0", "pandas>=1.5", "plotly>=5"]
+
+[project.scripts]
+mlipflow = "mlipflow.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.data-files]
+"share/mlipflow/schemas" = ["schemas/*.json"]
+"share/mlipflow/docs" = ["docs/*.md"]
+"share/mlipflow/reports" = ["reports/*.json", "reports/*.md"]
+"share/mlipflow/examples/high_entropy_sulfide" = ["examples/high_entropy_sulfide/*.md", "examples/high_entropy_sulfide/*.yaml"]
+"share/mlipflow/examples/high_entropy_sulfide_reproduction" = ["examples/high_entropy_sulfide_reproduction/*.md", "examples/high_entropy_sulfide_reproduction/*.yaml", "examples/high_entropy_sulfide_reproduction/*.py"]
+"share/mlipflow/examples/high_entropy_sulfide_reproduction/evidence" = ["examples/high_entropy_sulfide_reproduction/evidence/*.json", "examples/high_entropy_sulfide_reproduction/evidence/*.csv"]
+"share/mlipflow/examples/high_entropy_sulfide_reproduction/benchmark" = ["examples/high_entropy_sulfide_reproduction/benchmark/*.json", "examples/high_entropy_sulfide_reproduction/benchmark/*.csv"]
+"share/mlipflow/examples/high_entropy_sulfide_reproduction/reports" = ["examples/high_entropy_sulfide_reproduction/reports/*.json", "examples/high_entropy_sulfide_reproduction/reports/*.md"]
+"share/mlipflow/plugins/high-entropy-structure" = ["plugins/high-entropy-structure/*.yaml", "plugins/high-entropy-structure/*.py"]
+"share/mlipflow/plugins/pes-sampling" = ["plugins/pes-sampling/*.yaml", "plugins/pes-sampling/*.py"]
+"share/mlipflow/plugins/dft-labeling" = ["plugins/dft-labeling/*.yaml", "plugins/dft-labeling/*.py"]
+"share/mlipflow/plugins/mlip-training" = ["plugins/mlip-training/*.yaml", "plugins/mlip-training/*.py"]
+"share/mlipflow/plugins/mlip-benchmark" = ["plugins/mlip-benchmark/*.yaml", "plugins/mlip-benchmark/*.py"]
+"share/mlipflow/plugins/ionic-transport" = ["plugins/ionic-transport/*.yaml", "plugins/ionic-transport/*.py"]
+"share/mlipflow/plugins/composition-screening" = ["plugins/composition-screening/*.yaml", "plugins/composition-screening/*.py"]
+"share/mlipflow/plugins/electrochemical-voltage" = ["plugins/electrochemical-voltage/*.yaml", "plugins/electrochemical-voltage/*.py"]
+"share/mlipflow/agent-skills/mlip-workflow" = [".agents/skills/mlip-workflow/SKILL.md"]
+"share/mlipflow/agent-skills/mlip-workflow/agents" = [".agents/skills/mlip-workflow/agents/openai.yaml"]
+"share/mlipflow/agent-skills/high-entropy-structure" = [".agents/skills/high-entropy-structure/SKILL.md"]
+"share/mlipflow/agent-skills/high-entropy-structure/agents" = [".agents/skills/high-entropy-structure/agents/openai.yaml"]
+"share/mlipflow/agent-skills/pes-sampling" = [".agents/skills/pes-sampling/SKILL.md"]
+"share/mlipflow/agent-skills/pes-sampling/agents" = [".agents/skills/pes-sampling/agents/openai.yaml"]
+"share/mlipflow/agent-skills/dft-labeling" = [".agents/skills/dft-labeling/SKILL.md"]
+"share/mlipflow/agent-skills/dft-labeling/agents" = [".agents/skills/dft-labeling/agents/openai.yaml"]
+"share/mlipflow/agent-skills/mlip-training" = [".agents/skills/mlip-training/SKILL.md"]
+"share/mlipflow/agent-skills/mlip-training/agents" = [".agents/skills/mlip-training/agents/openai.yaml"]
+"share/mlipflow/agent-skills/mlip-benchmark" = [".agents/skills/mlip-benchmark/SKILL.md"]
+"share/mlipflow/agent-skills/mlip-benchmark/agents" = [".agents/skills/mlip-benchmark/agents/openai.yaml"]
+"share/mlipflow/agent-skills/ionic-transport" = [".agents/skills/ionic-transport/SKILL.md"]
+"share/mlipflow/agent-skills/ionic-transport/agents" = [".agents/skills/ionic-transport/agents/openai.yaml"]
+"share/mlipflow/agent-skills/composition-screening" = [".agents/skills/composition-screening/SKILL.md"]
+"share/mlipflow/agent-skills/composition-screening/agents" = [".agents/skills/composition-screening/agents/openai.yaml"]
+"share/mlipflow/agent-skills/electrochemical-voltage" = [".agents/skills/electrochemical-voltage/SKILL.md"]
+"share/mlipflow/agent-skills/electrochemical-voltage/agents" = [".agents/skills/electrochemical-voltage/agents/openai.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"

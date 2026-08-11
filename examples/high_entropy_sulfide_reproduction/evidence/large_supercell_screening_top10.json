@@ -1,0 +1,326 @@
+{
+  "schema_version": 1,
+  "artifact_type": "mlipflow.evidence_replay.large_supercell_screening_top10",
+  "status": "REPLAY_VERIFIED",
+  "evidence_level": "PINNED_LOCAL_RESULT_ARTIFACT",
+  "calculation_claim": "This compact artifact transcribes an already-completed deterministic screening result; this example did not generate candidates, run transport simulations, or execute an MLIP.",
+  "source_artifacts": {
+    "ranking": {
+      "locator": "external-screening-artifact/ranking.json",
+      "sha256": "sha256:30ada4653684618ab1594b4b428502ba324908b208028910d68b8e4785f5793a",
+      "size_bytes": 1813,
+      "read_only": true
+    },
+    "candidate_manifest": {
+      "locator": "external-screening-artifact/candidates.json",
+      "sha256": "sha256:d030d2fdbd9c042b13a1a15c6a124ef2b953d62ca1170e963c272a57b43aa90d",
+      "size_bytes": 76042,
+      "read_only": true
+    },
+    "transport_results_manifest": {
+      "locator": "external-screening-artifact/transport.json",
+      "sha256": "sha256:e3c4f4466b872b575345e4a10560b311fff19a8ed049383a82c18132534cd1c0",
+      "size_bytes": 129776,
+      "read_only": true
+    }
+  },
+  "input_set": {
+    "candidate_count": 247,
+    "source_structure_count": 247,
+    "unique_source_structure_count": 247,
+    "evaluated_count": 247,
+    "excluded_missing_count": 0,
+    "expected_metal_sites_per_candidate": 28,
+    "candidate_element_order": [
+      "Zn",
+      "Fe",
+      "Cu",
+      "Ni",
+      "Mn"
+    ],
+    "canonical_element_order": [
+      "Mn",
+      "Fe",
+      "Ni",
+      "Cu",
+      "Zn"
+    ],
+    "normalizer": "mlipflow-legacy-li10-screening-v1",
+    "portable_locator_note": "Personal and cluster absolute paths are intentionally omitted; full input manifests and every legacy source text are pinned by SHA-256, basename, and byte size."
+  },
+  "legacy_source_collection": {
+    "candidate_source_file_count": 11,
+    "metric_source_file_count": 11,
+    "candidate_sources": [
+      {
+        "basename": "output_Zn2.txt",
+        "sha256": "sha256:136a289a9f5f288873357fb813b09b418a122cdc434861a5985cbbbe98b00c07",
+        "size_bytes": 2670
+      },
+      {
+        "basename": "output_Zn3.txt",
+        "sha256": "sha256:5398fe7632314bed27e2f2050d55cf1a48583c4dab08dad10cd65aee354ac979",
+        "size_bytes": 2670
+      },
+      {
+        "basename": "output_Zn3_add.txt",
+        "sha256": "sha256:23e5b6ff9216ffb2b3f8c853c9f21eb2c3b0d4200356081bfd644bcdb90866c4",
+        "size_bytes": 178
+      },
+      {
+        "basename": "output_Zn4.txt",
+        "sha256": "sha256:7da331d94af6313a46e15f4c5dc6d57b372c875c6a2893704a06eb198185a5c8",
+        "size_bytes": 2670
+      },
+      {
+        "basename": "output_Zn5.txt",
+        "sha256": "sha256:5707cc645d6dcae35d8946b2607adc955c2389bac661130510303b0475712693",
+        "size_bytes": 2670
+      },
+      {
+        "basename": "output_Zn5_add.txt",
+        "sha256": "sha256:376645defc56fecfe16e8b60bec3c79735a9426dc3adca72289d7db475bea4d8",
+        "size_bytes": 267
+      },
+      {
+        "basename": "output_Zn6.txt",
+        "sha256": "sha256:99a09c0685522ede8f75b81adbac073683975e451f5f3722b71f655a8ba56f42",
+        "size_bytes": 2670
+      },
+      {
+        "basename": "output_Zn7.txt",
+        "sha256": "sha256:d5eaf7fad977e9fe355b1d4a62880b232e26ed46133312700d4b734a4f533900",
+        "size_bytes": 2670
+      },
+      {
+        "basename": "output_Zn7_add.txt",
+        "sha256": "sha256:179b2cc658c4085c6b6e61079b285b3528f6e8e7e47e3eae3baaf346c053bf0d",
+        "size_bytes": 178
+      },
+      {
+        "basename": "output_Zn8.txt",
+        "sha256": "sha256:869aa651ccec33231f1d912bb9844dd172011e7c74372d82954ceda2abaa3bec",
+        "size_bytes": 2670
+      },
+      {
+        "basename": "output_Zn9.txt",
+        "sha256": "sha256:8e78ffdfd4fd69528c32313a71865424f67258152f38fe9cb4dc0c57121aaf00",
+        "size_bytes": 2670
+      }
+    ],
+    "metric_sources": [
+      {
+        "basename": "sigma_Li10_Zn2.txt",
+        "sha256": "sha256:6da424621e15020534a3fe436c72ae75338b45a1835c40cef591d7f9227b5431",
+        "size_bytes": 1143
+      },
+      {
+        "basename": "sigma_Li10_Zn3.txt",
+        "sha256": "sha256:b62d4fbc049a2eb871c4c4e5416183836cdf4cfbef2d26ab54e1e73219a15bf9",
+        "size_bytes": 1143
+      },
+      {
+        "basename": "sigma_Li10_Zn3_add.txt",
+        "sha256": "sha256:d2e40e792972e4d6afa65894dd711a226dfbe3c4f4fab0f74d8a1bbcd6a33e54",
+        "size_bytes": 78
+      },
+      {
+        "basename": "sigma_Li10_Zn4.txt",
+        "sha256": "sha256:4755c358fe63a8d3aeafc53a0b71a71908fafef53f4841b9ce57441192e6177e",
+        "size_bytes": 1142
+      },
+      {
+        "basename": "sigma_Li10_Zn5.txt",
+        "sha256": "sha256:3494fbd7433caf97b4026691b1c291c30dfc22c725b482e82a2184ef490e722c",
+        "size_bytes": 1143
+      },
+      {
+        "basename": "sigma_Li10_Zn5_add.txt",
+        "sha256": "sha256:3e95b4b16b50bfac8be75ca53c851243069f27c88c2ccf30a575cc469da40b5b",
+        "size_bytes": 114
+      },
+      {
+        "basename": "sigma_Li10_Zn6.txt",
+        "sha256": "sha256:5246899ef2c61220b5944386bc28641c51a3bd1e38e0937a5c06bc7750616b8e",
+        "size_bytes": 1143
+      },
+      {
+        "basename": "sigma_Li10_Zn7.txt",
+        "sha256": "sha256:38be4b54170dd1edba276fcdb88e79724ae07d7a998c3ac3400611a4ca42b20d",
+        "size_bytes": 1148
+      },
+      {
+        "basename": "sigma_Li10_Zn7_add.txt",
+        "sha256": "sha256:7737500222a1d2946902375dc7a20aec70298835a26fd16d15d1f02c483014a3",
+        "size_bytes": 75
+      },
+      {
+        "basename": "sigma_Li10_Zn8.txt",
+        "sha256": "sha256:89b54c68998443288b5f707be25637b07c441d889c4bc5420ca467791561c5fd",
+        "size_bytes": 1145
+      },
+      {
+        "basename": "sigma_Li10_Zn9.txt",
+        "sha256": "sha256:88ef008dfd9b16b37cb6795984e2bf31c408b7079fdf29a67cba1987482733c9",
+        "size_bytes": 1147
+      }
+    ]
+  },
+  "metric": {
+    "name": "ionic_conductivity_300k_s_per_m",
+    "unit": "S/m",
+    "source_convention": "legacy-text-value-no-rescaling"
+  },
+  "rule": {
+    "direction": "maximize",
+    "missing_metric_policy": "error",
+    "top_k": 10,
+    "tie_break": "candidate_id-ascending"
+  },
+  "implementation": {
+    "ranking_implementation": "mlipflow-deterministic-single-metric-screen",
+    "ranking_implementation_version": 1,
+    "plugin_id": "composition-screening",
+    "plugin_version": "0.3.0",
+    "files": [
+      {
+        "locator": "plugins/composition-screening/screen.py",
+        "sha256": "sha256:18fab4cb37aae5c485277050a8ba0d2df03b27545082e75cd342df495b15d335"
+      },
+      {
+        "locator": "plugins/composition-screening/normalize_legacy.py",
+        "sha256": "sha256:783a6db77ea116e045e4c4ad7a6f56b3a08b5ff5915e673d23389bec84af4d0b"
+      },
+      {
+        "locator": "plugins/composition-screening/adapter.py",
+        "sha256": "sha256:ad43b2a8a12873eb188760ebfaeed4bb018925b3cbbd85890c4d8f9c0002edb5"
+      },
+      {
+        "locator": "plugins/composition-screening/plugin.yaml",
+        "sha256": "sha256:dd127dab0750b3be8d94e338be544a5ad656d6f59c79ba13d3938c7a76f9b5be"
+      }
+    ]
+  },
+  "top_candidates": [
+    {
+      "rank": 1,
+      "candidate_id": "Mn6_Fe3_Ni8_Cu4_Zn7",
+      "composition": {
+        "Mn": 6,
+        "Fe": 3,
+        "Ni": 8,
+        "Cu": 4,
+        "Zn": 7
+      },
+      "value": 18.420176685825222
+    },
+    {
+      "rank": 2,
+      "candidate_id": "Mn2_Fe2_Ni9_Cu9_Zn6",
+      "composition": {
+        "Mn": 2,
+        "Fe": 2,
+        "Ni": 9,
+        "Cu": 9,
+        "Zn": 6
+      },
+      "value": 17.626045819654934
+    },
+    {
+      "rank": 3,
+      "candidate_id": "Mn4_Fe8_Ni7_Cu6_Zn3",
+      "composition": {
+        "Mn": 4,
+        "Fe": 8,
+        "Ni": 7,
+        "Cu": 6,
+        "Zn": 3
+      },
+      "value": 14.282118728392
+    },
+    {
+      "rank": 4,
+      "candidate_id": "Mn7_Fe5_Ni6_Cu8_Zn2",
+      "composition": {
+        "Mn": 7,
+        "Fe": 5,
+        "Ni": 6,
+        "Cu": 8,
+        "Zn": 2
+      },
+      "value": 14.034032196953927
+    },
+    {
+      "rank": 5,
+      "candidate_id": "Mn5_Fe9_Ni8_Cu3_Zn3",
+      "composition": {
+        "Mn": 5,
+        "Fe": 9,
+        "Ni": 8,
+        "Cu": 3,
+        "Zn": 3
+      },
+      "value": 12.28403894229092
+    },
+    {
+      "rank": 6,
+      "candidate_id": "Mn4_Fe9_Ni5_Cu7_Zn3",
+      "composition": {
+        "Mn": 4,
+        "Fe": 9,
+        "Ni": 5,
+        "Cu": 7,
+        "Zn": 3
+      },
+      "value": 12.145340623018692
+    },
+    {
+      "rank": 7,
+      "candidate_id": "Mn7_Fe5_Ni8_Cu2_Zn6",
+      "composition": {
+        "Mn": 7,
+        "Fe": 5,
+        "Ni": 8,
+        "Cu": 2,
+        "Zn": 6
+      },
+      "value": 12.103564653934505
+    },
+    {
+      "rank": 8,
+      "candidate_id": "Mn3_Fe4_Ni7_Cu5_Zn9",
+      "composition": {
+        "Mn": 3,
+        "Fe": 4,
+        "Ni": 7,
+        "Cu": 5,
+        "Zn": 9
+      },
+      "value": 11.669317033317999
+    },
+    {
+      "rank": 9,
+      "candidate_id": "Mn8_Fe2_Ni6_Cu5_Zn7",
+      "composition": {
+        "Mn": 8,
+        "Fe": 2,
+        "Ni": 6,
+        "Cu": 5,
+        "Zn": 7
+      },
+      "value": 11.368330421666451
+    },
+    {
+      "rank": 10,
+      "candidate_id": "Mn6_Fe7_Ni8_Cu4_Zn3",
+      "composition": {
+        "Mn": 6,
+        "Fe": 7,
+        "Ni": 8,
+        "Cu": 4,
+        "Zn": 3
+      },
+      "value": 11.349884215572143
+    }
+  ]
+}

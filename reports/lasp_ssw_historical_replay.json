@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "report_id": "pes-sampling-lasp-ssw-historical-replay-v1",
+  "plugin_id": "pes-sampling",
+  "operation": "lasp-ssw-normalize-replay",
+  "status": "HISTORICAL_POSTPROCESS_REPLAY_PASS",
+  "executed_on": "2026-08-11",
+  "scientific_claim": {
+    "historical_source_audited_read_only": true,
+    "historical_archive_postprocessing_replayed": true,
+    "historical_counts_and_order_matched": true,
+    "licensed_lasp_executed": false,
+    "ssw_numerical_parity_established": false,
+    "scheduler_or_hpc_integration_validated": false,
+    "manuscript_result_recomputed": false,
+    "purpose": "Bounded verification of LASP BIOSYM archive parsing, the reviewed energy-filter then accepted-order stride policy, structure lineage, and portable result checking."
+  },
+  "implementation": {
+    "adapter": {
+      "locator": "plugins/pes-sampling/adapter.py",
+      "sha256": "21418a4c8c1d32421a330aaee33588c0804a569a47f687bb34f2220276bce7f8"
+    },
+    "wrapper": {
+      "locator": "plugins/pes-sampling/lasp_ssw.py",
+      "sha256": "5248b5ab960e6fd424648bb9ff63cf0ac9ba70bcb63cf44c73faf3225744af11"
+    },
+    "plugin_manifest": {
+      "locator": "plugins/pes-sampling/plugin.yaml",
+      "sha256": "e0f01d73c7f9984bf5656714c7a9c41b1aacb3224c41cb6d7df73fda6dcdb804"
+    }
+  },
+  "source_audit": {
+    "access": "read-only",
+    "remote_files_modified": false,
+    "scheduler_jobs_submitted": false,
+    "credentials_or_private_paths_recorded": false,
+    "potcar_or_model_files_read_or_copied": false,
+    "raw_structure_files_included_in_repository": false,
+    "temporary_local_copies_retained_after_audit": false,
+    "initial_run": {
+      "locator": "remote-mlp://Li10M7P8S32/run/11113",
+      "source_files": {
+        "lasp.in": {
+          "size_bytes": 247,
+          "sha256": "c882875e4760a07de7f49cfa20e0df6d3b2089220d044b4e6b4034f4ba8c3e13"
+        },
+        "allstr.arc": {
+          "size_bytes": 28837,
+          "sha256": "e432c7f2a4e3a581bddb1b4a86a47f4adc566dd113bb1688ce42db2aaadcb65a"
+        },
+        "best.arc": {
+          "size_bytes": 9629,
+          "sha256": "d72e7208db8bd9ec93986fcbf1643737d848bf8432a6d527adeb9b5d3ad2d83f"
+        },
+        "SSWtraj": {
+          "size_bytes": 156,
+          "sha256": "4cb137bd4268b1f96631a42996f129bcd394cdd399c777046d14be56d05b8591"
+        },
+        "single.py": {
+          "size_bytes": 1011,
+          "sha256": "cf5dc705d67103a942104851e1fdb48e2395c5114f01b85b4e42d704b8e5acf4"
+        }
+      },
+      "reviewed_parameters": {
+        "potential": "vasp",
+        "explore_type": "ssw",
+        "Run_type": "5",
+        "SSW.SSWsteps": "4",
+        "SSW.MaxOptstep": "300",
+        "SSW.Temp": "200.0000",
+        "SSW.printdelay": "2",
+        "SSW.printselect": "6",
+        "SSW.printevery": "T",
+        "SSW.output": "T",
+        "SSW.DimerdR": "0.010",
+        "SSW.ftol": "0.1000",
+        "seed": "HISTORICAL_PARAMETER_UNKNOWN"
+      }
+    },
+    "rerun": {
+      "locator": "remote-mlp://Li10M7P8S32/rerun/run/11113",
+      "source_files": {
+        "lasp.in": {
+          "size_bytes": 367,
+          "sha256": "d3619680bc4c3f50c467f59e44c0d13c1f8c4a30767896e8e4a0299bee1edb71"
+        },
+        "allstr.arc": {
+          "size_bytes": 316547,
+          "sha256": "6f5a3e202aaab95ff32f1e488fc2be6ebbdc0cebd87412d81ffb19ef458c91f0"
+        },
+        "best.arc": {
+          "size_bytes": 4827,
+          "sha256": "01627e9d6b75767567c974c5a89c1372e6ba5f6a36db3e0b81fe8487e8505841"
+        },
+        "md.arc": {
+          "size_bytes": 82645,
+          "sha256": "117a9470cf88aa28abd78c6986b8317012dbc438f302b09f2181722d3bafa4c1"
+        },
+        "SSWtraj": {
+          "size_bytes": 108,
+          "sha256": "688d43b3d163040af70e0f3c58c143612f561bd2641dc9d527d1c981068b2e70"
+        },
+        "single.py": {
+          "size_bytes": 1011,
+          "sha256": "cf5dc705d67103a942104851e1fdb48e2395c5114f01b85b4e42d704b8e5acf4"
+        },
+        "single_extract.slurm": {
+          "sha256": "f8058827bdbf7f45a9a98635ed2af8e2146b76efd831b9ba3a19e383a8e3a2b3"
+        },
+        "md.py": {
+          "sha256": "44e1ddf12b1d6c4b5c458c72d4bf8b609a455feff45c563840cd9627d7d74aa2"
+        }
+      },
+      "reviewed_parameters": {
+        "potential": "vasp",
+        "explore_type": "ssw",
+        "Run_type": "5",
+        "SSW.SSWsteps": "6",
+        "SSW.MaxOptstep": "300",
+        "SSW.mdfreq": "3",
+        "MD.initial_T": "500",
+        "MD.target_T": "800",
+        "MD.ttotal": "4000",
+        "MD.dt": "2",
+        "MD.print_strfreq": "250",
+        "SSW.LowTemp": "600",
+        "SSW.HighTemp": "800",
+        "SSW.TempCycle": "3",
+        "seed": "HISTORICAL_PARAMETER_UNKNOWN"
+      }
+    }
+  },
+  "replay_parameters": {
+    "energy_max_ev": 0.0,
+    "initial_selection_stride": 1,
+    "rerun_selection_stride": 3,
+    "stride_applies_after_energy_filter": true,
+    "preserve_historical_order": true,
+    "max_frames": 100,
+    "seed_status": "HISTORICAL_PARAMETER_UNKNOWN"
+  },
+  "results": {
+    "initial_run": {
+      "wrapper_returncode": 0,
+      "adapter_check_status": "OK",
+      "generated_structure_count": 6,
+      "energy_accepted_count": 5,
+      "selected_structure_count": 5,
+      "aimd_seed_candidate_count": 2,
+      "md_structure_count": 0,
+      "sampling_result_size_bytes": 5594,
+      "sampling_result_sha256": "20f3ddf49d049054203b2ce729bd2fcc5b4623481ad75a88a9686b5d98c3b0ae"
+    },
+    "rerun": {
+      "wrapper_returncode": 0,
+      "adapter_check_status": "OK",
+      "generated_structure_count": 66,
+      "energy_accepted_count": 25,
+      "selected_structure_count": 9,
+      "aimd_seed_candidate_count": 1,
+      "md_structure_count": 17,
+      "sampling_result_size_bytes": 27161,
+      "sampling_result_sha256": "1a3233429a52f4607846134d33ff9b183d99f9321bd338893a0e02765d4c9090"
+    }
+  },
+  "comparison": {
+    "source_sha256": "exact",
+    "frame_counts": "exact",
+    "finite_energy_values": "exact text-to-float parse",
+    "energy_filter": "exact inclusive energy_ev <= 0",
+    "accepted_order_stride": "exact",
+    "historical_order": "exact",
+    "selected_structure_bytes": "exact canonical BIOSYM header plus historical frame bytes"
+  },
+  "limitations": [
+    "The replay never invoked LASP, VASP, MPI, a scheduler, or a remote mutation command.",
+    "The report validates archive post-processing and provenance only; it does not establish LASP/SSW numerical correctness, sampling quality, convergence, or production readiness.",
+    "The fake-executable unit smoke validates the local execution contract but is not part of this scientific replay claim.",
+    "The reviewed history does not expose a random seed, and no value was inferred.",
+    "The historical SSW-to-single-point and best.arc-to-AIMD lineage was audited, but no AIMD, DFT labeling, LASP potential training, or TrainStr/TrainFor export was executed."
+  ]
+}

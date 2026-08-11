@@ -1,0 +1,5 @@
+frame_id,energy_ev_per_atom,max_force_ev_a,stress_trace_gpa,label_status,evidence_kind
+frame-0001,-4.101,0.082,0.31,fixture-only,synthetic
+frame-0002,-4.087,0.115,-0.18,fixture-only,synthetic
+frame-0003,-4.063,0.149,0.42,fixture-only,synthetic
+

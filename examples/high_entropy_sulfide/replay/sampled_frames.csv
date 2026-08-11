@@ -1,0 +1,5 @@
+frame_id,source_structure,sampler,temperature_k,step,evidence_kind
+frame-0001,hes-structure-001,fixture-md,600,1000,synthetic
+frame-0002,hes-structure-001,fixture-md,800,2000,synthetic
+frame-0003,hes-structure-002,fixture-md,1000,3000,synthetic
+

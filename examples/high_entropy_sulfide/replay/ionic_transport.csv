@@ -1,0 +1,5 @@
+temperature_k,diffusion_cm2_s,conductivity_s_cm,source_model,evidence_kind
+600,1.40e-6,2.10e-3,deepmd-demo,synthetic
+800,4.80e-6,5.90e-3,deepmd-demo,synthetic
+1000,1.05e-5,1.03e-2,deepmd-demo,synthetic
+

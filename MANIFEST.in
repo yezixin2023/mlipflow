@@ -1,0 +1,8 @@
+include README.md LICENSE CITATION.cff AGENTS.md CONTRIBUTING.md SECURITY.md
+recursive-include schemas *.json
+recursive-include plugins *.yaml *.py
+recursive-include .agents *.md *.yaml
+recursive-include docs *.md
+recursive-include examples *.md *.yaml *.json *.csv *.py
+recursive-include reports *.md *.json
+global-exclude .DS_Store *.py[cod]

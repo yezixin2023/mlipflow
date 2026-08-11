@@ -1,0 +1,15 @@
+model_id,task,scenario,metric,value,unit,validation_samples,evidence_kind
+deepmd-demo,ionic-transport,synthetic-high-entropy-sulfide-v1,force_rmse_ev_a,0.052,eV/A,24,synthetic
+deepmd-demo,ionic-transport,synthetic-high-entropy-sulfide-v1,diffusion_log10_mae,0.070,log10(cm2/s),24,synthetic
+chgnet-demo,ionic-transport,synthetic-high-entropy-sulfide-v1,force_rmse_ev_a,0.081,eV/A,24,synthetic
+chgnet-demo,ionic-transport,synthetic-high-entropy-sulfide-v1,diffusion_log10_mae,0.160,log10(cm2/s),24,synthetic
+mace-demo,ionic-transport,synthetic-high-entropy-sulfide-v1,force_rmse_ev_a,0.063,eV/A,24,synthetic
+mace-demo,ionic-transport,synthetic-high-entropy-sulfide-v1,diffusion_log10_mae,0.105,log10(cm2/s),24,synthetic
+deepmd-demo,electrochemical-voltage,synthetic-high-entropy-sulfide-v1,energy_rmse_ev_atom,0.031,eV/atom,24,synthetic
+deepmd-demo,electrochemical-voltage,synthetic-high-entropy-sulfide-v1,voltage_mae_v,0.120,V,24,synthetic
+chgnet-demo,electrochemical-voltage,synthetic-high-entropy-sulfide-v1,energy_rmse_ev_atom,0.017,eV/atom,24,synthetic
+chgnet-demo,electrochemical-voltage,synthetic-high-entropy-sulfide-v1,voltage_mae_v,0.045,V,24,synthetic
+mace-demo,electrochemical-voltage,synthetic-high-entropy-sulfide-v1,energy_rmse_ev_atom,0.024,eV/atom,24,synthetic
+mace-demo,electrochemical-voltage,synthetic-high-entropy-sulfide-v1,voltage_mae_v,0.078,V,24,synthetic
+m3gnet-unseen-demo,ionic-transport,unseen-transfer-probe-v1,force_rmse_ev_a,0.091,eV/A,8,synthetic
+m3gnet-unseen-demo,ionic-transport,unseen-transfer-probe-v1,diffusion_log10_mae,0.210,log10(cm2/s),8,synthetic

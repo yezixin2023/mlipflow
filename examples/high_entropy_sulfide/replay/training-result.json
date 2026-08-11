@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "status": "OK",
+  "result_id": "synthetic-training-result-v1",
+  "fixture_kind": "synthetic",
+  "summary": "Model-family catalog only; no optimization ran and no weights are distributed.",
+  "metrics": {"training_prototype_families": 3, "unseen_transfer_families": 1, "weight_files": 0},
+  "artifacts": [{"path": "training_models.json", "role": "model"}]
+}

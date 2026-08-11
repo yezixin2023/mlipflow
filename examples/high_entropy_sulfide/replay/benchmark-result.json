@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "status": "OK",
+  "result_id": "synthetic-benchmark-result-v1",
+  "fixture_kind": "synthetic",
+  "summary": "Task-aware evidence for three training prototypes and one unseen-transfer family; all values are invented.",
+  "metrics": {
+    "training_prototype_families": 3,
+    "unseen_transfer_families": 1,
+    "tasks": 2,
+    "validation_samples_per_model_task": 24
+  },
+  "artifacts": [
+    {
+      "path": "model_benchmark.csv",
+      "role": "metric"
+    }
+  ]
+}

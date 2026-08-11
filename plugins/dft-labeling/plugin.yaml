@@ -1,0 +1,102 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "schema_version": 1,
+  "id": "dft-labeling",
+  "name": "DFT labeling and dataset assembly",
+  "display_name": "DFT labeling and dataset assembly",
+  "version": "0.2.0",
+  "api_version": 1,
+  "description": "Thin adapter for explicit user-owned DFT preparation/labeling commands and strict standardized convergence result manifests; scheduling remains core-owned.",
+  "category": "labeling",
+  "contract": {
+    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
+  },
+  "implementation": {
+    "kind": "python-adapter",
+    "entrypoint": "adapter.py:Adapter",
+    "status": "adapter-ready",
+    "source_classification": ["C", "D"],
+    "source_references": [
+      "inventory://remote/MLP/DeepMD/sub_AIMD_Li8_4ele.py",
+      "inventory://remote/MLP/3-Element/sub_AIMD_Li8_3ele.py",
+      "inventory://workspace/claw/MD/AIMD/generate_input.py"
+    ],
+    "limitations": [
+      "The user script remains responsible for engine-specific input generation, execution, parsing, stress convention, and dataset export parity.",
+      "MLIPFlow never bundles pseudopotentials, POTCAR files, credentials, or VASP and never infers convergence from an OUTCAR substring.",
+      "Only local execution is enabled in this release; a scheduled backend must invoke this same scientific checker before it can be declared supported."
+    ]
+  },
+  "execution": {
+    "mode": "external-command",
+    "backends": ["local"],
+    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
+    "operations": ["label"],
+    "shell": false,
+    "executes_external_programs": true,
+    "writes_files": true,
+    "submits_jobs": false
+  },
+  "replay": {
+    "supported": true,
+    "behavior": "parse-existing-artifacts",
+    "accepted_media_types": ["application/json"],
+    "reason": "Replay only verifies a standardized result manifest and explicit dataset artifacts; it never launches DFT or heuristically parses raw engine output."
+  },
+  "inputs": [
+    {"name": "structures-manifest", "kind": "manifest", "required": true, "media_type": "application/json"},
+    {"name": "labeling-config", "kind": "manifest", "required": true, "media_type": "application/json"},
+    {"name": "pseudopotential-reference", "kind": "artifact-reference", "required": false, "description": "User-managed reference only; binary data are not copied into MLIPFlow."}
+  ],
+  "parameters": [
+    {"name": "operation", "type": "string", "required": true, "description": "Currently must be label; the adapter never submits a scheduler job."},
+    {"name": "prepare-script", "type": "string", "required": false, "description": "Optional explicit project-relative preparation helper passed to the reviewed label command."},
+    {"name": "label-script", "type": "string", "required": false, "description": "Explicit project-relative labeling command, required for operation=label; it must not call sbatch."},
+    {"name": "interpreter-argv", "type": "array", "required": true, "description": "Interpreter argv prefix passed without a shell."},
+    {"name": "engine", "type": "string", "required": true, "description": "Explicit DFT engine identifier."},
+    {"name": "completion-policy", "type": "object", "required": true, "description": "Reviewed electronic/ionic completion and file-integrity criteria."},
+    {"name": "units", "type": "object", "required": true, "description": "Explicit energy, force, stress, and length units and conventions."},
+    {"name": "result-manifest", "type": "string", "required": false, "description": "Safe attempt-relative standardized result path.", "default": "dft-labeling-result.json"}
+  ],
+  "outputs": [
+    {"name": "labeled-dataset", "kind": "artifact-reference", "required": true},
+    {"name": "dataset-manifest", "kind": "manifest", "required": true, "media_type": "application/json"}
+  ],
+  "dependencies": {
+    "upstream_plugins": ["pes-sampling"],
+    "python_packages": [
+      {"name": "dpdata", "required": false, "bundled": false, "purpose": "Optional DeepMD-format conversion."},
+      {"name": "ase", "required": false, "bundled": false, "purpose": "Optional extxyz conversion."},
+      {"name": "pymatgen", "required": false, "bundled": false, "purpose": "Optional VASP parsing and input generation."}
+    ],
+    "external_programs": [
+      {"name": "VASP", "required": true, "bundled": false, "purpose": "User-licensed DFT engine executed only by an approved backend adapter."}
+    ]
+  },
+  "safety": {
+    "expensive": true,
+    "destructive": false,
+    "network_access": false,
+    "requires_approval_before_execution": true,
+    "notes": ["Every DFT submission must present structure count, resource estimate, pseudopotential reference, and plan digest."]
+  },
+  "completion": {
+    "status": "implemented",
+    "checks": [
+      {"id": "dft-convergence", "implemented": true, "description": "Require scheduler success, electronic convergence, applicable ionic convergence, and explicit non-truncation in the standard result."},
+      {"id": "dataset-shape-and-units", "implemented": true, "description": "Require one label per source structure, exact approved units, non-empty dataset artifacts, and matching sha256 fingerprints."}
+    ],
+    "success_state": "OK",
+    "failure_state": "FAIL"
+  },
+  "retry": {
+    "status": "delegated-to-core",
+    "allowed_from": ["FAIL", "STOPPED"],
+    "creates_new_attempt": true,
+    "reuses_previous_run_directory": false,
+    "requires_approval": true,
+    "max_attempts": null,
+    "limit_enforced": false,
+    "notes": ["Continuation from previous DFT files is not implied; any reuse policy must be explicit in a future adapter plan."]
+  }
+}

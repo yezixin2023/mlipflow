@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mlipflow:schema:project:1.0",
+  "title": "MLIPFlow project manifest",
+  "description": "Configuration for a deterministic MLIPFlow project. Credentials and private keys are intentionally outside this contract.",
+  "type": "object",
+  "required": ["schema_version", "project", "workflow"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schema_version": {"const": 1},
+    "project": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "name": {"$ref": "#/$defs/non_empty_string"},
+        "description": {"type": "string"},
+        "labels": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "plugin_paths": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/non_empty_string"},
+      "uniqueItems": true,
+      "default": ["plugins"]
+    },
+    "locations": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {"$ref": "#/$defs/non_empty_string"},
+          {
+            "type": "object",
+            "additionalProperties": true
+          }
+        ]
+      },
+      "default": {}
+    },
+    "backend_profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {"$ref": "#/$defs/non_empty_string"},
+          {
+            "type": "object",
+            "required": ["ssh_profile"],
+            "properties": {
+              "ssh_profile": {"$ref": "#/$defs/non_empty_string"}
+            },
+            "additionalProperties": true
+          }
+        ]
+      },
+      "description": "Named profiles may reference an SSH config alias; they must not embed passwords or private-key material."
+    },
+    "model_registry": {
+      "$ref": "#/$defs/non_empty_string",
+      "description": "Path to a model-registry manifest, resolved relative to the project file."
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "database_path": {
+          "$ref": "#/$defs/non_empty_string",
+          "default": ".mlipflow/state.sqlite3"
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflow": {
+      "type": "object",
+      "required": ["nodes"],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/workflow_node"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "routing": {
+      "type": "object",
+      "properties": {
+        "policies": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/routing_policy"},
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "fingerprints": {
+      "type": "object",
+      "properties": {
+        "full_hash_max_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 67108864
+        }
+      },
+      "additionalProperties": false
+    },
+    "safety": {
+      "type": "object",
+      "properties": {
+        "auto_submit": {"const": false},
+        "auto_advance": {"const": false},
+        "require_approval_for_expensive": {"type": "boolean", "default": true},
+        "require_approval_for_destructive": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "non_empty_string": {"type": "string", "minLength": 1},
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "workflow_node": {
+      "type": "object",
+      "required": ["id", "uses"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "uses": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*(?:@[0-9]+)?$"
+        },
+        "needs": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identifier"},
+          "uniqueItems": true,
+          "default": []
+        },
+        "mode": {
+          "enum": ["execute", "replay"],
+          "default": "execute"
+        },
+        "backend": {
+          "enum": ["local", "slurm", "ssh-slurm"],
+          "default": "local"
+        },
+        "backend_profile": {"$ref": "#/$defs/identifier"},
+        "inputs": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "routing_policy": {
+      "type": "object",
+      "required": ["metrics"],
+      "properties": {
+        "metrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["name", "direction", "weight"],
+            "properties": {
+              "name": {"$ref": "#/$defs/identifier"},
+              "direction": {"enum": ["minimize", "maximize"]},
+              "weight": {"type": "number", "exclusiveMinimum": 0},
+              "required": {"type": "boolean", "default": true}
+            },
+            "additionalProperties": false
+          }
+        },
+        "allow_unverified_evidence": {
+          "type": "boolean",
+          "default": false,
+          "description": "Explicit opt-in to rank external or metadata-only evidence."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "status": "OK",
+  "result_id": "synthetic-transport-result-v1",
+  "fixture_kind": "synthetic",
+  "summary": "Small transport table for replay plumbing only; no MD was run. DeepMD is selected only by this fixture's task metrics.",
+  "metrics": {
+    "temperatures": 3,
+    "source_model": "deepmd-demo"
+  },
+  "artifacts": [
+    {
+      "path": "ionic_transport.csv",
+      "role": "metric"
+    }
+  ]
+}

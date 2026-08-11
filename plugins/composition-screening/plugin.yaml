@@ -1,0 +1,98 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "schema_version": 1,
+  "id": "composition-screening",
+  "name": "Composition screening",
+  "display_name": "Composition screening",
+  "version": "0.3.0",
+  "api_version": 1,
+  "description": "Executable deterministic top-k screening with a bundled legacy Li10 normalizer, explicit metric units, provenance, and independent result verification.",
+  "category": "screening",
+  "contract": {
+    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
+  },
+  "implementation": {
+    "kind": "python-adapter",
+    "entrypoint": "adapter.py:Adapter",
+    "status": "implemented",
+    "source_classification": ["C", "D"],
+    "source_references": [
+      "inventory://remote/MLP/Li10M7P8S32/SQS/supercell/replace_sqs.py",
+      "inventory://remote/MLP/supply",
+      "inventory://local-readonly/MLP/supply/code/Li10"
+    ],
+    "limitations": [
+      "The bundled implementation ranks existing metrics only; candidate generation and transport inference remain upstream responsibilities.",
+      "Multi-objective Pareto ranking, uncertainty calibration, imputation, and model choice are deliberately outside this adapter.",
+      "The legacy normalizer preserves the source value and requires an explicit unit; it does not reinterpret conductivity physics.",
+      "Only local execution is enabled until scheduled completion is rechecked through this adapter."
+    ]
+  },
+  "execution": {
+    "mode": "external-command",
+    "backends": ["local"],
+    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
+    "operations": ["rank-candidates"],
+    "shell": false,
+    "executes_external_programs": true,
+    "writes_files": true,
+    "submits_jobs": false
+  },
+  "replay": {
+    "supported": true,
+    "behavior": "parse-existing-artifacts",
+    "accepted_media_types": ["application/json"],
+    "reason": "Replay reads candidate, transport, and ranking manifests and verifies the approved rule without invoking inference or the screening script."
+  },
+  "inputs": [
+    {"name": "candidate-manifest", "kind": "manifest", "required": true, "media_type": "application/json"},
+    {"name": "transport-results-manifest", "kind": "manifest", "required": true, "media_type": "application/json"}
+  ],
+  "parameters": [
+    {"name": "screening-script", "type": "string", "required": false, "description": "Optional project-relative override; omitted uses the fingerprinted bundled deterministic implementation."},
+    {"name": "interpreter-argv", "type": "array", "required": false, "description": "Optional one-item interpreter argv passed without a shell; defaults to the current Python interpreter."},
+    {"name": "metric", "type": "string", "required": true, "description": "Finite transport metric key used for ranking."},
+    {"name": "direction", "type": "string", "required": true, "description": "minimize or maximize."},
+    {"name": "top-k", "type": "integer", "required": true, "description": "Positive selection count cap."},
+    {"name": "missing-metric-policy", "type": "string", "required": true, "description": "Deterministic reject or error policy; no implicit imputation."},
+    {"name": "result-manifest", "type": "string", "required": false, "description": "Safe attempt-relative standardized result path.", "default": "screening-result.json"}
+  ],
+  "outputs": [
+    {"name": "ranked-candidates", "kind": "artifact-reference", "required": true, "media_type": "application/json"},
+    {"name": "routing-evidence", "kind": "manifest", "required": true, "media_type": "application/json"}
+  ],
+  "dependencies": {
+    "upstream_plugins": ["high-entropy-structure", "ionic-transport"],
+    "python_packages": [
+      {"name": "numpy", "required": false, "bundled": false, "purpose": "Future deterministic scoring and stable ranking."}
+    ],
+    "external_programs": []
+  },
+  "safety": {
+    "expensive": true,
+    "destructive": false,
+    "network_access": false,
+    "requires_approval_before_execution": true,
+    "notes": ["Large enumeration or inference batches require count and cost estimates before approval."]
+  },
+  "completion": {
+    "status": "implemented",
+    "checks": [
+      {"id": "legacy-element-order", "implemented": true, "description": "Normalize Zn-Fe-Cu-Ni-Mn candidate rows and element-labelled Mn-Fe-Ni-Cu-Zn metric rows without positional ambiguity."},
+      {"id": "candidate-identity-and-count", "implemented": true, "description": "Require unique candidate identities and reject transport records for unknown candidates."},
+      {"id": "ranking-evidence", "implemented": true, "description": "Recompute deterministic single-metric ordering, missing decisions, tie breaks, and top-k count from explicit manifests."}
+    ],
+    "success_state": "OK",
+    "failure_state": "FAIL"
+  },
+  "retry": {
+    "status": "delegated-to-core",
+    "allowed_from": ["FAIL", "STOPPED"],
+    "creates_new_attempt": true,
+    "reuses_previous_run_directory": false,
+    "requires_approval": true,
+    "max_attempts": null,
+    "limit_enforced": false,
+    "notes": ["Retry preserves the candidate-space and policy digests unless a new plan is explicitly approved."]
+  }
+}

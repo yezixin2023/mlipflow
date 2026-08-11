@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "project": {
+    "id": "high-entropy-sulfide-replay",
+    "name": "Synthetic high-entropy sulfide replay",
+    "description": "Tiny offline fixtures for a complete MLIP workflow and routing demonstration."
+  },
+  "locations": {},
+  "backend_profiles": {},
+  "model_registry": "model_registry.yaml",
+  "workflow": {
+    "nodes": [
+      {
+        "id": "structure-replay",
+        "uses": "high-entropy-structure@0",
+        "mode": "replay",
+        "backend": "local",
+        "inputs": {"result_manifest": "replay/structure-result.json"},
+        "parameters": {"fixture_kind": "synthetic", "executes_numerics": false}
+      },
+      {
+        "id": "sampling-replay",
+        "uses": "pes-sampling@0",
+        "needs": ["structure-replay"],
+        "mode": "replay",
+        "backend": "local",
+        "inputs": {"result_manifest": "replay/sampling-result.json"},
+        "parameters": {"fixture_kind": "synthetic", "executes_numerics": false}
+      },
+      {
+        "id": "labeling-replay",
+        "uses": "dft-labeling@0",
+        "needs": ["sampling-replay"],
+        "mode": "replay",
+        "backend": "local",
+        "inputs": {"result_manifest": "replay/labeling-result.json"},
+        "parameters": {"fixture_kind": "synthetic", "executes_numerics": false}
+      },
+      {
+        "id": "training-replay",
+        "uses": "mlip-training@0",
+        "needs": ["labeling-replay"],
+        "mode": "replay",
+        "backend": "local",
+        "inputs": {"result_manifest": "replay/training-result.json"},
+        "parameters": {"fixture_kind": "synthetic", "executes_numerics": false}
+      },
+      {
+        "id": "benchmark-replay",
+        "uses": "mlip-benchmark@0",
+        "needs": ["training-replay"],
+        "mode": "replay",
+        "backend": "local",
+        "inputs": {"result_manifest": "replay/benchmark-result.json"},
+        "parameters": {"fixture_kind": "synthetic", "executes_numerics": false}
+      },
+      {
+        "id": "transport-replay",
+        "uses": "ionic-transport@0",
+        "needs": ["benchmark-replay"],
+        "mode": "replay",
+        "backend": "local",
+        "inputs": {"result_manifest": "replay/transport-result.json"},
+        "parameters": {"fixture_kind": "synthetic", "executes_numerics": false}
+      },
+      {
+        "id": "screening-replay",
+        "uses": "composition-screening@0",
+        "needs": ["benchmark-replay"],
+        "mode": "replay",
+        "backend": "local",
+        "inputs": {"result_manifest": "replay/screening-result.json"},
+        "parameters": {"fixture_kind": "synthetic", "executes_numerics": false}
+      },
+      {
+        "id": "high-fidelity-validation-replay",
+        "uses": "dft-labeling@0",
+        "needs": ["screening-replay"],
+        "mode": "replay",
+        "backend": "local",
+        "inputs": {"result_manifest": "replay/high-fidelity-validation-result.json"},
+        "parameters": {"fixture_kind": "synthetic", "executes_numerics": false}
+      },
+      {
+        "id": "voltage-replay",
+        "uses": "electrochemical-voltage@0",
+        "needs": ["benchmark-replay", "high-fidelity-validation-replay"],
+        "mode": "replay",
+        "backend": "local",
+        "inputs": {"result_manifest": "replay/voltage-result.json"},
+        "parameters": {"fixture_kind": "synthetic", "executes_numerics": false}
+      }
+    ]
+  },
+  "routing": {
+    "policies": {
+      "ionic-transport": {
+        "metrics": [
+          {"name": "force_rmse_ev_a", "direction": "minimize", "weight": 0.6, "required": true},
+          {"name": "diffusion_log10_mae", "direction": "minimize", "weight": 0.4, "required": true}
+        ]
+      },
+      "electrochemical-voltage": {
+        "metrics": [
+          {"name": "energy_rmse_ev_atom", "direction": "minimize", "weight": 0.6, "required": true},
+          {"name": "voltage_mae_v", "direction": "minimize", "weight": 0.4, "required": true}
+        ]
+      }
+    }
+  },
+  "fingerprints": {"full_hash_max_bytes": 1048576},
+  "safety": {
+    "auto_submit": false,
+    "auto_advance": false,
+    "require_approval_for_expensive": true,
+    "require_approval_for_destructive": true
+  }
+}
+

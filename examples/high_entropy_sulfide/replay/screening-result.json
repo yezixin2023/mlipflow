@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "status": "OK",
+  "result_id": "synthetic-screening-result-v1",
+  "fixture_kind": "synthetic",
+  "summary": "Invented shortlist for workflow testing; no candidate property was predicted.",
+  "metrics": {"candidates_considered": 2, "shortlisted": 2},
+  "artifacts": [{"path": "screening_candidates.csv", "role": "metric"}]
+}

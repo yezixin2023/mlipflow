@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "status": "OK",
+  "result_id": "synthetic-voltage-result-v1",
+  "fixture_kind": "synthetic",
+  "summary": "Small voltage curve for replay plumbing only; no energies were calculated. CHGNet is selected only by this fixture's task metrics.",
+  "metrics": {
+    "compositions": 4,
+    "source_model": "chgnet-demo"
+  },
+  "artifacts": [
+    {
+      "path": "voltage_curve.csv",
+      "role": "metric"
+    }
+  ]
+}

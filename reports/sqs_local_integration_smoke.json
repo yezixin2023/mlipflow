@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "plugin_id": "high-entropy-structure",
+  "status": "LOCAL_INTEGRATION_SMOKE_PASS",
+  "executed_on": "2026-08-11",
+  "scientific_claim": {
+    "production_sqs_executed": false,
+    "historical_structure_parity_established": false,
+    "purpose": "Verify the real ASE/icet wrapper, deterministic seed handling, structure writing, and immutable generation manifest on one bounded Li-M-P-S candidate."
+  },
+  "implementation": {
+    "entrypoint_locator": "plugins/high-entropy-structure/sqs.py",
+    "entrypoint_sha256": "f24907f7c0f3799696a6c84a347c76306f89ef52525d65efbf319bf205547d1f",
+    "python_version": "3.11.14",
+    "ase_version": "3.28.0",
+    "icet_version": "3.2",
+    "api": "generate_sqs_from_supercells"
+  },
+  "input": {
+    "prototype_locator": "externally-supplied/Li10M7P8S32/original/POSCAR",
+    "prototype_sha256": "d1775309bc8f346d3cd724737bf968d92a4a7c0e7d3c522495cb234f07c04a77",
+    "prototype_size_bytes": 2681,
+    "prototype_formula": "Li10Zn7P8S32",
+    "prototype_atom_count": 57,
+    "alloy_sublattice_species": "Zn",
+    "alloy_site_count": 7
+  },
+  "bounded_parameters": {
+    "candidate_id": "sqs-smoke-mn1-fe1-ni1-cu1-zn3",
+    "metal_counts": {"Zn": 3, "Fe": 1, "Cu": 1, "Ni": 1, "Mn": 1},
+    "cluster_cutoffs_angstrom": [7.0, 5.0],
+    "supercell_repeat": [1, 1, 1],
+    "n_steps": 100,
+    "seed": 23,
+    "candidate_count": 1
+  },
+  "result": {
+    "run_count": 2,
+    "byte_identical_between_runs": true,
+    "structure_sha256": "fecc25359faf5530ce46434795f3a87a8eb47977f9d3d21f615c5e4a4749f97e",
+    "generation_manifest_sha256": "47d0fad56fb39a9b8bfa067599ec666c1bda8835668596029ee6a63584e97a39",
+    "output_atom_count": 57,
+    "output_species_counts": {"Cu": 1, "Fe": 1, "Li": 10, "Mn": 1, "Ni": 1, "P": 8, "S": 32, "Zn": 3},
+    "cluster_vector_length": 605
+  },
+  "limitations": [
+    "The 100-step run is an integration smoke only and is not a converged or production-quality SQS search.",
+    "The historical generator did not expose a seed, so this proves deterministic new execution rather than byte parity with a historical structure.",
+    "The external prototype is fingerprinted but is not copied into the public repository pending data-sharing review."
+  ]
+}

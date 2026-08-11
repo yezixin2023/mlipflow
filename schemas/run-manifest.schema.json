@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mlipflow:schema:run-manifest:1",
+  "title": "MLIPFlow immutable run-attempt manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "project_id",
+    "node_id",
+    "plugin",
+    "attempt",
+    "state",
+    "state_reason",
+    "mode",
+    "backend",
+    "job",
+    "remote_dir",
+    "timestamps",
+    "retry",
+    "dependencies",
+    "command",
+    "resources",
+    "inputs",
+    "parameters",
+    "artifacts",
+    "metrics",
+    "provenance"
+  ],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schema_version": {"const": 1},
+    "run_id": {"$ref": "#/$defs/non_empty_string"},
+    "project_id": {"$ref": "#/$defs/identifier"},
+    "node_id": {"$ref": "#/$defs/identifier"},
+    "plugin": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "version": {"$ref": "#/$defs/non_empty_string"}
+      },
+      "additionalProperties": false
+    },
+    "attempt": {"type": "integer", "minimum": 1},
+    "state": {"$ref": "#/$defs/state"},
+    "state_reason": {"type": ["string", "null"]},
+    "mode": {"enum": ["execute", "replay"]},
+    "backend": {
+      "type": "object",
+      "required": ["type", "profile"],
+      "properties": {
+        "type": {"enum": ["local", "slurm", "ssh-slurm"]},
+        "profile": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "job": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["job_id", "scheduler_state", "scheduler_info"],
+          "properties": {
+            "job_id": {"$ref": "#/$defs/non_empty_string"},
+            "scheduler_state": {"$ref": "#/$defs/non_empty_string"},
+            "scheduler_info": {"type": ["string", "null"]}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "remote_dir": {"type": ["string", "null"]},
+    "timestamps": {
+      "type": "object",
+      "required": ["created_at", "updated_at", "submitted_at", "started_at", "finished_at"],
+      "properties": {
+        "created_at": {"$ref": "#/$defs/timestamp"},
+        "updated_at": {"$ref": "#/$defs/timestamp"},
+        "submitted_at": {"$ref": "#/$defs/nullable_timestamp"},
+        "started_at": {"$ref": "#/$defs/nullable_timestamp"},
+        "finished_at": {"$ref": "#/$defs/nullable_timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "retry": {
+      "type": "object",
+      "required": ["retry_count", "max_retries", "previous_run_id"],
+      "properties": {
+        "retry_count": {"type": "integer", "minimum": 0},
+        "max_retries": {"type": ["integer", "null"], "minimum": 0},
+        "previous_run_id": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["node_id", "run_id", "required_states"],
+        "properties": {
+          "node_id": {"$ref": "#/$defs/identifier"},
+          "run_id": {"type": ["string", "null"]},
+          "required_states": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/state"},
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "command": {
+      "type": ["array", "null"],
+      "items": {"type": "string"}
+    },
+    "resources": {"type": "object"},
+    "inputs": {"type": "object"},
+    "parameters": {"type": "object"},
+    "artifacts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/artifact"}
+    },
+    "metrics": {"type": "object"},
+    "provenance": {
+      "type": "object",
+      "required": [
+        "plan_digest",
+        "config_digest",
+        "created_by",
+        "software",
+        "environment",
+        "source_git_commit",
+        "captured_at"
+      ],
+      "properties": {
+        "plan_digest": {"$ref": "#/$defs/digest"},
+        "config_digest": {"$ref": "#/$defs/digest"},
+        "created_by": {"const": "mlipflow"},
+        "software": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "version"],
+            "properties": {
+              "name": {"$ref": "#/$defs/non_empty_string"},
+              "version": {"$ref": "#/$defs/non_empty_string"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "environment": {
+          "type": "object",
+          "required": ["python", "platform", "variables"],
+          "properties": {
+            "python": {"$ref": "#/$defs/non_empty_string"},
+            "platform": {"$ref": "#/$defs/non_empty_string"},
+            "variables": {"type": "object", "additionalProperties": {"type": "string"}}
+          },
+          "additionalProperties": false
+        },
+        "source_git_commit": {"type": ["string", "null"]},
+        "captured_at": {"$ref": "#/$defs/timestamp"},
+        "source_run_id": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "non_empty_string": {"type": "string", "minLength": 1},
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "state": {
+      "enum": ["PREP", "READY", "SUBMITTED", "PENDING", "RUNNING", "OK", "FAIL", "WAIT", "BLOCKED", "STOPPED"]
+    },
+    "timestamp": {"type": "string", "format": "date-time"},
+    "nullable_timestamp": {"type": ["string", "null"], "format": "date-time"},
+    "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "artifact": {
+      "type": "object",
+      "required": ["role", "uri", "fingerprint", "fingerprint_mode", "size_bytes", "mtime_ns"],
+      "properties": {
+        "role": {"$ref": "#/$defs/identifier"},
+        "uri": {"$ref": "#/$defs/non_empty_string"},
+        "media_type": {"type": ["string", "null"]},
+        "fingerprint": {"$ref": "#/$defs/non_empty_string"},
+        "fingerprint_mode": {"enum": ["full", "metadata", "external"]},
+        "size_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "mtime_ns": {"type": ["integer", "null"], "minimum": 0},
+        "metadata": {"type": "object"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

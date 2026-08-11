@@ -1,0 +1,660 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mlipflow:schema:plugin:1.0",
+  "title": "MLIPFlow computational plugin manifest",
+  "description": "Contract for deterministic computational plugins. Agent Skills are deliberately excluded.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "version",
+    "api_version",
+    "description",
+    "category",
+    "contract",
+    "implementation",
+    "execution",
+    "replay",
+    "inputs",
+    "parameters",
+    "outputs",
+    "dependencies",
+    "safety",
+    "completion",
+    "retry"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "api_version": {
+      "const": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "category": {
+      "enum": [
+        "structure-generation",
+        "sampling",
+        "labeling",
+        "training",
+        "benchmarking",
+        "transport-analysis",
+        "screening",
+        "electrochemical-analysis"
+      ]
+    },
+    "contract": {
+      "type": "object",
+      "required": [
+        "methods"
+      ],
+      "properties": {
+        "methods": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "validate",
+              "plan",
+              "prepare",
+              "check",
+              "collect",
+              "replay"
+            ]
+          },
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "allOf": [
+            {"contains": {"const": "validate"}},
+            {"contains": {"const": "plan"}},
+            {"contains": {"const": "prepare"}},
+            {"contains": {"const": "check"}},
+            {"contains": {"const": "collect"}},
+            {"contains": {"const": "replay"}}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "implementation": {
+      "type": "object",
+      "required": [
+        "kind",
+        "entrypoint",
+        "status",
+        "source_classification",
+        "limitations"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "python-adapter",
+            "external-command",
+            "replay-only"
+          ]
+        },
+        "entrypoint": {
+          "type": "string",
+          "pattern": "^[^/:]+\\.py:[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "status": {
+          "enum": [
+            "contract-only",
+            "replay-ready",
+            "adapter-ready",
+            "implemented"
+          ]
+        },
+        "source_classification": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "D",
+              "E",
+              "new"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "source_references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/non_empty_string"
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/non_empty_string"
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "mode",
+        "backends",
+        "entrypoint",
+        "operations",
+        "shell",
+        "executes_external_programs",
+        "writes_files",
+        "submits_jobs"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "placeholder",
+            "external-command",
+            "python-library"
+          ]
+        },
+        "backends": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "local",
+              "slurm",
+              "ssh-slurm"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "entrypoint": {
+          "type": "object",
+          "required": [
+            "path",
+            "object"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^[^/]+\\.py$"
+            },
+            "object": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "uniqueItems": true
+        },
+        "shell": {
+          "const": false
+        },
+        "executes_external_programs": {
+          "type": "boolean"
+        },
+        "writes_files": {
+          "type": "boolean"
+        },
+        "submits_jobs": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "replay": {
+      "type": "object",
+      "required": [
+        "supported",
+        "behavior"
+      ],
+      "properties": {
+        "supported": {
+          "type": "boolean"
+        },
+        "behavior": {
+          "enum": [
+            "disabled",
+            "reference-only",
+            "parse-existing-artifacts"
+          ]
+        },
+        "accepted_media_types": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/non_empty_string"
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/io_descriptor"
+      }
+    },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/parameter_descriptor"
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/io_descriptor"
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "required": [
+        "upstream_plugins",
+        "python_packages",
+        "external_programs"
+      ],
+      "properties": {
+        "upstream_plugins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "uniqueItems": true
+        },
+        "python_packages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/external_dependency"
+          }
+        },
+        "external_programs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/external_dependency"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "safety": {
+      "type": "object",
+      "required": [
+        "expensive",
+        "destructive",
+        "network_access",
+        "requires_approval_before_execution"
+      ],
+      "properties": {
+        "expensive": {
+          "type": "boolean"
+        },
+        "destructive": {
+          "type": "boolean"
+        },
+        "network_access": {
+          "type": "boolean"
+        },
+        "requires_approval_before_execution": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/non_empty_string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "completion": {
+      "type": "object",
+      "required": [
+        "status",
+        "checks",
+        "success_state",
+        "failure_state"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "checker-pending",
+            "implemented"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/completion_check"
+          },
+          "minItems": 1
+        },
+        "success_state": {
+          "const": "OK"
+        },
+        "failure_state": {
+          "const": "FAIL"
+        }
+      },
+      "additionalProperties": false
+    },
+    "retry": {
+      "type": "object",
+      "required": [
+        "status",
+        "allowed_from",
+        "creates_new_attempt",
+        "reuses_previous_run_directory",
+        "requires_approval",
+        "max_attempts",
+        "limit_enforced",
+        "notes"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "delegated-to-core",
+            "plugin-managed"
+          ]
+        },
+        "allowed_from": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "FAIL",
+              "STOPPED"
+            ]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "creates_new_attempt": {
+          "const": true
+        },
+        "reuses_previous_run_directory": {
+          "const": false
+        },
+        "requires_approval": {
+          "const": true
+        },
+        "max_attempts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "limit_enforced": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/non_empty_string"
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "computational_backends": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/computational_backend"
+      },
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "mode": {
+                "const": "placeholder"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "executes_external_programs": {"const": false},
+              "writes_files": {"const": false},
+              "submits_jobs": {"const": false}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "replay": {
+            "properties": {
+              "supported": {
+                "const": false
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "replay": {
+            "properties": {
+              "behavior": {
+                "const": "disabled"
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "non_empty_string": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "io_descriptor": {
+      "type": "object",
+      "required": [
+        "name",
+        "kind",
+        "required"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "directory",
+            "manifest",
+            "value",
+            "artifact-reference"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "media_type": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "parameter_descriptor": {
+      "type": "object",
+      "required": [
+        "name",
+        "type",
+        "required",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "enum": [
+            "string",
+            "integer",
+            "number",
+            "boolean",
+            "array",
+            "object"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "description": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "default": true
+      },
+      "additionalProperties": false
+    },
+    "completion_check": {
+      "type": "object",
+      "required": [
+        "id",
+        "implemented",
+        "description"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "implemented": {
+          "type": "boolean"
+        },
+        "description": {
+          "$ref": "#/$defs/non_empty_string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "external_dependency": {
+      "type": "object",
+      "required": [
+        "name",
+        "required",
+        "bundled"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "bundled": {
+          "const": false
+        },
+        "purpose": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "computational_backend": {
+      "type": "object",
+      "required": [
+        "id",
+        "family",
+        "status",
+        "operations",
+        "external_programs",
+        "limitations"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "family": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "status": {
+          "enum": [
+            "declared-only",
+            "adapter-ready",
+            "implemented"
+          ]
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          },
+          "uniqueItems": true
+        },
+        "external_programs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/non_empty_string"
+          },
+          "uniqueItems": true
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/non_empty_string"
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

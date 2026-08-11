@@ -1,0 +1,98 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "schema_version": 1,
+  "id": "high-entropy-structure",
+  "name": "High-entropy structure generation",
+  "display_name": "High-entropy structure generation",
+  "version": "0.3.0",
+  "api_version": 1,
+  "description": "Executable, seeded icet SQS generation from explicit sublattice/count/cutoff/supercell manifests, plus immutable structure provenance and replay checks.",
+  "category": "structure-generation",
+  "contract": {
+    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
+  },
+  "implementation": {
+    "kind": "python-adapter",
+    "entrypoint": "adapter.py:Adapter",
+    "status": "implemented",
+    "source_classification": ["C", "D"],
+    "source_references": [
+      "inventory://remote/MLP/3-Element/Li8/replace_sqs_6.5-4.5.py",
+      "inventory://remote/MLP/Li10M7P8S32/SQS"
+    ],
+    "limitations": [
+      "The bundled generator implements the manuscript workflow through icet; sublattice mappings, exact counts, cluster cutoffs and supercells remain explicit inputs.",
+      "MLIPFlow verifies declared structure identities and sha256 fingerprints, but does not independently prove SQS optimality.",
+      "The historical generator was unseeded, so newly seeded structures are reproducible executions rather than byte-identical historical replay.",
+      "Only local execution is enabled until scheduled completion is rechecked through this adapter."
+    ]
+  },
+  "execution": {
+    "mode": "external-command",
+    "backends": ["local"],
+    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
+    "operations": ["generate-sqs"],
+    "shell": false,
+    "executes_external_programs": true,
+    "writes_files": true,
+    "submits_jobs": false
+  },
+  "replay": {
+    "supported": true,
+    "behavior": "parse-existing-artifacts",
+    "accepted_media_types": ["application/json"],
+    "reason": "Replay only validates a standardized generation manifest and its explicitly referenced files; it never regenerates structures."
+  },
+  "inputs": [
+    {"name": "prototype-structure", "kind": "artifact-reference", "required": true, "description": "Project-relative prototype structure supplied to the user generator."},
+    {"name": "composition-manifest", "kind": "manifest", "required": true, "media_type": "application/json"}
+  ],
+  "parameters": [
+    {"name": "sqs-script", "type": "string", "required": false, "description": "Optional project-relative override; omitted uses the fingerprinted bundled icet implementation."},
+    {"name": "interpreter-argv", "type": "array", "required": false, "description": "Optional one-item interpreter argv passed without a shell; defaults to the current Python interpreter."},
+    {"name": "seed", "type": "integer", "required": true, "description": "Explicit non-negative random seed recorded in provenance."},
+    {"name": "max-candidates", "type": "integer", "required": true, "description": "Hard positive cap presented in the approval plan."},
+    {"name": "structures-dir", "type": "string", "required": false, "description": "Safe attempt-relative structure output directory.", "default": "structures"},
+    {"name": "result-manifest", "type": "string", "required": false, "description": "Safe attempt-relative standardized result path.", "default": "generation-result.json"}
+  ],
+  "outputs": [
+    {"name": "structures", "kind": "artifact-reference", "required": true},
+    {"name": "generation-manifest", "kind": "manifest", "required": true, "media_type": "application/json"}
+  ],
+  "dependencies": {
+    "upstream_plugins": [],
+    "python_packages": [
+      {"name": "ase", "required": true, "bundled": false, "purpose": "Prototype/supercell representation and VASP/CIF output."},
+      {"name": "icet", "required": true, "bundled": false, "purpose": "Seeded generate_sqs_from_supercells scientific implementation."},
+      {"name": "pymatgen", "required": false, "bundled": false, "purpose": "Optional structure conversion."}
+    ],
+    "external_programs": []
+  },
+  "safety": {
+    "expensive": true,
+    "destructive": false,
+    "network_access": false,
+    "requires_approval_before_execution": true,
+    "notes": ["Large composition enumerations require a dry-run size estimate and explicit approval."]
+  },
+  "completion": {
+    "status": "implemented",
+    "checks": [
+      {"id": "sqs-input-contract", "implemented": true, "description": "Require exact alloy species/counts, cluster cutoffs, repeat vector, Monte Carlo steps and a deterministic seed policy."},
+      {"id": "result-manifest-schema", "implemented": true, "description": "Require schema version, plugin identity, approved seed, and status OK."},
+      {"id": "structure-count-and-fingerprints", "implemented": true, "description": "Enforce the candidate cap, unique IDs, non-empty files, compositions, and matching sha256 fingerprints."}
+    ],
+    "success_state": "OK",
+    "failure_state": "FAIL"
+  },
+  "retry": {
+    "status": "delegated-to-core",
+    "allowed_from": ["FAIL", "STOPPED"],
+    "creates_new_attempt": true,
+    "reuses_previous_run_directory": false,
+    "requires_approval": true,
+    "max_attempts": null,
+    "limit_enforced": false,
+    "notes": ["The core creates a clean attempt; a project retry limit must be enforced before numerical execution is enabled."]
+  }
+}

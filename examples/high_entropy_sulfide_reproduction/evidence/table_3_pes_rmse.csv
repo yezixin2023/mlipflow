@@ -1,0 +1,8 @@
+source_table,source_document_sha256,model_id,source_model_label,energy_train_rmse_mev_atom,energy_validation_rmse_mev_atom,energy_test_rmse_mev_atom,force_train_rmse_mev_a,force_validation_rmse_mev_a,force_test_rmse_mev_a
+Table 3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,deepmd-se_atten_v2,DeePMD(se_atten_v2),7.76,,7.91,184,,186
+Table 3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,deepmd-se_e2_a,DeePMD(se_e2_a),7.06,,7.19,175,,177
+Table 3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,deepmd-se_e2_r,DeePMD(se_e2_r),12.75,,13.03,275,,276
+Table 3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,deepmd-dpa2,DeePMD(DPA-2),6.53,,6.63,148,,151
+Table 3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,m3gnet,M3GNet,15.83,15.68,15.84,213,214,212
+Table 3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,chgnet,CHGNet,8.10,8.27,8.12,190,189,191
+

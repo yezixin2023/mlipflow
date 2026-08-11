@@ -1,0 +1,102 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "schema_version": 1,
+  "id": "electrochemical-voltage",
+  "name": "Electrochemical voltage analysis",
+  "display_name": "Electrochemical voltage analysis",
+  "version": "0.4.0",
+  "api_version": 1,
+  "description": "Implemented local postprocessor for adjacent average Li intercalation voltages plus deterministic replay of the manuscript SI Table S11 voltage evidence with per-model error metrics and provenance.",
+  "category": "electrochemical-analysis",
+  "contract": {
+    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
+  },
+  "implementation": {
+    "kind": "python-adapter",
+    "entrypoint": "adapter.py:Adapter",
+    "status": "implemented",
+    "source_classification": ["D", "new"],
+    "source_references": [
+      "manuscript://SI_0510zdl.docx#Table-S11",
+      "inventory://remote/MLP/Voltage/GGA+U",
+      "inventory://remote/MLP/Voltage/without_U"
+    ],
+    "limitations": [
+      "Only adjacent average voltages for an increasing Li sequence are implemented; phase stability, convex hulls, capacity, and finite-temperature corrections are outside scope.",
+      "Only eV total energies and a metallic-Li reference in eV/atom are currently accepted; every upstream energy must declare completion_status=OK.",
+      "operation=compute-from-energies is the legacy-compatible default and recomputes adjacent voltages from a supplied energy series.",
+      "operation=replay-si-table-s11 invokes the bundled manuscript_replay.py with argv and shell=false, validates a strict 15-column table and writes only three fresh replay artifacts.",
+      "SI Table S11 replay recomputes errors from transcribed voltage values; it does not execute DFT or an MLIP and does not recompute voltages from total energies."
+    ]
+  },
+  "execution": {
+    "mode": "external-command",
+    "backends": ["local"],
+    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
+    "operations": ["compute-from-energies", "replay-si-table-s11"],
+    "shell": false,
+    "executes_external_programs": true,
+    "writes_files": true,
+    "submits_jobs": false
+  },
+  "replay": {
+    "supported": true,
+    "behavior": "parse-existing-artifacts",
+    "accepted_media_types": ["application/json", "text/csv"],
+    "reason": "Adapter.replay never writes: for compute-from-energies it recomputes the core voltage formula in memory; for replay-si-table-s11 it builds or verifies the three strict evidence artifacts in memory without claiming model, DFT, or total-energy execution."
+  },
+  "inputs": [
+    {"name": "energy-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Required only by compute-from-energies: strictly increasing Li states, eV total energies, formula-unit count, completion status, and source references."},
+    {"name": "manuscript-voltage-table", "kind": "manifest", "required": false, "media_type": "text/csv", "description": "Required only by replay-si-table-s11: exact 15-column long transcription with DFT references, all six model columns, V units, and source-document SHA-256."}
+  ],
+  "parameters": [
+    {"name": "operation", "type": "string", "required": false, "description": "compute-from-energies (default, backward compatible) or replay-si-table-s11.", "default": "compute-from-energies"},
+    {"name": "lithium-reference-ev", "type": "number", "required": false, "description": "Required by compute-from-energies: finite metallic-Li reference energy in eV/atom."},
+    {"name": "electrons-per-li", "type": "number", "required": false, "description": "Positive transferred electrons per inserted Li.", "default": 1.0},
+    {"name": "energy-unit", "type": "string", "required": false, "description": "Required by compute-from-energies and must be eV."},
+    {"name": "reference-species", "type": "string", "required": false, "description": "Required by compute-from-energies and must be Li."},
+    {"name": "composition-order", "type": "string", "required": false, "description": "Required by compute-from-energies and must be increasing-li."},
+    {"name": "result-manifest", "type": "string", "required": false, "description": "Safe attempt-relative compute-from-energies result path.", "default": "voltage-result.json"},
+    {"name": "source-document-sha256", "type": "string", "required": false, "description": "Required by replay-si-table-s11 and compared exactly with every CSV row and provenance.json."},
+    {"name": "replay-output-subdir", "type": "string", "required": false, "description": "Fresh attempt-relative directory for metrics.json, model_ranking.json, and provenance.json; an existing directory is rejected.", "default": "manuscript-voltage-replay"}
+  ],
+  "outputs": [
+    {"name": "voltage-curve", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "compute-from-energies output."},
+    {"name": "voltage-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "compute-from-energies output."},
+    {"name": "manuscript-replay-metrics", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Per-row voltage errors and per-model MAE, RMSE, maximum absolute error, and N."},
+    {"name": "manuscript-replay-ranking", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Deterministic MAE-first model ranking."},
+    {"name": "manuscript-replay-provenance", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Source hashes, unit source, and explicit evidence-replay boundaries."}
+  ],
+  "dependencies": {
+    "upstream_plugins": ["dft-labeling"],
+    "python_packages": [],
+    "external_programs": []
+  },
+  "safety": {
+    "expensive": false,
+    "destructive": false,
+    "network_access": false,
+    "requires_approval_before_execution": false,
+    "notes": ["Only deterministic post-processing belongs here; DFT relaxations and labeling remain separately approved upstream runs."]
+  },
+  "completion": {
+    "status": "implemented",
+    "checks": [
+      {"id": "energy-series-consistency", "implemented": true, "description": "Validate strict Li ordering, unique states, finite energies, eV units, positive formula units, source references, and upstream OK completion."},
+      {"id": "voltage-reference-and-sign", "implemented": true, "description": "Require an explicit Li reference and recompute every result step with the core average-intercalation-voltage primitive."},
+      {"id": "manuscript-table-replay", "implemented": true, "description": "Through the standard Adapter, validate the exact 15-column SI Table S11 CSV and approved document SHA, reject duplicate/non-finite/non-V rows and overwrite attempts, and recompute every model error and deterministic ranking with mode=replay, model_execution=false, and recomputed_from_total_energies=false."}
+    ],
+    "success_state": "OK",
+    "failure_state": "FAIL"
+  },
+  "retry": {
+    "status": "delegated-to-core",
+    "allowed_from": ["FAIL", "STOPPED"],
+    "creates_new_attempt": true,
+    "reuses_previous_run_directory": false,
+    "requires_approval": true,
+    "max_attempts": null,
+    "limit_enforced": false,
+    "notes": ["A retry creates a new post-processing attempt and never changes upstream DFT energies in place."]
+  }
+}

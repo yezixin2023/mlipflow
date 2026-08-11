@@ -1,0 +1,4 @@
+candidate_id,validation_method,energy_ev_per_atom,validation_status,evidence_kind
+hes-candidate-01,fixture-dft,-4.121,fixture-only,synthetic
+hes-candidate-02,fixture-dft,-4.094,fixture-only,synthetic
+

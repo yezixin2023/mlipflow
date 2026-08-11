@@ -1,0 +1,145 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "schema_version": 1,
+  "id": "mlip-training",
+  "name": "Machine-learned interatomic potential training",
+  "display_name": "Machine-learned interatomic potential training",
+  "version": "0.3.0",
+  "api_version": 1,
+  "description": "Safe external-wrapper planning and strict result collection, plus a bundled read-only source auditor for historical DeepMD, M3GNet, CHGNet, and MACE entrypoints.",
+  "category": "training",
+  "contract": {
+    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
+  },
+  "implementation": {
+    "kind": "python-adapter",
+    "entrypoint": "adapter.py:Adapter",
+    "status": "adapter-ready",
+    "source_classification": ["B", "D"],
+    "source_references": [
+      "inventory://remote/MLP/MACE/train/run.slurm",
+      "inventory://remote/MLP/MACE/finetune/para-0/run.slurm",
+      "inventory://remote/MLP/CHGnet/code/train_model_Li8.py",
+      "inventory://remote/MLP/M3Gnet/all_train/train.py"
+    ],
+    "limitations": [
+      "The adapter does not import or reimplement any training framework; a user-owned wrapper must implement the documented argv and result-manifest contracts.",
+      "Framework-specific config semantics, data splits, units, resume behavior, and scheduler templates remain the wrapper owner's responsibility; this adapter currently executes only through the local core backend.",
+      "Only DeepMD fresh training is exposed because the inventory did not establish a complete production DeepMD fine-tune/freeze/test entrypoint.",
+      "No numerical parity claim is made for the path-hard-coded inventoried M3GNet and CHGNet scripts or the malformed sampled MACE SLURM command."
+    ]
+  },
+  "execution": {
+    "mode": "external-command",
+    "backends": ["local"],
+    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
+    "operations": ["train", "finetune"],
+    "shell": false,
+    "executes_external_programs": true,
+    "writes_files": true,
+    "submits_jobs": false
+  },
+  "replay": {
+    "supported": true,
+    "behavior": "parse-existing-artifacts",
+    "accepted_media_types": ["application/json"],
+    "reason": "Replay reads only an explicit standard training result manifest and verifies its referenced model path; it never loads a checkpoint or framework."
+  },
+  "inputs": [
+    {"name": "executable", "kind": "file", "required": true, "description": "Explicit non-shell executable for the user-owned wrapper."},
+    {"name": "script", "kind": "file", "required": true, "description": "User-owned CLI wrapper implementing the documented argv contract."},
+    {"name": "config", "kind": "manifest", "required": true, "description": "Framework-specific training configuration passed without interpretation."},
+    {"name": "data", "kind": "artifact-reference", "required": true, "description": "Explicit labeled dataset path."},
+    {"name": "output", "kind": "artifact-reference", "required": true, "description": "Relative model output path inside a fresh attempt directory."},
+    {"name": "result-manifest", "kind": "manifest", "required": true, "media_type": "application/json"},
+    {"name": "foundation-model", "kind": "artifact-reference", "required": false}
+  ],
+  "parameters": [
+    {"name": "framework", "type": "string", "required": true, "description": "One declared framework: deepmd, m3gnet, chgnet, or mace."},
+    {"name": "operation", "type": "string", "required": true, "description": "Fresh train, or finetune for M3GNet, CHGNet, and MACE."},
+    {"name": "seed", "type": "integer", "required": true, "description": "Explicit training and data-loader seed."},
+    {"name": "device", "type": "string", "required": true, "description": "Requested CPU/GPU execution device recorded in provenance."},
+    {"name": "precision", "type": "string", "required": true, "description": "Requested numerical precision."},
+    {"name": "dataset-fingerprint", "type": "string", "required": true, "description": "Approved labeled-dataset fingerprint that the wrapper must echo."},
+    {"name": "config-fingerprint", "type": "string", "required": true, "description": "Approved training-config fingerprint that the wrapper must echo."},
+    {"name": "foundation-model-fingerprint", "type": "string", "required": false, "description": "Required for fine-tuning and echoed by the wrapper."},
+    {"name": "hyperparameters", "type": "object", "required": false, "description": "Framework-specific hyperparameters belong in the explicit config and may be copied into provenance."}
+  ],
+  "outputs": [
+    {"name": "model-artifact", "kind": "artifact-reference", "required": true},
+    {"name": "training-manifest", "kind": "manifest", "required": true, "media_type": "application/json"}
+  ],
+  "dependencies": {
+    "upstream_plugins": ["dft-labeling"],
+    "python_packages": [
+      {"name": "deepmd-kit", "required": false, "bundled": false, "purpose": "Declared DeepMD backend."},
+      {"name": "m3gnet", "required": false, "bundled": false, "purpose": "Declared M3GNet backend."},
+      {"name": "chgnet", "required": false, "bundled": false, "purpose": "Declared CHGNet backend."},
+      {"name": "mace-torch", "required": false, "bundled": false, "purpose": "Declared MACE backend."}
+    ],
+    "external_programs": [
+      {"name": "user-configured framework training wrapper", "required": true, "bundled": false, "purpose": "Runs the selected framework and emits a standard result manifest; MLIPFlow invokes it without a shell."}
+    ]
+  },
+  "safety": {
+    "expensive": true,
+    "destructive": false,
+    "network_access": false,
+    "requires_approval_before_execution": true,
+    "notes": ["Training plans must expose backend, data split, seeds, device, precision, resources, output paths, and resume policy."]
+  },
+  "completion": {
+    "status": "implemented",
+    "checks": [
+      {"id": "historical-source-audit", "implemented": true, "description": "Statically identify source hashes, seeds, splits, devices, host-specific paths, mixed APIs, top-level side effects and broken shell continuations without importing a framework."},
+      {"id": "framework-exit-and-checkpoint", "implemented": true, "description": "Require an OK result manifest and an existing model artifact at the planned output path."},
+      {"id": "training-provenance", "implemented": true, "description": "Require dataset/config fingerprints, explicit seed, and framework version in the result manifest."}
+    ],
+    "success_state": "OK",
+    "failure_state": "FAIL"
+  },
+  "retry": {
+    "status": "delegated-to-core",
+    "allowed_from": ["FAIL", "STOPPED"],
+    "creates_new_attempt": true,
+    "reuses_previous_run_directory": false,
+    "requires_approval": true,
+    "max_attempts": null,
+    "limit_enforced": false,
+    "notes": ["Checkpoint reuse is disabled by default and requires an explicit future backend-specific resume plan."]
+  },
+  "computational_backends": [
+    {
+      "id": "deepmd",
+      "family": "DeepMD",
+      "status": "adapter-ready",
+      "operations": ["train"],
+      "external_programs": ["user-configured wrapper"],
+      "limitations": ["Only fresh training is planned; no freeze, test, restart, or fine-tune CLI was verified in the sampled source tree."]
+    },
+    {
+      "id": "m3gnet",
+      "family": "M3GNet",
+      "status": "adapter-ready",
+      "operations": ["train", "finetune"],
+      "external_programs": ["user-configured wrapper"],
+      "limitations": ["Sampled scripts mix M3GNet and MatGL APIs and require version-specific refactoring."]
+    },
+    {
+      "id": "chgnet",
+      "family": "CHGNet",
+      "status": "adapter-ready",
+      "operations": ["train", "finetune"],
+      "external_programs": ["user-configured wrapper"],
+      "limitations": ["Sampled training is path-specific and lacks a standardized artifact collector."]
+    },
+    {
+      "id": "mace",
+      "family": "MACE",
+      "status": "adapter-ready",
+      "operations": ["train", "finetune"],
+      "external_programs": ["user-configured wrapper"],
+      "limitations": ["Sampled SLURM scripts hard-code resources and one command has a suspected missing continuation character."]
+    }
+  ]
+}
