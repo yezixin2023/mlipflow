@@ -1,65 +1,190 @@
 # MLIPFlow
 
-MLIPFlow 是一个面向机器学习原子势（MLIP）研究的确定性工作流层。它把结构生成、PES 采样、DFT 标注、模型训练、基准评估、离子输运、成分筛选和电化学电压组织成显式 DAG，并记录状态、审批、版本、输入、输出、模型与来源。
+MLIPFlow 是一个面向机器学习原子势（MLIP）研究的确定性工作流层。它负责把结构生成、PES 采样、DFT 标注、模型训练、基准评估、离子输运、成分筛选和电化学电压组织成显式 DAG，并把计划、审批、状态、版本、输入、输出、模型、指标和来源写入可审计记录。
 
-当前版本为 **0.1.0 alpha**。
+当前版本：**0.1.0 alpha**。
 
-这份 README 的目标不是只介绍软件，而是帮助你按下面的顺序真正把环境跑通：
+这份 README 是 **最终用户使用手册**，不是某一台工作站或某一个集群的私人配置记录。任何用户都应该能够按照这里的步骤完成：
 
 ```text
-本地离线流程
--> 本地 CPU 科学 smoke
--> 本地 GPU smoke（如果本机有 NVIDIA GPU）
--> SSH 登录集群
--> 集群 CPU 计算节点 smoke
--> 集群 GPU 计算节点 smoke
--> VASP / POTCAR / LAMMPS / LASP 等站点程序验证
--> SLURM tiny job
--> 小规模真实科学任务
--> 生产计算
+安装 MLIPFlow
+-> 本地离线验证
+-> 配置所需科学环境
+-> 本地 CPU/GPU smoke
+-> 配置 SSH
+-> 识别集群 CPU/GPU/SLURM 参数
+-> 在计算节点验证环境
+-> 用 SLURM 包裹 MLIPFlow 执行当前 local Adapter
+-> 配置 VASP / POTCAR / LAMMPS / LASP
+-> 做 tiny scientific validation
+-> 扩大到真实计算
 ```
-
-> **重要边界**
->
-> - MLIPFlow 不是 VASP、LAMMPS、LASP、DeepMD、MACE、CHGNet 或 M3GNet 的替代品。
-> - 仓库不会分发 VASP、POTCAR、LASP、模型权重、私钥、token 或集群账号信息。
-> - 核心代码已经实现 `local`、`slurm`、`ssh-slurm` 后端边界，但当前内置科学 Adapter 仍只声明 `local`。
-> - 当前真实 HPC 的 stage -> `sbatch` -> monitor -> fetch -> scientific check 全闭环仍是 `EXTERNAL_VALIDATION_PENDING`。
-> - **这不妨碍你现在在集群计算节点上运行 MLIPFlow。** 目前最稳妥的方式是先用 `salloc`/`srun` 获得 CPU 或 GPU 计算节点，再在计算节点中使用 MLIPFlow 的 `local` Adapter。
-> - `ionic-transport` 当前设备接口接受 `cpu`、`cuda`、`mps`；Linux NVIDIA GPU 集群使用 `cuda`。
-> - DFT、长 MD、训练、大规模筛选和真实集群作业都应从 tiny smoke 开始，不要直接跳到生产规模。
 
 ---
 
-## 1. 工作流与当前能力
+## 0. 先读这一节：README、用户配置和代码边界
 
-核心工作流：
+### 0.1 README 中的 `<...>` 是变量，不是仓库配置
+
+本文会使用：
 
 ```text
-structure
-  -> PES sampling
-  -> DFT labeling
-  -> MLIP training
-  -> benchmark
-       |-> ionic transport
-       |-> composition screening -> high-fidelity validation
-       `-> electrochemical voltage
+<SSH_ALIAS>
+<LOGIN_HOST>
+<USERNAME>
+<CPU_PARTITION>
+<GPU_PARTITION>
+<ACCOUNT>
+<QOS>
+<GPU_RESOURCE_DIRECTIVE>
+<CONDA_ROOT>
+<MPI_MODULE>
+<CUDA_MODULE>
+<VASP_MODULE>
+<LAMMPS_MODULE>
+<PROJECT_ROOT>
+<SCRATCH_ROOT>
+```
+
+这些值 **永远不应该替换后再提交回 README**。
+
+正确流程是：
+
+```text
+README 告诉用户需要什么参数
+-> 用户从自己的集群文档/命令查询真实值
+-> 用户把真实值写进自己的 SSH 配置、sbatch、wrapper 或 project.yaml
+-> 用户执行验证命令
+-> README 保持通用
+```
+
+### 0.2 只有代码真实读取的文件才称为“MLIPFlow 配置”
+
+当前主要产品配置是：
+
+```text
+project.yaml
+model_registry.yaml
+plugins/*/plugin.yaml
+.ml ipflow/state.sqlite3      # 运行状态，由程序管理；实际目录名见下文
+```
+
+实际状态目录是：
+
+```text
+.mlipflow/state.sqlite3
+.mlipflow/runs/<node>/attempt-<N>/
+```
+
+`project.yaml` 支持的顶层字段由 `schemas/project.schema.json` 定义，包括：
+
+```text
+project
+plugin_paths
+locations
+backend_profiles
+model_registry
+state
+workflow
+routing
+fingerprints
+safety
+```
+
+README 不会再把一个代码没有读取的 `site.local.yaml` 描述成正式产品配置。
+
+### 0.3 不把科学参数猜成默认值
+
+README 可以告诉你 **参数在哪里配置、怎样记录、怎样检查**，但不会替你猜：
+
+```text
+POTCAR label
+ENCUT
+KPOINTS 密度
+VASP NCORE/KPAR
+LAMMPS timestep
+训练超参数
+MSD 拟合窗口
+生产 MD 时长
+CPU/GPU 数量
+walltime
+```
+
+这些值必须来自你的研究方案、历史计算、论文复现目标、收敛测试或集群 benchmark。
+
+---
+
+## 1. 当前实现状态：什么能直接跑，什么还不能
+
+这是理解后面所有集群配置的关键。
+
+| 能力 | 当前状态 |
+|---|---|
+| 本地 `local` backend | 可执行 |
+| replay 工作流 | 可执行 |
+| 内置科学 Adapter | 当前都只声明 `local` |
+| core `slurm` backend | 已实现 `sbatch/squeue/sacct/scancel` 抽象 |
+| core `ssh-slurm` backend | 已实现 SSH alias、远端 scheduler 查询/提交/fetch 基础能力 |
+| 科学 Adapter 直接 `backend: slurm` | **当前被核心显式阻止** |
+| 科学 Adapter 直接 `backend: ssh-slurm` | **当前被核心显式阻止** |
+| 自动 remote stage -> submit -> monitor -> fetch -> scientific check | **尚未完成真实 HPC 闭环验证** |
+| 在 Slurm 分配到的计算节点中运行 `backend: local` | 当前最实际的集群科学执行方式 |
+
+当前仓库状态明确记录为：
+
+```text
+REAL_HPC_INTEGRATION = EXTERNAL_VALIDATION_PENDING
+```
+
+因此：
+
+- **现在可以在集群 CPU/GPU 计算节点上真正运行科学 Adapter**；
+- 但当前方法是让 SLURM 先分配资源，然后 MLIPFlow 在该计算节点内以 `backend: local` 执行；
+- 不能把科学节点直接改成 `backend: slurm` 或 `backend: ssh-slurm` 来绕过核心保护；
+- 未来 first-class scheduler reconciliation 完成后，才能把 scheduler 提交和科学 `check/collect` 完整合并进 MLIPFlow backend。
+
+---
+
+## 2. MLIPFlow 的科学工作流
+
+```text
+structure generation
+        |
+        v
+PES sampling / representative selection
+        |
+        v
+DFT labeling
+        |
+        v
+MLIP training
+        |
+        v
+benchmark / model evidence
+        |
+        +---------------------+--------------------+
+        |                     |                    |
+        v                     v                    v
+ionic transport      composition screening   voltage analysis
+                              |
+                              v
+                    high-fidelity validation
 ```
 
 当前八个科学插件：
 
-| 插件 | 主要用途 | 当前执行边界 |
-|---|---|---|
-| `high-entropy-structure` | 高熵/SQS 结构生成 | 本地 seeded icet wrapper 已实现 |
-| `pes-sampling` | DIRECT、LASP/SSW execute/replay | Adapter 仅 `local`；LASP 由用户提供 |
-| `dft-labeling` | DFT 标注与数据集装配 | 用户自备 VASP/脚本；Adapter 仅 `local` |
-| `mlip-training` | DeepMD/M3GNet/CHGNet/MACE wrapper contract | 用户自备框架环境；Adapter 仅 `local` |
-| `mlip-benchmark` | MAE/RMSE/Pearson、历史 benchmark 归一化 | 本地可执行 |
-| `ionic-transport` | 轨迹/MSD 后处理、极小 ASE-MD smoke | 本地可执行；设备 `cpu/cuda/mps` |
-| `composition-screening` | 已有候选指标排序与 top-k | 本地可执行 |
-| `electrochemical-voltage` | 总能序列电压后处理、论文证据 replay | 本地可执行 |
+| 插件 | 操作 | 主要依赖 | 当前 backend |
+|---|---|---|---|
+| `high-entropy-structure` | `generate-sqs` | ASE + icet | `local` |
+| `pes-sampling` | `direct-select` / `lasp-ssw-execute` / `lasp-ssw-normalize-replay` | MAML/ASE/pymatgen 或用户 LASP | `local` |
+| `dft-labeling` | `label` | 用户 DFT wrapper + VASP | `local` |
+| `mlip-training` | `train` / `finetune` | 用户训练 wrapper + DeepMD/M3GNet/CHGNet/MACE | `local` |
+| `mlip-benchmark` | benchmark normalize/evaluate | 内置或用户 prediction wrapper | `local` |
+| `ionic-transport` | `analyze-existing` / bounded `md-smoke-and-analyze` | trajectory/MSD + 可选 ASE calculator | `local` |
+| `composition-screening` | deterministic top-k | 已有候选和指标 | `local` |
+| `electrochemical-voltage` | energy -> voltage / replay | 已有总能量序列 | `local` |
 
-详细状态见：
+更严格的实现状态见：
 
 - `docs/IMPLEMENTATION_STATUS.md`
 - `docs/SCIENTIFIC_VALIDATION.md`
@@ -68,85 +193,122 @@ structure
 
 ---
 
-## 2. 最重要的环境划分
+## 3. 本地和集群到底需要哪些环境
 
-不要把所有软件塞进一个 Conda 环境。建议把 **控制环境** 和 **科学环境** 分开。
+不要把所有软件塞进一个 Python 环境。
 
-### 2.1 本地电脑
+推荐思路：**一个控制环境 + 按科学框架拆分的执行环境 + 站点外部程序**。
+
+### 3.1 最小控制环境
+
+用于：
+
+```text
+mlipflow CLI
+project.yaml 解析
+状态数据库
+plan/digest/approval
+replay
+轻量 post-processing
+```
+
+建议名称：
 
 ```text
 mlipflow-control
-  MLIPFlow
-  PyYAML
-  pytest/ruff（开发时）
-
-mlipflow-sqs
-  ASE
-  icet
-  pymatgen
-
-mlipflow-mace-cpu
-  PyTorch CPU
-  MACE
-  ASE
-
-mlipflow-deepmd-cpu
-  DeePMD-kit CPU
-
-可选本地 GPU 环境
-  mlipflow-mace-gpu
-  mlipflow-deepmd-gpu
 ```
 
-如果本地只想先验证 MLIPFlow 本身，第一阶段只需要 `mlipflow-control`。
-
-### 2.2 集群
-
-建议在共享 HOME/PROJECT 文件系统中建立：
-
-```text
-mlipflow-control
-mlipflow-sqs
-mlipflow-mace-cpu
-mlipflow-mace-gpu
-mlipflow-deepmd-cpu
-mlipflow-deepmd-gpu
-mlipflow-chgnet-gpu        # 只有需要 CHGNet 时安装
-mlipflow-m3gnet-gpu        # 只有需要 M3GNet/MatGL 时安装
-```
-
-站点程序由集群提供或单独安装：
-
-```text
-SLURM
-MPI
-NVIDIA driver
-CUDA module/runtime（按站点要求）
-VASP
-POTCAR/pseudopotential library
-LAMMPS CPU build
-LAMMPS GPU build
-LASP
-```
-
-**Conda 环境不要负责安装 NVIDIA kernel driver。** GPU 驱动属于计算节点操作系统/集群管理员管理的范围。
-
----
-
-## 3. 本地：先把 MLIPFlow 控制层跑通
-
-### 3.1 Python 要求
-
-`pyproject.toml` 当前要求：
+要求：
 
 ```text
 Python >= 3.9
 PyYAML >= 6.0
 ```
 
-建议使用 Python 3.11。
+推荐 Python 3.11。
 
-### 3.2 创建控制环境
+### 3.2 科学环境
+
+推荐分开：
+
+```text
+mlipflow-sqs
+mlipflow-direct
+mlipflow-dft
+mlipflow-mace-cpu
+mlipflow-mace-gpu
+mlipflow-deepmd-cpu
+mlipflow-deepmd-gpu
+mlipflow-chgnet-cpu
+mlipflow-chgnet-gpu
+mlipflow-m3gnet-cpu
+mlipflow-m3gnet-gpu
+mlipflow-analysis
+```
+
+不是每个用户都需要全部创建。
+
+### 3.3 本地电脑
+
+最低只需要：
+
+```text
+mlipflow-control
+```
+
+要运行 SQS：
+
+```text
+mlipflow-control
+mlipflow-sqs
+```
+
+要本地 CPU 测试 MACE：
+
+```text
+mlipflow-control
+mlipflow-mace-cpu
+```
+
+本机有 NVIDIA GPU 才需要：
+
+```text
+mlipflow-mace-gpu
+mlipflow-deepmd-gpu
+...
+```
+
+### 3.4 集群 CPU
+
+集群共享文件系统中通常需要：
+
+```text
+mlipflow-control
+所需 CPU 科学环境
+MPI（如果科学程序需要）
+VASP/LASP/LAMMPS CPU build（如果任务需要）
+SLURM client commands
+```
+
+### 3.5 集群 GPU
+
+在 CPU 环境基础上增加：
+
+```text
+NVIDIA driver                 # 集群管理员提供
+CUDA runtime/toolkit          # 由站点 module 或 Python wheel 方案决定
+GPU-compatible PyTorch
+GPU-compatible MLIP framework
+GPU-compatible LAMMPS build   # 只有 LAMMPS GPU MD 时需要
+```
+
+**不要在 Conda 环境里安装或替换计算节点的 NVIDIA kernel driver。**
+
+---
+
+## 4. 安装 MLIPFlow 控制环境
+
+在仓库根目录：
 
 ```bash
 conda create -n mlipflow-control python=3.11 -y
@@ -155,19 +317,19 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-开发时：
+开发者额外安装：
 
 ```bash
 python -m pip install -e '.[dev]'
 ```
 
-需要仓库通用科学依赖时：
+仓库通用科学 extra：
 
 ```bash
 python -m pip install -e '.[science]'
 ```
 
-当前 `science` extra 包含：
+当前 `science` extra 是：
 
 ```text
 numpy >= 1.23
@@ -177,1173 +339,77 @@ pandas >= 1.5
 plotly >= 5
 ```
 
-### 3.3 基本检查
+检查：
 
 ```bash
 python --version
-python -c 'import mlipflow; print(mlipflow.__version__)'
 mlipflow --version
-mlipflow --project examples/high_entropy_sulfide doctor
 python -m pytest
 ```
 
-### 3.4 纯离线 replay
+---
+
+## 5. 第一次运行：先完成纯离线闭环
+
+仓库自带一个 synthetic replay 示例，不需要 VASP、LAMMPS、LASP、GPU 或网络。
+
+### 5.1 复制示例
 
 ```bash
 DEMO_ROOT="$(mktemp -d)"
 cp -R examples/high_entropy_sulfide "$DEMO_ROOT/"
 DEMO_PROJECT="$DEMO_ROOT/high_entropy_sulfide"
+```
+
+### 5.2 只读检查
+
+```bash
 mlipflow --project "$DEMO_PROJECT" list
 mlipflow --project "$DEMO_PROJECT" status
 mlipflow --project "$DEMO_PROJECT" doctor
+```
+
+### 5.3 初始化状态库
+
+```bash
 mlipflow --project "$DEMO_PROJECT" init
+```
+
+### 5.4 dry-run
+
+```bash
 mlipflow --project "$DEMO_PROJECT" run structure-replay --dry-run
 ```
 
-把 `--dry-run` 输出中的完整 `sha256:...` 复制出来：
+输出会包含精确：
+
+```text
+plan_digest = sha256:...
+```
+
+### 5.5 批准同一计划
 
 ```bash
 mlipflow --project "$DEMO_PROJECT" run structure-replay --approve 'sha256:<PLAN_DIGEST>'
 ```
 
-推进依赖仍然需要单独审批：
+### 5.6 推进依赖
 
 ```bash
 mlipflow --project "$DEMO_PROJECT" advance --dry-run
+```
+
+复制新的 digest 后：
+
+```bash
 mlipflow --project "$DEMO_PROJECT" advance --approve 'sha256:<PLAN_DIGEST>'
 ```
 
----
-
-## 4. 本地：SQS 环境
-
-推荐独立环境：
-
-```bash
-conda create -n mlipflow-sqs python=3.11 -y
-conda activate mlipflow-sqs
-python -m pip install --upgrade pip
-python -m pip install ase icet pymatgen
-```
-
-检查：
-
-```bash
-python -c 'import ase, icet, pymatgen; print(ase.__version__); print(icet.__version__)'
-```
-
-仓库已有真实 bounded smoke 使用过：
-
-```text
-Python 3.11.14
-ASE 3.28.0
-icet 3.2
-CPU
-seed = 23
-```
-
-这些版本证明至少有一套环境跑通过，不是全项目强制 pin。
+MLIPFlow 不会因为一个节点 `OK` 就自动执行下一个节点。
 
 ---
 
-## 5. 本地：MACE CPU/GPU 环境
-
-MACE 官方安装方式是先安装与机器匹配的 PyTorch，再安装 `mace-torch`。不要先随便装一套 CUDA PyTorch 再猜是否兼容。
-
-### 5.1 CPU 环境
-
-```bash
-conda create -n mlipflow-mace-cpu python=3.11 -y
-conda activate mlipflow-mace-cpu
-python -m pip install --upgrade pip
-python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-python -m pip install mace-torch ase
-```
-
-检查：
-
-```bash
-python -c 'import torch; print(torch.__version__); print(torch.cuda.is_available())'
-python -c 'import mace; print(mace.__version__ if hasattr(mace,"__version__") else "mace imported")'
-```
-
-CPU 环境预期 `torch.cuda.is_available()` 为 `False`。
-
-### 5.2 NVIDIA GPU 环境
-
-只有本机确实有 NVIDIA GPU 时才建立。
-
-先检查主机驱动：
-
-```bash
-nvidia-smi
-```
-
-然后根据 PyTorch 官方安装选择器，安装与当前 NVIDIA 驱动兼容的 CUDA wheel。不要把 README 中某个 CUDA 小版本永久当作要求。
-
-环境框架：
-
-```bash
-conda create -n mlipflow-mace-gpu python=3.11 -y
-conda activate mlipflow-mace-gpu
-python -m pip install --upgrade pip
-python -m pip install <PYTORCH_CUDA_COMMAND_FROM_OFFICIAL_SELECTOR>
-python -m pip install mace-torch ase
-```
-
-GPU 检查：
-
-```bash
-python -c 'import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NO CUDA GPU")'
-```
-
-只有输出 `True` 并显示正确 GPU 型号，才算 Python GPU 环境真正接通。
-
-仓库已经记录过一次 MACE CPU integration smoke：
-
-```text
-Python 3.12.12
-ASE 3.28.0
-MACE 0.3.15
-PyTorch 2.10.0
-CPU float64
-```
-
-这仍只是已知工作环境，不表示 GPU 必须使用相同组合。
-
----
-
-## 6. 本地：DeepMD CPU/GPU 环境
-
-DeepMD 建议与 MACE 分开环境。
-
-### 6.1 CPU
-
-```bash
-conda create -n mlipflow-deepmd-cpu python=3.11 -y
-conda activate mlipflow-deepmd-cpu
-python -m pip install --upgrade pip
-python -m pip install 'deepmd-kit[cpu]'
-```
-
-检查：
-
-```bash
-dp -h
-python -c 'import deepmd; print(deepmd.__version__)'
-```
-
-### 6.2 NVIDIA GPU
-
-当前 DeePMD-kit 官方文档提供 CUDA 预编译安装方式，例如 CUDA 12 路线可使用 GPU extra。实际选择仍必须与集群驱动/站点模块匹配。
-
-```bash
-conda create -n mlipflow-deepmd-gpu python=3.11 -y
-conda activate mlipflow-deepmd-gpu
-python -m pip install --upgrade pip
-python -m pip install 'deepmd-kit[gpu,cu12]'
-```
-
-如果还希望该环境同时提供 DeePMD 的 LAMMPS 集成，可按 DeePMD 官方对应版本文档使用 `lmp` extra；不要和站点另一个不匹配的 LAMMPS build 混用。
-
-检查：
-
-```bash
-dp -h
-python -c 'import deepmd; print(deepmd.__version__)'
-```
-
-GPU 是否真正工作必须在有 GPU 的机器/计算节点上验证，而不是只看安装成功。
-
----
-
-## 7. CHGNet、M3GNet/MatGL
-
-这几套框架的版本/API 漂移比 MLIPFlow 核心更快。建议各建独立环境，而且只在真正要跑对应模型时安装。
-
-```text
-mlipflow-chgnet-cpu
-mlipflow-chgnet-gpu
-mlipflow-m3gnet-cpu
-mlipflow-m3gnet-gpu
-```
-
-每个 wrapper 必须记录：
-
-```text
-Python version
-framework name/version
-PyTorch/TensorFlow backend version
-CUDA runtime（GPU 时）
-GPU model（GPU 时）
-device
-precision
-seed
-dataset SHA-256
-config SHA-256
-model SHA-256
-```
-
-不要依赖“latest”作为科学 provenance。
-
----
-
-## 8. 连接集群前先收集站点信息
-
-在真正配置之前，你需要从管理员文档或登录节点明确以下信息：
-
-```text
-登录域名
-用户名
-是否需要 VPN / 跳板机
-CPU partition 名
-GPU partition 名
-是否必须填写 account
-是否必须填写 qos
-GPU 型号
-GPU 请求语法（--gres=gpu:1 / --gpus=1 / 其他站点约定）
-CPU 每节点数量
-内存规则
-HOME quota
-scratch/project 路径
-module 名称
-CUDA module
-MPI module
-VASP module/path
-LAMMPS module/path
-LASP path
-作业最长 walltime
-```
-
-在登录节点运行：
-
-```bash
-hostname
-uname -a
-which sbatch
-which srun
-which squeue
-which sacct
-sinfo
-scontrol show config | head
-module avail 2>&1 | head -n 80
-```
-
-如果站点限制 `scontrol` 或 `module avail`，按管理员文档为准。
-
----
-
-## 9. SSH：从本地连接集群
-
-### 9.1 本地生成集群登录 key
-
-```bash
-ssh-keygen -t ed25519 -a 100 -f ~/.ssh/id_ed25519_hpc -C 'mlipflow-hpc'
-chmod 600 ~/.ssh/id_ed25519_hpc
-```
-
-把 `.pub` 公钥按集群要求加入远端账号。私钥不要上传 GitHub、不要放项目目录。
-
-### 9.2 本地 `~/.ssh/config`
-
-```sshconfig
-Host mlip-cluster
-    HostName <LOGIN_HOST>
-    User <USERNAME>
-    IdentityFile ~/.ssh/id_ed25519_hpc
-    IdentitiesOnly yes
-    ServerAliveInterval 60
-    ServerAliveCountMax 3
-```
-
-需要跳板机时：
-
-```sshconfig
-Host mlip-cluster
-    HostName <INTERNAL_LOGIN_HOST>
-    User <USERNAME>
-    IdentityFile ~/.ssh/id_ed25519_hpc
-    ProxyJump <BASTION_ALIAS>
-```
-
-验证：
-
-```bash
-ssh mlip-cluster
-```
-
-登录后只读检查：
-
-```bash
-hostname
-which sbatch
-which srun
-which squeue
-which sacct
-```
-
-MLIPFlow 的 `ssh-slurm` 配置只引用 `mlip-cluster` 这个 alias，不保存密码或私钥。
-
----
-
-## 10. 把私有仓库放到集群
-
-推荐把代码放在共享 HOME 或 PROJECT 路径，让登录节点和计算节点都能看到。
-
-目录示例：
-
-```text
-$HOME/src/mlipflow                 # 代码
-$HOME/.conda/envs/...              # 小型 Conda 环境，若 HOME quota 允许
-$PROJECT/mlipflow/envs/...         # 大环境/模型，若站点推荐 project FS
-$PROJECT/mlipflow/models/...       # 模型
-$PROJECT/mlipflow/projects/...     # 项目配置
-$SCRATCH/mlipflow-runs/...         # 大量临时运行结果
-```
-
-如果集群允许访问 GitHub，可在集群单独配置 GitHub SSH key，然后：
-
-```bash
-git clone git@github.com:yezixin2023/mlipflow.git "$HOME/src/mlipflow"
-cd "$HOME/src/mlipflow"
-git checkout docs/readme-setup-hpc-guide
-```
-
-如果计算中心不允许直接访问 GitHub，则从本地安全地 `rsync` 代码到集群。不要把本地私钥一起同步。
-
----
-
-## 11. 集群：先建立控制环境
-
-控制环境不需要 GPU，也不需要在 GPU 节点安装。
-
-如果集群已有 Conda/Mamba module：
-
-```bash
-module load <CONDA_OR_MAMBA_MODULE>
-```
-
-否则使用站点允许的 Miniforge/Miniconda。
-
-创建环境：
-
-```bash
-conda create -n mlipflow-control python=3.11 -y
-conda activate mlipflow-control
-cd "$HOME/src/mlipflow"
-python -m pip install --upgrade pip
-python -m pip install -e .
-```
-
-检查：
-
-```bash
-mlipflow --version
-mlipflow --project examples/high_entropy_sulfide doctor
-```
-
-**不要在登录节点运行训练、MD、VASP、LASP 或大 SQS。** 登录节点只用于配置、编辑、提交和轻量检查。
-
----
-
-## 12. 集群：CPU 科学环境
-
-CPU 环境和本地逻辑相同，但必须安装在计算节点可见的共享路径。
-
-### SQS
-
-```bash
-conda create -n mlipflow-sqs python=3.11 -y
-conda activate mlipflow-sqs
-python -m pip install ase icet pymatgen
-```
-
-### MACE CPU
-
-```bash
-conda create -n mlipflow-mace-cpu python=3.11 -y
-conda activate mlipflow-mace-cpu
-python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-python -m pip install mace-torch ase
-```
-
-### DeepMD CPU
-
-```bash
-conda create -n mlipflow-deepmd-cpu python=3.11 -y
-conda activate mlipflow-deepmd-cpu
-python -m pip install 'deepmd-kit[cpu]'
-```
-
-CPU 框架 smoke 应放在 CPU 计算节点执行，而不是登录节点长期跑。
-
----
-
-## 13. 集群：GPU 科学环境
-
-### 13.1 先申请 GPU 计算节点
-
-不同站点参数不同。典型形式：
-
-```bash
-salloc --partition=<GPU_PARTITION> --nodes=1 --ntasks=1 --cpus-per-task=8 --gres=gpu:1 --mem=32G --time=01:00:00
-```
-
-获得 allocation 后进入计算节点 shell：
-
-```bash
-srun --pty bash
-```
-
-如果站点使用 `--gpus=1`，按管理员规定替换 `--gres=gpu:1`。Slurm 的 GPU GRES/TRES 配置由站点决定。
-
-### 13.2 在计算节点检查 GPU
-
-```bash
-hostname
-nvidia-smi
-printf '%s\n' "$CUDA_VISIBLE_DEVICES"
-```
-
-Slurm 通常通过 `CUDA_VISIBLE_DEVICES` 限定当前 job step 可见 GPU。
-
-### 13.3 加载站点 CUDA（如果需要）
-
-```bash
-module purge
-module load <CUDA_MODULE>
-```
-
-是否需要显式 `module load cuda/...` 取决于站点。PyTorch wheel 自带用户态 CUDA runtime 的场景下仍然必须有兼容的 NVIDIA 驱动。
-
-### 13.4 MACE GPU 环境
-
-可以在登录节点安装环境，也可以在交互 GPU allocation 中安装；环境最终必须位于所有计算节点可见的文件系统。
-
-```bash
-conda create -n mlipflow-mace-gpu python=3.11 -y
-conda activate mlipflow-mace-gpu
-python -m pip install --upgrade pip
-python -m pip install <PYTORCH_CUDA_COMMAND_FROM_OFFICIAL_SELECTOR>
-python -m pip install mace-torch ase
-```
-
-在 GPU 计算节点验证：
-
-```bash
-python -c 'import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NO CUDA GPU")'
-```
-
-再做一个真实模型单点 inference，然后才做 tiny MD。
-
-### 13.5 DeepMD GPU 环境
-
-```bash
-conda create -n mlipflow-deepmd-gpu python=3.11 -y
-conda activate mlipflow-deepmd-gpu
-python -m pip install --upgrade pip
-python -m pip install 'deepmd-kit[gpu,cu12]'
-```
-
-这条命令是当前官方 CUDA 12 预编译路线之一；若集群环境需要不同后端/版本，按对应 DeePMD 官方版本文档调整。
-
-GPU 计算节点验证：
-
-```bash
-dp -h
-python -c 'import deepmd; print(deepmd.__version__)'
-```
-
-随后用一个极小模型/输入做 inference，再进行 LAMMPS smoke。
-
----
-
-## 14. 当前最推荐的“集群运行 MLIPFlow”方式
-
-当前科学 Adapter 只声明 `local`。因此现在要真正使用集群 CPU/GPU，推荐：
-
-```text
-本地电脑
-  -> ssh 登录节点
-  -> salloc 请求 CPU/GPU 资源
-  -> srun --pty bash 进入计算节点
-  -> 激活对应科学环境
-  -> 在这个计算节点上运行 MLIPFlow
-  -> MLIPFlow 仍使用 backend: local
-```
-
-这里的 `local` 指的是“相对于当前计算节点本地执行”，不是“必须在你的笔记本上执行”。
-
-这是当前最容易验证、也最符合现有 Adapter 能力的路线。
-
-### CPU allocation 示例
-
-```bash
-salloc --partition=<CPU_PARTITION> --nodes=1 --ntasks=1 --cpus-per-task=16 --mem=32G --time=01:00:00
-srun --pty bash
-```
-
-进入节点后：
-
-```bash
-source <CONDA_ROOT>/etc/profile.d/conda.sh
-conda activate mlipflow-sqs
-cd <PROJECT_DIRECTORY>
-python -c 'import ase, icet; print(ase.__version__, icet.__version__)'
-```
-
-### GPU allocation 示例
-
-```bash
-salloc --partition=<GPU_PARTITION> --nodes=1 --ntasks=1 --cpus-per-task=8 --gres=gpu:1 --mem=32G --time=01:00:00
-srun --pty bash
-```
-
-进入节点后：
-
-```bash
-source <CONDA_ROOT>/etc/profile.d/conda.sh
-conda activate mlipflow-mace-gpu
-nvidia-smi
-python -c 'import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))'
-```
-
-完成这些再调用真正 wrapper/MLIPFlow 节点。
-
----
-
-## 15. VASP 与赝势/POTCAR
-
-MLIPFlow **不会保存、下载或生成 POTCAR**。VASP 可执行文件、许可证和赝势库由用户/机构管理。
-
-### 15.1 站点目录示例
-
-```text
-/apps/vasp/6.x/vasp_std
-/apps/vasp/6.x/vasp_gam
-/project/pseudopotentials/potpaw_PBE/...
-```
-
-真实路径按你的集群修改。
-
-### 15.2 pymatgen POTCAR 配置
-
-当前 pymatgen 推荐用 `pmg config` 管理 `PMG_VASP_PSP_DIR`。例如先把机构合法获得的 VASP POTCAR 目录整理成 pymatgen 格式：
-
-```bash
-pmg config -p /path/to/original/potpaw_PBE /path/to/pmg_potcars
-pmg config --add PMG_VASP_PSP_DIR /path/to/pmg_potcars
-```
-
-检查配置：
-
-```bash
-pmg config --help
-```
-
-不要提交 `.pmgrc.yaml` 中的私人绝对路径到公共仓库。
-
-### 15.3 Li-M-P-S 体系必须记录实际 label
-
-配置格式示例：
-
-```yaml
-pseudopotentials:
-  functional: PBE
-  species:
-    Li: <ACTUAL_LI_LABEL>
-    Mn: <ACTUAL_MN_LABEL>
-    Fe: <ACTUAL_FE_LABEL>
-    Ni: <ACTUAL_NI_LABEL>
-    Cu: <ACTUAL_CU_LABEL>
-    Zn: <ACTUAL_ZN_LABEL>
-    P: <ACTUAL_P_LABEL>
-    S: <ACTUAL_S_LABEL>
-```
-
-不要因为 README 示例就擅自决定 `Mn`/`Mn_pv` 或 `Fe`/`Fe_pv`。如果目标是复现实验/论文历史计算，应以历史 INCAR/POTCAR provenance 或论文方法为准。
-
-每种赝势建议记录：
-
-```text
-element
-POTCAR label
-functional
-release/header identity
-SHA-256
-```
-
-POTCAR 本体不进入仓库。
-
-### 15.4 VASP CPU/MPI 先做 tiny job
-
-先验证：
-
-```bash
-which vasp_std
-```
-
-如果使用 module：
-
-```bash
-module load <MPI_MODULE>
-module load <VASP_MODULE>
-which vasp_std
-```
-
-不要直接用正式结构验证环境。先用允许的极小测试体系确认 MPI、POTCAR、输出与收敛检查链路。
-
----
-
-## 16. DFT wrapper 的职责
-
-当前 `dft-labeling` 需要用户自备 wrapper。wrapper 至少应完成：
-
-1. 读取 structures manifest；
-2. 生成 POSCAR/INCAR/KPOINTS；
-3. 按显式映射从站点赝势库组装 POTCAR；
-4. 调用/准备 VASP；
-5. 检查电子收敛；
-6. 对 relax 检查离子收敛；
-7. 检查输出是否截断；
-8. 明确能量、力、应力、长度单位与应力符号约定；
-9. 生成标准结果 manifest；
-10. 对 dataset/artifact 写 SHA-256。
-
-不能仅通过 OUTCAR 中出现某个字符串就认定成功。
-
----
-
-## 17. LAMMPS：不要把不同 MLIP build 混为一谈
-
-MLIPFlow 当前没有固定一个通用 LAMMPS 版本，因为 DeepMD 和 MACE 的 LAMMPS 集成方式不同。
-
-### 17.1 任何节点先记录实际 build
-
-```bash
-which lmp
-lmp -h | head -n 30
-```
-
-生产 provenance 至少记录：
-
-```text
-lmp absolute path
-LAMMPS version/build
-compiler
-MPI
-CPU/GPU build
-required package/pair_style
-MLIP framework version
-model SHA-256
-```
-
-### 17.2 DeepMD + LAMMPS
-
-DeePMD 官方支持 built-in mode 和 plugin mode。当前官方文档说明 plugin mode 可加载 `libdeepmd_lmp.so`，较新的 LAMMPS 也可以通过 `LAMMPS_PLUGIN_PATH` 找插件。
-
-先检查：
-
-```bash
-lmp -h | grep -i deepmd
-```
-
-如果是 plugin mode，还要确认对应 DeePMD plugin 路径和动态库依赖。
-
-DeepMD 常用 LAMMPS `units metal`，其内部距离/能量/力单位与 `metal` 对应；正式计算仍应在 manifest 中记录 units。
-
-### 17.3 MACE + LAMMPS
-
-MACE 官方文档提供专门的 LAMMPS build/`ML-MACE` 路线。CPU 与 GPU build 不是同一套编译参数；GPU 通常结合 Kokkos/CUDA。
-
-正式使用前顺序：
-
-```text
-MACE ASE 单点成功
--> 导出 LAMMPS model
--> LAMMPS 能识别 MACE pair style/package
--> 单结构 0/1 step smoke
--> ASE 与 LAMMPS 能量/力对照
--> tiny MD
--> 长 MD
-```
-
-MACE 官方当前文档仍特别提醒先对比 LAMMPS 模型与等价 ASE calculator。
-
-### 17.4 不要只做 `lmp` 启动测试
-
-真正合格的 MLIP-LAMMPS smoke 至少包括：
-
-```text
-lmp 可启动
-目标 pair_style/package 可见
-模型可以加载
-元素 type map 正确
-units 正确
-1-2 step 可执行
-能量/力与受信独立计算器一致
-GPU build 时确实使用分配到的 GPU
-```
-
----
-
-## 18. LASP / SSW
-
-MLIPFlow 不分发 LASP。
-
-`pes-sampling` 当前操作：
-
-```text
-direct-select
-lasp-ssw-execute
-lasp-ssw-normalize-replay
-```
-
-`lasp-ssw-execute` 需要显式提供：
-
-```text
-LASP executable
-lasp_version
-input.arc
-lasp.in
-必要辅助文件
-```
-
-MPI 时还需提供：
-
-```text
-mpirun 或 mpiexec 的真实可执行文件
-mpi_processes
-```
-
-配置示例：
-
-```yaml
-inputs:
-  lasp_executable: /apps/lasp/bin/lasp
-  input_structure: inputs/input.arc
-  lasp_input: inputs/lasp.in
-parameters:
-  operation: lasp-ssw-execute
-  lasp_version: '<SITE_LASP_VERSION>'
-  seed_status: HISTORICAL_PARAMETER_UNKNOWN
-  acknowledge_uncontrolled_seed: true
-  preserve_historical_order: true
-resources:
-  python_executable: /path/to/python
-  mpi_launcher: /usr/bin/mpirun
-```
-
-历史 LASP 源没有可恢复 seed，不要伪造历史随机种子。
-
----
-
-## 19. SLURM：CPU tiny job
-
-先测试调度器，不跑科学程序。
-
-`slurm_cpu_smoke.sbatch`：
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=mlip-cpu-smoke
-#SBATCH --partition=<CPU_PARTITION>
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
-#SBATCH --mem=2G
-#SBATCH --time=00:05:00
-#SBATCH --output=slurm-%j.out
-#SBATCH --error=slurm-%j.err
-set -euo pipefail
-source <CONDA_ROOT>/etc/profile.d/conda.sh
-conda activate mlipflow-control
-hostname
-python --version
-mlipflow --version
-```
-
-提交：
-
-```bash
-sbatch slurm_cpu_smoke.sbatch
-squeue -u "$USER"
-```
-
-结束后：
-
-```bash
-sacct -j <JOB_ID> --format=JobID,State,ExitCode,Elapsed,MaxRSS
-cat slurm-<JOB_ID>.out
-cat slurm-<JOB_ID>.err
-```
-
-如果站点未启用 `sacct`，使用管理员提供的 accounting 方法。
-
----
-
-## 20. SLURM：GPU tiny job
-
-`slurm_gpu_smoke.sbatch`：
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=mlip-gpu-smoke
-#SBATCH --partition=<GPU_PARTITION>
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:1
-#SBATCH --mem=8G
-#SBATCH --time=00:10:00
-#SBATCH --output=slurm-%j.out
-#SBATCH --error=slurm-%j.err
-set -euo pipefail
-source <CONDA_ROOT>/etc/profile.d/conda.sh
-conda activate mlipflow-mace-gpu
-nvidia-smi
-printf '%s\n' "$CUDA_VISIBLE_DEVICES"
-python -c 'import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NO CUDA GPU")'
-```
-
-提交：
-
-```bash
-sbatch slurm_gpu_smoke.sbatch
-```
-
-只有 `torch.cuda.is_available()` 为 `True` 才继续做模型 inference。
-
-Slurm 支持 `--gres=gpu:...`、`--gpus`、`--gpus-per-node` 等多种 GPU 请求参数，但实际可用形式取决于站点 `select/cons_tres` 和 GRES 配置；以你的集群文档为准。
-
----
-
-## 21. SLURM：VASP CPU/MPI 模板
-
-示例：
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=vasp-label
-#SBATCH --partition=<CPU_PARTITION>
-#SBATCH --nodes=1
-#SBATCH --ntasks=<MPI_RANKS>
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=<MEMORY>
-#SBATCH --time=<WALLTIME>
-#SBATCH --output=slurm-%j.out
-#SBATCH --error=slurm-%j.err
-set -euo pipefail
-module purge
-module load <MPI_MODULE>
-module load <VASP_MODULE>
-srun vasp_std
-```
-
-`MPI_RANKS`、`KPAR`、`NCORE`、节点数、内存和 walltime 必须按体系和站点 benchmark，不要直接复制别人的值。
-
----
-
-## 22. SLURM：GPU Python/MLIP 模板
-
-用于 MACE/CHGNet/M3GNet 训练或 GPU wrapper 的基本形式：
-
-```bash
-#!/bin/bash
-#SBATCH --job-name=mlip-gpu
-#SBATCH --partition=<GPU_PARTITION>
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --gres=gpu:1
-#SBATCH --mem=32G
-#SBATCH --time=02:00:00
-#SBATCH --output=slurm-%j.out
-#SBATCH --error=slurm-%j.err
-set -euo pipefail
-source <CONDA_ROOT>/etc/profile.d/conda.sh
-conda activate mlipflow-mace-gpu
-export OMP_NUM_THREADS="$SLURM_CPUS_PER_TASK"
-nvidia-smi
-python -c 'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))'
-python your_wrapper.py --config config.yaml
-```
-
-不要在脚本里硬编码 GPU `0` 后忽略 `CUDA_VISIBLE_DEVICES`；让调度器控制当前作业可见设备。
-
----
-
-## 23. LAMMPS CPU/GPU 的 sbatch 思路
-
-LAMMPS 的具体命令取决于你的 build。
-
-CPU/MPI 常见模式：
-
-```bash
-srun <CPU_LAMMPS_EXECUTABLE> -in in.lammps
-```
-
-GPU Kokkos 常见模式会包含 GPU/Kokkos 参数，但不要从 README 盲目复制到未知 build。应先根据你的 LAMMPS/MACE/DeepMD 官方 build 文档确认，然后把**最终已验证命令**保存到站点 profile。
-
-特别是 MACE LAMMPS GPU，官方文档给出的实现与 Kokkos、libtorch、GPU 架构和 MACE-LAMMPS 接口绑定，必须在目标计算节点编译/验证。
-
----
-
-## 24. 推荐的私有站点配置
-
-不要把集群路径散落在插件代码里。建议自己维护一个 **不提交公共仓库** 的配置，例如 `site.local.yaml`：
-
-```yaml
-site: my-hpc
-ssh:
-  profile: mlip-cluster
-filesystem:
-  repo: /home/<USER>/src/mlipflow
-  project_root: /project/<ACCOUNT>/mlipflow/projects
-  model_root: /project/<ACCOUNT>/mlipflow/models
-  scratch_root: /scratch/<USER>/mlipflow
-scheduler:
-  type: slurm
-  cpu_partition: <CPU_PARTITION>
-  gpu_partition: <GPU_PARTITION>
-  account: <ACCOUNT>
-  qos: <QOS_OR_NULL>
-  gpu_request: '--gres=gpu:1'
-python:
-  control: /path/to/envs/mlipflow-control/bin/python
-  sqs: /path/to/envs/mlipflow-sqs/bin/python
-  mace_cpu: /path/to/envs/mlipflow-mace-cpu/bin/python
-  mace_gpu: /path/to/envs/mlipflow-mace-gpu/bin/python
-  deepmd_cpu: /path/to/envs/mlipflow-deepmd-cpu/bin/python
-  deepmd_gpu: /path/to/envs/mlipflow-deepmd-gpu/bin/python
-vasp:
-  executable: /apps/vasp/bin/vasp_std
-  module: <VASP_MODULE>
-  pseudopotential_root: /project/<ACCOUNT>/pseudopotentials
-lammps:
-  cpu_executable: /apps/lammps/cpu/bin/lmp
-  gpu_executable: /apps/lammps/gpu/bin/lmp
-  cpu_build_id: <RECORD_AFTER_VALIDATION>
-  gpu_build_id: <RECORD_AFTER_VALIDATION>
-lasp:
-  executable: /apps/lasp/bin/lasp
-  version: <SITE_LASP_VERSION>
-mpi:
-  launcher: /usr/bin/mpirun
-```
-
-把 `site.local.yaml` 加进 `.gitignore` 或放在仓库外。
-
----
-
-## 25. `project.yaml` 与 backend
-
-Schema 支持：
-
-```text
-local
-slurm
-ssh-slurm
-```
-
-但是当前每个科学 Adapter 是否允许某后端，要看对应 `plugins/*/plugin.yaml` 的 `execution.backends`。
-
-现阶段真实科学节点推荐仍写：
-
-```yaml
-workflow:
-  nodes:
-    - id: structure
-      uses: high-entropy-structure@0
-      mode: execute
-      backend: local
-      inputs: {}
-      parameters: {}
-      resources: {}
-```
-
-然后在 **Slurm 已经分配给你的计算节点里** 执行 MLIPFlow。
-
-远端 profile 的安全格式：
-
-```yaml
-backend_profiles:
-  cluster-a:
-    ssh_profile: mlip-cluster
-```
-
-项目中不写密码、私钥、token。
-
----
-
-## 26. 真正的 `ssh-slurm` 自动闭环目前还差什么
-
-核心已经有：
-
-```text
-SSH alias
-sbatch
-scancel
-squeue
-sacct
-scp fetch
-job ID parsing
-completion identity manifest logic
-```
-
-但还没有在生产集群完成一次受控的：
-
-```text
-local project
--> remote staging
--> remote sbatch
--> queue monitor
--> terminal state
--> allowlisted artifact fetch
--> SHA-256
--> local scientific check/collect
-```
-
-所以现阶段你应先把前面的手动/半手动集群流程跑通并记录真实站点字段。等 tiny HPC validation 完成后，再把这些字段固化成 `ssh-slurm` 的正式站点配置，而不是现在猜路径和资源。
-
----
-
-## 27. 第一次集群验证的推荐顺序
-
-严格按层推进：
-
-```text
-A. ssh 登录成功
-B. 登录节点能看到 sbatch/srun/squeue
-C. CPU salloc 成功
-D. CPU 节点 python/MLIPFlow 成功
-E. CPU tiny science smoke 成功
-F. GPU salloc 成功
-G. GPU 节点 nvidia-smi 成功
-H. GPU Python torch.cuda.is_available() == True
-I. GPU 单模型 inference 成功
-J. CPU sbatch tiny job 成功
-K. GPU sbatch tiny job 成功
-L. VASP tiny MPI job 成功
-M. POTCAR mapping/hash 固定
-N. LAMMPS CPU pair_style smoke 成功
-O. LAMMPS GPU pair_style smoke 成功
-P. LASP tiny/local contract（如需要）
-Q. MLIPFlow scientific wrapper tiny run
-R. remote artifact fetch + hash + scientific check
-S. 小规模真实体系
-T. 生产计算
-```
-
-任何一步失败都先修这一层，不要继续扩大规模。
-
----
-
-## 28. CPU/GPU 环境验收清单
-
-### 本地 CPU
-
-```bash
-python --version
-mlipflow --version
-python -m pytest
-python -c 'import ase; print(ase.__version__)'
-```
-
-### 本地 GPU（如果有）
-
-```bash
-nvidia-smi
-python -c 'import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NO CUDA GPU")'
-```
-
-### 集群 CPU 计算节点
-
-```bash
-hostname
-lscpu | head
-python --version
-mlipflow --version
-```
-
-### 集群 GPU 计算节点
-
-```bash
-hostname
-nvidia-smi
-printf '%s\n' "$CUDA_VISIBLE_DEVICES"
-python -c 'import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NO CUDA GPU")'
-```
-
-### 集群外部程序
-
-```bash
-which mpirun || true
-which sbatch || true
-which srun || true
-which lmp || true
-which vasp_std || true
-```
-
----
-
-## 29. 科学任务开始前必须记录的版本
-
-每次正式运行至少保存：
-
-```text
-MLIPFlow git commit
-project.yaml SHA-256
-plugin implementation SHA-256
-Python version
-framework version
-PyTorch/TensorFlow version
-CPU model or GPU model
-NVIDIA driver
-CUDA runtime（GPU 时）
-MPI implementation/version
-LAMMPS build/version（涉及 LAMMPS 时）
-VASP version（涉及 DFT 时）
-POTCAR identities + SHA-256（涉及 VASP 时）
-LASP version（涉及 LASP 时）
-model SHA-256
-dataset/input SHA-256
-seed
-precision
-scheduler job ID
-SLURM resources
-```
-
-这样本地与集群结果才可比较。
-
----
-
-## 30. CPU 与 GPU 结果要先做科学一致性检查
-
-“GPU 跑得起来”不等于“GPU 的科学结果正确”。至少比较一个小样本：
-
-```text
-同一个结构
-同一个模型文件
-同一种 dtype/precision
-CPU energy/forces
-GPU energy/forces
-允许误差阈值
-```
-
-对 MACE-LAMMPS/DeepMD-LAMMPS 还应比较：
-
-```text
-框架原生 inference
-vs
-LAMMPS inference
-```
-
-确认单位、元素映射和邻居设置无误后才进入长 MD。
-
----
-
-## 31. MLIPFlow 审批语义
+## 6. CLI 安全语义
 
 严格只读：
 
@@ -1357,7 +423,7 @@ route
 doctor
 ```
 
-可能写状态或调用后端：
+会写状态或执行动作：
 
 ```text
 init
@@ -1367,73 +433,1676 @@ retry
 stop
 ```
 
-除 `init` 外先：
+除 `init` 外，写操作遵循：
+
+```text
+dry-run
+-> 检查计划
+-> 复制 plan_digest
+-> approve 精确 digest
+```
+
+例如：
 
 ```bash
-mlipflow ... --dry-run
+mlipflow --project <PROJECT> run <NODE> --dry-run
+mlipflow --project <PROJECT> run <NODE> --approve 'sha256:<PLAN_DIGEST>'
+```
+
+如果项目状态、输入、脚本或计划发生变化，旧 digest 不应被继续使用。
+
+---
+
+## 7. `project.yaml`：用户真正需要配置什么
+
+最小结构：
+
+```yaml
+schema_version: 1
+project:
+  id: my-project
+  name: My MLIP project
+plugin_paths:
+  - plugins
+locations: {}
+backend_profiles: {}
+model_registry: model_registry.yaml
+state:
+  database_path: .mlipflow/state.sqlite3
+workflow:
+  nodes: []
+routing:
+  policies: {}
+fingerprints:
+  full_hash_max_bytes: 67108864
+safety:
+  auto_submit: false
+  auto_advance: false
+  require_approval_for_expensive: true
+  require_approval_for_destructive: true
+```
+
+### 7.1 workflow node
+
+Schema 支持：
+
+```yaml
+- id: node-name
+  uses: plugin-id@0
+  needs: []
+  mode: execute
+  backend: local
+  inputs: {}
+  parameters: {}
+  resources: {}
+```
+
+可用 backend 名称：
+
+```text
+local
+slurm
+ssh-slurm
+```
+
+但 **schema 允许某个 backend，不代表科学 Adapter 当前允许它**。
+
+当前内置科学 Adapter 都应使用：
+
+```yaml
+backend: local
+```
+
+### 7.2 不要依赖隐式 project 搜索
+
+CLI 不会自动向父目录寻找 `project.yaml`。
+
+显式使用：
+
+```bash
+mlipflow --project /path/to/project status
+```
+
+或：
+
+```bash
+mlipflow --project /path/to/project/project.yaml status
+```
+
+---
+
+## 8. 科学环境一：SQS / 高熵结构生成
+
+插件：
+
+```text
+high-entropy-structure
+```
+
+需要：
+
+```text
+ASE
+icet
+可选 pymatgen
+```
+
+创建环境：
+
+```bash
+conda create -n mlipflow-sqs python=3.11 -y
+conda activate mlipflow-sqs
+python -m pip install --upgrade pip
+python -m pip install ase icet pymatgen
+```
+
+检查：
+
+```bash
+python -c 'import ase, icet; print(ase.__version__); print(icet.__version__)'
+```
+
+仓库已有 bounded smoke 记录：
+
+```text
+Python 3.11.14
+ASE 3.28.0
+icet 3.2
+CPU
+seed = 23
+```
+
+这是已运行过的集成证据，不是版本强制 pin。
+
+### 8.1 SQS execute node 示例
+
+下面字段来自当前 Adapter contract：
+
+```yaml
+- id: structure
+  uses: high-entropy-structure@0
+  mode: execute
+  backend: local
+  inputs:
+    prototype_structure: inputs/prototype.cif
+    composition_manifest: inputs/composition.json
+  parameters:
+    interpreter_argv:
+      - /absolute/path/to/mlipflow-sqs/bin/python
+    seed: 17
+    max_candidates: 2
+  resources:
+    cpus: 1
+```
+
+`composition_manifest` 必须显式描述 sublattice、species/count、cluster cutoff、supercell 等科学设置；不要从 README 猜这些值。
+
+---
+
+## 9. 科学环境二：DIRECT / LASP / SSW
+
+插件：
+
+```text
+pes-sampling
+```
+
+操作：
+
+```text
+direct-select
+lasp-ssw-execute
+lasp-ssw-normalize-replay
+```
+
+### 9.1 DIRECT
+
+按使用的 reviewed DIRECT 源，需要的 Python 包可能包括：
+
+```text
+pymatgen
+maml
+ase
+plotly
+```
+
+建议单独环境：
+
+```bash
+conda create -n mlipflow-direct python=3.11 -y
+conda activate mlipflow-direct
+python -m pip install pymatgen maml ase plotly
+```
+
+DIRECT 历史源没有可消费的 seed 参数；Adapter 会把 seed 限制写进 provenance，而不会伪造历史随机性。
+
+### 9.2 LASP / SSW
+
+MLIPFlow **不分发 LASP，也不实现 SSW 数值内核**。
+
+用户需要准备：
+
+```text
+LASP executable
+input.arc
+lasp.in
+必要 auxiliary files
+LASP version identity
+可选 mpirun/mpiexec
+```
+
+当前 LASP execute 是 `local` wrapper contract，所以在集群上应先获得计算节点 allocation，再运行该节点。
+
+示意配置：
+
+```yaml
+- id: sampling
+  uses: pes-sampling@0
+  mode: execute
+  backend: local
+  inputs:
+    lasp_executable: /absolute/site/path/to/lasp
+    input_structure: inputs/input.arc
+    lasp_input: inputs/lasp.in
+  parameters:
+    operation: lasp-ssw-execute
+    lasp_version: '<ACTUAL_LASP_VERSION>'
+    seed_status: HISTORICAL_PARAMETER_UNKNOWN
+    acknowledge_uncontrolled_seed: true
+    preserve_historical_order: true
+    mpi_processes: 8
+  resources:
+    python_executable: /absolute/path/to/python
+    mpi_launcher: /absolute/path/to/mpirun
+```
+
+如果不用 MPI，不要填写虚构的 `mpi_launcher`。
+
+---
+
+## 10. 科学环境三：DFT labeling
+
+插件：
+
+```text
+dft-labeling
+```
+
+当前插件不是一个 VASP driver。它是：
+
+```text
+MLIPFlow plan/approval
+-> 用户自备 Python labeling wrapper
+-> wrapper 生成 DFT 输入并运行/读取 DFT
+-> wrapper 写标准 result manifest
+-> MLIPFlow check
+-> MLIPFlow collect
+```
+
+### 10.1 Python 环境
+
+按 wrapper 需要安装：
+
+```text
+pymatgen
+ASE
+dpdata
+其他解析依赖
+```
+
+示例：
+
+```bash
+conda create -n mlipflow-dft python=3.11 -y
+conda activate mlipflow-dft
+python -m pip install pymatgen ase dpdata
+```
+
+VASP 本体不通过这个 Conda 环境安装。
+
+### 10.2 DFT node 示例
+
+```yaml
+- id: labeling
+  uses: dft-labeling@0
+  mode: execute
+  backend: local
+  inputs:
+    structures_manifest: inputs/selected-structures.json
+    labeling_config: configs/vasp-labeling.json
+    pseudopotential_reference: configs/pseudopotential-metadata.json
+  parameters:
+    operation: label
+    label_script: wrappers/run_vasp_label.py
+    interpreter_argv:
+      - /absolute/path/to/mlipflow-dft/bin/python
+    engine: vasp
+    completion_policy:
+      require_ionic_convergence: false
+    units:
+      energy: eV
+      length: angstrom
+      force: eV/angstrom
+      stress: GPa-voigt-xx-yy-zz-yz-xz-xy
+```
+
+如果任务是结构优化，把离子收敛要求按照你的 wrapper contract 明确打开。
+
+### 10.3 `label_script` 不能做什么
+
+当前 Adapter 明确要求：
+
+- 不要在 `label_script` 中再次提交 `sbatch`；
+- 不要把 scheduler `COMPLETED` 直接视为科学 `OK`；
+- 不要只 grep OUTCAR 某一句文字就宣称收敛；
+- 不要把 POTCAR 或私钥写入仓库。
+
+在 Slurm 计算节点中，wrapper 可以调用已经分配资源内允许的 MPI/VASP 启动方式，但不能再嵌套提交新的 batch job。
+
+---
+
+## 11. 科学环境四：MLIP training
+
+插件：
+
+```text
+mlip-training
+```
+
+当前声明框架：
+
+```text
+DeepMD
+M3GNet
+CHGNet
+MACE
+```
+
+关键事实：**MLIPFlow 不直接 import 或重写这些训练框架。**
+
+它调用用户自备 wrapper：
+
+```text
+Python executable
++ wrapper script
++ framework config
++ labeled data
++ requested output
++ seed/device/precision/fingerprints
+```
+
+wrapper 最终必须写标准 `training-result.json`。
+
+### 11.1 training node 示例
+
+```yaml
+- id: train-mace
+  uses: mlip-training@0
+  mode: execute
+  backend: local
+  inputs:
+    executable: /absolute/path/to/mlipflow-mace-gpu/bin/python
+    script: wrappers/mace_train.py
+    config: configs/mace.yaml
+    data: data/labeled
+    output: model.model
+    result_manifest: training-result.json
+  parameters:
+    framework: mace
+    operation: train
+    seed: 20260810
+    device: cuda
+    precision: float64
+    dataset_fingerprint: 'sha256:<DATASET_MANIFEST_HASH>'
+    config_fingerprint: 'sha256:<CONFIG_HASH>'
+  resources:
+    cpus: 8
+    gpus: 1
+```
+
+对于 CPU，把 wrapper 选择的 device 改成 CPU，并使用 CPU framework 环境。
+
+DeepMD 当前只暴露 fresh `train`；当前仓库没有验证完整 DeepMD finetune/freeze/test 生产入口。
+
+M3GNet、CHGNet、MACE 支持 wrapper contract 层面的 `train`/`finetune`，但 framework-specific 参数仍归你的 config/wrapper 管理。
+
+---
+
+## 12. MACE 环境：CPU 和 NVIDIA GPU
+
+MACE 官方推荐先安装适合系统的 PyTorch，再安装 `mace-torch`。
+
+### 12.1 CPU
+
+```bash
+conda create -n mlipflow-mace-cpu python=3.11 -y
+conda activate mlipflow-mace-cpu
+python -m pip install --upgrade pip
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+python -m pip install mace-torch ase
+```
+
+检查：
+
+```bash
+python -c 'import torch; print(torch.__version__); print(torch.cuda.is_available())'
+```
+
+CPU 环境中 `torch.cuda.is_available()` 应为 `False`。
+
+### 12.2 GPU
+
+先在 **真正的 GPU 机器或计算节点**：
+
+```bash
+nvidia-smi
+```
+
+然后使用 PyTorch 官方安装选择器，根据：
+
+```text
+OS
+package manager
+Python
+CUDA compute platform
+```
+
+生成适合该站点的安装命令。
+
+不要把 README 中某个 CUDA 小版本当成永久要求。
+
+```bash
+conda create -n mlipflow-mace-gpu python=3.11 -y
+conda activate mlipflow-mace-gpu
+python -m pip install --upgrade pip
+python -m pip install <PYTORCH_COMMAND_FROM_OFFICIAL_SELECTOR>
+python -m pip install mace-torch ase
+```
+
+验证：
+
+```bash
+python -c 'import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NO CUDA GPU")'
+```
+
+只有以下条件全部成立才算 GPU Python 环境接通：
+
+```text
+nvidia-smi 正常
+PyTorch import 正常
+torch.cuda.is_available() == True
+GPU 名称正确
+真实模型单点 inference 成功
+```
+
+---
+
+## 13. DeepMD 环境：CPU 和 NVIDIA GPU
+
+DeePMD 建议和 MACE 分开环境。
+
+当前 DeePMD stable 文档的 Python interface 要求 Python 3.10+，因此推荐 Python 3.11。
+
+### 13.1 CPU
+
+```bash
+conda create -n mlipflow-deepmd-cpu python=3.11 -y
+conda activate mlipflow-deepmd-cpu
+python -m pip install --upgrade pip
+python -m pip install 'deepmd-kit[cpu]'
+```
+
+验证：
+
+```bash
+dp -h
+python -c 'import deepmd; print(deepmd.__version__)'
+```
+
+### 13.2 GPU
+
+当前 stable 文档提供 CUDA 12 预编译路线：
+
+```bash
+conda create -n mlipflow-deepmd-gpu python=3.11 -y
+conda activate mlipflow-deepmd-gpu
+python -m pip install --upgrade pip
+python -m pip install 'deepmd-kit[gpu,cu12]'
+```
+
+这不是说所有集群都必须 CUDA 12。你的集群如果使用其他受支持组合，应按该 DeePMD release 的官方安装矩阵选择。
+
+如果需要 DeePMD 自带/匹配的 LAMMPS 集成，可按照对应版本官方文档选择 `lmp` extra；不要安装一个 DeePMD 后再随意混用另一个来源的 LAMMPS executable。
+
+---
+
+## 14. CHGNet / M3GNet 环境
+
+当前 MLIPFlow 对二者提供的是 **wrapper contract**，不固定它们的完整 Python dependency graph。
+
+建议：
+
+```text
+每个框架单独环境
+固定 Python/framework/backend 版本
+把环境版本写进 result manifest
+不要用“latest”作为科学 provenance
+```
+
+需要记录：
+
+```text
+Python version
+framework version
+backend version
+CPU/GPU device
+CUDA runtime（GPU 时）
+precision
+seed
+dataset fingerprint
+config fingerprint
+model fingerprint
+```
+
+如果复现历史 M3GNet，不要在没有验证的情况下静默替换成 MatGL 并仍标成同一模型环境。
+
+---
+
+## 15. benchmark / transport / screening / voltage 分别需要什么
+
+### 15.1 `mlip-benchmark`
+
+当前 normalize/execute 路线可以从显式 reference/prediction pairs 或历史证据重新计算/归一化：
+
+```text
+MAE
+RMSE
+Pearson
+```
+
+它不自动加载 MLIP 做 prediction；如果要真实模型预测，使用用户 prediction wrapper。
+
+### 15.2 `ionic-transport`
+
+两类操作：
+
+```text
+analyze-existing
+md-smoke-and-analyze
+```
+
+推荐生产路线是：
+
+```text
+外部可靠 MD（如经过验证的 LAMMPS）
+-> trajectory/MSD
+-> ionic-transport analyze-existing
+```
+
+`md-smoke-and-analyze` 有严格时长上限，只用于 integration smoke，不是生产输运计算。
+
+该 smoke 的设备字段接受：
+
+```text
+cpu
+cuda
+mps
+```
+
+Linux NVIDIA GPU 使用 `cuda`。
+
+### 15.3 `composition-screening`
+
+对已有候选指标做确定性排序/top-k。它不应自己启动 DFT 或训练。
+
+### 15.4 `electrochemical-voltage`
+
+从显式 total-energy sequence 计算相邻组分电压。输入能量来源必须有明确的 completion status 和 provenance。
+
+---
+
+## 16. 连接集群：先收集站点参数
+
+不要猜 partition、GPU 资源语法、account 或 module 名。
+
+### 16.1 需要收集的字段
+
+| 变量 | 从哪里找 | 写到哪里 |
+|---|---|---|
+| `<LOGIN_HOST>` | 集群用户文档 | `~/.ssh/config` |
+| `<USERNAME>` | 集群账号 | `~/.ssh/config` |
+| `<SSH_ALIAS>` | 用户自己定义 | `~/.ssh/config`；未来/实验 `backend_profiles.ssh_profile` |
+| `<CPU_PARTITION>` | `sinfo` / 管理员文档 | 用户自己的 `sbatch` |
+| `<GPU_PARTITION>` | `sinfo` / 管理员文档 | 用户自己的 `sbatch` |
+| `<ACCOUNT>` | 管理员文档 / `sacctmgr`（若开放） | 用户自己的 `sbatch` |
+| `<QOS>` | 管理员文档 / `sacctmgr`（若开放） | 用户自己的 `sbatch` |
+| `<GPU_RESOURCE_DIRECTIVE>` | Slurm/site 文档 | 用户自己的 `sbatch` |
+| `<CUDA_MODULE>` | `module avail` / `module spider` | site shell/wrapper；不是 README |
+| `<MPI_MODULE>` | `module avail` / `module spider` | site shell/wrapper |
+| `<VASP_MODULE>` | 机构 VASP 文档 | site shell/wrapper |
+| `<LAMMPS_MODULE>` | 集群软件目录 | site shell/wrapper |
+| `<PROJECT_ROOT>` | 集群 storage 文档 | 用户 project |
+| `<SCRATCH_ROOT>` | 集群 storage 文档 | 用户运行目录/外部程序 |
+
+### 16.2 登录节点查询
+
+```bash
+hostname
+uname -a
+which sbatch
+which srun
+which squeue
+which sacct
+sinfo
+sinfo -o '%P %a %l %D %G'
+```
+
+可用时：
+
+```bash
+scontrol show partition <PARTITION>
+module avail
+module spider cuda
+module spider mpi
+module spider vasp
+module spider lammps
+```
+
+如果 `sacctmgr` 对普通用户开放，可查询用户关联；否则直接看站点文档：
+
+```bash
+sacctmgr show assoc where user="$USER" format=User,Account,Partition,QOS
+```
+
+任何命令不可用时，以集群管理员文档为准。
+
+---
+
+## 17. SSH 配置
+
+MLIPFlow 不保存密码、私钥文本或 token。
+
+### 17.1 生成 HPC 登录 key
+
+在你的本地电脑：
+
+```bash
+ssh-keygen -t ed25519 -a 100 -f ~/.ssh/id_ed25519_hpc -C 'mlipflow-hpc'
+chmod 600 ~/.ssh/id_ed25519_hpc
+```
+
+把 **公钥** 按集群机构规定安装到远端账号。
+
+不要把私钥放进项目目录或 GitHub。
+
+### 17.2 `~/.ssh/config`
+
+```sshconfig
+Host <SSH_ALIAS>
+    HostName <LOGIN_HOST>
+    User <USERNAME>
+    IdentityFile ~/.ssh/id_ed25519_hpc
+    IdentitiesOnly yes
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+```
+
+需要跳板机时：
+
+```sshconfig
+Host <SSH_ALIAS>
+    HostName <INTERNAL_LOGIN_HOST>
+    User <USERNAME>
+    IdentityFile ~/.ssh/id_ed25519_hpc
+    ProxyJump <BASTION_ALIAS>
+```
+
+第一次连接时应按机构文档核对 host key fingerprint，不要盲目关闭 host key verification。
+
+测试：
+
+```bash
+ssh <SSH_ALIAS> 'hostname'
 ```
 
 然后：
 
 ```bash
-mlipflow ... --approve 'sha256:...'
+ssh <SSH_ALIAS> 'which sbatch && which srun && which squeue'
 ```
 
-调度器显示 `COMPLETED` 不等于科学结果 `OK`；还必须通过插件的 `check`/`collect`。
+### 17.3 MLIPFlow 中只引用 alias
+
+未来/实验性的 remote profile 形式：
+
+```yaml
+backend_profiles:
+  cluster-a:
+    ssh_profile: <SSH_ALIAS>
+```
+
+不要写：
+
+```text
+password
+private key content
+token
+IdentityFile
+```
+
+当前科学 Adapter 不应直接切换到 `ssh-slurm`；这个 profile 主要用于核心 backend 能力和后续 HPC 集成。
 
 ---
 
-## 32. 常见问题
+## 18. 把仓库和环境放到集群哪里
 
-### 登录节点 `nvidia-smi` 不存在
+代码和环境必须放在 **登录节点和计算节点都能访问** 的文件系统。
 
-很多集群登录节点没有 GPU，这是正常的。先申请 GPU allocation，再在计算节点运行。
-
-### `torch.cuda.is_available()` 为 False
-
-依次检查：
+常见布局示意：
 
 ```text
-当前是否真的在 GPU 计算节点
-Slurm 是否给了 GPU
-nvidia-smi 是否正常
-CUDA_VISIBLE_DEVICES 是否存在
-是否安装了 CUDA 版 PyTorch
-PyTorch wheel 与驱动是否兼容
-是否激活了错误 Conda 环境
+$HOME/src/mlipflow                  # 代码
+$PROJECT/mlipflow/envs/             # 大 Python 环境（如果站点推荐）
+$PROJECT/mlipflow/models/           # 模型
+$PROJECT/mlipflow/projects/         # project.yaml / configs
+$SCRATCH/mlipflow-runs/             # 大型临时科学输出
+```
+
+实际 `$PROJECT/$SCRATCH` 规则必须以站点文档为准。
+
+私有仓库如果允许集群直接访问 GitHub，按机构安全政策配置 GitHub 认证；不要复用或复制 HPC 登录私钥作为 GitHub 私钥。
+
+如果集群不允许外网访问，用站点批准的 `rsync/scp` 方法同步代码和小配置。
+
+---
+
+## 19. 集群控制环境
+
+在集群共享文件系统中建立控制环境：
+
+```bash
+conda create -n mlipflow-control python=3.11 -y
+conda activate mlipflow-control
+cd <MLIPFLOW_REPOSITORY>
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+检查：
+
+```bash
+mlipflow --version
+mlipflow --project examples/high_entropy_sulfide doctor
+```
+
+登录节点只做：
+
+```text
+编辑配置
+查看状态
+生成 dry-run plan
+提交 batch
+读取小日志
+```
+
+不要在登录节点运行长训练、MD、VASP 或大 SQS。
+
+---
+
+## 20. 集群 CPU：先用交互 allocation 验证
+
+先查询真实 CPU partition。
+
+典型请求形式：
+
+```bash
+salloc --partition=<CPU_PARTITION> --nodes=1 --ntasks=1 --cpus-per-task=4 --mem=8G --time=00:30:00
+```
+
+如果站点要求 account/QoS，加入对应字段。
+
+进入计算节点：
+
+```bash
+srun --pty bash
+```
+
+验证：
+
+```bash
+hostname
+lscpu | head
+python --version
+mlipflow --version
+```
+
+激活对应科学环境做 tiny smoke，例如 SQS：
+
+```bash
+conda activate mlipflow-sqs
+python -c 'import ase, icet; print(ase.__version__, icet.__version__)'
+```
+
+成功后再运行一个有界 scientific node。
+
+---
+
+## 21. 集群 GPU：先识别 Slurm 的 GPU 请求方式
+
+Slurm 可以使用多种 GPU 请求方式，例如：
+
+```text
+--gres=gpu:1
+--gres=gpu:<TYPE>:1
+--gpus=1
+--gpus-per-node=1
+```
+
+并不是每个站点都支持所有写法。特别是 `--gpus*` 依赖站点的 Slurm `select/cons_tres` 配置。
+
+先看：
+
+```bash
+sinfo -o '%P %G'
+```
+
+再看集群文档确认正式 GPU directive。
+
+### 21.1 申请 GPU 交互节点
+
+常见示意：
+
+```bash
+salloc --partition=<GPU_PARTITION> --nodes=1 --ntasks=1 --cpus-per-task=4 --gres=gpu:1 --mem=16G --time=00:30:00
+```
+
+如果你的站点使用其他 GPU directive，替换 `--gres=gpu:1`。
+
+然后：
+
+```bash
+srun --pty bash
+```
+
+验证：
+
+```bash
+hostname
+nvidia-smi
+printf '%s\n' "$CUDA_VISIBLE_DEVICES"
+```
+
+Slurm GPU GRES/TRES 配置通常会为 job step 设置 `CUDA_VISIBLE_DEVICES`；不要在自己的程序里无条件硬编码物理 GPU `0` 并绕开 scheduler 分配。
+
+### 21.2 Python GPU 验证
+
+激活实际 GPU 环境：
+
+```bash
+conda activate mlipflow-mace-gpu
+```
+
+检查：
+
+```bash
+python -c 'import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NO CUDA GPU")'
+```
+
+通过后顺序应是：
+
+```text
+tensor/device test
+-> 单结构 model inference
+-> CPU/GPU energy-force 对照
+-> tiny MD
+-> 再做训练或长 MD
+```
+
+---
+
+## 22. 一个容易忽略的限制：MLIPFlow 会清洗执行环境
+
+`LocalBackend` 不会把父 shell 的所有环境变量原样传给 scientific wrapper。
+
+当前默认允许的核心变量包括：
+
+```text
+HOME
+LANG
+PATH
+PYTHONHOME
+PYTHONPATH
+TMP/TEMP/TMPDIR
+VIRTUAL_ENV
+CONDA_PREFIX
+CONDA_DEFAULT_ENV
+```
+
+以及前缀：
+
+```text
+LC_
+SLURM_
+CUDA_
+ROCR_
+OMP_
+MKL_
+```
+
+因此不要假设：
+
+```bash
+module load <SOME_SOFTWARE>
+```
+
+之后 module 设置的任意 `LD_LIBRARY_PATH`、自定义变量等一定会进入 MLIPFlow 启动的 wrapper。
+
+更稳妥的做法：
+
+1. 在 `project.yaml` 中为科学环境使用 **明确的 Python executable**；
+2. 对 VASP/LAMMPS/LASP 使用明确的 executable path；
+3. 尽量使用站点提供、RPATH 已正确设置的 build；
+4. 如果软件必须依赖额外动态库/环境，由用户自备的受审 Python wrapper 显式建立该软件的运行环境；
+5. 不要通过把密码/token 塞入环境变量来绕过安全边界。
+
+这也是为什么“在 shell 中 `module load` 成功”不能单独证明 MLIPFlow scientific node 一定成功。
+
+---
+
+## 23. 当前版本怎样在 Slurm 上真正跑科学节点
+
+当前最通用的方式是：
+
+```text
+SLURM 负责分配 CPU/GPU
+-> batch script 启动一次 MLIPFlow CLI
+-> workflow node 仍写 backend: local
+-> MLIPFlow 在已经分配的计算节点里运行 Adapter argv
+-> Adapter check/collect
+-> MLIPFlow 写状态和 provenance
+```
+
+这不是绕过 MLIPFlow，因为科学命令仍然由 MLIPFlow plan/approval/state/check/collect 管理；`sbatch` 只是外层资源分配器。
+
+### 23.1 先在登录节点生成计划
+
+```bash
+mlipflow --project <PROJECT_ROOT> run <NODE_ID> --dry-run
+```
+
+检查：
+
+```text
+输入
+脚本
+模型
+backend=local
+resources
+输出目录
+plan_digest
+```
+
+复制准确 digest。
+
+### 23.2 CPU batch wrapper
+
+保存为用户自己的 `run_mlipflow_cpu.sbatch`：
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=mlipflow-cpu
+#SBATCH --partition=<CPU_PARTITION>
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=8G
+#SBATCH --time=00:30:00
+#SBATCH --output=slurm-%j.out
+#SBATCH --error=slurm-%j.err
+
+set -euo pipefail
+source <CONDA_ROOT>/etc/profile.d/conda.sh
+conda activate mlipflow-control
+cd <PROJECT_ROOT>
+mlipflow --project <PROJECT_ROOT> run <NODE_ID> --approve 'sha256:<PLAN_DIGEST>'
+```
+
+如果集群要求 account/QoS，在用户自己的脚本中添加：
+
+```text
+#SBATCH --account=<ACCOUNT>
+#SBATCH --qos=<QOS>
+```
+
+### 23.3 GPU batch wrapper
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=mlipflow-gpu
+#SBATCH --partition=<GPU_PARTITION>
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --gres=gpu:1
+#SBATCH --mem=32G
+#SBATCH --time=02:00:00
+#SBATCH --output=slurm-%j.out
+#SBATCH --error=slurm-%j.err
+
+set -euo pipefail
+source <CONDA_ROOT>/etc/profile.d/conda.sh
+conda activate mlipflow-control
+nvidia-smi
+printf '%s\n' "$CUDA_VISIBLE_DEVICES"
+cd <PROJECT_ROOT>
+mlipflow --project <PROJECT_ROOT> run <NODE_ID> --approve 'sha256:<PLAN_DIGEST>'
+```
+
+把 `#SBATCH --gres=gpu:1` 替换成你的站点正式 GPU 请求方式。
+
+### 23.4 提交与检查
+
+```bash
+sbatch run_mlipflow_cpu.sbatch
+```
+
+或：
+
+```bash
+sbatch run_mlipflow_gpu.sbatch
+```
+
+查看 scheduler：
+
+```bash
+squeue -u "$USER"
+```
+
+结束后：
+
+```bash
+sacct -j <JOB_ID> --format=JobID,State,ExitCode,Elapsed,MaxRSS
+```
+
+然后读取 **MLIPFlow 自己的状态**：
+
+```bash
+mlipflow --project <PROJECT_ROOT> status <NODE_ID>
+mlipflow --project <PROJECT_ROOT> logs <NODE_ID>
+```
+
+只有 MLIPFlow plugin check/collect 返回 `OK` 才算科学节点成功。`sacct` 的 `COMPLETED` 不是科学完成判据。
+
+---
+
+## 24. VASP 配置
+
+MLIPFlow 不分发 VASP。
+
+用户需要合法的：
+
+```text
+VASP license
+VASP executable
+MPI runtime
+POTCAR library
+```
+
+### 24.1 找到 VASP
+
+站点可能使用 module：
+
+```bash
+module spider vasp
+module load <VASP_MODULE>
+which vasp_std
+```
+
+也可能提供绝对路径。
+
+记录真实：
+
+```text
+VASP version
+executable path/module identity
+MPI implementation
+compiler/toolchain（能获取时）
+```
+
+### 24.2 VASP 资源不要从 README 抄生产值
+
+CPU/MPI batch allocation 通常需要：
+
+```text
+nodes
+ntasks
+cpus-per-task
+memory
+walltime
+partition
+account/qos
+```
+
+`NCORE/KPAR` 等 VASP 参数必须做站点和体系 benchmark。
+
+---
+
+## 25. POTCAR / 赝势：怎样配置才可复现
+
+MLIPFlow **不会下载、生成或提交 POTCAR**。
+
+### 25.1 pymatgen 目录
+
+如果 wrapper 使用 pymatgen，可把机构合法获得的 VASP pseudopotential 整理成 pymatgen 能读取的目录。
+
+当前 pymatgen 官方方式：
+
+```bash
+pmg config -p /path/to/original/potcar_PBE /path/to/pmg_potcars
+pmg config --add PMG_VASP_PSP_DIR /path/to/pmg_potcars
+```
+
+不要把 POTCAR 内容提交仓库。
+
+### 25.2 元素映射必须显式
+
+例如 Li-M-P-S 项目应维护类似元数据：
+
+```yaml
+functional: PBE
+species:
+  Li: <ACTUAL_LI_POTCAR_LABEL>
+  Mn: <ACTUAL_MN_POTCAR_LABEL>
+  Fe: <ACTUAL_FE_POTCAR_LABEL>
+  Ni: <ACTUAL_NI_POTCAR_LABEL>
+  Cu: <ACTUAL_CU_POTCAR_LABEL>
+  Zn: <ACTUAL_ZN_POTCAR_LABEL>
+  P: <ACTUAL_P_POTCAR_LABEL>
+  S: <ACTUAL_S_POTCAR_LABEL>
+```
+
+不要因为某个例子使用 `Fe_pv` 就假定所有项目都应该用 `Fe_pv`。
+
+### 25.3 记录 metadata，不提交势文件
+
+至少保存：
+
+```text
+element
+POTCAR label
+functional
+release/header identity
+SHA-256
+```
+
+本地计算 hash：
+
+```bash
+sha256sum /licensed/path/to/POTCAR
+```
+
+如果是多个元素的独立源文件，分别记录每个源文件 identity/hash，再记录最终拼接 POTCAR 的 hash。
+
+### 25.4 `pseudopotential_reference`
+
+`dft-labeling` 可以接受一个 **用户管理的 reference**；这个 reference 应描述势函数身份，而不是把 POTCAR binary 放进 MLIPFlow 仓库。
+
+---
+
+## 26. DFT wrapper 必须输出什么
+
+wrapper 至少应该完成：
+
+```text
+读取 structures manifest
+生成 POSCAR/INCAR/KPOINTS
+按显式映射组装 POTCAR
+运行 VASP
+检查电子收敛
+需要时检查离子收敛
+检查输出是否截断
+解析 energy/force/stress
+统一单位和 stress convention
+输出 dataset
+输出 dft-labeling-result.json
+计算 artifact SHA-256
+```
+
+当前 Adapter 要求 result 中至少能表达：
+
+```json
+{
+  "schema_version": 1,
+  "plugin_id": "dft-labeling",
+  "status": "OK",
+  "engine": "vasp",
+  "completion": {
+    "scheduler_success": true,
+    "electronic_converged": true,
+    "ionic_convergence_required": false,
+    "ionic_converged": null,
+    "truncated": false
+  },
+  "units": {
+    "energy": "eV",
+    "length": "angstrom",
+    "force": "eV/angstrom",
+    "stress": "<EXPLICIT_CONVENTION>"
+  },
+  "source_structure_count": 1,
+  "label_count": 1,
+  "artifacts": []
+}
+```
+
+真正结果还应包含批准输入对应的 fingerprints 和实际 dataset artifact。
+
+---
+
+## 27. LAMMPS：为什么 README 不固定一个通用版本
+
+**MLIPFlow 本身不依赖某个固定 LAMMPS 版本。**
+
+LAMMPS 版本由你使用的 MLIP interface 决定。
+
+错误做法：
+
+```text
+“README 写 LAMMPS 202X，所以 DeepMD/MACE 都统一装这个版本”
+```
+
+正确做法：
+
+```text
+先决定 MLIP interface
+-> 查该 framework release 的官方 LAMMPS 兼容方式
+-> 建一套固定 build
+-> 在目标 CPU/GPU 节点 smoke
+-> 记录 exact build/version
+```
+
+### 27.1 任何 LAMMPS build 先做这些检查
+
+```bash
+which lmp
+lmp -h | head -n 40
+lmp -h | grep -Ei 'deepmd|mace|mliap|kokkos'
+```
+
+`lmp -h` 可以确认当前 executable 编译进了哪些 style/package。
+
+生产 provenance 至少记录：
+
+```text
+LAMMPS version/tag/commit
+executable path
+compiler
+MPI
+CPU/GPU build
+Kokkos/GPU package 状态
+MLIP interface
+framework version
+model SHA-256
+```
+
+---
+
+## 28. DeepMD + LAMMPS
+
+DeePMD 官方目前支持两种主要集成：
+
+```text
+built-in mode
+plugin mode
+```
+
+### 28.1 最简单的原则
+
+如果安装 DeePMD 时同时安装了它匹配的 LAMMPS integration：
+
+```text
+尽量使用同一个 DeePMD 环境提供的 lmp
+```
+
+不要同时 `module load` 一个不相关的 LAMMPS 后仍假设 `pair_style deepmd` ABI 一定匹配。
+
+### 28.2 plugin mode
+
+官方文档支持加载：
+
+```text
+libdeepmd_lmp.so
+```
+
+较新的 LAMMPS plugin 系统也可以通过 `LAMMPS_PLUGIN_PATH` 配置。
+
+先验证：
+
+```bash
+lmp -h | grep -i deepmd
+```
+
+然后做一个 0/1/2-step 极小模型 smoke，再做正式 MD。
+
+### 28.3 units
+
+DeePMD 文档说明常见 `metal` units 与其内部 Å/eV/eV/Å 自然一致；其他受支持 units 可由 LAMMPS 转换，但必须记录实际 unit style。
+
+---
+
+## 29. MACE + LAMMPS
+
+MACE 当前有不止一种 LAMMPS interface，不能混成一套说明。
+
+### 29.1 原始 MACE LAMMPS interface
+
+官方文档提供专用 MACE/LAMMPS build，支持 CPU/GPU；GPU build 通常使用 Kokkos/CUDA。
+
+模型需要先导出为对应 LAMMPS model。
+
+在真正 MD 前必须对照：
+
+```text
+同一结构
+MACE ASE calculator
+vs
+MACE LAMMPS
+```
+
+比较 energy/forces。
+
+### 29.2 ML-IAP interface
+
+MACE 的 ML-IAP 路线是另一套接口。当前官方文档要求特定 LAMMPS build 选项，例如：
+
+```text
+PKG_ML-IAP
+MLIAP_ENABLE_PYTHON
+PKG_PYTHON
+Kokkos GPU 配置
+```
+
+当前文档还把该接口标为需要谨慎验证的较新路线。
+
+所以 README 不会把它和原始 `pair_style mace` 视为同一个 build。
+
+### 29.3 GPU 架构
+
+MACE-LAMMPS GPU build 的 Kokkos architecture 必须匹配目标 GPU 架构。不要在未知 GPU 架构上复制另一台机器的 CMake flags。
+
+---
+
+## 30. LAMMPS scientific smoke 顺序
+
+无论 DeepMD 还是 MACE，都按：
+
+```text
+1. lmp -h 正常
+2. 目标 pair style/interface 可见
+3. 模型文件可加载
+4. 元素 type map 明确
+5. unit style 明确
+6. 单结构 0/1/2 step 成功
+7. 原生 framework 与 LAMMPS energy/force 对照
+8. CPU/GPU 对照（需要 GPU 时）
+9. tiny NVE/NVT
+10. 再做长 MD
+```
+
+不要从“LAMMPS 能启动”直接跳到生产长 MD。
+
+---
+
+## 31. LASP 集群运行
+
+LASP 由用户所在机构提供。
+
+集群运行前确认：
+
+```bash
+which <LASP_EXECUTABLE_NAME>
+```
+
+记录：
+
+```text
+LASP version
+executable SHA/path identity
+MPI implementation
+input.arc hash
+lasp.in hash
+auxiliary file hashes
+```
+
+`pes-sampling` 的 LASP wrapper 可以在已经分配的 Slurm 计算节点中运行，并使用显式 `mpirun/mpiexec`；它自己不提交 scheduler job。
+
+---
+
+## 32. `doctor` 能检查什么，不能检查什么
+
+```bash
+mlipflow --project <PROJECT> doctor
+```
+
+它适合检查：
+
+```text
+project 是否能加载
+plugin 是否可发现
+声明的必需 Python 包
+部分外部 executable
+state database
+选择 slurm/ssh-slurm 时基础 scheduler/ssh executable
+```
+
+但 `doctor` 不能替代：
+
+```text
+GPU driver/runtime 验证
+VASP license/module 验证
+POTCAR identity 验证
+LAMMPS pair style ABI 验证
+模型 inference 验证
+MPI 并行 smoke
+科学参数收敛测试
+```
+
+站点软件名称常常是逻辑名或 module 提供的命令，因此必须继续执行本文每个程序的显式 preflight。
+
+---
+
+## 33. 当前 first-class `slurm` / `ssh-slurm` 的边界
+
+Schema 已允许：
+
+```yaml
+backend: slurm
+```
+
+和：
+
+```yaml
+backend: ssh-slurm
+```
+
+核心也已经有：
+
+```text
+sbatch
+squeue
+sacct
+scancel
+SSH alias
+remote scheduler query
+scp fetch primitive
+job-id parsing
+identity-bound completion context
+```
+
+但是当前 `run_node` 会对 Adapter-backed scientific node 的 scheduler execution 显式报错，原因是：
+
+```text
+scheduler completion path 尚未与 pinned scientific checker 完整结合
+```
+
+因此不要通过手工修改 plugin manifest 来绕过限制。
+
+真正 first-class HPC 闭环需要：
+
+```text
+local project
+-> controlled remote stage
+-> exact approved remote work dir
+-> sbatch
+-> persisted job ID
+-> squeue/sacct reconciliation
+-> terminal state
+-> allowlisted fetch
+-> hash verification
+-> pinned plugin scientific check
+-> collect
+-> final run manifest
+```
+
+这部分完成真实集群验收后，才应该把 README 的“当前 Slurm 外层包裹 local Adapter”升级成 MLIPFlow 原生 scheduler 使用方式。
+
+---
+
+## 34. CPU/GPU 科学一致性检查
+
+GPU 跑得起来不代表科学结果正确。
+
+至少选择小样本比较：
+
+```text
+same structure
+same model
+same units
+same element map
+same precision（尽可能）
+CPU energy/forces
+GPU energy/forces
+predefined tolerance
+```
+
+对于 LAMMPS 还要比较：
+
+```text
+framework native inference
+vs
+LAMMPS inference
+```
+
+只有通过后再扩大到长 MD/大训练。
+
+---
+
+## 35. 生产运行必须记录的 provenance
+
+至少保存：
+
+```text
+MLIPFlow git commit
+project.yaml SHA-256
+plugin id/version
+adapter/script SHA-256
+Python version
+framework name/version
+backend library version
+CPU model 或 GPU model
+NVIDIA driver（GPU）
+CUDA runtime（GPU）
+precision
+seed
+MPI implementation/version
+SLURM job ID
+partition/account/qos/resources
+VASP version（DFT）
+POTCAR identity + SHA-256（DFT）
+LAMMPS version/build/interface（MD）
+LASP version（LASP）
+model SHA-256
+dataset/input/config SHA-256
+```
+
+这样本地、集群 CPU 和集群 GPU 的结果才可以真正比较。
+
+---
+
+## 36. 第一次真实集群验证顺序
+
+不要直接提交生产 DFT/训练/长 MD。
+
+推荐：
+
+```text
+A. ssh <SSH_ALIAS> 成功
+B. 登录节点能看到 sbatch/srun/squeue
+C. 找到 CPU/GPU partition/account/qos
+D. CPU salloc 成功
+E. CPU 节点 MLIPFlow/control env 成功
+F. CPU tiny science smoke 成功
+G. GPU salloc 成功
+H. GPU 节点 nvidia-smi 成功
+I. torch.cuda.is_available() == True
+J. GPU 单模型 inference 成功
+K. CPU/GPU energy-force 对照
+L. CPU batch wrapper 跑 MLIPFlow node 成功
+M. GPU batch wrapper 跑 MLIPFlow node 成功
+N. VASP tiny MPI job + convergence parser 成功
+O. POTCAR identity/hash 固定
+P. DeepMD 或 MACE 对应 LAMMPS build 成功
+Q. LAMMPS 1-2 step parity 成功
+R. LASP tiny execute（需要时）
+S. 小规模真实工作负载
+T. 生产工作负载
+```
+
+任何一步失败都先修这一层。
+
+---
+
+## 37. 常见问题
+
+### `ModuleNotFoundError`
+
+```bash
+which python
+python --version
+python -m pip list
+```
+
+检查 `project.yaml` 中是否真的指向正确 scientific environment 的 Python executable。
+
+### 登录节点没有 `nvidia-smi`
+
+很多集群登录节点没有 GPU。申请 GPU allocation 后在计算节点检查。
+
+### `torch.cuda.is_available()` 是 False
+
+检查：
+
+```text
+是否真的在 GPU 计算节点
+Slurm 是否分配 GPU
+nvidia-smi 是否成功
+CUDA_VISIBLE_DEVICES
+是否安装 GPU 版 PyTorch
+PyTorch/CUDA 与 NVIDIA driver 是否兼容
+是否激活了错误环境
 ```
 
 ### `sbatch: command not found`
 
-你可能不在 Slurm 集群环境，或 scheduler module 未加载。
+说明当前环境不是该 Slurm 集群的正常登录环境，或 scheduler module/PATH 未初始化。
 
 ### `sacct` 查不到作业
 
-可能站点未启用 accounting 或有延迟；按站点文档处理。
+可能站点没有开放 accounting、存在延迟或使用不同 accounting 方法。按站点文档处理。
 
-### `lmp` 可以启动但 `pair_style` 不存在
+### `lmp` 能启动但没有 `deepmd/mace/mliap`
 
-当前 LAMMPS build 没编译/加载目标 MLIP 接口。重新核对 DeepMD/MACE 对应 build。
+当前 LAMMPS build 没有目标 MLIP interface。不要继续跑 MD，先换/重编译正确 build。
 
-### DeepMD LAMMPS 找不到插件
+### `lmp` 找到 pair style 但模型加载失败
 
-检查 DeepMD/LAMMPS 是否是同一个兼容安装，plugin mode 时检查动态库和 `LAMMPS_PLUGIN_PATH`。
+检查：
+
+```text
+framework/interface 版本
+动态库
+模型导出格式
+模型元素集合
+pair_coeff/type map
+CPU/GPU build
+```
 
 ### VASP 找不到 POTCAR
 
-检查机构赝势目录、pymatgen `PMG_VASP_PSP_DIR` 和元素 label 映射。MLIPFlow 不会下载 POTCAR。
+检查机构合法 POTCAR 根目录、pymatgen `PMG_VASP_PSP_DIR`、元素 label 和 wrapper 的实际组装路径。
 
-### 集群 Python 环境登录节点可用、计算节点不可用
+### shell 里 `module load` 后外部程序仍在 MLIPFlow 中失败
 
-环境安装在了节点本地磁盘而不是共享文件系统，或者计算节点缺少依赖动态库/module。把环境迁到站点推荐的共享路径并在 allocation 中重新验证。
+检查第 22 节的环境清洗规则。尤其不要假设 `LD_LIBRARY_PATH` 一定会继承到 wrapper。
 
-### SSH 后端拒绝 key/path 参数
+### `backend: slurm` scientific node 被拒绝
 
-这是设计行为。认证放 `~/.ssh/config`，MLIPFlow 只引用 alias。
+这是当前设计行为，不是 YAML 拼写错误。内置 Adapter scheduler reconciliation 还没有开放；当前集群执行请使用 Slurm 外层分配 + node `backend: local`。
+
+### scheduler `COMPLETED`，但 MLIPFlow 是 FAIL
+
+这是正确行为。查看：
+
+```bash
+mlipflow --project <PROJECT> logs <NODE>
+mlipflow --project <PROJECT> inspect <NODE>
+```
+
+检查 plugin completion manifest、artifact hash、科学收敛或单位条件。
 
 ---
 
-## 33. 当前已有真实 smoke 证据
+## 38. 当前已有的真实本地 smoke 证据
 
 ### SQS
 
@@ -1445,7 +2114,7 @@ CPU/local
 seed 23
 ```
 
-### MACE MD -> transport
+### MACE MD -> transport integration smoke
 
 ```text
 Python 3.12.12
@@ -1458,55 +2127,32 @@ Plotly 6.6.0
 CPU float64
 ```
 
-后者每个温度只有 10 个 production step，只证明软件交接，不具有科学收敛意义。
+后者每个温度只有极少 production steps，只是软件链路 smoke，不是输运收敛证据。
+
+这些版本是 **已知曾跑通的环境证据**，不是要求用户统一安装这些精确版本。
 
 ---
 
-## 34. 当前 HPC 状态
+## 39. 外部官方文档
 
-```text
-REAL_HPC_INTEGRATION = EXTERNAL_VALIDATION_PENDING
-```
+依赖和 HPC 软件更新很快。安装 GPU/framework/LAMMPS interface 时应同时检查对应 release 的官方文档。
 
-这意味着：
+- PyTorch installation: <https://docs.pytorch.org/get-started/locally/>
+- DeePMD stable installation: <https://docs.deepmodeling.com/projects/deepmd/en/stable/install/easy-install.html>
+- DeePMD + LAMMPS: <https://docs.deepmodeling.com/projects/deepmd/en/stable/install/install-lammps.html>
+- DeePMD LAMMPS commands: <https://docs.deepmodeling.com/projects/deepmd/en/stable/third-party/lammps-command.html>
+- MACE installation: <https://mace-docs.readthedocs.io/en/latest/guide/installation.html>
+- MACE LAMMPS: <https://mace-docs.readthedocs.io/en/latest/guide/lammps.html>
+- MACE ML-IAP LAMMPS: <https://mace-docs.readthedocs.io/en/latest/guide/lammps_mliap.html>
+- Slurm GPU/GRES: <https://slurm.schedmd.com/gres.html>
+- LAMMPS command-line options: <https://docs.lammps.org/Run_options.html>
+- pymatgen POTCAR setup: <https://pymatgen.org/installation.html>
 
-```text
-核心 scheduler/SSH 代码存在
-但生产 stage/submit/monitor/fetch/scientific-recheck 尚未完成真实站点验收
-```
-
-你的下一阶段目标应当就是按本 README 的顺序完成这次真实集群验收。
-
----
-
-## 35. 最短可执行路线
-
-如果你现在已经把本地流程跑通，下一步直接按这个顺序：
-
-```text
-1. 配好 ~/.ssh/config，确认 ssh mlip-cluster 成功
-2. 在集群共享目录 clone/同步 mlipflow
-3. 建 mlipflow-control
-4. CPU salloc + srun 进入计算节点
-5. 在 CPU 节点跑 doctor + tiny SQS/后处理
-6. 建 mlipflow-mace-gpu 或 deepmd-gpu
-7. GPU salloc + srun 进入计算节点
-8. nvidia-smi + torch.cuda.is_available()
-9. GPU 单模型 inference
-10. GPU tiny MD
-11. 提交 CPU/GPU sbatch smoke
-12. 配 VASP + POTCAR 并跑 tiny DFT
-13. 配 DeepMD/MACE 对应 LAMMPS build 并跑 1-2 step smoke
-14. 把验证过的路径、module、partition、版本写进私有 site.local.yaml
-15. 做 remote fetch + SHA-256 + MLIPFlow check/collect
-16. 再扩大到真实训练、DFT、长 MD 和筛选
-```
+README 给出的是 MLIPFlow 的稳定配置逻辑；framework/driver/build 的具体版本仍应以你实际安装版本的官方文档为准。
 
 ---
 
-## 36. 开发与许可
-
-测试：
+## 40. 开发与测试
 
 ```bash
 python -m pytest
@@ -1525,4 +2171,31 @@ ruff check .
 - `AGENTS.md`
 - `docs/PLUGIN_DEVELOPMENT.md`
 
-MLIPFlow 使用 Apache License 2.0。外部数值程序、模型、数据、POTCAR 和势函数受各自许可证约束；安装 MLIPFlow 不会自动获得它们的使用权。
+---
+
+## 41. 一句话使用路径
+
+如果你是第一次使用：
+
+```text
+clone/install
+-> offline replay
+-> 为所需插件建立独立科学环境
+-> 本地/交互计算节点 tiny smoke
+-> 配 SSH + 查清 partition/account/GPU directive
+-> 用 sbatch 只负责资源分配，在计算节点运行 backend: local 的 MLIPFlow node
+-> 配 VASP/POTCAR/LAMMPS/LASP
+-> 做 CPU/GPU/原生框架/LAMMPS 科学对照
+-> 通过 check/collect
+-> 再扩大到生产规模
+```
+
+当前版本不要把科学 Adapter 强行改成 `slurm`/`ssh-slurm`。等仓库完成真实 stage -> submit -> monitor -> fetch -> pinned scientific check 闭环后，再启用 MLIPFlow 原生远程调度路径。
+
+---
+
+## License
+
+MLIPFlow 使用 Apache License 2.0。
+
+VASP、POTCAR、LASP、LAMMPS、MLIP frameworks、模型和数据仍受各自许可证与机构政策约束；安装 MLIPFlow 不会自动获得这些外部资产的使用权。
