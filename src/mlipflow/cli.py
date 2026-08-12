@@ -173,12 +173,12 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             raise ApprovalError("run requires --dry-run or --approve PLAN_DIGEST")
         return run_node(project, args.node, args.plugins, args.approve)
     if command == "advance":
-        plan = make_advance_plan(project)
+        plan = make_advance_plan(project, args.plugins)
         if args.dry_run:
             return plan
         if not args.approve:
             raise ApprovalError("advance requires --dry-run or --approve PLAN_DIGEST")
-        return advance(project, args.approve)
+        return advance(project, args.approve, args.plugins)
     if command == "retry":
         plan = make_retry_plan(project, args.node, args.plugins)
         if args.dry_run:

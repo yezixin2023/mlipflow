@@ -13,6 +13,27 @@ from .helpers import plugin_manifest, project_config, write_json
 
 
 class ConfigTests(unittest.TestCase):
+    def test_project_relative_state_database_path_is_honoured(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = project_config([])
+            config["state"] = {"database_path": ".mlipflow/alternate.sqlite3"}
+            write_json(root / "project.yaml", config)
+            initialized = initialize(root)
+            self.assertEqual(
+                str((root / ".mlipflow/alternate.sqlite3").resolve()),
+                initialized["state_database"],
+            )
+
+    def test_state_database_path_cannot_escape_project(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = project_config([])
+            config["state"] = {"database_path": "../outside.sqlite3"}
+            write_json(root / "project.yaml", config)
+            with self.assertRaisesRegex(ConfigError, "inside the project root"):
+                initialize(root)
+
     def test_cycle_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

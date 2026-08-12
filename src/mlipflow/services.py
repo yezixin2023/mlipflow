@@ -7,6 +7,7 @@ separate below the explicit boundary marker.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import re
 import shlex
@@ -31,7 +32,20 @@ STATE_RELATIVE = Path(".mlipflow/state.sqlite3")
 
 
 def state_path(project: Project) -> Path:
-    return project.root / STATE_RELATIVE
+    configuration = project.raw.get("state", {})
+    reference = (
+        configuration.get("database_path", str(STATE_RELATIVE))
+        if isinstance(configuration, dict)
+        else str(STATE_RELATIVE)
+    )
+    if not isinstance(reference, str) or not reference or Path(reference).is_absolute():
+        raise ConfigError("state.database_path must be a non-empty project-relative path")
+    candidate = (project.root / reference).resolve()
+    try:
+        candidate.relative_to(project.root.resolve())
+    except ValueError as exc:
+        raise ConfigError("state.database_path must remain inside the project root") from exc
+    return candidate
 
 
 def _assert_state_matches_project(store: StateStore, project: Project) -> None:
@@ -319,6 +333,12 @@ def make_run_plan(project: Project, node_id: str, plugin_root: Path) -> dict[str
         unsigned["adapter_command_fingerprints"] = _adapter_command_fingerprints(
             project, adapter_plan
         )
+        if (
+            str(node.get("backend", "local")) == "ssh-slurm"
+            and isinstance(adapter_plan, dict)
+            and isinstance(adapter_plan.get("scheduled_execution"), dict)
+        ):
+            unsigned["scheduled_transport"] = _scheduled_transport_plan(project, node)
         plan = with_digest(unsigned)
     return plan
 
@@ -348,11 +368,18 @@ def run_node(
             raise PluginError(
                 "local execution requires an adapter-ready plugin with scientific check/collect"
             )
-        if backend in {"slurm", "ssh-slurm"} and isinstance(adapter_plan, dict):
+        if backend == "slurm" and isinstance(adapter_plan, dict):
             raise BackendError(
-                "scheduled adapter execution is disabled until its pinned scientific checker "
-                "is integrated into scheduler reconciliation"
+                "local SLURM adapter execution is disabled; only the controlled ssh-slurm "
+                "staging/fetch/check contract is currently implemented"
             )
+        if backend == "ssh-slurm" and isinstance(adapter_plan, dict):
+            if not isinstance(adapter_plan.get("scheduled_execution"), dict) or not isinstance(
+                plan.get("scheduled_transport"), dict
+            ):
+                raise BackendError(
+                    "ssh-slurm adapter execution requires an explicit staged execution contract"
+                )
     database = state_path(project)
     existed = database.is_file()
     with StateStore(database, readonly=False) as store:
@@ -376,7 +403,7 @@ def run_node(
     return result
 
 
-def make_advance_plan(project: Project) -> dict[str, Any]:
+def make_advance_plan(project: Project, plugin_root: Path | None = None) -> dict[str, Any]:
     database = state_path(project)
     transitions: list[dict[str, str]] = []
     observations: list[dict[str, Any]] = []
@@ -389,8 +416,26 @@ def make_advance_plan(project: Project) -> dict[str, Any]:
                     RunState.PENDING.value,
                     RunState.RUNNING.value,
                 } and step.job_id:
-                    observation = _observe_scheduled_step(project, step)
+                    observation = _observe_scheduled_step(project, step, plugin_root)
                     observations.append(observation)
+                    finalization = observation.get("adapter_finalization")
+                    if isinstance(finalization, dict):
+                        transitions.append(
+                            {
+                                "node_id": step.node_id,
+                                "action": "adapter-finalize",
+                                "reason": str(
+                                    observation.get(
+                                        "reason", "scheduler adapter finalization"
+                                    )
+                                ),
+                                "scheduler_state": str(
+                                    observation.get("scheduler_state", "UNKNOWN")
+                                ),
+                                "adapter_finalization": finalization,
+                            }
+                        )
+                        continue
                     target = observation.get("target_state")
                     if isinstance(target, str) and target != step.state:
                         transitions.append(
@@ -430,8 +475,10 @@ def make_advance_plan(project: Project) -> dict[str, Any]:
     )
 
 
-def advance(project: Project, approval: str) -> dict[str, Any]:
-    plan = make_advance_plan(project)
+def advance(
+    project: Project, approval: str, plugin_root: Path | None = None
+) -> dict[str, Any]:
+    plan = make_advance_plan(project, plugin_root)
     _require_approval(plan, approval)
     database = state_path(project)
     if not database.is_file():
@@ -441,6 +488,15 @@ def advance(project: Project, approval: str) -> dict[str, Any]:
         _assert_state_matches_project(store, project)
         for change in plan["details"]["transitions"]:
             step = store.latest_step(project.project_id, change["node_id"])
+            if change.get("action") == "adapter-finalize":
+                if plugin_root is None:
+                    raise PluginError("scheduled adapter finalization requires the plugin root")
+                changed.append(
+                    _finalize_scheduled_adapter(
+                        project, step, change, plugin_root, store
+                    ).to_dict()
+                )
+                continue
             target = RunState(change["to"])
             manifest_ref = change.get("completion_manifest")
             artifacts: list[dict[str, Any]] = []
@@ -766,11 +822,21 @@ def _execute_ready(
         adapter_plan = plan.get("adapter_plan")
         command: list[str]
         if isinstance(adapter_plan, dict):
-            raise BackendError(
-                "scheduled adapter execution is disabled until the scheduler completion "
-                "path runs the pinned plugin scientific checker; use local or an explicit "
-                "legacy scheduler script with the identity-bound completion contract"
+            if backend != "ssh-slurm":
+                raise BackendError(
+                    "scheduled adapters currently require the controlled ssh-slurm contract"
+                )
+            scheduled_transport = plan.get("scheduled_transport")
+            if not isinstance(scheduled_transport, dict) or not isinstance(
+                scheduled_transport.get("remote_cwd"), str
+            ):
+                raise BackendError("approved plan lacks an exact remote directory")
+            remote_dir = str(scheduled_transport["remote_cwd"])
+            result, observed_remote_dir, command = _stage_and_submit_scheduled_adapter(
+                project, node, plugin, plan, directory
             )
+            if observed_remote_dir != remote_dir:
+                raise BackendError("staged remote directory differs from the approved target")
         else:
             script_value = node.get("parameters", {}).get("submit_script")
             if not isinstance(script_value, str):
@@ -798,6 +864,15 @@ def _execute_ready(
         updated = store.transition(
             run_id, RunState.PENDING, job_id=result.job_id, remote_dir=remote_dir
         )
+        control_artifacts: list[dict[str, Any]] = []
+        if isinstance(adapter_plan, dict):
+            for path, role in (
+                (directory / "approved-plan.json", "approved-plan"),
+                (directory / _REMOTE_COMMAND_NAME, "scheduler-command"),
+                (directory / _REMOTE_SCRIPT_NAME, "scheduler-script"),
+                (directory / _REMOTE_RUNNER_NAME, "scheduler-runner"),
+            ):
+                control_artifacts.append(fingerprint(path) | {"role": role})
         manifest = run_manifest(
             project_id=project.project_id,
             node_id=node_id,
@@ -810,6 +885,7 @@ def _execute_ready(
             plan_digest=plan["plan_digest"],
             inputs=node.get("inputs", {}),
             parameters=node.get("parameters", {}),
+            artifacts=control_artifacts,
             state=RunState.PENDING.value,
             state_reason="submitted to scheduler",
             job={
@@ -823,6 +899,15 @@ def _execute_ready(
             **_manifest_context(project, node, plugin, store, run_id, finished=False),
         )
         write_json_atomic(manifest_path, manifest)
+        for artifact in control_artifacts:
+            store.add_artifact(
+                run_id,
+                str(artifact["role"]),
+                str(artifact["uri"]),
+                artifact.get("fingerprint"),
+                artifact.get("size_bytes"),
+                artifact.get("metadata", {}),
+            )
         updated = store.transition(
             run_id,
             RunState.PENDING,
@@ -840,7 +925,13 @@ def _execute_ready(
                 RunState.PENDING,
                 RunState.RUNNING,
             }:
-                store.transition(run_id, RunState.FAIL, diagnostic=str(exc))
+                remote = locals().get("remote_dir")
+                store.transition(
+                    run_id,
+                    RunState.FAIL,
+                    diagnostic=str(exc),
+                    remote_dir=remote if isinstance(remote, str) else None,
+                )
         except Exception:
             pass
         raise
@@ -928,6 +1019,13 @@ _SLURM_RESOURCE_FLAGS = {
     "constraint": "constraint",
 }
 _SAFE_SLURM_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:+/@%=-]*")
+_SAFE_REMOTE_ROOT = re.compile(r"[A-Za-z0-9_./+\-]+")
+_SAFE_REMOTE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+\-]*")
+_SAFE_REMOTE_EXECUTABLE = re.compile(r"(?:/[A-Za-z0-9_./+\-]+|[A-Za-z0-9][A-Za-z0-9._+\-]*)")
+_SAFE_MODULE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+\-/]*")
+_REMOTE_RUNNER_NAME = "mlipflow-remote-runner.py"
+_REMOTE_COMMAND_NAME = "mlipflow-command.json"
+_REMOTE_SCRIPT_NAME = "run.slurm"
 
 
 def _materialize_slurm_adapter(
@@ -1004,6 +1102,276 @@ def _materialize_slurm_adapter(
     return script, list(argv)
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
+
+
+def _scheduled_transport_plan(project: Project, node: dict[str, Any]) -> dict[str, Any]:
+    profile_name = node.get("backend_profile")
+    profiles = project.raw.get("backend_profiles", {})
+    configuration = profiles.get(profile_name) if isinstance(profiles, dict) else None
+    if not isinstance(configuration, dict):
+        raise ConfigError(
+            f"node {node['id']} requires an object backend profile with ssh_profile and remote_root"
+        )
+    profile = configuration.get("ssh_profile")
+    remote_root = configuration.get("remote_root")
+    if not isinstance(profile, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", profile):
+        raise ConfigError(f"node {node['id']} has an invalid SSH profile alias")
+    if (
+        not isinstance(remote_root, str)
+        or not _SAFE_REMOTE_ROOT.fullmatch(remote_root)
+        or ".." in Path(remote_root).parts
+    ):
+        raise ConfigError(
+            f"node {node['id']} remote_root must be an existing safe path without '..'"
+        )
+    database = state_path(project)
+    if not database.is_file():
+        raise StateError("project must be initialized before planning remote staging")
+    with StateStore(database, readonly=True) as store:
+        step = store.latest_step(project.project_id, str(node["id"]))
+    prefix = f"mlipflow-{project.project_id}-{node['id']}-a{step.attempt}"
+    safe_prefix = re.sub(r"[^A-Za-z0-9._+-]", "-", prefix).strip("-.")[:96]
+    run_name = f"{safe_prefix}-{step.run_id[:12]}"
+    remote_cwd = run_name if remote_root == "." else f"{remote_root.rstrip('/')}/{run_name}"
+    remote_runner = Path(__file__).with_name("remote_runner.py")
+    if remote_runner.is_symlink() or not remote_runner.is_file():
+        raise BackendError("self-contained remote runner is missing")
+    return {
+        "ssh_profile": profile,
+        "remote_root": remote_root,
+        "run_name": run_name,
+        "remote_cwd": remote_cwd,
+        "remote_runner_sha256": _sha256_file(remote_runner),
+        "fresh_directory_required": True,
+        "overwrite": False,
+    }
+
+
+def _scheduled_contract(
+    project: Project,
+    plugin: PluginSpec,
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    adapter_plan = plan.get("adapter_plan")
+    scheduled = adapter_plan.get("scheduled_execution") if isinstance(adapter_plan, dict) else None
+    if not isinstance(scheduled, dict) or scheduled.get("schema_version") != 1:
+        raise PluginError("scheduled adapter plan requires scheduled_execution schema_version=1")
+    remote_argv = scheduled.get("remote_argv")
+    if not isinstance(remote_argv, list) or not all(isinstance(item, str) for item in remote_argv):
+        raise PluginError("scheduled_execution.remote_argv must be a string list")
+    validate_argv(remote_argv)
+    remote_python = scheduled.get("remote_python")
+    if not isinstance(remote_python, str) or not _SAFE_REMOTE_EXECUTABLE.fullmatch(remote_python):
+        raise PluginError("scheduled_execution.remote_python is unsafe")
+    if ".." in Path(remote_python).parts:
+        raise PluginError("scheduled_execution.remote_python must not contain '..'")
+    modules = scheduled.get("modules", [])
+    if not isinstance(modules, list) or not all(
+        isinstance(item, str) and _SAFE_MODULE.fullmatch(item) for item in modules
+    ):
+        raise PluginError("scheduled_execution.modules contains an unsafe module name")
+    if len(set(modules)) != len(modules):
+        raise PluginError("scheduled_execution.modules must be unique")
+    staged = scheduled.get("staged_files")
+    if not isinstance(staged, list) or not staged:
+        raise PluginError("scheduled_execution.staged_files must be a non-empty list")
+    allowed_roots = (project.root.resolve(), plugin.path.parent.resolve())
+    names: set[str] = {_REMOTE_RUNNER_NAME, _REMOTE_COMMAND_NAME, _REMOTE_SCRIPT_NAME}
+    normalized_stage: list[dict[str, Any]] = []
+    for index, item in enumerate(staged):
+        if not isinstance(item, dict):
+            raise PluginError(f"scheduled staged file {index} must be a mapping")
+        source_value = item.get("source")
+        remote_name = item.get("remote_name")
+        declared = item.get("sha256")
+        size_bytes = item.get("size_bytes")
+        if not isinstance(source_value, str) or not isinstance(remote_name, str):
+            raise PluginError(f"scheduled staged file {index} lacks source/remote_name")
+        if not _SAFE_REMOTE_NAME.fullmatch(remote_name) or remote_name in names:
+            raise PluginError(f"unsafe or duplicate remote staging name: {remote_name!r}")
+        names.add(remote_name)
+        source = Path(source_value).expanduser().absolute()
+        if source.is_symlink() or not source.is_file():
+            raise PluginError(f"staging source must be an ordinary file: {source}")
+        resolved = source.resolve()
+        if not any(_is_within(resolved, root) for root in allowed_roots):
+            raise PluginError(f"staging source is outside the project/plugin roots: {source}")
+        if not isinstance(declared, str) or declared != _sha256_file(source):
+            raise PluginError(f"staging source fingerprint changed: {source}")
+        if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes != source.stat().st_size:
+            raise PluginError(f"staging source size changed: {source}")
+        normalized_stage.append({**item, "source": str(source), "remote_name": remote_name})
+    outputs = scheduled.get("fetch_outputs")
+    if not isinstance(outputs, list) or not outputs:
+        raise PluginError("scheduled_execution.fetch_outputs must be a non-empty list")
+    output_names: set[str] = set()
+    normalized_outputs: list[dict[str, Any]] = []
+    for index, item in enumerate(outputs):
+        if not isinstance(item, dict):
+            raise PluginError(f"scheduled fetch output {index} must be a mapping")
+        remote_name = item.get("remote_name")
+        local_name = item.get("local_name")
+        required = item.get("required")
+        maximum = item.get("max_bytes")
+        if (
+            not isinstance(remote_name, str)
+            or not _SAFE_REMOTE_NAME.fullmatch(remote_name)
+            or remote_name in output_names
+            or not isinstance(local_name, str)
+            or not _SAFE_REMOTE_NAME.fullmatch(local_name)
+            or type(required) is not bool
+            or isinstance(maximum, bool)
+            or not isinstance(maximum, int)
+            or maximum < 1
+        ):
+            raise PluginError(f"invalid scheduled fetch output {index}")
+        output_names.add(remote_name)
+        normalized_outputs.append(dict(item))
+    return {
+        **scheduled,
+        "remote_argv": list(remote_argv),
+        "remote_python": remote_python,
+        "modules": list(modules),
+        "staged_files": normalized_stage,
+        "fetch_outputs": normalized_outputs,
+    }
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _materialize_remote_slurm_adapter(
+    attempt_dir: Path,
+    scheduled: dict[str, Any],
+    resources: Any,
+    node_id: str,
+) -> tuple[Path, Path, Path]:
+    """Create a self-contained scheduler control bundle for remote staging."""
+
+    command_file = attempt_dir / _REMOTE_COMMAND_NAME
+    write_json_atomic(
+        command_file,
+        {
+            "schema_version": 1,
+            "argv": scheduled["remote_argv"],
+            "cwd": ".",
+            "environment": {},
+        },
+    )
+    runner_source = Path(__file__).with_name("remote_runner.py")
+    if runner_source.is_symlink() or not runner_source.is_file():
+        raise BackendError("self-contained remote runner is missing")
+    runner = attempt_dir / _REMOTE_RUNNER_NAME
+    shutil.copy2(runner_source, runner)
+    if not isinstance(resources, dict):
+        raise ConfigError("SLURM resources must be a mapping")
+    unknown = sorted(set(resources) - set(_SLURM_RESOURCE_FLAGS) - {"exclusive"})
+    if unknown:
+        raise ConfigError(f"unsupported SLURM resource keys: {', '.join(unknown)}")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "-", node_id).strip("-.") or "mlipflow"
+    directives = [
+        f"#SBATCH --job-name={safe_name[:64]}",
+        "#SBATCH --output=slurm.out",
+        "#SBATCH --error=slurm.err",
+    ]
+    for key, flag in _SLURM_RESOURCE_FLAGS.items():
+        if key not in resources:
+            continue
+        value = resources[key]
+        if isinstance(value, bool) or not isinstance(value, (str, int)):
+            raise ConfigError(f"SLURM resource {key} must be a string or integer")
+        rendered = str(value)
+        if not _SAFE_SLURM_VALUE.fullmatch(rendered):
+            raise ConfigError(f"unsafe SLURM resource value for {key}: {rendered!r}")
+        directives.append(f"#SBATCH --{flag}={rendered}")
+    exclusive = resources.get("exclusive", False)
+    if not isinstance(exclusive, bool):
+        raise ConfigError("SLURM resource exclusive must be boolean")
+    if exclusive:
+        directives.append("#SBATCH --exclusive")
+    modules = [f"module load {shlex.quote(item)}" for item in scheduled["modules"]]
+    runner_command = "exec " + " ".join(
+        shlex.quote(item)
+        for item in [
+            scheduled["remote_python"],
+            _REMOTE_RUNNER_NAME,
+            _REMOTE_COMMAND_NAME,
+        ]
+    )
+    script = attempt_dir / _REMOTE_SCRIPT_NAME
+    write_text_atomic(
+        script,
+        "\n".join(
+            [
+                "#!/bin/bash -l",
+                *directives,
+                "set -euo pipefail",
+                "umask 077",
+                *modules,
+                runner_command,
+                "",
+            ]
+        ),
+    )
+    return script, command_file, runner
+
+
+def _stage_and_submit_scheduled_adapter(
+    project: Project,
+    node: dict[str, Any],
+    plugin: PluginSpec,
+    plan: dict[str, Any],
+    attempt_dir: Path,
+) -> tuple[Any, str, list[str]]:
+    scheduled = _scheduled_contract(project, plugin, plan)
+    transport = plan.get("scheduled_transport")
+    if not isinstance(transport, dict):
+        raise BackendError("approved plan lacks scheduled transport identity")
+    expected_transport = _scheduled_transport_plan(project, node)
+    if transport != expected_transport:
+        raise BackendError("scheduled transport target changed after approval")
+    approved_plan = attempt_dir / "approved-plan.json"
+    write_json_atomic(approved_plan, plan)
+    script, command_file, runner = _materialize_remote_slurm_adapter(
+        attempt_dir, scheduled, node.get("resources", {}), str(node["id"])
+    )
+    files: list[tuple[Path, str, str]] = [
+        (
+            Path(str(item["source"])),
+            str(item["remote_name"]),
+            str(item["sha256"]),
+        )
+        for item in scheduled["staged_files"]
+    ]
+    files.extend(
+        (path, name, _sha256_file(path))
+        for path, name in (
+            (script, _REMOTE_SCRIPT_NAME),
+            (command_file, _REMOTE_COMMAND_NAME),
+            (runner, _REMOTE_RUNNER_NAME),
+        )
+    )
+    backend = SshSlurmBackend(str(transport["ssh_profile"]))
+    remote_cwd = backend.stage_fresh(
+        str(transport["remote_root"]), str(transport["run_name"]), files
+    )
+    if remote_cwd != transport["remote_cwd"]:
+        raise BackendError("backend returned an unexpected remote directory")
+    result = backend.submit(_REMOTE_SCRIPT_NAME, remote_cwd)
+    return result, remote_cwd, list(scheduled["remote_argv"])
+
+
 def _scheduled_completion_path(
     project: Project, node: dict[str, Any], attempt: int
 ) -> Path | None:
@@ -1052,7 +1420,9 @@ def _scheduler_expected_identity(step: Any) -> dict[str, Any]:
     }
 
 
-def _observe_scheduled_step(project: Project, step: Any) -> dict[str, Any]:
+def _observe_scheduled_step(
+    project: Project, step: Any, plugin_root: Path | None = None
+) -> dict[str, Any]:
     node = project.node(step.node_id)
     try:
         if step.backend == "slurm":
@@ -1106,6 +1476,76 @@ def _observe_scheduled_step(project: Project, step: Any) -> dict[str, Any]:
         observation["target_state"] = RunState.STOPPED.value
         observation["reason"] = f"scheduler reports cancellation: {raw_state}"
     elif raw_state == "COMPLETED":
+        approved_plan_path = (
+            project.root
+            / ".mlipflow"
+            / "runs"
+            / step.node_id
+            / f"attempt-{step.attempt}"
+            / "approved-plan.json"
+        )
+        if approved_plan_path.is_file():
+            if plugin_root is None:
+                observation["reason"] = (
+                    "scheduler completed; plugin root is required for pinned adapter finalization"
+                )
+                return observation
+            try:
+                approved_plan, plugin, scheduled = _load_pinned_scheduled_plan(
+                    project, step, plugin_root
+                )
+                transport = approved_plan.get("scheduled_transport")
+                if not isinstance(transport, dict) or step.remote_dir != transport.get("remote_cwd"):
+                    raise BackendError("persisted remote directory differs from the approved plan")
+                backend = SshSlurmBackend(str(transport["ssh_profile"]))
+                inventory: list[dict[str, Any]] = []
+                for item in scheduled["fetch_outputs"]:
+                    observed = backend.inspect_file(
+                        str(transport["remote_cwd"]), str(item["remote_name"])
+                    )
+                    record = {**item, **observed}
+                    if observed.get("exists") and int(observed.get("size_bytes", 0)) > int(
+                        item["max_bytes"]
+                    ):
+                        record["oversized"] = True
+                    inventory.append(record)
+                observation["adapter_finalization"] = {
+                    "approved_plan_fingerprint": fingerprint(approved_plan_path),
+                    "plugin_id": plugin.plugin_id,
+                    "remote_cwd": transport["remote_cwd"],
+                    "outputs": inventory,
+                }
+                missing = [
+                    str(item["remote_name"])
+                    for item in inventory
+                    if item["required"] and not item.get("exists")
+                ]
+                oversized = [
+                    str(item["remote_name"])
+                    for item in inventory
+                    if item.get("oversized")
+                ]
+                if missing or oversized:
+                    details = []
+                    if missing:
+                        details.append("missing required outputs: " + ", ".join(missing))
+                    if oversized:
+                        details.append("oversized outputs: " + ", ".join(oversized))
+                    observation["reason"] = (
+                        "scheduler completed; approved fetch/check will fail safely ("
+                        + "; ".join(details)
+                        + ")"
+                    )
+                else:
+                    observation["reason"] = (
+                        "scheduler completed; approved outputs are ready for bounded fetch and "
+                        "the pinned plugin scientific checker"
+                    )
+                return observation
+            except Exception as exc:
+                observation["target_state"] = RunState.FAIL.value
+                observation["reason"] = f"pinned scheduled adapter contract is invalid: {exc}"
+                return observation
         completion_path = _scheduled_completion_path(project, node, step.attempt)
         if completion_path is None:
             observation["reason"] = (
@@ -1147,6 +1587,185 @@ def _observe_scheduled_step(project: Project, step: Any) -> dict[str, Any]:
     else:
         observation["reason"] = f"unrecognized scheduler state {raw_state}; no state change"
     return observation
+
+
+def _load_pinned_scheduled_plan(
+    project: Project, step: Any, plugin_root: Path
+) -> tuple[dict[str, Any], PluginSpec, dict[str, Any]]:
+    attempt_dir = (
+        project.root / ".mlipflow" / "runs" / step.node_id / f"attempt-{step.attempt}"
+    )
+    plan_path = attempt_dir / "approved-plan.json"
+    if plan_path.is_symlink() or not plan_path.is_file():
+        raise ConfigError("approved scheduled plan is missing or is a symlink")
+    plan = load_mapping(plan_path)
+    expected_digest = with_digest(
+        {key: value for key, value in plan.items() if key != "plan_digest"}
+    )["plan_digest"]
+    if plan.get("plan_digest") != expected_digest:
+        raise ApprovalError("approved scheduled plan digest is invalid")
+    identity = _scheduler_expected_identity(step)
+    if plan.get("plan_digest") != identity["plan_digest"]:
+        raise ApprovalError("approved plan differs from the initial run manifest")
+    node = project.node(step.node_id)
+    plugin = select_plugin(discover_plugins(plugin_root), str(node["uses"]))
+    current = node_plan(project, node, plugin)
+    for key in (
+        "project_id",
+        "node_id",
+        "plugin",
+        "backend",
+        "backend_profile",
+        "project_config_digest",
+        "inputs",
+        "input_fingerprints",
+        "parameters",
+        "resources",
+    ):
+        if plan.get(key) != current.get(key):
+            raise ApprovalError(f"pinned scheduled plan field changed: {key}")
+    scheduled = _scheduled_contract(project, plugin, plan)
+    return plan, plugin, scheduled
+
+
+def _finalize_scheduled_adapter(
+    project: Project,
+    step: Any,
+    change: dict[str, Any],
+    plugin_root: Path,
+    store: StateStore,
+) -> Any:
+    details = change.get("adapter_finalization")
+    if not isinstance(details, dict):
+        raise StateError("approved transition lacks adapter finalization details")
+    plan, plugin, scheduled = _load_pinned_scheduled_plan(project, step, plugin_root)
+    attempt_dir = (
+        project.root / ".mlipflow" / "runs" / step.node_id / f"attempt-{step.attempt}"
+    )
+    plan_path = attempt_dir / "approved-plan.json"
+    if fingerprint(plan_path) != details.get("approved_plan_fingerprint"):
+        raise StateError("approved scheduled plan changed after advance dry-run")
+    transport = plan.get("scheduled_transport")
+    if not isinstance(transport, dict) or details.get("remote_cwd") != transport.get("remote_cwd"):
+        raise StateError("approved remote directory changed before fetch")
+    approved_inventory = details.get("outputs")
+    if not isinstance(approved_inventory, list):
+        raise StateError("advance plan lacks the approved remote output inventory")
+    backend = SshSlurmBackend(str(transport["ssh_profile"]))
+    current_inventory: list[dict[str, Any]] = []
+    for item in scheduled["fetch_outputs"]:
+        observed = backend.inspect_file(
+            str(transport["remote_cwd"]), str(item["remote_name"])
+        )
+        record = {**item, **observed}
+        if observed.get("exists") and int(observed.get("size_bytes", 0)) > int(
+            item["max_bytes"]
+        ):
+            record["oversized"] = True
+        current_inventory.append(record)
+    if current_inventory != approved_inventory:
+        raise StateError("remote outputs changed after the approved advance plan")
+    fetched: list[dict[str, Any]] = []
+    fetch_errors: list[str] = []
+    for item in current_inventory:
+        if not item.get("exists"):
+            if item["required"]:
+                fetch_errors.append(f"required output is missing: {item['remote_name']}")
+            continue
+        if item.get("oversized"):
+            fetch_errors.append(f"output exceeds approved bound: {item['remote_name']}")
+            continue
+        destination = attempt_dir / str(item["local_name"])
+        backend.fetch_from(
+            str(transport["remote_cwd"]), str(item["remote_name"]), destination
+        )
+        if destination.stat().st_size != item["size_bytes"] or _sha256_file(destination) != item["sha256"]:
+            raise StateError(f"fetched output fingerprint mismatch: {item['remote_name']}")
+        fetched.append(fingerprint(destination) | {"role": "scheduler-output"})
+    node = project.node(step.node_id)
+    context = _adapter_context(project, node, step.attempt)
+    context["execution"] = {
+        "returncode": 0,
+        "scheduler_state": "COMPLETED",
+        "remote_output_inventory": current_inventory,
+        "plan": plan["adapter_plan"],
+    }
+    adapter = load_adapter(plugin)
+    checked = adapter.check(context)
+    collected: dict[str, Any] | None = None
+    metrics: dict[str, Any] = {}
+    reason: str
+    if fetch_errors:
+        final = RunState.FAIL
+        reason = "; ".join(fetch_errors)
+    elif not isinstance(checked, dict) or checked.get("status") != RunState.OK.value:
+        final = RunState.FAIL
+        reason = f"pinned plugin completion check did not return OK: {checked}"
+    else:
+        collected = adapter.collect(context)
+        if not isinstance(collected, dict) or collected.get("status") != RunState.OK.value:
+            final = RunState.FAIL
+            reason = f"pinned plugin collection did not return OK: {collected}"
+        else:
+            normalized = _normalize_adapter_artifacts(
+                project, attempt_dir, collected.get("artifacts", [])
+            )
+            known = {str(item["uri"]) for item in fetched}
+            fetched.extend(item for item in normalized if str(item["uri"]) not in known)
+            raw_metrics = collected.get("metrics", {})
+            metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+            final = RunState.OK
+            reason = "scheduler completed; bounded fetch and pinned plugin checks succeeded"
+    initial_artifacts = store.artifacts(step.run_id)
+    artifacts = [
+        {
+            **item,
+            "fingerprint_mode": (
+                "full"
+                if isinstance(item.get("fingerprint"), str)
+                and str(item["fingerprint"]).startswith("sha256:")
+                else "metadata"
+            ),
+            "mtime_ns": None,
+        }
+        for item in initial_artifacts
+    ]
+    known_uris = {str(item["uri"]) for item in artifacts}
+    artifacts.extend(item for item in fetched if str(item["uri"]) not in known_uris)
+    current_state = RunState(step.state)
+    if current_state in {RunState.SUBMITTED, RunState.PENDING}:
+        step = store.transition(
+            step.run_id,
+            RunState.RUNNING,
+            diagnostic="scheduler completed between approved observations",
+        )
+    for artifact in fetched:
+        if str(artifact["uri"]) in known_uris:
+            continue
+        known_uris.add(str(artifact["uri"]))
+        store.add_artifact(
+            step.run_id,
+            str(artifact["role"]),
+            str(artifact["uri"]),
+            artifact.get("fingerprint"),
+            artifact.get("size_bytes"),
+            artifact.get("metadata", {}),
+        )
+    final_manifest = _finalize_scheduler_manifest(
+        project,
+        step,
+        final,
+        reason,
+        "COMPLETED",
+        artifacts,
+        metrics,
+    )
+    return store.transition(
+        step.run_id,
+        final,
+        diagnostic=None if final == RunState.OK else reason,
+        manifest_path=str(final_manifest) if final_manifest else None,
+    )
 
 
 def _finalize_scheduler_manifest(
@@ -1214,6 +1833,11 @@ def _adapter_command_fingerprints(
     project: Project, adapter_plan: Any
 ) -> dict[str, dict[str, Any]]:
     if not isinstance(adapter_plan, dict):
+        return {}
+    if isinstance(adapter_plan.get("scheduled_execution"), dict):
+        # Remote argv refers only to staged basenames and remote executables.
+        # Their local sources are exhaustively fingerprinted by staged_files;
+        # resolving values such as "." against the controller cwd is incorrect.
         return {}
     argv = adapter_plan.get("argv")
     if not isinstance(argv, list):

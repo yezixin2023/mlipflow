@@ -416,9 +416,12 @@ class AdapterSafetyBoundaryTests(unittest.TestCase):
                     nonlocal_context["backend"] = "ssh-slurm"
                     plan = adapter.plan(nonlocal_context)
                     self.assertEqual("BLOCKED", plan["status"])
-                    self.assertIn(
-                        "backend.unsupported", {item["code"] for item in plan["diagnostics"]}
+                    expected_code = (
+                        "parameters.scheduler_runner"
+                        if plugin_id == "dft-labeling"
+                        else "backend.unsupported"
                     )
+                    self.assertIn(expected_code, {item["code"] for item in plan["diagnostics"]})
 
 
 if __name__ == "__main__":

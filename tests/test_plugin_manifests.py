@@ -24,7 +24,7 @@ EXPECTED_PLUGINS = {
 CONTRACT_METHODS = {"validate", "plan", "prepare", "check", "collect", "replay"}
 EXACT_EXECUTION_OPERATIONS = {
     "composition-screening": ["rank-candidates"],
-    "dft-labeling": ["label"],
+    "dft-labeling": ["vasp-prepare", "label"],
     "high-entropy-structure": ["generate-sqs"],
     "mlip-benchmark": ["evaluate-static", "normalize-replay", "normalize-execute"],
     "mlip-training": ["train", "finetune"],
@@ -114,7 +114,12 @@ class PluginManifestTests(unittest.TestCase):
 
                 execution = manifest["execution"]
                 self.assertIn(execution["mode"], {"external-command", "python-library"})
-                self.assertEqual(["local"], execution["backends"])
+                expected_backends = (
+                    ["local", "ssh-slurm"]
+                    if manifest["id"] == "dft-labeling"
+                    else ["local"]
+                )
+                self.assertEqual(expected_backends, execution["backends"])
                 self.assertFalse(execution["shell"])
                 self.assertFalse(execution["submits_jobs"])
                 self.assertTrue(execution["operations"])

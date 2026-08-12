@@ -22,6 +22,7 @@ classifiers = [
 [project.optional-dependencies]
 dev = ["pytest>=7", "jsonschema>=4", "ruff>=0.5"]
 science = ["numpy>=1.23", "ase>=3.22", "icet>=2.0", "pandas>=1.5", "plotly>=5"]
+dft = ["pymatgen>=2024.5"]
 
 [project.scripts]
 mlipflow = "mlipflow.cli:main"

@@ -41,7 +41,7 @@ READY ──提交──> SUBMITTED ──队列──> PENDING ──调度─�
 FAIL/STOPPED ──retry──> 新 attempt 的 READY（旧 attempt 保留）
 ```
 
-SLURM `COMPLETED` 只是调度事实。完成清单必须绑定 project/node/run/attempt/plugin/plan digest，并在批准与落库间保持相同指纹；内置 adapter 仍只支持 local，直到调度回收侧能运行固定版本的插件科学 checker。
+SLURM `COMPLETED` 只是调度事实。完成清单必须绑定 project/node/run/attempt/plugin/plan digest，并在批准与落库间保持相同指纹。`dft-labeling.label` 的单结构 static SSH-SLURM 合同会在第二次 `advance` 审批后执行 allowlisted fetch，再运行固定 adapter 的 `check/collect`；其余内置 adapter 仍只支持 local。
 
 ## 插件发现
 
@@ -71,6 +71,6 @@ SLURM `COMPLETED` 只是调度事实。完成清单必须绑定 project/node/run
 
 - local：同步运行显式 argv、`shell=False`、白名单环境，并在固定 adapter check/collect 后判定科学状态；LASP/SSW 可直接运行；MPI 只接受显式、可指纹化且 basename 为 `mpirun`/`mpiexec` 的普通可执行文件路径与 `-np N`，这仍是 local execution，不是 scheduler backend；
 - SLURM：保存 `sbatch` 回执中的 job ID，再按 ID 查询/取消；当前用于显式用户脚本及身份绑定 completion；
-- SSH+SLURM：只使用 SSH config alias；不在仓库保存连接凭据，远端 staging 闭环尚未完成。
+- SSH+SLURM：只使用 SSH config alias；不在仓库保存连接凭据。DFT static 窄合同要求已存在的 `remote_root`、全新 identity 派生目录、basename-only staging、上传后逐文件 SHA-256、持久化 job ID、终态输出只读 inventory、第二次审批、fresh local fetch 和 pinned scientific checker。POTCAR 永不回收。
 
 远端 staging、fetch、cancel 均只能由获批命令触发。查询若以后支持 live overlay，也只能驻留内存，不修改状态。

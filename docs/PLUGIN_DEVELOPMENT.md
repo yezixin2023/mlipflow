@@ -53,7 +53,7 @@ class Adapter:
 8. 与既有小样例输出做 parity test；
 9. 原脚本含 `rm/mv`、无限轮询或隐式提交时必须拆分，不能原样调用。
 
-内置 adapter 目前只允许 `local`。不要在 manifest 中声明 `slurm`/`ssh-slurm`：调度回收侧尚未重跑固定 adapter 的 `check/collect`，核心会拒绝 scheduled adapter。需要调度器时，先使用显式用户 SLURM 脚本和身份绑定的 completion contract；远端 staging 完成后再扩展插件能力。
+内置 adapter 默认只允许 `local`。唯一例外是 `dft-labeling.label` 的单结构 static `ssh-slurm` 合同：adapter plan 必须显式声明已指纹化 `staged_files`、shell-free `remote_argv`、module allowlist、`remote_python` 和有单文件大小上限的 `fetch_outputs`；核心创建 fresh 目录、提交并在第二次 `advance` 审批后 fetch，再加载 pinned plugin 执行 `check/collect`。不要仅在 manifest 中增加 backend；缺少该完整合同的 scheduled adapter 会被核心拒绝。本地 `slurm` adapter 仍未开放。
 
 LASP/SSW 是这条边界的一个具体例子：execute 只包装用户自备 executable，要求显式
 版本、ARC/`lasp.in`/辅助输入与 fresh attempt，使用 `shell=False`；可选 MPI 只接受

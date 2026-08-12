@@ -60,7 +60,7 @@ archive（`allstr.arc`、`best.arc`、可选 `md.arc`）与 `lasp.in` 到临时�
 | `3-Element/*/sub_aimd_*.sh` | 初始结构 → 分温区 AIMD 轨迹 | 建目录、拷贝、提交和数值计算混在一起 | D | `pes-sampling` |
 | `Li24M12P16S64/data/sub_aimd.slurm` | 0–800 K 分段 AIMD → CONTCAR/轨迹 | VASP、核数、路径硬编码 | D | `pes-sampling` |
 | `Li24M12P16S64/data/extract.sh` | 轮询 CONTCAR → 每 100 次更新的快照 | 无明确超时/完成协议 | C/D | `pes-sampling` |
-| `4-Element/Li8/scf/sub_1.slurm` | 快照 → VASP 单点标签 | 调度与科学参数耦合 | D | `dft-labeling` |
+| `4-Element/Li8/scf/{single/INCAR,single/KPOINTS,sub_1.slurm}` | 快照 → VASP 单点输入/标签 | 参数与调度耦合；INCAR/KPOINTS 已只读审计并 SHA-256 固定，POTCAR 未读取 | D | `dft-labeling.vasp-prepare` 的 `manuscript-static-v1` 历史模板证据 + 独立 `label` |
 | `*/vasp2lasptrain.py` | OUTCAR/CONTCAR → `TrainStr.txt`/`TrainFor.txt` | 约万份重复副本；解析规则可复用 | B/C/E | `dft-labeling` 的 LASP 训练数据导出；不是 SSW sampler |
 | `Li10M7P8S32/run/{sub.slurm,single.py}` | 结构 → LASP SSW archive → 能量过滤/抽样 → 单点输入 | LASP、`pos2arc_`、绝对路径和 scheduler 耦合；历史 seed 未记录 | D | 已提炼为 `pes-sampling` 的 `lasp-ssw-execute`/`lasp-ssw-normalize-replay` local contract；不复用调度脚本 |
 | `Li10M7P8S32/rerun/test_data.py` | VASP 输出 → 完成/失败清单 | 只读判据有价值 | C | `dft-labeling` checks |
@@ -166,7 +166,7 @@ MSD 时间轴、体积、Li 数量、扩散维度、拟合窗、平衡段和电�
 | `MD/ase_MD/ase_md_only_multi_calc.py` | MACE/CHGNet/M3GNet/EMT/LJ，NPT/NVT → trajectory/log/metadata | D | `ionic-transport` MD adapter；关键参数、device/dtype/seed 必须显式，禁止覆盖轨迹，增加恢复点 |
 | `MD/lammps_MD/generate_md.py` | 结构/模型/多温度/seed/超胞 → MACE-LAMMPS data 与 NPT/NVT/MSD 输入 | B/C | `ionic-transport`；去除 `Li type 1`、framework `2 3` 和 `data.LYC` 假设 |
 | `MD/lammps_MD/submit_mace_cond.sh` | 模块加载并调用绝对路径 LAMMPS | E | 只把资源意图迁入用户 backend profile，不复用脚本文本 |
-| `MD/AIMD/generate_input.py` | pymatgen MITMDSet → NVT/NPT VASP 输入 | D | `pes-sampling`/`dft-labeling` 输入准备；POTCAR 生成由用户环境处理，仓库绝不包含 POTCAR |
+| `MD/AIMD/generate_input.py` | pymatgen MITMDSet → NVT/NPT VASP 输入 | D | 已提炼为 `dft-labeling.vasp-prepare` 的显式 `aimd` contract；POTCAR 只由用户 `PMG_VASP_PSP_DIR` 运行时组装且禁止 collect/入库 |
 | `diffusion_analysis/ionic_conductivity.py` | ASE/LAMMPS/VASP/MSD 多源；漂移、多时间原点、MSD、D、Nernst–Einstein、Arrhenius → CSV/JSON/HTML | C | `ionic-transport` 首选薄适配器；显式拟合窗、维度、体积、电荷、Haven ratio、replica 聚合与外推警告 |
 | `skill/{direct-sampling,mace-sft,ase-md,diffusion_analysis}/SKILL.md` | 旧 Agent 操作说明 | D | 只提炼领域决策，重新编写九个 MLIPFlow Skills |
 

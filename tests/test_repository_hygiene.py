@@ -109,7 +109,10 @@ class RepositoryHygieneTests(unittest.TestCase):
                     ".txt",
                     ".yaml",
                 }
-                or any(part in {".pytest_cache", "__pycache__"} for part in path.parts)
+                or any(
+                    part in {".mlipflow", ".pytest_cache", "__pycache__"}
+                    for part in path.parts
+                )
             ):
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")

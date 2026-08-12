@@ -120,12 +120,12 @@ walltime
 |---|---|
 | 本地 `local` backend | 可执行 |
 | replay 工作流 | 可执行 |
-| 内置科学 Adapter | 当前都只声明 `local` |
+| 内置科学 Adapter | 默认 `local`；`dft-labeling.label` 另有受控单结构 static `ssh-slurm` 合同 |
 | core `slurm` backend | 已实现 `sbatch/squeue/sacct/scancel` 抽象 |
 | core `ssh-slurm` backend | 已实现 SSH alias、远端 scheduler 查询/提交/fetch 基础能力 |
 | 科学 Adapter 直接 `backend: slurm` | **当前被核心显式阻止** |
-| 科学 Adapter 直接 `backend: ssh-slurm` | **当前被核心显式阻止** |
-| 自动 remote stage -> submit -> monitor -> fetch -> scientific check | **尚未完成真实 HPC 闭环验证** |
+| 其他科学 Adapter 直接 `backend: ssh-slurm` | **当前被核心显式阻止** |
+| `dft-labeling.label` 的 remote stage -> submit -> monitor -> fetch -> scientific check | 软件合同和 fake E2E 已实现；真实 HPC 验证待单独记录 |
 | 在 Slurm 分配到的计算节点中运行 `backend: local` | 当前最实际的集群科学执行方式 |
 
 当前仓库状态明确记录为：
@@ -138,8 +138,8 @@ REAL_HPC_INTEGRATION = EXTERNAL_VALIDATION_PENDING
 
 - **现在可以在集群 CPU/GPU 计算节点上真正运行科学 Adapter**；
 - 但当前方法是让 SLURM 先分配资源，然后 MLIPFlow 在该计算节点内以 `backend: local` 执行；
-- 不能把科学节点直接改成 `backend: slurm` 或 `backend: ssh-slurm` 来绕过核心保护；
-- 未来 first-class scheduler reconciliation 完成后，才能把 scheduler 提交和科学 `check/collect` 完整合并进 MLIPFlow backend。
+- 只有 `dft-labeling.label` 的 `bundled-vasp-static-v1` 可以按本文合同直接使用 `ssh-slurm`；
+- 其他插件不能靠修改 manifest 切换 scheduler backend；本地 `slurm` Adapter、relax/AIMD、array 和 continuation 尚未开放。
 
 ---
 
@@ -175,7 +175,7 @@ ionic transport      composition screening   voltage analysis
 |---|---|---|---|
 | `high-entropy-structure` | `generate-sqs` | ASE + icet | `local` |
 | `pes-sampling` | `direct-select` / `lasp-ssw-execute` / `lasp-ssw-normalize-replay` | MAML/ASE/pymatgen 或用户 LASP | `local` |
-| `dft-labeling` | `label` | 用户 DFT wrapper + VASP | `local` |
+| `dft-labeling` | `vasp-prepare` / `label` | pymatgen；用户 DFT wrapper + VASP | `local`；单结构 static `label` 可用受控 `ssh-slurm` |
 | `mlip-training` | `train` / `finetune` | 用户训练 wrapper + DeepMD/M3GNet/CHGNet/MACE | `local` |
 | `mlip-benchmark` | benchmark normalize/evaluate | 内置或用户 prediction wrapper | `local` |
 | `ionic-transport` | `analyze-existing` / bounded `md-smoke-and-analyze` | trajectory/MSD + 可选 ASE calculator | `local` |
@@ -335,6 +335,12 @@ ase >= 3.22
 icet >= 2.0
 pandas >= 1.5
 plotly >= 5
+```
+
+DFT 输入生成单独安装：
+
+```bash
+python -m pip install -e '.[dft]'
 ```
 
 检查：
@@ -505,7 +511,7 @@ ssh-slurm
 
 但 **schema 允许某个 backend，不代表科学 Adapter 当前允许它**。
 
-当前内置科学 Adapter 都应使用：
+除本文明确描述的 DFT static SSH-SLURM 例外外，内置科学 Adapter 应使用：
 
 ```yaml
 backend: local
@@ -686,16 +692,20 @@ LASP version identity
 dft-labeling
 ```
 
-当前插件不是一个 VASP driver。它是：
+当前插件把输入生成和 VASP 执行拆成两个独立操作：
 
 ```text
 MLIPFlow plan/approval
--> 用户自备 Python labeling wrapper
--> wrapper 生成 DFT 输入并运行/读取 DFT
+-> vasp-prepare：pymatgen 生成 POSCAR/INCAR/KPOINTS，运行时组装 POTCAR
+-> dft-input-manifest.json + MLIPFlow check/collect
+-> 第二次 plan/approval
+-> label：用户自备 Python labeling wrapper 运行/读取 DFT
 -> wrapper 写标准 result manifest
 -> MLIPFlow check
 -> MLIPFlow collect
 ```
+
+`vasp-prepare` 不运行 VASP、不调用 `sbatch`；`label` 不会继承第一次审批。
 
 ### 10.1 Python 环境
 
@@ -713,12 +723,59 @@ dpdata
 ```bash
 conda create -n mlipflow-dft python=3.11 -y
 conda activate mlipflow-dft
-python -m pip install pymatgen ase dpdata
+python -m pip install -e '.[dft]'
+python -m pip install ase dpdata
 ```
 
 VASP 本体不通过这个 Conda 环境安装。
 
-### 10.2 DFT node 示例
+### 10.2 `vasp-prepare` node 示例
+
+```yaml
+- id: prepare-static-inputs
+  uses: dft-labeling@0
+  mode: execute
+  backend: local
+  inputs:
+    structures_manifest: inputs/selected-structures.json
+    labeling_config: configs/vasp-labeling.json
+    pseudopotential_reference: configs/pseudopotential-metadata.json
+  parameters:
+    operation: vasp-prepare
+    interpreter_argv:
+      - /absolute/path/to/mlipflow-dft/bin/python
+    engine: vasp
+    output_subdir: vasp-inputs
+    max_structures: 1000
+    result_manifest: dft-input-manifest.json
+```
+
+静态配置可以显式引用本仓库已审计的论文 preset：
+
+```json
+{
+  "schema_version": 1,
+  "engine": "vasp",
+  "calculation_type": "static",
+  "preset": "manuscript-static-v1",
+  "incar": {},
+  "sort_structure": true
+}
+```
+
+该 preset 中，SI Fig. S3 直接支持 `ENCUT=450`、`EDIFF=5e-6`、`IALGO=38`；
+其余参数与 1×1×1 Monkhorst 网格来自只读审计的历史单点模板。二者在
+`reports/dft_static_parameter_audit.json` 中分层记录。历史 `NPAR=4` 因依赖硬件和
+VASP 版本而不进入 preset。SI 把 EDIFF 标成 eV/atom，但 VASP 的 EDIFF 是绝对电子
+停止阈值；实现保留数值并记录这个来源语义差异，不做静默单位换算。
+
+`relax` 不使用该静态 preset，必须显式给出正 `NSW`、`IBRION=1/2/3`、`EDIFFG`
+和 `ISIF`。`aimd` 必须显式给出 `IBRION=0`、正 `NSW/POTIM`、`TEBEG/TEEND`
+和 `MDALGO`。三种 calculation type 不允许靠猜测补参数。
+
+### 10.3 独立的 `label` node
+
+检查 `dft-input-manifest.json` 后，再为实际 DFT 建立单独节点和审批：
 
 ```yaml
 - id: labeling
@@ -728,7 +785,7 @@ VASP 本体不通过这个 Conda 环境安装。
   inputs:
     structures_manifest: inputs/selected-structures.json
     labeling_config: configs/vasp-labeling.json
-    pseudopotential_reference: configs/pseudopotential-metadata.json
+    dft_input_manifest: .mlipflow/runs/prepare-static-inputs/attempt-1/dft-input-manifest.json
   parameters:
     operation: label
     label_script: wrappers/run_vasp_label.py
@@ -746,7 +803,7 @@ VASP 本体不通过这个 Conda 环境安装。
 
 如果任务是结构优化，把离子收敛要求按照你的 wrapper contract 明确打开。
 
-### 10.3 `label_script` 不能做什么
+### 10.4 `label_script` 不能做什么
 
 当前 Adapter 明确要求：
 
@@ -756,6 +813,55 @@ VASP 本体不通过这个 Conda 环境安装。
 - 不要把 POTCAR 或私钥写入仓库。
 
 在 Slurm 计算节点中，wrapper 可以调用已经分配资源内允许的 MPI/VASP 启动方式，但不能再嵌套提交新的 batch job。
+
+### 10.5 受控 SSH-SLURM static 单点
+
+当前原生远端合同每个 node 只接受一个已经 `vasp-prepare` 审核通过的 static 结构：
+
+```yaml
+backend_profiles:
+  cpu-site:
+    ssh_profile: <SSH_ALIAS>
+    remote_root: .
+
+workflow:
+  nodes:
+    - id: label-static-001
+      uses: dft-labeling@0
+      backend: ssh-slurm
+      backend_profile: cpu-site
+      inputs:
+        structures_manifest: inputs/one-structure.json
+        labeling_config: configs/vasp-static.json
+        dft_input_manifest: .mlipflow/runs/prepare-static/attempt-1/dft-input-manifest.json
+      parameters:
+        operation: label
+        scheduler_runner: bundled-vasp-static-v1
+        remote_python: /usr/bin/python3
+        modules: [vasp/6.3.0-intel2023.2]
+        vasp_argv: [srun, --ntasks=4, vasp_std]
+        engine: vasp
+        completion_policy:
+          require_ionic_convergence: false
+        units:
+          energy: eV
+          length: angstrom
+          force: eV/angstrom
+          stress: kbar-vasp-3x3
+        result_manifest: dft-labeling-result.json
+      resources:
+        partition: <PARTITION>
+        qos: <QOS>
+        nodes: 1
+        ntasks: 4
+        time: 00:05:00
+```
+
+`vasp_argv` 的 `--ntasks=N` 必须与 `resources.ntasks` 一致。首次运行先执行 `run
+--dry-run` 并批准精确摘要；该批准会创建全新远端目录、上传 basename allowlist、核对
+SHA-256 并提交。作业完成后执行 `advance --dry-run`，审查允许拉回的文件、大小和
+SHA-256，再批准 `advance`。第二步才会拉回结果并在本地独立检查 XML、OUTCAR footer、
+电子步/NELM、标签数值和 artifact hashes。POTCAR 不在回收清单中。
 
 ---
 
@@ -1099,7 +1205,6 @@ chmod 600 ~/.ssh/id_ed25519_hpc
 Host <SSH_ALIAS>
     HostName <LOGIN_HOST>
     User <USERNAME>
-    IdentityFile ~/.ssh/id_ed25519_hpc
     IdentitiesOnly yes
     ServerAliveInterval 60
     ServerAliveCountMax 3
@@ -1111,7 +1216,6 @@ Host <SSH_ALIAS>
 Host <SSH_ALIAS>
     HostName <INTERNAL_LOGIN_HOST>
     User <USERNAME>
-    IdentityFile ~/.ssh/id_ed25519_hpc
     ProxyJump <BASTION_ALIAS>
 ```
 
@@ -1137,6 +1241,7 @@ ssh <SSH_ALIAS> 'which sbatch && which srun && which squeue'
 backend_profiles:
   cluster-a:
     ssh_profile: <SSH_ALIAS>
+    remote_root: .
 ```
 
 不要写：
@@ -1145,10 +1250,12 @@ backend_profiles:
 password
 private key content
 token
-IdentityFile
+本地 SSH 私钥文件配置
 ```
 
-当前科学 Adapter 不应直接切换到 `ssh-slurm`；这个 profile 主要用于核心 backend 能力和后续 HPC 集成。
+`remote_root` 必须是登录节点上已经存在的受限目录；MLIPFlow 只会在其下创建一个由
+project/node/attempt/run identity 派生的全新目录。当前只有 DFT 单结构 static runner
+消费这个 profile；其他科学 Adapter 不应直接切换到 `ssh-slurm`。
 
 ---
 
@@ -1547,7 +1654,8 @@ account/qos
 
 ## 25. POTCAR / 赝势：怎样配置才可复现
 
-MLIPFlow **不会下载、生成或提交 POTCAR**。
+MLIPFlow **不会下载、分发、collect 或提交 POTCAR**。`vasp-prepare` 只会在已批准的
+本地 attempt 中，临时从用户合法配置的 `PMG_VASP_PSP_DIR` 组装运行所需 POTCAR。
 
 ### 25.1 pymatgen 目录
 
@@ -1558,6 +1666,15 @@ MLIPFlow **不会下载、生成或提交 POTCAR**。
 ```bash
 pmg config -p /path/to/original/potcar_PBE /path/to/pmg_potcars
 pmg config --add PMG_VASP_PSP_DIR /path/to/pmg_potcars
+```
+
+这会把 `PMG_VASP_PSP_DIR` 写入 pymatgen 的用户 settings；也可以在执行环境中设置
+同名环境变量。`vasp-prepare` 支持这两种官方配置方式，优先使用环境变量，并且只在
+manifest 中记录 `environment` 或 `pymatgen-settings`，绝不记录实际目录。可用下面的
+命令确认配置是否被 pymatgen 读取（不要打印目录本身）：
+
+```bash
+python -c 'from pymatgen.core import SETTINGS; print("configured" if SETTINGS.get("PMG_VASP_PSP_DIR") else "missing")'
 ```
 
 不要把 POTCAR 内容提交仓库。
@@ -1603,18 +1720,45 @@ sha256sum /licensed/path/to/POTCAR
 
 ### 25.4 `pseudopotential_reference`
 
-`dft-labeling` 可以接受一个 **用户管理的 reference**；这个 reference 应描述势函数身份，而不是把 POTCAR binary 放进 MLIPFlow 仓库。
+`dft-labeling.vasp-prepare` 要求一个 **用户管理的 reference**；它只描述赝势身份和
+批准的哈希，不包含 POTCAR binary 或真实文件系统路径。例如：
+
+```json
+{
+  "schema_version": 1,
+  "reference_id": "project-pbe54-v1",
+  "source_env": "PMG_VASP_PSP_DIR",
+  "license_acknowledged": true,
+  "functional": "PBE_54",
+  "symbols": {"Li": "Li_sv", "P": "P", "S": "S"},
+  "expected_component_sha256": {},
+  "expected_combined_sha256": null
+}
+```
+
+建议在批准前填入已知的 component/combined SHA-256。wrapper 只从用户合法配置的
+`PMG_VASP_PSP_DIR` 组装 POTCAR；`dft-input-manifest.json` 只记录 reference、symbol、
+hash 和 `collectable=false`。POTCAR 会留在该 attempt 的运行目录供后续 VASP 使用，
+但 MLIPFlow `collect`、报告、wheel 和仓库都不会收集它。
 
 ---
 
 ## 26. DFT wrapper 必须输出什么
 
-wrapper 至少应该完成：
+内置 `vasp-prepare` 已负责：
 
 ```text
 读取 structures manifest
 生成 POSCAR/INCAR/KPOINTS
 按显式映射组装 POTCAR
+记录 pymatgen 版本、结构/配置/赝势指纹、INCAR、KPOINTS 和 POTCAR symbol/hash
+输出 dft-input-manifest.json
+```
+
+随后独立审批的 label wrapper 至少应该完成：
+
+```text
+读取并绑定 dft-input-manifest.json
 运行 VASP
 检查电子收敛
 需要时检查离子收敛
@@ -1897,15 +2041,13 @@ job-id parsing
 identity-bound completion context
 ```
 
-但是当前 `run_node` 会对 Adapter-backed scientific node 的 scheduler execution 显式报错，原因是：
+当前只开放一个窄合同：
 
 ```text
-scheduler completion path 尚未与 pinned scientific checker 完整结合
+dft-labeling.label + bundled-vasp-static-v1 + backend: ssh-slurm
 ```
 
-因此不要通过手工修改 plugin manifest 来绕过限制。
-
-真正 first-class HPC 闭环需要：
+它执行以下闭环：
 
 ```text
 local project
@@ -1922,7 +2064,13 @@ local project
 -> final run manifest
 ```
 
-这部分完成真实集群验收后，才应该把 README 的“当前 Slurm 外层包裹 local Adapter”升级成 MLIPFlow 原生 scheduler 使用方式。
+所有 staged 文件在提交前逐一核对 SHA-256；POTCAR 只能上传，永不进入 fetch allowlist。
+第一次 `run` 审批负责 staging + submit；scheduler `COMPLETED` 后还必须对包含远端输出
+大小/SHA-256 的 `advance --dry-run` 进行第二次审批，随后才允许 fetch 和 pinned adapter
+`check/collect`。远端文件在两次 observation 间变化会拒绝执行。
+
+其他 Adapter-backed scheduler execution 继续显式报错。真实集群 smoke 完成之前，状态仍是
+`REAL_HPC_INTEGRATION = EXTERNAL_VALIDATION_PENDING`；fake E2E 不能升级这个证据等级。
 
 ---
 
@@ -2188,7 +2336,8 @@ clone/install
 -> 再扩大到生产规模
 ```
 
-当前版本不要把科学 Adapter 强行改成 `slurm`/`ssh-slurm`。等仓库完成真实 stage -> submit -> monitor -> fetch -> pinned scientific check 闭环后，再启用 MLIPFlow 原生远程调度路径。
+当前版本只有本文列出的 DFT static 窄合同可使用原生 `ssh-slurm`。其他科学 Adapter
+继续使用 `local`（可位于已分配计算节点中），不得强行改 manifest 绕过核心保护。
 
 ---
 

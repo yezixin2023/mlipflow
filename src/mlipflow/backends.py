@@ -18,6 +18,8 @@ from .errors import BackendError
 
 
 JOB_ID = re.compile(r"Submitted batch job\s+(\d+)")
+SAFE_REMOTE_PATH = re.compile(r"[A-Za-z0-9_./+\-]+")
+SAFE_REMOTE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+\-]*")
 SAFE_ENVIRONMENT_KEYS = frozenset(
     {
         "HOME",
@@ -176,6 +178,8 @@ class SshSlurmBackend:
         self.profile = profile
 
     def submit(self, remote_script: str, remote_cwd: str) -> ExecutionResult:
+        _validate_remote_directory(remote_cwd, allow_dot=True)
+        _validate_remote_name(remote_script)
         # Arguments are passed as separate argv fields. The remote helper should
         # eventually replace OpenSSH command composition with a fixed RPC.
         command = f"cd -- {_quote_remote(remote_cwd)} && sbatch -- {_quote_remote(remote_script)}"
@@ -195,6 +199,130 @@ class SshSlurmBackend:
             match.group(1) if match else None,
         )
 
+    def stage_fresh(
+        self,
+        remote_root: str,
+        run_name: str,
+        files: Sequence[tuple[Path, str, str]],
+    ) -> str:
+        """Create one fresh remote directory, upload an allowlist, and verify SHA-256.
+
+        ``files`` entries are ``(local_source, remote_basename, sha256:...)``.  A
+        basename-only contract intentionally avoids recursive staging and makes
+        every remote write visible in the approved run plan.
+        """
+
+        _validate_remote_directory(remote_root, allow_dot=True)
+        _validate_remote_name(run_name)
+        if not files:
+            raise BackendError("remote staging requires at least one file")
+        remote_cwd = run_name if remote_root == "." else f"{remote_root.rstrip('/')}/{run_name}"
+        _validate_remote_directory(remote_cwd)
+        create = (
+            f"cd -- {_quote_remote(remote_root)} && "
+            f"mkdir -- {_quote_remote(run_name)}"
+        )
+        completed = subprocess.run(
+            ["ssh", "--", self.profile, create],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise BackendError(
+                completed.stderr or completed.stdout or "fresh remote directory creation failed"
+            )
+        seen: set[str] = set()
+        for source, remote_name, expected_sha256 in files:
+            _validate_remote_name(remote_name)
+            if remote_name in seen:
+                raise BackendError(f"duplicate remote staging name: {remote_name}")
+            seen.add(remote_name)
+            if source.is_symlink() or not source.is_file():
+                raise BackendError(f"staging source must be an ordinary file: {source}")
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_sha256):
+                raise BackendError(f"invalid staging fingerprint for {remote_name}")
+            uploaded = subprocess.run(
+                ["scp", "--", str(source), f"{self.profile}:{remote_cwd}/{remote_name}"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=False,
+                check=False,
+            )
+            if uploaded.returncode != 0:
+                raise BackendError(
+                    uploaded.stderr or uploaded.stdout or f"remote staging failed: {remote_name}"
+                )
+            observed = self.inspect_file(remote_cwd, remote_name)
+            if observed.get("sha256") != expected_sha256:
+                raise BackendError(f"remote staging fingerprint mismatch: {remote_name}")
+        return remote_cwd
+
+    def inspect_file(self, remote_cwd: str, remote_name: str) -> dict[str, object]:
+        """Read one remote file's bounded identity without modifying remote state."""
+
+        _validate_remote_directory(remote_cwd)
+        _validate_remote_name(remote_name)
+        command = (
+            f"cd -- {_quote_remote(remote_cwd)} && "
+            f"if [ -f {_quote_remote(remote_name)} ] && "
+            f"[ ! -L {_quote_remote(remote_name)} ]; then "
+            f"stat -c '%s' -- {_quote_remote(remote_name)} && "
+            f"sha256sum -- {_quote_remote(remote_name)}; "
+            "else printf 'MISSING\\n'; fi"
+        )
+        completed = subprocess.run(
+            ["ssh", "--", self.profile, command],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise BackendError(
+                completed.stderr or completed.stdout or "remote file inspection failed"
+            )
+        lines = completed.stdout.strip().splitlines()
+        if lines == ["MISSING"] or not lines:
+            return {"path": remote_name, "exists": False}
+        if len(lines) != 2 or not lines[0].isdigit():
+            raise BackendError(f"unexpected remote fingerprint response for {remote_name}")
+        digest, separator, returned_name = lines[1].partition("  ")
+        if not separator or returned_name != remote_name or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise BackendError(f"invalid remote fingerprint response for {remote_name}")
+        return {
+            "path": remote_name,
+            "exists": True,
+            "size_bytes": int(lines[0]),
+            "sha256": f"sha256:{digest}",
+        }
+
+    def fetch_from(self, remote_cwd: str, remote_name: str, destination: Path) -> Path:
+        """Fetch one approved basename into a fresh local destination."""
+
+        _validate_remote_directory(remote_cwd)
+        _validate_remote_name(remote_name)
+        if destination.exists() or destination.is_symlink():
+            raise BackendError(f"remote fetch destination must be fresh: {destination}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        completed = subprocess.run(
+            ["scp", "--", f"{self.profile}:{remote_cwd}/{remote_name}", str(destination)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise BackendError(completed.stderr or completed.stdout or "scp fetch failed")
+        if destination.is_symlink() or not destination.is_file():
+            raise BackendError(f"fetched output is not an ordinary file: {destination}")
+        return destination
+
     def cancel(self, job_id: str) -> ExecutionResult:
         if not job_id.isdigit():
             raise BackendError(f"invalid SLURM job id: {job_id!r}")
@@ -212,9 +340,9 @@ class SshSlurmBackend:
         if not job_id.isdigit():
             raise BackendError(f"invalid SLURM job id: {job_id!r}")
         command = (
-            f"squeue -h -j {job_id} -o '%T|%R' || exit $?; "
-            f"if ! squeue -h -j {job_id} | grep -q .; then "
-            f"sacct -n -X -j {job_id} -o State,Reason -P; fi"
+            f"active=$(squeue -h -j {job_id} -o '%T|%R' 2>/dev/null || true); "
+            "if [ -n \"$active\" ]; then printf '%s\\n' \"$active\"; "
+            f"else sacct -n -X -j {job_id} -o State,Reason -P; fi"
         )
         completed = subprocess.run(
             ["ssh", "--", self.profile, command],
@@ -322,3 +450,16 @@ def _quote_remote(value: str) -> str:
     if "\x00" in value or "\n" in value:
         raise BackendError("invalid remote path")
     return "'" + value.replace("'", "'\\''") + "'"
+
+
+def _validate_remote_name(value: str) -> None:
+    if not isinstance(value, str) or not SAFE_REMOTE_NAME.fullmatch(value):
+        raise BackendError(f"remote file name must be a safe basename: {value!r}")
+
+
+def _validate_remote_directory(value: str, *, allow_dot: bool = False) -> None:
+    if not isinstance(value, str) or not value or not SAFE_REMOTE_PATH.fullmatch(value):
+        raise BackendError(f"remote directory uses unsafe characters: {value!r}")
+    path = Path(value)
+    if ".." in path.parts or (path == Path(".") and not allow_dot):
+        raise BackendError(f"remote directory is not allowed: {value!r}")

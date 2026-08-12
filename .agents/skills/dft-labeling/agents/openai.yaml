@@ -1,0 +1,4 @@
+interface:
+  display_name: "DFT labeling"
+  short_description: "Prepare VASP inputs and supervise local or scheduled DFT safely"
+  default_prompt: "$dft-labeling Prepare, submit, or verify a DFT labeling stage with explicit provenance, staging, and approval boundaries."
