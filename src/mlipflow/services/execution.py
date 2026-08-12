@@ -20,11 +20,13 @@ from ..errors import BackendError, ConfigError, PluginError
 from ..io import write_json_atomic, write_text_atomic
 from ..manifests import run_manifest
 from ..planning import resolve_reference
+from ..portable import to_runtime
 from ..plugins import PluginSpec, load_adapter
 from ..state import RunState, StateStore
 from .backend_factory import SchedulerFactory
 from .contracts import (
     _adapter_context,
+    _portable_roots,
     _load_result,
     _manifest_context,
     _normalize_adapter_artifacts,
@@ -101,7 +103,13 @@ def _execute_ready(
             raise PluginError(f"plugin {plugin.plugin_id} only supports replay")
         if backend == "local":
             store.transition(run_id, RunState.RUNNING)
-            adapter_plan = plan.get("adapter_plan")
+            # The signed plan holds portable tokens; runtime path resolution
+            # happens here, so the adapter still sees this machine's absolute
+            # paths in argv, cwd and its own echoed plan.
+            adapter_plan = to_runtime(
+                plan.get("adapter_plan"),
+                _portable_roots(project, plugin, node_id, attempt),
+            )
             if not isinstance(adapter_plan, dict):
                 raise PluginError(
                     "local execution requires an adapter-ready plugin with scientific check/collect"

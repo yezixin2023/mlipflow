@@ -58,7 +58,7 @@ from .commands import (  # noqa: F401
     _require_approval,
 )
 from .contracts import (  # noqa: F401
-    _adapter_command_fingerprints,
+    _adapter_command_identities,
     _adapter_context,
     _cluster_profile,
     _is_within,

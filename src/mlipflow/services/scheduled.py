@@ -10,12 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import fingerprint
+from ..artifacts import content_identity, fingerprint
 from ..config import Project
 from ..errors import ApprovalError, BackendError, ConfigError, StateError
 from ..io import load_mapping, write_json_atomic, write_text_atomic
 from ..planning import node_plan, with_digest
 from ..plugins import PluginSpec, discover_plugins, load_adapter, select_plugin
+from ..portable import to_runtime
 from ..site import load_site_config
 from ..state import RunState, StateStore, StepRun, utc_now
 from .backend_factory import (
@@ -25,6 +26,7 @@ from .backend_factory import (
 )
 from .contracts import (
     _adapter_context,
+    _portable_roots,
     _normalize_adapter_artifacts,
     _scheduled_contract,
     _sha256_file,
@@ -68,7 +70,11 @@ def _stage_and_submit_scheduled_adapter(
     *,
     factory: SchedulerFactory | None = None,
 ) -> tuple[Any, str, list[str]]:
-    scheduled = _scheduled_contract(project, plugin, plan)
+    node_id = str(node["id"])
+    attempt = int(str(attempt_dir.name).rsplit("-", 1)[1])
+    scheduled = _scheduled_contract(
+        project, plugin, plan, node_id=node_id, attempt=attempt
+    )
     hpc_execution = plan.get("hpc_execution")
     if not isinstance(hpc_execution, dict):
         raise BackendError("approved plan lacks resolved HPC execution")
@@ -240,7 +246,12 @@ def _observe_scheduled_step(
                 backend = scheduler_from_cluster_record(cluster_record, factory=factory)
                 inventory = _remote_output_inventory(backend, workspace, scheduled)
                 observation["adapter_finalization"] = {
-                    "approved_plan_fingerprint": fingerprint(approved_plan_path),
+                    # Content identity, not a filesystem fingerprint: this value
+                    # enters the advance approval digest, and re-staging or
+                    # copying the attempt directory must not invalidate it.
+                    "approved_plan_identity": content_identity(
+                        approved_plan_path, root=project.root
+                    ),
                     "plugin_id": plugin.plugin_id,
                     "remote_run_dir": workspace["run_dir"],
                     "outputs": inventory,
@@ -333,12 +344,15 @@ def _load_pinned_scheduled_plan(
     for key in (
         "project_id",
         "node_id",
+        # ``plugin`` carries implementation_identity, so a real edit to the
+        # adapter source between submission and fetch is still caught here — but
+        # a touch, a re-clone or an rsync of identical bytes no longer is.
         "plugin",
         "backend",
         "backend_profile",
         "project_config_digest",
         "inputs",
-        "input_fingerprints",
+        "input_identities",
         "parameters",
         "resources",
     ):
@@ -356,7 +370,9 @@ def _load_pinned_scheduled_plan(
         raise ApprovalError("site configuration changed after scheduler submission")
     if cluster_record != profile.to_plan_dict():
         raise ApprovalError("cluster profile changed after scheduler submission")
-    scheduled = _scheduled_contract(project, plugin, plan)
+    scheduled = _scheduled_contract(
+        project, plugin, plan, node_id=step.node_id, attempt=step.attempt
+    )
     return plan, plugin, scheduled
 
 
@@ -378,7 +394,9 @@ def _finalize_scheduled_adapter(
     )
     attempt_dir = attempt_directory(project, step.node_id, step.attempt)
     plan_path = attempt_dir / "approved-plan.json"
-    if fingerprint(plan_path) != details.get("approved_plan_fingerprint"):
+    if content_identity(plan_path, root=project.root) != details.get(
+        "approved_plan_identity"
+    ):
         raise StateError("approved scheduled plan changed after advance dry-run")
     hpc_execution = plan.get("hpc_execution")
     cluster_record = (
@@ -428,7 +446,12 @@ def _finalize_scheduled_adapter(
         "returncode": 0,
         "scheduler_state": "COMPLETED",
         "remote_output_inventory": current_inventory,
-        "plan": plan["adapter_plan"],
+        # Resolve portable tokens so the pinned checker reads the same absolute
+        # paths its planning half emitted.
+        "plan": to_runtime(
+            plan["adapter_plan"],
+            _portable_roots(project, plugin, step.node_id, step.attempt),
+        ),
         "hpc_execution": hpc_execution,
     }
     adapter = load_adapter(plugin)

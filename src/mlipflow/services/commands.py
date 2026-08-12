@@ -11,20 +11,22 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import fingerprint
+from ..artifacts import content_identity
 from ..backends import SshSlurmBackend
 from ..config import Project, load_project
 from ..errors import ApprovalError, BackendError, PluginError, StateError
 from ..hpc import TemplateLibrary, resolve_hpc_execution_plan
 from ..io import write_json_atomic
 from ..planning import action_plan, node_plan, resolve_reference, with_digest
+from ..portable import to_portable
 from ..plugins import discover_plugins, load_adapter, select_plugin
 from ..site import load_site_config
 from ..state import RunState, StateStore
 from .backend_factory import SchedulerFactory, scheduler_for_node
 from .contracts import (
-    _adapter_command_fingerprints,
+    _adapter_command_identities,
     _adapter_context,
+    _portable_roots,
     _load_result,
     _planned_attempt,
     _project_scoped_result_path,
@@ -104,22 +106,34 @@ def make_run_plan(
     if node.get("mode", "execute") == "execute" and plugin.raw.get("implementation", {}).get(
         "status"
     ) in {"adapter-ready", "implemented"}:
-        context = _adapter_context(project, node, _planned_attempt(project, node_id))
+        attempt = _planned_attempt(project, node_id)
+        context = _adapter_context(project, node, attempt)
         adapter = load_adapter(plugin)
         diagnostics = adapter.validate(context)
         adapter_plan = adapter.plan(context)
         unsigned = {key: value for key, value in plan.items() if key != "plan_digest"}
-        unsigned["adapter_diagnostics"] = diagnostics
-        unsigned["adapter_plan"] = adapter_plan
-        unsigned["adapter_command_fingerprints"] = _adapter_command_fingerprints(
-            project, adapter_plan
+        # Adapters emit this machine's absolute paths in argv, cwd, staged
+        # sources and diagnostic messages.  Approval must describe the work, not
+        # the filesystem it was planned on, so those roots become tokens here and
+        # are resolved again in ``_execute_ready`` just before anything runs.
+        roots = _portable_roots(project, plugin, node_id, attempt)
+        unsigned["adapter_diagnostics"] = to_portable(diagnostics, roots)
+        unsigned["adapter_plan"] = to_portable(adapter_plan, roots)
+        unsigned["adapter_command_identities"] = _adapter_command_identities(
+            project, adapter_plan, plugin=plugin, node_id=node_id, attempt=attempt
         )
         if (
             str(node.get("backend", "local")) == "ssh-slurm"
             and isinstance(adapter_plan, dict)
             and isinstance(adapter_plan.get("scheduled_execution"), dict)
         ):
-            _scheduled_contract(project, plugin, {"adapter_plan": adapter_plan})
+            _scheduled_contract(
+                project,
+                plugin,
+                {"adapter_plan": adapter_plan},
+                node_id=node_id,
+                attempt=attempt,
+            )
             site = load_site_config(site_path)
             profile = site.cluster(node.get("backend_profile"))
             provider: TemplateLibrary = (
@@ -132,7 +146,7 @@ def make_run_plan(
                 profile=profile,
                 project_id=project.project_id,
                 node_id=str(node["id"]),
-                attempt=_planned_attempt(project, node_id),
+                attempt=attempt,
                 resources_value=node.get("resources"),
                 scheduled_execution=adapter_plan["scheduled_execution"],
                 library=provider,
@@ -267,8 +281,8 @@ def make_advance_plan(
                                 "reason": str(observation.get("reason", "scheduler reconciliation")),
                                 "scheduler_state": str(observation.get("scheduler_state", "UNKNOWN")),
                                 "completion_manifest": observation.get("completion_manifest"),
-                                "completion_fingerprint": observation.get(
-                                    "completion_fingerprint"
+                                "completion_identity": observation.get(
+                                    "completion_identity"
                                 ),
                             }
                         )
@@ -332,10 +346,10 @@ def advance(
                 result_path = _project_scoped_result_path(
                     project, resolve_reference(manifest_ref, project.root)
                 )
-                approved_fingerprint = change.get("completion_fingerprint")
-                current_fingerprint = fingerprint(result_path)
-                if not isinstance(approved_fingerprint, dict) or (
-                    current_fingerprint != approved_fingerprint
+                approved_identity = change.get("completion_identity")
+                current_identity = content_identity(result_path, root=project.root)
+                if not isinstance(approved_identity, dict) or (
+                    current_identity != approved_identity
                 ):
                     raise StateError(
                         "completion manifest changed after the approved advance plan"

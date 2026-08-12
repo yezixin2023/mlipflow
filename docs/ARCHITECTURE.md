@@ -26,7 +26,54 @@ executable、模板或远端 work root。
 模板 identity 与渲染脚本纳入审批摘要。执行模式的计划会加载所选 Python adapter，因此
 插件与构建脚本一样属于受信代码；查询命令除 `doctor` 的本地 site 校验外不 import
 adapter 或访问 backend。批准摘要绑定项目配置、site digest、plugin manifest/adapter
-源码、现有输入和远端模板指纹；任一内容改变后旧摘要失效。
+源码、现有输入和远端模板指纹；任一**内容**改变后旧摘要失效。
+
+## 审批身份：内容，不是文件系统状态
+
+plan `schema_version` 为 2。审批身份只能由声明配置和文件**内容**导出：
+
+```text
+content identity（可进入 plan_digest）      observational metadata（永不进入）
+  locator：project/plugin 相对路径            uri：绝对 file:// 路径
+  size_bytes                                  mtime_ns
+  content：SHA-256 / tree-SHA-256
+  content_mode
+```
+
+`artifacts.content_identity()` 产出前者，`artifacts.fingerprint()` 产出后者并仍随
+artifact 落盘供审计。二者共用同一个内容摘要，因此目录树身份在两侧都与 mtime 无关。
+
+由此，同一份内容在 `touch`、`git clone` 到别处、`rsync` 到另一台机器后产生**相同**的
+`plan_digest`；内容一改则必然改变。schema 1 曾把 `mtime_ns` 与绝对 `file://` URI 经
+`implementation_fingerprint`/`input_fingerprints` 送入摘要，其后果是排队中的作业会因为
+任何原地重写而永久无法 `advance`。schema 2 用 `implementation_identity`、
+`input_identities` 与 `adapter_command_identities` 取代之。
+
+超过阈值的大文件不读取内容，报告 `content: null` 与 `content_mode: "size-only"`：
+metadata 哈希不是内容证据，不得冒充内容证据。
+
+### Adapter-authored 字段的可移植化
+
+adapter 天然以绝对路径思考：八个插件全部输出 `cwd`，部分还输出绝对 argv、staged
+`source` 与引用文件名的诊断信息。这些都落在被签名的 `adapter_plan` /
+`adapter_diagnostics` 里。核心因此在签名前按已知根改写，在执行前还原：
+
+```text
+<project>/.mlipflow/runs/n/attempt-1/out  ->  {ATTEMPT_DIR}/out
+<project>/prepared/POSCAR                 ->  {PROJECT_ROOT}/prepared/POSCAR
+<plugins>/dft-labeling/helper.py           ->  {PLUGIN_DIR}/helper.py
+```
+
+`portable.to_portable()` 在 `make_run_plan` 中改写，`portable.to_runtime()` 在
+`_execute_ready`、`_scheduled_contract` 与 pinned checker 上下文中还原，因此 adapter
+始终收到本机绝对路径，argv 与工作目录完全不变——科学行为不受影响。审批看到的是可移植
+描述，执行看到的是本机实现。
+
+不在任何已知根内的路径保持原样：例如 `resources.python_executable` 属于项目显式声明的
+站点配置，在任何使用同一份 `project.yaml` 的机器上都相同，改写它反而会隐藏审批内容。
+
+实测覆盖：8 个插件的 BLOCKED plan、2 个 local READY plan、1 个 ssh-slurm READY plan
+共 11 种 plan 形态，machine-specific path leaves = 0，mtime leaves = 0。
 
 ## 持久状态
 
@@ -119,7 +166,7 @@ resolve local profile
 
 ## 产物与回放
 
-每个 attempt 写独立 `run-manifest.json`。小文件和小目录树默认 SHA-256；超过阈值的大文件/目录记录 URI、size、mtime 和 metadata fingerprint，避免默认扫描多 GB 数据。Adapter 产物必须是 fresh attempt 内的普通文件；外部引用必须走显式 URI+fingerprint 契约。
+每个 attempt 写独立 `run-manifest.json`。小文件和小目录树默认 SHA-256；超过阈值的大文件记录 URI、size、mtime 和 metadata fingerprint，避免默认扫描多 GB 数据。大目录树退化为 `tree-structure-sha256`（路径+size+symlink 目标，不含 mtime），仍是稳定的结构身份。artifact 记录保留 URI 与 mtime 供审计，但这些字段属于 observational metadata，不参与任何审批摘要。Adapter 产物必须是 fresh attempt 内的普通文件；外部引用必须走显式 URI+fingerprint 契约。
 
 回放只接受项目根内的普通 result manifest，要求显式 `OK`，并只为其目录内明确列出的普通文件建立引用和指纹；拒绝绝对路径、`..` 与符号链接，不复制数据或运行数值程序。
 

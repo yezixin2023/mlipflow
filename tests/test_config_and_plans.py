@@ -161,7 +161,9 @@ class PlanTests(unittest.TestCase):
             (dataset / "part.dat").write_text("beta\n", encoding="utf-8")
             third = make_run_plan(project, "x", plugins)
             self.assertNotEqual(second["plan_digest"], third["plan_digest"])
-            self.assertEqual(third["input_fingerprints"]["data"]["fingerprint_mode"], "tree-full")
+            self.assertEqual(third["input_identities"]["data"]["content_mode"], "tree-full")
+            self.assertEqual(third["input_identities"]["data"]["locator"], "dataset")
+            self.assertEqual(third["input_identities"]["structures"]["locator"], "structures.xyz")
 
     def test_input_or_plugin_change_invalidates_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -12,17 +12,37 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import fingerprint
+from ..artifacts import content_identity, fingerprint
 from ..config import Project
 from ..errors import ConfigError, PluginError
 from ..io import load_mapping
 from ..plugins import PluginSpec
+from ..portable import PortableRoots, to_runtime
 from ..site import ClusterProfile, load_site_config
 from ..state import RunState, StateStore, utc_now
 from .paths import attempt_directory, state_path
 
 
 _SAFE_REMOTE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+\-]*")
+
+
+def _portable_roots(
+    project: Project,
+    plugin: PluginSpec | None = None,
+    node_id: str | None = None,
+    attempt: int | None = None,
+) -> PortableRoots:
+    """Build the root set used to make adapter-authored plan fields portable."""
+
+    return PortableRoots(
+        project_root=project.root,
+        attempt_dir=(
+            attempt_directory(project, node_id, attempt)
+            if node_id is not None and attempt is not None
+            else None
+        ),
+        plugin_dir=plugin.path.parent if plugin is not None else None,
+    )
 
 
 def _sha256_file(path: Path) -> str:
@@ -102,8 +122,17 @@ def _scheduled_contract(
     project: Project,
     plugin: PluginSpec,
     plan: dict[str, Any],
+    *,
+    node_id: str | None = None,
+    attempt: int | None = None,
 ) -> dict[str, Any]:
-    adapter_plan = plan.get("adapter_plan")
+    # Staging needs real paths, but a signed plan carries portable tokens, so
+    # resolve before validating.  Doing it here rather than at each of the three
+    # call sites keeps the plan-form/runtime-form boundary in one place.
+    adapter_plan = to_runtime(
+        plan.get("adapter_plan"),
+        _portable_roots(project, plugin, node_id, attempt),
+    )
     scheduled = adapter_plan.get("scheduled_execution") if isinstance(adapter_plan, dict) else None
     if not isinstance(scheduled, dict) or scheduled.get("schema_version") != 2:
         raise PluginError("scheduled adapter plan requires scheduled_execution schema_version=2")
@@ -246,9 +275,22 @@ def _adapter_context(project: Project, node: dict[str, Any], attempt: int) -> di
     }
 
 
-def _adapter_command_fingerprints(
-    project: Project, adapter_plan: Any
+def _adapter_command_identities(
+    project: Project,
+    adapter_plan: Any,
+    *,
+    plugin: PluginSpec | None = None,
+    node_id: str | None = None,
+    attempt: int | None = None,
 ) -> dict[str, dict[str, Any]]:
+    """Bind, by content, whichever argv entries name real files.
+
+    An interpreter or wrapper outside the project reports ``locator: None`` and
+    is identified purely by its bytes: the literal path the node will invoke is
+    already carried in ``adapter_plan.argv``, so repeating it here would make the
+    approval digest differ between two machines running identical software.
+    """
+
     if not isinstance(adapter_plan, dict):
         return {}
     if isinstance(adapter_plan.get("scheduled_execution"), dict):
@@ -256,6 +298,11 @@ def _adapter_command_fingerprints(
         # staged_files.  Site-owned executable/launcher identity belongs to the
         # selected remote templates, so no adapter argv is resolved locally.
         return {}
+    # Hashing needs real paths; the resulting identities are locator-based and
+    # so remain portable regardless of which form went in.
+    adapter_plan = to_runtime(
+        adapter_plan, _portable_roots(project, plugin, node_id, attempt)
+    )
     argv = adapter_plan.get("argv")
     if not isinstance(argv, list):
         return {}
@@ -269,8 +316,8 @@ def _adapter_command_fingerprints(
         candidate = Path(raw)
         candidate = candidate if candidate.is_absolute() else base / candidate
         if candidate.exists():
-            captured[str(index)] = fingerprint(
-                candidate, full_hash_max_bytes=threshold
+            captured[str(index)] = content_identity(
+                candidate, root=project.root, full_hash_max_bytes=threshold
             )
     return captured
 

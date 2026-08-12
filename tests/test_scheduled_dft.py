@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -423,6 +424,205 @@ class ScheduledDftTests(unittest.TestCase):
             self.assertIn("field attempt", finished["changed"][0]["diagnostic"])
             attempt = root / ".mlipflow/runs/label-li/attempt-1"
             self.assertFalse((attempt / "labels.json").exists())
+
+    def _submit_with_plugin_copy(self, root: Path):
+        """Submit using a private copy of the plugin tree we may safely edit."""
+
+        plugins = root / "plugin-copy"
+        shutil.copytree(PLUGINS, plugins)
+        _, site = prepared_fixture(root)
+        initialize(root)
+        project = load_project(root)
+        library = FakeTemplateLibrary()
+        plan = make_run_plan(project, "label-li", plugins, site, library)
+        remote_dir = plan["hpc_execution"]["workspace"]["run_dir"]
+        with patch(
+            "mlipflow.services.SshSlurmBackend.stage_workspace",
+            return_value=remote_dir,
+        ), patch(
+            "mlipflow.services.SshSlurmBackend.submit",
+            return_value=ExecutionResult(0, "Submitted batch job 77\n", "", "77"),
+        ):
+            run_node(project, "label-li", plugins, plan["plan_digest"], site, library)
+        return project, plugins, site
+
+    def test_pinned_plan_survives_touching_every_file_after_submission(self) -> None:
+        """A queued job must not become unadvanceable because mtimes moved.
+
+        Under plan schema 1 this failed with ``pinned scheduled plan field
+        changed: plugin``: re-staging, an rsync, or any tool that rewrites a file
+        in place stranded the submitted job permanently.
+        """
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project, plugins, site = self._submit_with_plugin_copy(root)
+
+            times = (1_700_000_000, 1_700_000_000)
+            for tree in (plugins, root / "prepared"):
+                for path in sorted(tree.rglob("*"), reverse=True):
+                    os.utime(path, times, follow_symlinks=False)
+
+            remote = root / "fake-remote"
+            write_vasp_outputs(remote)
+            write_json(
+                remote / "completion.json",
+                {
+                    "schema_version": 1,
+                    "status": "COMPLETED",
+                    "exit_code": 0,
+                    "project_id": project.project_id,
+                    "node_id": "label-li",
+                    "attempt": 1,
+                },
+            )
+            inspect, _ = self._inventory_hooks(remote)
+            with patch(
+                "mlipflow.services.SshSlurmBackend.status",
+                return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.inspect_file",
+                autospec=True,
+                side_effect=inspect,
+            ):
+                approved = make_advance_plan(project, plugins, site)
+            self.assertEqual(
+                "adapter-finalize", approved["details"]["transitions"][0]["action"]
+            )
+
+    def _advance_expecting_rejection(self, project, plugins, site) -> str:
+        """Advance with every remote call trapped: rejection must precede them."""
+
+        with patch(
+            "mlipflow.services.SshSlurmBackend.status",
+            return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
+        ), patch(
+            "mlipflow.services.SshSlurmBackend.inspect_file",
+            side_effect=AssertionError("a rejected plan must not touch the cluster"),
+        ), patch(
+            "mlipflow.backends.subprocess.run",
+            side_effect=AssertionError("no subprocess may be spawned"),
+        ):
+            observed = make_advance_plan(project, plugins, site)
+        self.assertEqual([], observed["details"]["transitions"])
+        return str(observed["details"]["observations"][0]["reason"])
+
+    def test_pinned_plan_still_rejects_a_real_adapter_source_change(self) -> None:
+        """The guarantee that must survive dropping mtime from the digest."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project, plugins, site = self._submit_with_plugin_copy(root)
+
+            adapter = plugins / "dft-labeling" / "adapter.py"
+            adapter.write_text(
+                adapter.read_text(encoding="utf-8") + "\n# tampered\n",
+                encoding="utf-8",
+            )
+            self.assertIn(
+                "pinned scheduled plan field changed: plugin",
+                self._advance_expecting_rejection(project, plugins, site),
+            )
+
+    def test_pinned_plan_still_rejects_a_real_input_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project, plugins, site = self._submit_with_plugin_copy(root)
+
+            manifest = root / "prepared" / "dft-input-manifest.json"
+            original = manifest.read_text(encoding="utf-8")
+            manifest.write_text(original + "\n", encoding="utf-8")
+            self.assertNotEqual(original, manifest.read_text(encoding="utf-8"))
+            self.assertIn(
+                "pinned scheduled plan field changed: input_identities",
+                self._advance_expecting_rejection(project, plugins, site),
+            )
+
+    def test_core_plan_fields_carry_no_mtime_and_no_absolute_path(self) -> None:
+        """Everything the core contributes to a plan must be relocatable.
+
+        ``adapter_plan`` is excluded because it is authored by the plugin, and
+        ``dft-labeling`` still emits absolute ``source``/``path`` values there.
+        That is a known remaining source of machine dependence, tracked as plugin
+        work; this test locks down the core so the boundary cannot quietly widen,
+        and asserts that *no* part of a plan — adapter included — carries mtime.
+        """
+
+        def leaves(value, trail=""):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    yield from leaves(item, f"{trail}.{key}")
+            elif isinstance(value, list):
+                for index, item in enumerate(value):
+                    yield from leaves(item, f"{trail}[{index}]")
+            else:
+                yield trail, value
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            _, site = prepared_fixture(root)
+            initialize(root)
+            project = load_project(root)
+            plan = make_run_plan(
+                project, "label-li", PLUGINS, site, FakeTemplateLibrary()
+            )
+
+            self.assertEqual(2, plan["schema_version"])
+            self.assertEqual(
+                [], [trail for trail, _ in leaves(plan) if "mtime" in trail.lower()]
+            )
+            core = {key: value for key, value in plan.items() if key != "adapter_plan"}
+            self.assertEqual(
+                [],
+                [
+                    trail
+                    for trail, value in leaves(core)
+                    if isinstance(value, str)
+                    and (str(root) in value or value.startswith("file:///"))
+                ],
+            )
+            self.assertEqual(
+                "adapter.py", plan["plugin"]["implementation_identity"]["locator"]
+            )
+            self.assertEqual(
+                "prepared/dft-input-manifest.json",
+                plan["input_identities"]["dft_input_manifest"]["locator"],
+            )
+
+    def test_scheduled_plan_digests_identically_across_checkouts(self) -> None:
+        """The full ssh-slurm READY plan, planned twice under different roots.
+
+        This is the richest adapter plan the project produces: staged sources,
+        per-file fingerprints and a rendered remote workspace.  It is also the one
+        whose approval has to survive a clone, because staging and advancing may
+        well happen from a different machine than planning did.
+        """
+
+        with tempfile.TemporaryDirectory() as first_temporary, tempfile.TemporaryDirectory() as second_temporary:
+            first = Path(first_temporary).resolve()
+            second = Path(second_temporary).resolve() / "nested" / "deeper"
+            second.mkdir(parents=True)
+
+            digests = []
+            for root in (first, second):
+                _, site = prepared_fixture(root)
+                initialize(root)
+                plan = make_run_plan(
+                    load_project(root), "label-li", PLUGINS, site, FakeTemplateLibrary()
+                )
+                self.assertEqual("READY", plan["adapter_plan"]["status"])
+                digests.append(plan["plan_digest"])
+                self.assertEqual(
+                    "{PROJECT_ROOT}/prepared/POSCAR",
+                    next(
+                        item["source"]
+                        for item in plan["adapter_plan"]["scheduled_execution"][
+                            "staged_files"
+                        ]
+                        if item["remote_name"] == "POSCAR"
+                    ),
+                )
+            self.assertEqual(digests[0], digests[1])
 
     def test_stop_plan_binds_full_cluster_profile_and_site_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
