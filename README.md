@@ -12,9 +12,9 @@ MLIPFlow 是一个面向机器学习原子势（MLIP）研究的确定性工作�
 -> 配置所需科学环境
 -> 本地 CPU/GPU smoke
 -> 配置 SSH
--> 识别集群 CPU/GPU/SLURM 参数
--> 在计算节点验证环境
--> 用 SLURM 包裹 MLIPFlow 执行当前 local Adapter
+-> 由站点管理员 bootstrap 远端模板库
+-> 配置本地 ~/.mlipflow/site.yaml
+-> 在 project 中只选择 profile 并声明抽象资源
 -> 配置 VASP / POTCAR / LAMMPS / LASP
 -> 做 tiny scientific validation
 -> 扩大到真实计算
@@ -42,8 +42,8 @@ MLIPFlow 是一个面向机器学习原子势（MLIP）研究的确定性工作�
 <CUDA_MODULE>
 <VASP_MODULE>
 <LAMMPS_MODULE>
-<PROJECT_ROOT>
-<SCRATCH_ROOT>
+<REMOTE_TEMPLATE_ROOT>
+<WORK_ROOT>
 ```
 
 正确流程是：
@@ -51,7 +51,9 @@ MLIPFlow 是一个面向机器学习原子势（MLIP）研究的确定性工作�
 ```text
 README 告诉用户需要什么参数
 -> 用户从自己的集群文档/命令查询真实值
--> 用户把真实值写进自己的 SSH 配置、sbatch、wrapper 或 project.yaml
+-> 用户把 cluster 选择写入 ~/.mlipflow/site.yaml
+-> 站点专属的 sbatch/module/executable 逻辑写入远端模板库
+-> project.yaml 只写 backend_profile 和抽象资源需求
 -> 用户执行验证命令
 -> README 保持通用
 ```
@@ -62,6 +64,7 @@ README 告诉用户需要什么参数
 
 ```text
 project.yaml
+~/.mlipflow/site.yaml        # 用户本地 cluster control plane，不进入项目仓库
 model_registry.yaml
 plugins/*/plugin.yaml
 .mlipflow/state.sqlite3      # 运行状态，由程序管理
@@ -80,7 +83,6 @@ plugins/*/plugin.yaml
 project
 plugin_paths
 locations
-backend_profiles
 model_registry
 state
 workflow
@@ -89,7 +91,9 @@ fingerprints
 safety
 ```
 
-README 不会再把一个代码没有读取的 `site.local.yaml` 描述成正式产品配置。
+`~/.mlipflow/site.yaml` 由 `schemas/site.schema.json` 定义。CLI 仅在解析
+`ssh-slurm` 计划、监控或停止时读取它；测试和自动化可用全局 `--site PATH` 指向显式
+fixture。项目中不再接受 `backend_profiles`。
 
 ### 0.3 不把科学参数猜成默认值
 
@@ -120,12 +124,12 @@ walltime
 |---|---|
 | 本地 `local` backend | 可执行 |
 | replay 工作流 | 可执行 |
-| 内置科学 Adapter | 默认 `local`；`dft-labeling.label` 另有受控单结构 static `ssh-slurm` 合同 |
+| 内置科学 Adapter | 默认 `local`；`dft-labeling.label` 可提供 static VASP 科学输入/输出合同给通用 `ssh-slurm` backend |
 | core `slurm` backend | 已实现 `sbatch/squeue/sacct/scancel` 抽象 |
 | core `ssh-slurm` backend | 已实现 SSH alias、远端 scheduler 查询/提交/fetch 基础能力 |
 | 科学 Adapter 直接 `backend: slurm` | **当前被核心显式阻止** |
 | 其他科学 Adapter 直接 `backend: ssh-slurm` | **当前被核心显式阻止** |
-| `dft-labeling.label` 的 remote stage -> submit -> monitor -> fetch -> scientific check | 软件合同和 fake E2E 已实现；真实 HPC 验证待单独记录 |
+| profile -> template -> attempt workspace -> submit -> monitor -> fetch -> scientific check | 通用软件合同和 fake E2E 已实现；真实 HPC 验证待单独记录 |
 | 在 Slurm 分配到的计算节点中运行 `backend: local` | 当前最实际的集群科学执行方式 |
 
 当前仓库状态明确记录为：
@@ -138,7 +142,7 @@ REAL_HPC_INTEGRATION = EXTERNAL_VALIDATION_PENDING
 
 - **现在可以在集群 CPU/GPU 计算节点上真正运行科学 Adapter**；
 - 但当前方法是让 SLURM 先分配资源，然后 MLIPFlow 在该计算节点内以 `backend: local` 执行；
-- 只有 `dft-labeling.label` 的 `bundled-vasp-static-v1` 可以按本文合同直接使用 `ssh-slurm`；
+- 当前 `dft-labeling.label` static 是首个接入该通用合同的科学插件；
 - 其他插件不能靠修改 manifest 切换 scheduler backend；本地 `slurm` Adapter、relax/AIMD、array 和 continuation 尚未开放。
 
 ---
@@ -469,7 +473,6 @@ project:
 plugin_paths:
   - plugins
 locations: {}
-backend_profiles: {}
 model_registry: model_registry.yaml
 state:
   database_path: .mlipflow/state.sqlite3
@@ -511,11 +514,31 @@ ssh-slurm
 
 但 **schema 允许某个 backend，不代表科学 Adapter 当前允许它**。
 
-除本文明确描述的 DFT static SSH-SLURM 例外外，内置科学 Adapter 应使用：
+除已明确实现 scheduled scientific contract 的插件外，内置科学 Adapter 应使用：
 
 ```yaml
 backend: local
 ```
+
+`ssh-slurm` node 不提供完整 sbatch，也不提供远端工作目录：
+
+```yaml
+- id: label-static-001
+  uses: dft-labeling@0
+  backend: ssh-slurm
+  backend_profile: cluster-a
+  inputs: {}
+  parameters: {}
+  resources:
+    cpus: 16
+    gpus: 0
+    memory: 64G
+    walltime: "04:00:00"
+```
+
+`cpus/gpus/memory/walltime` 是可移植 resource requirements。`partition`、`account`、
+`qos`、module、launcher、executable 路径、模板路径和 work root 都不是 workflow node
+字段；缺少必需资源时计划会明确失败。
 
 ### 7.2 不要依赖隐式 project 搜索
 
@@ -814,54 +837,19 @@ VASP 版本而不进入 preset。SI 把 EDIFF 标成 eV/atom，但 VASP 的 EDIF
 
 在 Slurm 计算节点中，wrapper 可以调用已经分配资源内允许的 MPI/VASP 启动方式，但不能再嵌套提交新的 batch job。
 
-### 10.5 受控 SSH-SLURM static 单点
+### 10.5 SSH-SLURM static 单点的职责拆分
 
-当前原生远端合同每个 node 只接受一个已经 `vasp-prepare` 审核通过的 static 结构：
+`dft-labeling.label` 只声明科学合同：一个已由 `vasp-prepare` 审核通过的 static 结构、
+VASP 输入文件、`template_family: vasp` 和允许回收的原始输出。它不声明 partition、module、
+Python、VASP executable 或 launcher。backend 从 node 的 `backend_profile` 选择 cluster，
+读取该 cluster 的 `slurm/cpu.sbatch` 或 `slurm/gpu.sbatch` 与 `vasp/run.sh`，确定性渲染后
+创建 fresh attempt workspace。
 
-```yaml
-backend_profiles:
-  cpu-site:
-    ssh_profile: <SSH_ALIAS>
-    remote_root: .
-
-workflow:
-  nodes:
-    - id: label-static-001
-      uses: dft-labeling@0
-      backend: ssh-slurm
-      backend_profile: cpu-site
-      inputs:
-        structures_manifest: inputs/one-structure.json
-        labeling_config: configs/vasp-static.json
-        dft_input_manifest: .mlipflow/runs/prepare-static/attempt-1/dft-input-manifest.json
-      parameters:
-        operation: label
-        scheduler_runner: bundled-vasp-static-v1
-        remote_python: /usr/bin/python3
-        modules: [vasp/6.3.0-intel2023.2]
-        vasp_argv: [srun, --ntasks=4, vasp_std]
-        engine: vasp
-        completion_policy:
-          require_ionic_convergence: false
-        units:
-          energy: eV
-          length: angstrom
-          force: eV/angstrom
-          stress: kbar-vasp-3x3
-        result_manifest: dft-labeling-result.json
-      resources:
-        partition: <PARTITION>
-        qos: <QOS>
-        nodes: 1
-        ntasks: 4
-        time: 00:05:00
-```
-
-`vasp_argv` 的 `--ntasks=N` 必须与 `resources.ntasks` 一致。首次运行先执行 `run
---dry-run` 并批准精确摘要；该批准会创建全新远端目录、上传 basename allowlist、核对
-SHA-256 并提交。作业完成后执行 `advance --dry-run`，审查允许拉回的文件、大小和
-SHA-256，再批准 `advance`。第二步才会拉回结果并在本地独立检查 XML、OUTCAR footer、
-电子步/NELM、标签数值和 artifact hashes。POTCAR 不在回收清单中。
+首次 `run --dry-run` 会显示 profile、模板指纹、渲染脚本、资源和精确远端 attempt 路径；
+为生成这些内容，它会通过选定 SSH alias 只读获取所需远端模板，但不创建目录、不 stage、
+不提交。批准后才 staging 与 submit。scheduler `COMPLETED` 后仍需 `advance --dry-run` 审查输出
+inventory，再批准 fetch。随后本地 pinned adapter 独立检查 XML、OUTCAR footer、电子
+收敛、标签数值与 artifact hashes，再 collect；POTCAR 从不进入 fetch 清单。
 
 ---
 
@@ -1135,18 +1123,16 @@ Linux NVIDIA GPU 使用 `cuda`。
 |---|---|---|
 | `<LOGIN_HOST>` | 集群用户文档 | `~/.ssh/config` |
 | `<USERNAME>` | 集群账号 | `~/.ssh/config` |
-| `<SSH_ALIAS>` | 用户自己定义 | `~/.ssh/config`；未来/实验 `backend_profiles.ssh_profile` |
-| `<CPU_PARTITION>` | `sinfo` / 管理员文档 | 用户自己的 `sbatch` |
-| `<GPU_PARTITION>` | `sinfo` / 管理员文档 | 用户自己的 `sbatch` |
-| `<ACCOUNT>` | 管理员文档 / `sacctmgr`（若开放） | 用户自己的 `sbatch` |
-| `<QOS>` | 管理员文档 / `sacctmgr`（若开放） | 用户自己的 `sbatch` |
-| `<GPU_RESOURCE_DIRECTIVE>` | Slurm/site 文档 | 用户自己的 `sbatch` |
-| `<CUDA_MODULE>` | `module avail` / `module spider` | site shell/wrapper；不是 README |
-| `<MPI_MODULE>` | `module avail` / `module spider` | site shell/wrapper |
-| `<VASP_MODULE>` | 机构 VASP 文档 | site shell/wrapper |
-| `<LAMMPS_MODULE>` | 集群软件目录 | site shell/wrapper |
-| `<PROJECT_ROOT>` | 集群 storage 文档 | 用户 project |
-| `<SCRATCH_ROOT>` | 集群 storage 文档 | 用户运行目录/外部程序 |
+| `<SSH_ALIAS>` | 用户自己定义 | `~/.ssh/config` 和 `site.yaml` 的 `ssh_profile` |
+| `<REMOTE_TEMPLATE_ROOT>` | 站点 bootstrap 约定 | `site.yaml`；远端持久模板库 |
+| `<WORK_ROOT>` | 集群 storage 文档 | `site.yaml`；远端 per-run workspace 根 |
+| `<CPU_PARTITION>` | `sinfo` / 管理员文档 | 远端 `slurm/cpu.sbatch` |
+| `<GPU_PARTITION>` | `sinfo` / 管理员文档 | 远端 `slurm/gpu.sbatch` |
+| `<ACCOUNT>` | 管理员文档 / `sacctmgr`（若开放） | 远端 Slurm 模板 |
+| `<QOS>` | 管理员文档 / `sacctmgr`（若开放） | 远端 Slurm 模板 |
+| `<GPU_RESOURCE_DIRECTIVE>` | Slurm/site 文档 | 远端 `slurm/gpu.sbatch` |
+| `<CUDA_MODULE>` / `<MPI_MODULE>` | module catalog | 对应远端 `run.sh` |
+| `<VASP_MODULE>` / `<LAMMPS_MODULE>` | 机构软件文档 | 对应远端程序 `run.sh` |
 
 ### 16.2 登录节点查询
 
@@ -1233,15 +1219,37 @@ ssh <SSH_ALIAS> 'hostname'
 ssh <SSH_ALIAS> 'which sbatch && which srun && which squeue'
 ```
 
-### 17.3 MLIPFlow 中只引用 alias
+### 17.3 配置本地 cluster control plane
 
-未来/实验性的 remote profile 形式：
+用户在本地创建 `~/.mlipflow/site.yaml`。这是站点选择配置，不应提交到项目仓库：
+
+```bash
+mkdir -p ~/.mlipflow
+chmod 700 ~/.mlipflow
+```
 
 ```yaml
-backend_profiles:
+schema_version: 1
+clusters:
   cluster-a:
+    backend: ssh-slurm
     ssh_profile: <SSH_ALIAS>
-    remote_root: .
+    remote_template_root: <REMOTE_TEMPLATE_ROOT>
+    work_root: <WORK_ROOT>
+
+  cluster-b:
+    backend: ssh-slurm
+    ssh_profile: <ANOTHER_SSH_ALIAS>
+    remote_template_root: <ANOTHER_REMOTE_TEMPLATE_ROOT>
+    work_root: <ANOTHER_WORK_ROOT>
+```
+
+`remote_template_root` 和 `work_root` 都必须是安全绝对远端路径，且互不相同、互不嵌套。
+一个 project 可以让不同 node 通过 `backend_profile` 选择不同 cluster。若配置文件、profile
+或字段缺失，MLIPFlow 会失败，不会猜 host、路径或默认 cluster。需要测试独立 fixture 时可用：
+
+```bash
+mlipflow --site /absolute/path/to/site.yaml --project <PROJECT> doctor
 ```
 
 不要写：
@@ -1253,9 +1261,93 @@ token
 本地 SSH 私钥文件配置
 ```
 
-`remote_root` 必须是登录节点上已经存在的受限目录；MLIPFlow 只会在其下创建一个由
-project/node/attempt/run identity 派生的全新目录。当前只有 DFT 单结构 static runner
-消费这个 profile；其他科学 Adapter 不应直接切换到 `ssh-slurm`。
+`ssh_profile` 只是 `~/.ssh/config` alias；site config 不保存 hostname、用户名、私钥路径
+或凭据。创建 template library、安装 module/程序和授权存储属于单独的站点 bootstrap，
+不是某个 workflow node 的职责。
+
+保存后建议限制本地配置权限：
+
+```bash
+chmod 600 ~/.mlipflow/site.yaml
+mlipflow --project <PROJECT> doctor
+```
+
+### 17.4 站点管理员需要 bootstrap 的远端模板库
+
+`remote_template_root` 是持久、只读解析的 site-specific execution knowledge：
+
+```text
+<REMOTE_TEMPLATE_ROOT>/
+  slurm/
+    cpu.sbatch
+    gpu.sbatch
+  vasp/
+    run.sh
+  lammps/
+    run.sh
+  deepmd/
+    run.sh
+  mace/
+    run.sh
+  chgnet/
+    run.sh
+```
+
+CPU task 选择 `slurm/cpu.sbatch`，`gpus > 0` 选择 `slurm/gpu.sbatch`；插件的
+`template_family` 决定程序模板，例如 `vasp/run.sh`。这些模板可包含该站点真实的
+partition/account/QoS、module 初始化、`srun`/`mpirun` 约定和 executable invocation。
+MLIPFlow 不把这些值复制进 project，也不猜它们。
+
+模板只支持下列精确占位符，不支持表达式、include、循环或任意代码模板语言：
+
+```text
+{{PROJECT_ID}} {{NODE_ID}} {{ATTEMPT}}
+{{RUN_DIR}} {{INPUT_DIR}} {{OUTPUT_DIR}} {{LOG_DIR}}
+{{CPUS}} {{GPUS}} {{MEMORY}} {{WALLTIME}}
+```
+
+模板缺失、缺少必需占位符、使用未知占位符或 identity 在审批前变化都会明确失败。
+模板库不是 run directory；backend 不会把任务输入/输出写入它。
+
+一个通用的 Slurm skeleton 形状如下；站点管理员仍须按本站策略补上 partition/account/
+GPU directive，并确保 `run.sh` 的 module、launcher 和程序命令真实可用：
+
+```bash
+#!/bin/bash
+#SBATCH --cpus-per-task={{CPUS}}
+#SBATCH --mem={{MEMORY}}
+#SBATCH --time={{WALLTIME}}
+#SBATCH --output={{LOG_DIR}}/stdout.log
+#SBATCH --error={{LOG_DIR}}/stderr.log
+set -euo pipefail
+cd {{RUN_DIR}}
+exec bash {{RUN_DIR}}/run.sh
+```
+
+`vasp/run.sh` 等程序模板必须从 `{{INPUT_DIR}}` 读取输入，把允许回收的科学产物写入
+`{{OUTPUT_DIR}}`，并在程序结束后在 `{{RUN_DIR}}/completion.json` 写入正确的
+project/node/attempt/exit status。不要把模板中的示例注释当作已完成站点配置。
+
+### 17.5 远端 attempt workspace
+
+每次执行严格使用现有持久状态中的 attempt number：
+
+```text
+<WORK_ROOT>/<PROJECT_ID>/<NODE_ID>/attempt-0001/
+  submit.sbatch
+  run.sh
+  input/
+  output/
+  logs/
+    stdout.log
+    stderr.log
+  completion.json
+```
+
+retry 创建新 attempt，例如 `attempt-0002`；旧目录不覆盖。`input/` 只放获批 staged
+inputs，程序写 `output/`，scheduler 写 `logs/`，`completion.json` 记录至少
+`schema_version/status/exit_code/project_id/node_id/attempt`。attempt 目录必须 fresh；已存在
+时 backend 拒绝继续。
 
 ---
 
@@ -1994,6 +2086,7 @@ plugin 是否可发现
 声明的必需 Python 包
 部分外部 executable
 state database
+ssh-slurm node 使用的本地 site config 与 backend_profile
 选择 slurm/ssh-slurm 时基础 scheduler/ssh executable
 ```
 
@@ -2013,64 +2106,51 @@ MPI 并行 smoke
 
 ---
 
-## 33. 当前 first-class `slurm` / `ssh-slurm` 的边界
+## 33. `ssh-slurm` resolution 与执行状态机
 
-Schema 已允许：
-
-```yaml
-backend: slurm
-```
-
-和：
-
-```yaml
-backend: ssh-slurm
-```
-
-核心也已经有：
+计划不是用户提供的完整 sbatch。它由三类输入确定性组合：
 
 ```text
-sbatch
-squeue
-sacct
-scancel
-SSH alias
-remote scheduler query
-scp fetch primitive
-job-id parsing
-identity-bound completion context
+workflow node
+  scientific command/inputs + cpus/gpus/memory/walltime
+             +
+local ~/.mlipflow/site.yaml
+  named cluster + SSH alias + template root + work root
+             +
+remote template library
+  Slurm skeleton + program launch knowledge
+             |
+             v
+fingerprinted execution plan + rendered submit.sbatch/run.sh
 ```
 
-当前只开放一个窄合同：
+状态机是：
 
 ```text
-dft-labeling.label + bundled-vasp-static-v1 + backend: ssh-slurm
-```
-
-它执行以下闭环：
-
-```text
-local project
--> controlled remote stage
--> exact approved remote work dir
--> sbatch
--> persisted job ID
--> squeue/sacct reconciliation
--> terminal state
--> allowlisted fetch
--> hash verification
+resolve profile
+-> resolve/fingerprint remote templates
+-> render deterministic scripts
+-> create fresh attempt workspace
+-> stage inputs and scripts
+-> submit
+-> persist job ID
+-> monitor scheduler
+-> fetch completion/output/log allowlist
 -> pinned plugin scientific check
--> collect
--> final run manifest
+-> pinned plugin collect
+-> OK
 ```
 
-所有 staged 文件在提交前逐一核对 SHA-256；POTCAR 只能上传，永不进入 fetch allowlist。
-第一次 `run` 审批负责 staging + submit；scheduler `COMPLETED` 后还必须对包含远端输出
-大小/SHA-256 的 `advance --dry-run` 进行第二次审批，随后才允许 fetch 和 pinned adapter
-`check/collect`。远端文件在两次 observation 间变化会拒绝执行。
+缺少 site config、backend profile、template root、必需模板、必需模板变量或资源字段时，
+resolution 直接失败；不会猜 cluster 配置。所有 staged 文件在提交前核对 SHA-256。
+第一次 `run` 审批负责 staging + submit；scheduler `COMPLETED` 后还要对远端输出
+大小/SHA-256 的 `advance --dry-run` 进行第二次审批，随后才 fetch 与 `check/collect`。
+远端文件在两次 observation 间变化会拒绝执行。
 
-其他 Adapter-backed scheduler execution 继续显式报错。真实集群 smoke 完成之前，状态仍是
-`REAL_HPC_INTEGRATION = EXTERNAL_VALIDATION_PENDING`；fake E2E 不能升级这个证据等级。
+`scheduler COMPLETED` 永远不是 scientific `OK`。当前 static VASP contract 已用 synthetic
+site.yaml、fake template library、fake scheduler/fetch 做完 mocked integration tests；真实 SSH、
+Slurm、模板 bootstrap、站点 module/executable、共享文件系统权限和真实 VASP 均未在本阶段
+验证，状态仍是 `REAL_HPC_INTEGRATION = EXTERNAL_VALIDATION_PENDING`。
 
 ---
 
@@ -2328,16 +2408,18 @@ clone/install
 -> offline replay
 -> 为所需插件建立独立科学环境
 -> 本地/交互计算节点 tiny smoke
--> 配 SSH + 查清 partition/account/GPU directive
--> 用 sbatch 只负责资源分配，在计算节点运行 backend: local 的 MLIPFlow node
+-> 配 SSH + 由站点管理员建立远端模板库
+-> 配 ~/.mlipflow/site.yaml 的 named cluster profiles
+-> project node 只选择 backend_profile 并声明抽象资源
 -> 配 VASP/POTCAR/LAMMPS/LASP
 -> 做 CPU/GPU/原生框架/LAMMPS 科学对照
 -> 通过 check/collect
 -> 再扩大到生产规模
 ```
 
-当前版本只有本文列出的 DFT static 窄合同可使用原生 `ssh-slurm`。其他科学 Adapter
-继续使用 `local`（可位于已分配计算节点中），不得强行改 manifest 绕过核心保护。
+当前 static DFT 是首个接入通用 `ssh-slurm` lifecycle 的科学合同。其他科学 Adapter
+继续使用 `local`，直到其明确提供 scientific staged-files/fetch/check/collect 合同；不得
+把 `submit_script` 或 `remote_cwd` 塞回参数绕过 profile/template/workspace 分层。
 
 ---
 

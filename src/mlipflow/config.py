@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from .errors import ConfigError
+from .hpc import validate_hpc_resources
 from .io import load_mapping
 
 
@@ -60,6 +61,11 @@ def load_project(path: Path) -> Project:
 
 def validate_project(raw: dict[str, Any], source: Path | str = "project") -> None:
     _reject_embedded_credentials(raw, source)
+    if "backend_profiles" in raw:
+        raise ConfigError(
+            f"{source}: project.backend_profiles is no longer supported; configure named "
+            "clusters in ~/.mlipflow/site.yaml"
+        )
     if raw.get("schema_version") != 1:
         raise ConfigError(f"{source}: schema_version must be 1")
     project = raw.get("project")
@@ -90,6 +96,23 @@ def validate_project(raw: dict[str, Any], source: Path | str = "project") -> Non
                 f"{source}: node {node_id} uses must match {PLUGIN_REFERENCE.pattern!r}"
             )
         ids.add(node_id)
+        backend = node.get("backend", "local")
+        if backend == "ssh-slurm":
+            profile = node.get("backend_profile")
+            if not isinstance(profile, str) or not IDENTIFIER.fullmatch(profile):
+                raise ConfigError(
+                    f"{source}: ssh-slurm node {node_id} requires a safe backend_profile"
+                )
+            validate_hpc_resources(node.get("resources"))
+        parameters = node.get("parameters", {})
+        if backend in {"slurm", "ssh-slurm"} and isinstance(parameters, dict):
+            forbidden = sorted({"submit_script", "remote_cwd"} & set(parameters))
+            if forbidden:
+                raise ConfigError(
+                    f"{source}: node {node_id} must not provide {', '.join(forbidden)}; "
+                    "HPC scripts and workspaces come from the selected site profile and "
+                    "remote template library"
+                )
     for node in nodes:
         needs = node.get("needs", [])
         if not isinstance(needs, list) or not all(isinstance(item, str) for item in needs):

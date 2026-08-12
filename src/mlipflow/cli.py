@@ -59,6 +59,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=default_plugin_root(),
         help="plugin manifest root",
     )
+    parser.add_argument(
+        "--site",
+        type=Path,
+        default=None,
+        help="local site.yaml (defaults to ~/.mlipflow/site.yaml only when HPC resolution needs it)",
+    )
     parser.add_argument("--format", choices=("text", "json"), default="text")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -138,7 +144,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
     if command == "init":
         return initialize(args.path or args.project)
     if command == "doctor":
-        return query_doctor(args.project, args.plugins)
+        return query_doctor(args.project, args.plugins, args.site)
     project = load_project(args.project)
     if command == "list":
         data = query_workflow(project)
@@ -166,19 +172,19 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             project, task=args.task, elements=args.elements, scenario=args.scenario
         )
     if command == "run":
-        plan = make_run_plan(project, args.node, args.plugins)
+        plan = make_run_plan(project, args.node, args.plugins, args.site)
         if args.dry_run:
             return plan
         if not args.approve:
             raise ApprovalError("run requires --dry-run or --approve PLAN_DIGEST")
-        return run_node(project, args.node, args.plugins, args.approve)
+        return run_node(project, args.node, args.plugins, args.approve, args.site)
     if command == "advance":
-        plan = make_advance_plan(project, args.plugins)
+        plan = make_advance_plan(project, args.plugins, args.site)
         if args.dry_run:
             return plan
         if not args.approve:
             raise ApprovalError("advance requires --dry-run or --approve PLAN_DIGEST")
-        return advance(project, args.approve, args.plugins)
+        return advance(project, args.approve, args.plugins, args.site)
     if command == "retry":
         plan = make_retry_plan(project, args.node, args.plugins)
         if args.dry_run:
@@ -187,12 +193,12 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             raise ApprovalError("retry requires --dry-run or --approve PLAN_DIGEST")
         return retry(project, args.node, args.approve, args.plugins)
     if command == "stop":
-        plan = make_stop_plan(project, args.node)
+        plan = make_stop_plan(project, args.node, args.site)
         if args.dry_run:
             return plan
         if not args.approve:
             raise ApprovalError("stop requires --dry-run or --approve PLAN_DIGEST")
-        return stop(project, args.node, args.approve)
+        return stop(project, args.node, args.approve, args.site)
     raise MLIPFlowError(f"unsupported command: {command}")
 
 

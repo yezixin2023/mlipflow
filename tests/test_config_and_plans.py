@@ -75,16 +75,38 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(ConfigError):
                     load_project(root)
 
-    def test_embedded_credentials_are_rejected(self) -> None:
+    def test_project_embedded_backend_profiles_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config = project_config([])
             config["backend_profiles"] = {
-                "unsafe": {"ssh_profile": "cluster", "private_key": "<redacted>"}
+                "legacy": {"ssh_profile": "cluster"}
             }
             write_json(root / "project.yaml", config)
-            with self.assertRaisesRegex(ConfigError, "credential"):
+            with self.assertRaisesRegex(ConfigError, "site.yaml"):
                 load_project(root)
+
+    def test_hpc_node_rejects_submit_script_and_remote_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for key in ("submit_script", "remote_cwd"):
+                with self.subTest(key=key):
+                    node = {
+                        "id": "hpc",
+                        "uses": "demo@1",
+                        "backend": "ssh-slurm",
+                        "backend_profile": "cluster-a",
+                        "parameters": {key: "legacy-value"},
+                        "resources": {
+                            "cpus": 4,
+                            "gpus": 0,
+                            "memory": "8G",
+                            "walltime": "01:00:00",
+                        },
+                    }
+                    write_json(root / "project.yaml", project_config([node]))
+                    with self.assertRaisesRegex(ConfigError, key):
+                        load_project(root)
 
 
 class PlanTests(unittest.TestCase):
@@ -184,7 +206,7 @@ class PlanTests(unittest.TestCase):
                             "id": "hpc",
                             "uses": "demo@1",
                             "backend": "slurm",
-                            "parameters": {"submit_script": "run.slurm"},
+                            "parameters": {},
                         }
                     ]
                 ),

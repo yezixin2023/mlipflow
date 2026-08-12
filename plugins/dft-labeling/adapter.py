@@ -24,9 +24,6 @@ OPERATIONS = frozenset({PREPARE_OPERATION, LABEL_OPERATION})
 BUNDLED_PREPARE_WRAPPER = (
     Path(globals().get("__file__", "adapter.py")).absolute().with_name("vasp_prepare.py")
 )
-BUNDLED_LABEL_WRAPPER = (
-    Path(globals().get("__file__", "adapter.py")).absolute().with_name("vasp_label.py")
-)
 SHELL_EXECUTABLES = frozenset(
     {"bash", "csh", "cmd", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "tcsh", "zsh"}
 )
@@ -461,8 +458,7 @@ def _validate_label(context: Mapping[str, Any]) -> list[dict[str, str]]:
     _validate_input_path(diagnostics, context, "dft_input_manifest", required=False)
     allowed_parameters = {
         "operation", "label_script", "interpreter_argv", "engine",
-        "completion_policy", "units", "result_manifest", "scheduler_runner",
-        "remote_python", "modules", "vasp_argv",
+        "completion_policy", "units", "result_manifest",
     }
     unknown = sorted(set(parameters) - allowed_parameters)
     if "extra_args" in parameters:
@@ -488,59 +484,20 @@ def _validate_label(context: Mapping[str, Any]) -> list[dict[str, str]]:
         elif Path(interpreter[0]).name.lower() in SHELL_EXECUTABLES:
             diagnostics.append(_diagnostic("error", "parameters.shell_forbidden", "interpreter_argv 不得选择 shell。"))
     elif backend == "ssh-slurm":
-        if parameters.get("scheduler_runner") != "bundled-vasp-static-v1":
-            diagnostics.append(
-                _diagnostic(
-                    "error",
-                    "parameters.scheduler_runner",
-                    "ssh-slurm 当前只支持 bundled-vasp-static-v1。",
-                )
-            )
         if parameters.get("label_script") is not None or parameters.get("interpreter_argv") is not None:
             diagnostics.append(
                 _diagnostic(
                     "error",
                     "parameters.local_runner",
-                    "ssh-slurm 使用固定 bundled runner，不接受 local label_script/interpreter_argv。",
+                    "ssh-slurm 使用站点模板，不接受 local label_script/interpreter_argv。",
                 )
             )
-        remote_python = parameters.get("remote_python")
-        if not (
-            _plain_string(remote_python)
-            and re.fullmatch(
-                r"(?:/[A-Za-z0-9_./+\-]+|[A-Za-z0-9][A-Za-z0-9._+\-]*)",
-                str(remote_python),
-            )
-            and ".." not in Path(str(remote_python)).parts
-        ):
-            diagnostics.append(_diagnostic("error", "parameters.remote_python", "remote_python 必须是安全的远端可执行路径或名称。"))
-        modules = parameters.get("modules", [])
-        if not isinstance(modules, list) or not all(
-            isinstance(item, str)
-            and bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+\-/]*", item))
-            for item in modules
-        ) or len(set(modules)) != len(modules):
-            diagnostics.append(_diagnostic("error", "parameters.modules", "modules 必须是唯一且安全的 module 名称列表。"))
-        vasp_argv = parameters.get("vasp_argv")
-        if not (
-            isinstance(vasp_argv, list)
-            and len(vasp_argv) == 3
-            and all(_plain_string(item) for item in vasp_argv)
-            and vasp_argv[0] == "srun"
-            and re.fullmatch(r"--ntasks=[1-9][0-9]*", str(vasp_argv[1]))
-            and vasp_argv[2] in {"vasp_std", "vasp_gam", "vasp_ncl"}
-        ):
-            diagnostics.append(_diagnostic("error", "parameters.vasp_argv", "bundled runner 要求精确 argv：srun --ntasks=N vasp_std|vasp_gam|vasp_ncl。"))
-        elif not isinstance(_mapping(context.get("resources")).get("ntasks"), int) or int(
-            str(vasp_argv[1]).split("=", 1)[1]
-        ) != _mapping(context.get("resources"))["ntasks"]:
-            diagnostics.append(_diagnostic("error", "parameters.vasp_argv.ntasks", "srun --ntasks 必须与已批准 SLURM resources.ntasks 一致。"))
         if _mapping(context.get("inputs")).get("dft_input_manifest") is None:
             diagnostics.append(_diagnostic("error", "inputs.dft_input_manifest", "ssh-slurm label 必须绑定已审核的 dft_input_manifest。"))
     if not _plain_string(parameters.get("engine")):
         diagnostics.append(_diagnostic("error", "parameters.engine", "engine 必须显式声明。"))
     elif backend == "ssh-slurm" and parameters.get("engine") != "vasp":
-        diagnostics.append(_diagnostic("error", "parameters.engine", "bundled scheduler runner 的 engine 必须是 vasp。"))
+        diagnostics.append(_diagnostic("error", "parameters.engine", "vasp template family 的 engine 必须是 vasp。"))
     if not _safe_relative(parameters.get("result_manifest", "dft-labeling-result.json")):
         diagnostics.append(_diagnostic("error", "parameters.result_manifest", "result_manifest 必须是安全相对路径。"))
     elif backend == "ssh-slurm" and not SAFE_ID.fullmatch(
@@ -776,65 +733,30 @@ def _plan_scheduled_label(
         staged_vasp.append(_staged_record(source, name, sensitive=name == "POTCAR"))
     if _errors(diagnostics):
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": diagnostics}
-    result_name = str(parameters.get("result_manifest", "dft-labeling-result.json"))
-    labels_name = "labels.json"
-    remote_python = str(parameters["remote_python"])
-    vasp_argv = list(parameters["vasp_argv"])
-    remote_argv = [
-        remote_python,
-        "mlipflow-vasp-label.py",
-        "--attempt-dir",
-        ".",
-        "--structures-manifest",
-        "structures.json",
-        "--labeling-config",
-        "labeling.json",
-        "--dft-input-manifest",
-        "dft-input-manifest.json",
-        "--result-manifest",
-        result_name,
-        "--labels",
-        labels_name,
-        "--units-json",
-        json.dumps(parameters["units"], sort_keys=True, separators=(",", ":")),
-        "--vasp-argv-json",
-        json.dumps(vasp_argv, separators=(",", ":")),
-    ]
     staged = [
-        _staged_record(BUNDLED_LABEL_WRAPPER, "mlipflow-vasp-label.py"),
         _staged_record(paths["structures_manifest"], "structures.json"),
         _staged_record(paths["labeling_config"], "labeling.json"),
         _staged_record(paths["dft_input_manifest"], "dft-input-manifest.json"),
         *staged_vasp,
     ]
     fetch_outputs = [
-        {"remote_name": result_name, "local_name": result_name, "required": True, "max_bytes": 2 * 1024 * 1024},
-        {"remote_name": labels_name, "local_name": labels_name, "required": True, "max_bytes": 16 * 1024 * 1024},
         {"remote_name": "OUTCAR", "local_name": "OUTCAR", "required": True, "max_bytes": 128 * 1024 * 1024},
         {"remote_name": "OSZICAR", "local_name": "OSZICAR", "required": True, "max_bytes": 16 * 1024 * 1024},
         {"remote_name": "vasprun.xml", "local_name": "vasprun.xml", "required": True, "max_bytes": 256 * 1024 * 1024},
-        {"remote_name": "vasp.stdout", "local_name": "vasp.stdout", "required": False, "max_bytes": 16 * 1024 * 1024},
-        {"remote_name": "vasp.stderr", "local_name": "vasp.stderr", "required": False, "max_bytes": 16 * 1024 * 1024},
-        {"remote_name": "slurm.out", "local_name": "slurm.out", "required": False, "max_bytes": 16 * 1024 * 1024},
-        {"remote_name": "slurm.err", "local_name": "slurm.err", "required": False, "max_bytes": 16 * 1024 * 1024},
     ]
     return {
         "plugin_id": PLUGIN_ID,
         "status": "READY",
         "executable": True,
-        "argv": remote_argv,
-        "cwd": ".",
+        "argv": ["template-family:vasp"],
+        "cwd": "remote-attempt-workspace",
         "expected_outputs": [item["remote_name"] for item in fetch_outputs if item["required"]],
         "diagnostics": diagnostics,
         "operation": LABEL_OPERATION,
-        "input_fingerprints": _file_fingerprints(
-            {**paths, "label_wrapper": BUNDLED_LABEL_WRAPPER}
-        ),
+        "input_fingerprints": _file_fingerprints(paths),
         "scheduled_execution": {
-            "schema_version": 1,
-            "remote_python": remote_python,
-            "modules": list(parameters.get("modules", [])),
-            "remote_argv": remote_argv,
+            "schema_version": 2,
+            "template_family": "vasp",
             "staged_files": staged,
             "fetch_outputs": fetch_outputs,
         },
@@ -847,8 +769,7 @@ def _plan_scheduled_label(
             "calculation_type": "static",
             "structure_count": 1,
             "resources": context["resources"],
-            "modules": list(parameters.get("modules", [])),
-            "vasp_argv": vasp_argv,
+            "template_family": "vasp",
             "completion_policy": parameters["completion_policy"],
             "prepared_input_manifest": inputs["dft_input_manifest"],
             "staged_file_count": len(staged),
@@ -1264,13 +1185,13 @@ def _verify_scheduled_vasp_result(
     execution = manifest.get("execution")
     planned = _mapping(_mapping(context.get("execution")).get("plan"))
     scheduled = _mapping(planned.get("scheduled_execution"))
+    hpc_execution = _mapping(_mapping(context.get("execution")).get("hpc_execution"))
     if (
         not isinstance(execution, Mapping)
-        or execution.get("wrapper_sha256") != _sha256(BUNDLED_LABEL_WRAPPER)
-        or execution.get("vasp_argv") != _mapping(context.get("parameters")).get("vasp_argv")
-        or scheduled.get("remote_argv") != planned.get("argv")
+        or execution.get("template_family") != scheduled.get("template_family")
+        or execution.get("templates") != hpc_execution.get("templates")
     ):
-        diagnostics.append(_diagnostic("error", "result.execution", "远端 wrapper/argv 与批准计划不一致。"))
+        diagnostics.append(_diagnostic("error", "result.execution", "结果引用的远端模板与批准计划不一致。"))
     raw = manifest.get("raw_outputs")
     required = {"OUTCAR", "OSZICAR", "vasprun.xml"}
     if not isinstance(raw, Mapping) or set(raw) != required:
@@ -1342,6 +1263,167 @@ def _verify_scheduled_vasp_result(
     return diagnostics
 
 
+def _scheduled_raw_check(
+    context: Mapping[str, Any]
+) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
+    diagnostics: list[dict[str, str]] = []
+    attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
+    for name in ("OUTCAR", "OSZICAR", "vasprun.xml"):
+        path = attempt / name
+        if not _ordinary_file(path) or path.stat().st_size == 0:
+            diagnostics.append(
+                _diagnostic("error", f"raw.{name}", f"缺少非空的 {name}。")
+            )
+    if _errors(diagnostics):
+        return diagnostics, None
+    outcar = (attempt / "OUTCAR").read_text(encoding="utf-8", errors="replace")
+    if "General timing and accounting informations for this job:" not in outcar:
+        diagnostics.append(_diagnostic("error", "completion.outcar", "OUTCAR 不含正常结束 footer。"))
+    parsed = _parse_scheduled_vasprun(attempt / "vasprun.xml")
+    if parsed is None:
+        diagnostics.append(_diagnostic("error", "completion.vasprun", "vasprun.xml 无法完整解析。"))
+        return diagnostics, None
+    if not (0 < parsed["electronic_steps"] < parsed["nelm"]):
+        diagnostics.append(_diagnostic("error", "completion.electronic", "电子步达到 NELM 或为空。"))
+    prepared_path = _path(
+        context["project_root"], _mapping(context["inputs"])["dft_input_manifest"]
+    )
+    prepared, _ = _read_json(prepared_path)
+    calculations = prepared.get("calculations") if isinstance(prepared, Mapping) else None
+    calculation = calculations[0] if isinstance(calculations, list) and calculations else None
+    if not isinstance(calculation, Mapping) or calculation.get("atom_count") != len(
+        parsed["species"]
+    ):
+        diagnostics.append(_diagnostic("error", "result.atom_count", "VASP 输出原子数与准备清单不一致。"))
+    return diagnostics, parsed
+
+
+def _write_fresh_json(path: Path, value: Mapping[str, Any]) -> None:
+    if path.exists() or path.is_symlink():
+        raise ValueError(f"refusing to overwrite result: {path}")
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
+    diagnostics, parsed = _scheduled_raw_check(context)
+    if _errors(diagnostics) or parsed is None:
+        return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
+    attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
+    parameters = _mapping(context["parameters"])
+    inputs = _mapping(context["inputs"])
+    prepared_path = _path(context["project_root"], inputs["dft_input_manifest"])
+    prepared, _ = _read_json(prepared_path)
+    calculations = prepared.get("calculations") if isinstance(prepared, Mapping) else None
+    calculation = calculations[0] if isinstance(calculations, list) and calculations else {}
+    labels_path = attempt / "labels.json"
+    label = {
+        "schema_version": 1,
+        "records": [
+            {
+                "structure_id": calculation.get("structure_id"),
+                **{
+                    key: parsed[key]
+                    for key in (
+                        "energy_ev",
+                        "species",
+                        "lattice_angstrom",
+                        "fractional_coordinates",
+                        "forces_ev_per_angstrom",
+                        "stress_kbar_vasp_3x3",
+                    )
+                },
+            }
+        ],
+        "units": parameters["units"],
+    }
+    _write_fresh_json(labels_path, label)
+    outcar = (attempt / "OUTCAR").read_text(encoding="utf-8", errors="replace")
+    version = re.search(r"\bvasp\.([0-9][A-Za-z0-9._-]*)", outcar, re.I)
+    raw_outputs = {
+        name: {
+            "path": name,
+            "fingerprint": _sha256(attempt / name),
+            "size_bytes": (attempt / name).stat().st_size,
+        }
+        for name in ("OUTCAR", "OSZICAR", "vasprun.xml")
+    }
+    execution_context = _mapping(context.get("execution"))
+    hpc_execution = _mapping(execution_context.get("hpc_execution"))
+    manifest = {
+        "schema_version": 1,
+        "plugin_id": PLUGIN_ID,
+        "status": "OK",
+        "engine": "vasp",
+        "input_fingerprints": {
+            name: _sha256(_path(context["project_root"], inputs[name]))
+            for name in (
+                "structures_manifest",
+                "labeling_config",
+                "dft_input_manifest",
+            )
+        },
+        "completion": {
+            "scheduler_success": True,
+            "electronic_converged": True,
+            "ionic_convergence_required": False,
+            "ionic_converged": None,
+            "truncated": False,
+        },
+        "units": parameters["units"],
+        "source_structure_count": 1,
+        "label_count": 1,
+        "execution": {
+            "template_family": "vasp",
+            "templates": hpc_execution.get("templates"),
+            "vasp_version": version.group(1) if version else "UNKNOWN",
+            "electronic_steps": parsed["electronic_steps"],
+            "nelm": parsed["nelm"],
+        },
+        "raw_outputs": raw_outputs,
+        "artifacts": [
+            {
+                "name": "labels-json",
+                "path": "labels.json",
+                "media_type": "application/json",
+                "fingerprint": _sha256(labels_path),
+            }
+        ],
+    }
+    result_path = attempt / str(
+        parameters.get("result_manifest", "dft-labeling-result.json")
+    )
+    _write_fresh_json(result_path, manifest)
+    diagnostics.extend(_verify_label_result(context, manifest, verify_files=True))
+    if _errors(diagnostics):
+        return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
+    return {
+        "plugin_id": PLUGIN_ID,
+        "status": "OK",
+        "diagnostics": diagnostics,
+        "artifacts": [
+            {
+                "name": "dft-labeling-result",
+                "path": result_path.name,
+                "media_type": "application/json",
+            },
+            {
+                "name": "labels-json",
+                "path": "labels.json",
+                "media_type": "application/json",
+            },
+        ],
+        "metrics": {
+            "source_structure_count": 1,
+            "label_count": 1,
+            "electronic_converged": True,
+            "ionic_converged": None,
+        },
+    }
+
+
 class Adapter:
     """Plan one reviewed operation and verify its standardized result."""
 
@@ -1392,6 +1474,14 @@ class Adapter:
         if _errors(diagnostics):
             return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
         assert isinstance(context, Mapping)
+        if context.get("backend") == "ssh-slurm" and _operation(context) == LABEL_OPERATION:
+            raw_diagnostics, _ = _scheduled_raw_check(context)
+            diagnostics.extend(raw_diagnostics)
+            return {
+                "plugin_id": PLUGIN_ID,
+                "status": "FAIL" if _errors(diagnostics) else "OK",
+                "diagnostics": diagnostics,
+            }
         result_path = self._result_path(context)
         manifest, read_diagnostic = _read_json(result_path)
         if manifest is None:
@@ -1411,6 +1501,8 @@ class Adapter:
         if checked["status"] != "OK":
             return checked
         assert isinstance(context, Mapping)
+        if context.get("backend") == "ssh-slurm" and _operation(context) == LABEL_OPERATION:
+            return _collect_scheduled_result(context)
         result_path = self._result_path(context)
         manifest, _ = _read_json(result_path)
         assert manifest is not None

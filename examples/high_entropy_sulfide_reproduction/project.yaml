@@ -11,7 +11,6 @@
     "normalized_benchmark": "benchmark",
     "reports": "reports"
   },
-  "backend_profiles": {},
   "model_registry": "model_registry.yaml",
   "workflow": {"nodes": []},
   "routing": {
@@ -42,4 +41,3 @@
     "require_approval_for_destructive": true
   }
 }
-

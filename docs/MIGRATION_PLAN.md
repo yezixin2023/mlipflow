@@ -99,9 +99,15 @@ replay(context) -> plugin_result
 3. SLURM backend；
 4. SSH+SLURM backend。
 
-仓库只引用 `~/.ssh/config` profile；job ID 必须由提交回执保存，不允许靠工作目录猜测。远端 staging 只发生于显式已批准命令。
+仓库只引用用户本地 `~/.mlipflow/site.yaml` 中的 named cluster profile；profile 再引用
+`~/.ssh/config` alias，并把持久 `remote_template_root` 与 per-run `work_root` 分开。
+workflow node 只给 scientific contract 与抽象 resources，不接收完整 sbatch。job ID 必须
+由提交回执保存，不允许靠工作目录猜测；远端 staging 只发生于显式已批准命令。
 
-阶段门：本地小 fixture 可完整运行；fake scheduler 覆盖 pending/running/completed/failed/cancelled；重启后能恢复。
+阶段门：synthetic multi-cluster site config、fake template library/backend 可完整覆盖
+profile resolution、deterministic rendering、attempt workspace、stage、pending/running/
+completed/failed/cancelled、fetch/check/collect；重启后能恢复。真实 cluster bootstrap 与
+验证保持为独立站点步骤。
 
 ## Phase 4：逐能力包装
 

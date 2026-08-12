@@ -1,44 +1,97 @@
 from __future__ import annotations
 
-import argparse
 import hashlib
-import importlib.util
 import json
-import os
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import ModuleType
 from typing import Any
 from unittest.mock import patch
 
 from mlipflow.backends import ExecutionResult
 from mlipflow.config import load_project
-from mlipflow.services import advance, initialize, make_advance_plan, make_run_plan, run_node
+from mlipflow.services import (
+    advance,
+    initialize,
+    make_advance_plan,
+    make_retry_plan,
+    make_run_plan,
+    make_stop_plan,
+    retry,
+    run_node,
+)
+from mlipflow.state import RunState, StateStore
 
 from .helpers import project_config, write_json
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
-
-
-def load_module(name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+SUBMIT_TEMPLATE = """#!/bin/bash
+# {{PROJECT_ID}} {{NODE_ID}} attempt {{ATTEMPT}}
+#SBATCH --cpus-per-task={{CPUS}}
+#SBATCH --gpus={{GPUS}}
+#SBATCH --mem={{MEMORY}}
+#SBATCH --time={{WALLTIME}}
+#SBATCH --output={{LOG_DIR}}/stdout.log
+#SBATCH --error={{LOG_DIR}}/stderr.log
+cd {{RUN_DIR}}
+bash {{RUN_DIR}}/run.sh
+"""
+RUN_TEMPLATE = """#!/bin/bash
+# inputs={{INPUT_DIR}}
+# outputs={{OUTPUT_DIR}}
+cd {{RUN_DIR}}
+"""
 
 
 def sha256(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def prepared_fixture(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+class FakeTemplateLibrary:
+    def __init__(self, templates: dict[str, str] | None = None):
+        self.templates = templates or {
+            "slurm/cpu.sbatch": SUBMIT_TEMPLATE,
+            "slurm/gpu.sbatch": SUBMIT_TEMPLATE,
+            "vasp/run.sh": RUN_TEMPLATE,
+        }
+
+    def read_template(self, _root: str, relative: str) -> dict[str, Any]:
+        content = self.templates.get(relative)
+        if content is None:
+            return {"relative_path": relative, "exists": False}
+        payload = content.encode("utf-8")
+        return {
+            "relative_path": relative,
+            "exists": True,
+            "content": content,
+            "size_bytes": len(payload),
+            "sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+        }
+
+
+def write_site(root: Path) -> Path:
+    path = root / "site.yaml"
+    write_json(
+        path,
+        {
+            "schema_version": 1,
+            "clusters": {
+                "cluster-a": {
+                    "backend": "ssh-slurm",
+                    "ssh_profile": "cluster-a",
+                    "remote_template_root": "/templates/cluster-a",
+                    "work_root": "/work/cluster-a",
+                }
+            },
+        },
+    )
+    return path
+
+
+def prepared_fixture(root: Path) -> tuple[dict[str, Any], Path]:
     inputs = root / "inputs"
     prepared = root / "prepared"
     inputs.mkdir(parents=True)
@@ -83,9 +136,8 @@ def prepared_fixture(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
             "size_bytes": path.stat().st_size,
             "collectable": name != "POTCAR",
         }
-    prepared_manifest = prepared / "dft-input-manifest.json"
     write_json(
-        prepared_manifest,
+        prepared / "dft-input-manifest.json",
         {
             "schema_version": 1,
             "plugin_id": "dft-labeling",
@@ -95,34 +147,12 @@ def prepared_fixture(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
             "calculation_type": "static",
             "structure_count": 1,
             "calculations": [
-                {
-                    "structure_id": "li",
-                    "atom_count": 1,
-                    "files": files,
-                }
+                {"structure_id": "li", "atom_count": 1, "files": files}
             ],
         },
     )
-    fake_vasp = inputs / "fake_vasp.py"
-    fake_vasp.write_text(
-        "#!/usr/bin/env python3\n"
-        "from pathlib import Path\n"
-        "Path('OUTCAR').write_text('vasp.6.3.0\\nGeneral timing and accounting informations for this job:\\n')\n"
-        "Path('OSZICAR').write_text(' 1 F= -.150000E+01 E0= -.150000E+01\\n')\n"
-        "Path('vasprun.xml').write_text('''<modeling>\n"
-        "<parameters><separator><i name=\"NELM\">700</i></separator></parameters>\n"
-        "<atominfo><array name=\"atoms\"><set><rc><c>Li</c></rc></set></array></atominfo>\n"
-        "<structure name=\"finalpos\"><crystal><varray name=\"basis\"><v>3 0 0</v><v>0 3 0</v><v>0 0 3</v></varray></crystal><varray name=\"positions\"><v>0 0 0</v></varray></structure>\n"
-        "<calculation><scstep/><energy><i name=\"e_0_energy\">-1.5</i></energy><varray name=\"forces\"><v>0 0 0</v></varray><varray name=\"stress\"><v>1 0 0</v><v>0 1 0</v><v>0 0 1</v></varray></calculation>\n"
-        "</modeling>''')\n",
-        encoding="utf-8",
-    )
     parameters = {
         "operation": "label",
-        "scheduler_runner": "bundled-vasp-static-v1",
-        "remote_python": str(Path(sys.executable).resolve()),
-        "modules": [],
-        "vasp_argv": ["srun", "--ntasks=4", "vasp_std"],
         "engine": "vasp",
         "completion_policy": {"require_ionic_convergence": False},
         "units": {
@@ -137,169 +167,279 @@ def prepared_fixture(root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         "id": "label-li",
         "uses": "dft-labeling@0",
         "backend": "ssh-slurm",
-        "backend_profile": "cpu",
+        "backend_profile": "cluster-a",
         "inputs": {
             "structures_manifest": "inputs/structures.json",
             "labeling_config": "inputs/labeling.json",
             "dft_input_manifest": "prepared/dft-input-manifest.json",
         },
         "parameters": parameters,
-        "resources": {
-            "partition": "cpu192",
-            "qos": "debug",
-            "nodes": 1,
-            "ntasks": 4,
-            "time": "00:05:00",
-        },
+        "resources": {"cpus": 4, "gpus": 0, "memory": "4G", "walltime": "00:05:00"},
     }
-    config = project_config([node])
-    config["backend_profiles"] = {
-        "cpu": {"ssh_profile": "cpu", "remote_root": "."}
-    }
-    write_json(root / "project.yaml", config)
-    return node, parameters
+    write_json(root / "project.yaml", project_config([node]))
+    return parameters, write_site(root)
+
+
+def write_vasp_outputs(remote: Path, *, converged: bool = True) -> None:
+    output = remote / "output"
+    logs = remote / "logs"
+    output.mkdir(parents=True)
+    logs.mkdir()
+    (output / "OUTCAR").write_text(
+        "vasp.6.3.0\nGeneral timing and accounting informations for this job:\n",
+        encoding="utf-8",
+    )
+    (output / "OSZICAR").write_text(
+        " 1 F= -.150000E+01 E0= -.150000E+01\n", encoding="utf-8"
+    )
+    steps = "<scstep/>" if converged else "".join("<scstep/>" for _ in range(2))
+    nelm = 700 if converged else 2
+    (output / "vasprun.xml").write_text(
+        "<modeling>"
+        f'<parameters><separator><i name="NELM">{nelm}</i></separator></parameters>'
+        '<atominfo><array name="atoms"><set><rc><c>Li</c></rc></set></array></atominfo>'
+        '<structure name="finalpos"><crystal><varray name="basis">'
+        '<v>3 0 0</v><v>0 3 0</v><v>0 0 3</v></varray></crystal>'
+        '<varray name="positions"><v>0 0 0</v></varray></structure>'
+        f'<calculation>{steps}<energy><i name="e_0_energy">-1.5</i></energy>'
+        '<varray name="forces"><v>0 0 0</v></varray>'
+        '<varray name="stress"><v>1 0 0</v><v>0 1 0</v><v>0 0 1</v></varray>'
+        "</calculation></modeling>",
+        encoding="utf-8",
+    )
+    (logs / "stdout.log").write_text("done\n", encoding="utf-8")
+    (logs / "stderr.log").write_text("", encoding="utf-8")
 
 
 class ScheduledDftTests(unittest.TestCase):
-    def test_plan_submission_and_approved_fetch_use_pinned_checker(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            _, parameters = prepared_fixture(root)
-            initialize(root)
-            project = load_project(root)
-            plan = make_run_plan(project, "label-li", PLUGINS)
-            scheduled = plan["adapter_plan"]["scheduled_execution"]
-            potcar = next(item for item in scheduled["staged_files"] if item["remote_name"] == "POTCAR")
-            self.assertTrue(potcar["sensitive"])
-            self.assertFalse(potcar["fetch_allowed"])
-            self.assertNotIn("POTCAR", {item["remote_name"] for item in scheduled["fetch_outputs"]})
-            remote_cwd = plan["scheduled_transport"]["remote_cwd"]
-            with patch(
-                "mlipflow.services.SshSlurmBackend.stage_fresh",
-                return_value=remote_cwd,
-            ) as staged, patch(
-                "mlipflow.services.SshSlurmBackend.submit",
-                return_value=ExecutionResult(0, "Submitted batch job 77\n", "", "77"),
-            ):
-                submitted = run_node(project, "label-li", PLUGINS, plan["plan_digest"])
-            self.assertEqual("PENDING", submitted["step"]["state"])
-            staged_names = {item[1] for item in staged.call_args.args[2]}
-            self.assertIn("POTCAR", staged_names)
-            self.assertIn("run.slurm", staged_names)
-
-            remote = root / "remote-fixture"
-            remote.mkdir()
-            for name in ("POSCAR", "INCAR", "KPOINTS", "POTCAR"):
-                shutil.copy2(root / "prepared" / name, remote / name)
-            for source, destination in (
-                (root / "inputs/structures.json", remote / "structures.json"),
-                (root / "inputs/labeling.json", remote / "labeling.json"),
-                (root / "prepared/dft-input-manifest.json", remote / "dft-input-manifest.json"),
-                (PLUGINS / "dft-labeling/vasp_label.py", remote / "mlipflow-vasp-label.py"),
-            ):
-                shutil.copy2(source, destination)
-            shutil.copy2(root / "inputs/fake_vasp.py", remote / "srun")
-            (remote / "srun").chmod(0o700)
-            wrapper = load_module("test_scheduled_vasp_wrapper", remote / "mlipflow-vasp-label.py")
-            arguments = argparse.Namespace(
-                attempt_dir=str(remote),
-                structures_manifest="structures.json",
-                labeling_config="labeling.json",
-                dft_input_manifest="dft-input-manifest.json",
-                result_manifest="dft-labeling-result.json",
-                labels="labels.json",
-                units_json=json.dumps(parameters["units"]),
-                vasp_argv_json=json.dumps(parameters["vasp_argv"]),
+    def _submit(self, root: Path) -> tuple[Any, dict[str, Any], Path, FakeTemplateLibrary]:
+        _, site = prepared_fixture(root)
+        initialize(root)
+        project = load_project(root)
+        library = FakeTemplateLibrary()
+        plan = make_run_plan(project, "label-li", PLUGINS, site, library)
+        remote_dir = plan["hpc_execution"]["workspace"]["run_dir"]
+        with patch(
+            "mlipflow.services.SshSlurmBackend.stage_workspace",
+            return_value=remote_dir,
+        ) as staged, patch(
+            "mlipflow.services.SshSlurmBackend.submit",
+            return_value=ExecutionResult(0, "Submitted batch job 77\n", "", "77"),
+        ):
+            run_node(
+                project, "label-li", PLUGINS, plan["plan_digest"], site, library
             )
-            with patch.dict(
-                os.environ,
-                {"PATH": str(remote) + os.pathsep + os.environ.get("PATH", "")},
-            ):
-                wrapper.execute(arguments)
-            inventory = {
-                path.name: {
-                    "path": path.name,
-                    "exists": True,
-                    "size_bytes": path.stat().st_size,
-                    "sha256": sha256(path),
-                }
-                for path in remote.iterdir()
-                if path.is_file()
+        staged_paths = {item[1] for item in staged.call_args.args[1]}
+        self.assertIn("input/POTCAR", staged_paths)
+        self.assertIn("submit.sbatch", staged_paths)
+        self.assertIn("run.sh", staged_paths)
+        self.assertNotIn("POTCAR", plan["adapter_plan"]["approval_summary"]["fetch_allowlist"])
+        return project, plan, site, library
+
+    def _inventory_hooks(self, remote: Path):
+        def inspect(_self: object, _cwd: str, remote_path: str) -> dict[str, object]:
+            path = remote / remote_path
+            if not path.is_file():
+                return {"path": remote_path, "exists": False}
+            return {
+                "path": remote_path,
+                "exists": True,
+                "size_bytes": path.stat().st_size,
+                "sha256": sha256(path),
             }
 
-            def inspect(_: object, _cwd: str, remote_name: str) -> dict[str, object]:
-                return inventory.get(remote_name, {"path": remote_name, "exists": False})
+        def fetch(
+            _self: object, _cwd: str, remote_path: str, destination: Path
+        ) -> Path:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(remote / remote_path, destination)
+            return destination
 
-            def fetch(
-                _: object, _cwd: str, remote_name: str, destination: Path
-            ) -> Path:
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(remote / remote_name, destination)
-                return destination
+        return inspect, fetch
 
-            with patch(
-                "mlipflow.services.SshSlurmBackend.status",
-                return_value={"state": "COMPLETED", "detail": None, "source": "remote"},
-            ), patch(
-                "mlipflow.services.SshSlurmBackend.inspect_file", autospec=True, side_effect=inspect
-            ):
-                advance_plan = make_advance_plan(project, PLUGINS)
-            transition = advance_plan["details"]["transitions"][0]
-            self.assertEqual("adapter-finalize", transition["action"])
-            with patch(
-                "mlipflow.services.SshSlurmBackend.status",
-                return_value={"state": "COMPLETED", "detail": None, "source": "remote"},
-            ), patch(
-                "mlipflow.services.SshSlurmBackend.inspect_file", autospec=True, side_effect=inspect
-            ), patch(
-                "mlipflow.services.SshSlurmBackend.fetch_from", autospec=True, side_effect=fetch
-            ):
-                finished = advance(project, advance_plan["plan_digest"], PLUGINS)
-            self.assertEqual("OK", finished["changed"][0]["state"])
-            attempt = root / ".mlipflow/runs/label-li/attempt-1"
-            self.assertTrue((attempt / "OUTCAR").is_file())
-            self.assertFalse((attempt / "POTCAR").is_file())
-            self.assertTrue((attempt / "run-manifest.final.json").is_file())
-
-    def test_remote_output_change_after_advance_plan_is_rejected(self) -> None:
+    def test_plan_stage_fetch_check_collect_reaches_ok(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            prepared_fixture(root)
-            initialize(root)
-            project = load_project(root)
-            plan = make_run_plan(project, "label-li", PLUGINS)
-            remote_cwd = plan["scheduled_transport"]["remote_cwd"]
-            with patch(
-                "mlipflow.services.SshSlurmBackend.stage_fresh", return_value=remote_cwd
-            ), patch(
-                "mlipflow.services.SshSlurmBackend.submit",
-                return_value=ExecutionResult(0, "Submitted batch job 78\n", "", "78"),
-            ):
-                run_node(project, "label-li", PLUGINS, plan["plan_digest"])
-            def missing(_self: object, _cwd: str, name: str) -> dict[str, object]:
-                return {"path": name, "exists": False}
-            with patch(
-                "mlipflow.services.SshSlurmBackend.status",
-                return_value={"state": "COMPLETED", "detail": None, "source": "remote"},
-            ), patch(
-                "mlipflow.services.SshSlurmBackend.inspect_file", autospec=True, side_effect=missing
-            ):
-                approved = make_advance_plan(project, PLUGINS)
-            def changed(_self: object, _cwd: str, name: str) -> dict[str, object]:
-                return {
-                    "path": name,
-                    "exists": True,
-                    "size_bytes": 1,
-                    "sha256": "sha256:" + "0" * 64,
-                }
+            project, plan, site, _ = self._submit(root)
+            self.assertEqual(
+                "/work/cluster-a/test-project/label-li/attempt-0001",
+                plan["hpc_execution"]["workspace"]["run_dir"],
+            )
+            self.assertEqual(
+                "slurm/cpu.sbatch",
+                plan["hpc_execution"]["templates"]["submit.sbatch"]["relative_path"],
+            )
+            remote = root / "fake-remote"
+            write_vasp_outputs(remote)
+            write_json(
+                remote / "completion.json",
+                {
+                    "schema_version": 1,
+                    "status": "COMPLETED",
+                    "exit_code": 0,
+                    "project_id": project.project_id,
+                    "node_id": "label-li",
+                    "attempt": 1,
+                },
+            )
+            inspect, fetch = self._inventory_hooks(remote)
             with patch(
                 "mlipflow.services.SshSlurmBackend.status",
-                return_value={"state": "COMPLETED", "detail": None, "source": "remote"},
+                return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.services.SshSlurmBackend.inspect_file", autospec=True, side_effect=changed
+                "mlipflow.services.SshSlurmBackend.inspect_file",
+                autospec=True,
+                side_effect=inspect,
             ):
-                with self.assertRaisesRegex(Exception, "approval digest mismatch|changed after"):
-                    advance(project, approved["plan_digest"], PLUGINS)
+                approved = make_advance_plan(project, PLUGINS, site)
+            self.assertEqual(
+                "adapter-finalize", approved["details"]["transitions"][0]["action"]
+            )
+            with patch(
+                "mlipflow.services.SshSlurmBackend.status",
+                return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.inspect_file",
+                autospec=True,
+                side_effect=inspect,
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.fetch_from",
+                autospec=True,
+                side_effect=fetch,
+            ):
+                finished = advance(project, approved["plan_digest"], PLUGINS, site)
+            self.assertEqual("OK", finished["changed"][0]["state"])
+            attempt = root / ".mlipflow/runs/label-li/attempt-1"
+            self.assertTrue((attempt / "dft-labeling-result.json").is_file())
+            self.assertTrue((attempt / "labels.json").is_file())
+            self.assertFalse((attempt / "POTCAR").is_file())
+
+    def test_scheduler_completed_but_scientific_check_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project, _, site, _ = self._submit(root)
+            remote = root / "fake-remote"
+            write_vasp_outputs(remote, converged=False)
+            write_json(
+                remote / "completion.json",
+                {
+                    "schema_version": 1,
+                    "status": "COMPLETED",
+                    "exit_code": 0,
+                    "project_id": project.project_id,
+                    "node_id": "label-li",
+                    "attempt": 1,
+                },
+            )
+            inspect, fetch = self._inventory_hooks(remote)
+            patches = (
+                patch(
+                    "mlipflow.services.SshSlurmBackend.status",
+                    return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
+                ),
+                patch(
+                    "mlipflow.services.SshSlurmBackend.inspect_file",
+                    autospec=True,
+                    side_effect=inspect,
+                ),
+            )
+            with patches[0], patches[1]:
+                approved = make_advance_plan(project, PLUGINS, site)
+            with patch(
+                "mlipflow.services.SshSlurmBackend.status",
+                return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.inspect_file",
+                autospec=True,
+                side_effect=inspect,
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.fetch_from",
+                autospec=True,
+                side_effect=fetch,
+            ):
+                finished = advance(project, approved["plan_digest"], PLUGINS, site)
+            self.assertEqual("FAIL", finished["changed"][0]["state"])
+            self.assertIn("completion check", finished["changed"][0]["diagnostic"])
+
+    def test_retry_uses_new_persisted_attempt_in_remote_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project, _, site, library = self._submit(root)
+            with StateStore(root / ".mlipflow/state.sqlite3", readonly=False) as store:
+                submitted = store.latest_step(project.project_id, "label-li")
+                store.transition(submitted.run_id, RunState.FAIL, diagnostic="synthetic failure")
+            retry_plan = make_retry_plan(project, "label-li", PLUGINS)
+            retried = retry(
+                project, "label-li", retry_plan["plan_digest"], PLUGINS
+            )
+            self.assertEqual(2, retried["step"]["attempt"])
+            second = make_run_plan(project, "label-li", PLUGINS, site, library)
+            self.assertEqual(
+                "/work/cluster-a/test-project/label-li/attempt-0002",
+                second["hpc_execution"]["workspace"]["run_dir"],
+            )
+
+    def test_invalid_completion_identity_fails_before_scientific_collect(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project, _, site, _ = self._submit(root)
+            remote = root / "fake-remote"
+            write_vasp_outputs(remote)
+            write_json(
+                remote / "completion.json",
+                {
+                    "schema_version": 1,
+                    "status": "COMPLETED",
+                    "exit_code": 0,
+                    "project_id": project.project_id,
+                    "node_id": "label-li",
+                    "attempt": 999,
+                },
+            )
+            inspect, fetch = self._inventory_hooks(remote)
+            with patch(
+                "mlipflow.services.SshSlurmBackend.status",
+                return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.inspect_file",
+                autospec=True,
+                side_effect=inspect,
+            ):
+                approved = make_advance_plan(project, PLUGINS, site)
+            with patch(
+                "mlipflow.services.SshSlurmBackend.status",
+                return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.inspect_file",
+                autospec=True,
+                side_effect=inspect,
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.fetch_from",
+                autospec=True,
+                side_effect=fetch,
+            ):
+                finished = advance(project, approved["plan_digest"], PLUGINS, site)
+            self.assertEqual("FAIL", finished["changed"][0]["state"])
+            self.assertIn("field attempt", finished["changed"][0]["diagnostic"])
+            attempt = root / ".mlipflow/runs/label-li/attempt-1"
+            self.assertFalse((attempt / "labels.json").exists())
+
+    def test_stop_plan_binds_full_cluster_profile_and_site_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project, _, site, _ = self._submit(root)
+            first = make_stop_plan(project, "label-li", site)
+            details = first["details"]
+            self.assertEqual("cluster-a", details["scheduler_target"]["name"])
+            self.assertEqual(
+                "/templates/cluster-a",
+                details["scheduler_target"]["remote_template_root"],
+            )
+            raw = json.loads(site.read_text(encoding="utf-8"))
+            raw["clusters"]["cluster-a"]["ssh_profile"] = "changed-alias"
+            write_json(site, raw)
+            changed = make_stop_plan(project, "label-li", site)
+            self.assertNotEqual(first["plan_digest"], changed["plan_digest"])
 
 
 if __name__ == "__main__":

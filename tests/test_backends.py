@@ -66,7 +66,7 @@ class BackendTests(unittest.TestCase):
                     ["tool", "https://user:password@example.invalid/data"], Path(temporary)
                 )
 
-    def test_ssh_stage_requires_fresh_directory_and_verifies_each_hash(self) -> None:
+    def test_ssh_stage_workspace_is_attempt_scoped_and_verifies_each_hash(self) -> None:
         backend = SshSlurmBackend("safe-profile")
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "POSCAR"
@@ -76,13 +76,19 @@ class BackendTests(unittest.TestCase):
                 subprocess.CompletedProcess(["ssh"], 0, "", ""),
                 subprocess.CompletedProcess(["scp"], 0, "", ""),
                 subprocess.CompletedProcess(
-                    ["ssh"], 0, f"3\n{digest.removeprefix('sha256:')}  POSCAR\n", ""
+                    ["ssh"], 0, f"3\n{digest.removeprefix('sha256:')}  input/POSCAR\n", ""
                 ),
             ]
             with patch("mlipflow.backends.subprocess.run", side_effect=responses) as invoked:
-                remote = backend.stage_fresh(".", "mlipflow-run-1", [(source, "POSCAR", digest)])
-            self.assertEqual("mlipflow-run-1", remote)
+                remote = backend.stage_workspace(
+                    "/work/project/node/attempt-0001",
+                    [(source, "input/POSCAR", digest)],
+                )
+            self.assertEqual("/work/project/node/attempt-0001", remote)
             self.assertIn("mkdir --", invoked.call_args_list[0].args[0][-1])
+            self.assertIn("/input", invoked.call_args_list[0].args[0][-1])
+            self.assertIn("/output", invoked.call_args_list[0].args[0][-1])
+            self.assertIn("/logs", invoked.call_args_list[0].args[0][-1])
             self.assertEqual("scp", invoked.call_args_list[1].args[0][0])
 
     def test_ssh_fetch_rejects_overwrite_and_remote_path_escape(self) -> None:
@@ -96,6 +102,29 @@ class BackendTests(unittest.TestCase):
                 backend.fetch_from("mlipflow-run-1", "OUTCAR", destination)
             with self.assertRaises(BackendError):
                 backend.inspect_file("../escape", "OUTCAR")
+
+    def test_ssh_remote_template_read_is_bounded_and_parsed(self) -> None:
+        backend = SshSlurmBackend("safe-profile")
+        content = "#!/bin/bash\n# {{RUN_DIR}}\n"
+        digest = hashlib.sha256(content.encode()).hexdigest()
+        completed = subprocess.CompletedProcess(
+            ["ssh"],
+            0,
+            f"{len(content.encode())}\n{digest}  slurm/cpu.sbatch\n{content}",
+            "",
+        )
+        with patch("mlipflow.backends.subprocess.run", return_value=completed) as invoked:
+            observed = backend.read_template(
+                "/remote/templates", "slurm/cpu.sbatch"
+            )
+        self.assertEqual(content, observed["content"])
+        self.assertEqual("sha256:" + digest, observed["sha256"])
+        self.assertTrue(observed["root_exists"])
+        self.assertFalse(invoked.call_args.kwargs["shell"])
+        with self.assertRaises(BackendError), patch(
+            "mlipflow.backends.subprocess.run", side_effect=AssertionError("ssh invoked")
+        ):
+            backend.read_template("/remote/templates", "../escape")
 
     def test_ssh_status_falls_back_to_sacct_when_squeue_no_longer_knows_job(self) -> None:
         backend = SshSlurmBackend("safe-profile")

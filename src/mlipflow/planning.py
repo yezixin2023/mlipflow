@@ -38,12 +38,6 @@ def node_plan(project: Project, node: dict[str, Any], plugin: PluginSpec) -> dic
     if mode == "replay":
         warnings.append("Replay only parses and references existing artifacts; it must not run numerics.")
     profile_name = node.get("backend_profile")
-    profiles = project.raw.get("backend_profiles", {})
-    profile_configuration = (
-        profiles.get(profile_name)
-        if isinstance(profile_name, str) and isinstance(profiles, dict)
-        else None
-    )
     plan = {
         "schema_version": 1,
         "action": "run",
@@ -58,10 +52,7 @@ def node_plan(project: Project, node: dict[str, Any], plugin: PluginSpec) -> dic
         },
         "mode": mode,
         "backend": backend,
-        "backend_profile": {
-            "name": profile_name,
-            "configuration": profile_configuration,
-        },
+        "backend_profile": profile_name,
         "project_config_digest": _project_config_digest(project),
         "inputs": node.get("inputs", {}),
         "input_fingerprints": _input_fingerprints(project, node.get("inputs", {})),

@@ -40,7 +40,6 @@ def project_config(nodes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         "schema_version": 1,
         "project": {"id": "test-project", "name": "Test", "description": "fixture"},
         "locations": {},
-        "backend_profiles": {},
         "model_registry": "model_registry.yaml",
         "workflow": {"nodes": nodes or []},
         "routing": {
@@ -75,4 +74,3 @@ def snapshot(root: Path) -> dict[str, tuple[int, int, str]]:
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
         result[relative] = (stat.st_size, stat.st_mtime_ns, digest)
     return result
-

@@ -53,7 +53,14 @@ class Adapter:
 8. 与既有小样例输出做 parity test；
 9. 原脚本含 `rm/mv`、无限轮询或隐式提交时必须拆分，不能原样调用。
 
-内置 adapter 默认只允许 `local`。唯一例外是 `dft-labeling.label` 的单结构 static `ssh-slurm` 合同：adapter plan 必须显式声明已指纹化 `staged_files`、shell-free `remote_argv`、module allowlist、`remote_python` 和有单文件大小上限的 `fetch_outputs`；核心创建 fresh 目录、提交并在第二次 `advance` 审批后 fetch，再加载 pinned plugin 执行 `check/collect`。不要仅在 manifest 中增加 backend；缺少该完整合同的 scheduled adapter 会被核心拒绝。本地 `slurm` adapter 仍未开放。
+内置 adapter 默认只允许 `local`。若要接入 `ssh-slurm`，adapter 只能声明科学合同：
+`schema_version: 2`、安全 `template_family`、已指纹化 `staged_files` 和有单文件上限的
+`fetch_outputs`。adapter 不得声明 host、partition、module、executable path、launcher、
+remote work root 或完整 sbatch；这些属于用户本地 cluster profile 与远端 template library。
+核心从持久 attempt state 解析 fresh workspace、渲染脚本、提交，并在第二次 `advance`
+审批后 fetch，再加载 pinned plugin 执行 `check/collect`。不要仅在 manifest 中增加 backend；
+缺少完整 scientific contract 的 scheduled adapter 会被核心拒绝。本地 `slurm` adapter
+仍未开放。
 
 LASP/SSW 是这条边界的一个具体例子：execute 只包装用户自备 executable，要求显式
 版本、ARC/`lasp.in`/辅助输入与 fresh attempt，使用 `shell=False`；可选 MPI 只接受
@@ -85,7 +92,10 @@ Replay 可以：
 
 Replay 不可以：启动数值程序、提交作业、复制大数据/权重、修改来源产物，或把既有结果称为重新计算。
 
-结果 manifest 必须显式为 `OK`，使用相对、无 `..` 的普通文件引用，且不得通过符号链接逃逸。调度完成结果还必须包含 `project_id/node_id/run_id/attempt/plugin_id/plan_digest` 并与批准计划一致。
+portable replay/result manifest 必须显式为 `OK`，使用相对、无 `..` 的普通文件引用，且
+不得通过符号链接逃逸。远端 `completion.json` 只证明进程终止，必须至少绑定
+`project_id/node_id/attempt/status/exit_code`；core 另以 pinned approved plan 绑定
+run/plugin/plan/template identity，并且仍须执行科学 `check/collect`。
 
 ## 测试清单
 
@@ -96,7 +106,8 @@ Replay 不可以：启动数值程序、提交作业、复制大数据/权重、
 - 完成判据的成功/失败/不完整 fixture；
 - manifest 通过 `run-manifest.schema.json`；
 - retry 新 attempt、不覆盖；
-- fake local、SLURM scheduler reconciliation 与 SSH argv/path 边界；
+- synthetic multi-cluster site config、fake template library、fresh workspace/stage plan、
+  scheduler reconciliation 与 SSH argv/path 边界；
 - 科学单位和已知小样例 parity。
 
 运行：

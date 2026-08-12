@@ -45,12 +45,13 @@ def load_json(path: Path) -> dict:
 
 
 class SchemaTests(unittest.TestCase):
-    def test_four_draft_2020_12_schemas_are_json(self) -> None:
+    def test_five_draft_2020_12_schemas_are_json(self) -> None:
         expected = {
             "project.schema.json",
             "plugin.schema.json",
             "run-manifest.schema.json",
             "model-registry.schema.json",
+            "site.schema.json",
         }
         self.assertEqual(expected, {path.name for path in SCHEMA_ROOT.glob("*.json")})
         for name in sorted(expected):

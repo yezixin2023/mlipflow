@@ -417,7 +417,7 @@ class AdapterSafetyBoundaryTests(unittest.TestCase):
                     plan = adapter.plan(nonlocal_context)
                     self.assertEqual("BLOCKED", plan["status"])
                     expected_code = (
-                        "parameters.scheduler_runner"
+                        "parameters.local_runner"
                         if plugin_id == "dft-labeling"
                         else "backend.unsupported"
                     )

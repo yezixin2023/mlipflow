@@ -162,10 +162,10 @@ MSD 时间轴、体积、Li 数量、扩散维度、拟合窗、平衡段和电�
 |---|---|---:|---|
 | `direct_sampling/direct.py` | MAML DIRECT/Birch 代表性采样 CLI；POSCAR/CIF/vasprun/XDATCAR/ASE/LAMMPS → POSCAR、`manifest.csv`、PCA/FCS 图 | B | `pes-sampling`；需去绝对默认路径，禁止默认 `rmtree`，补版本/输入哈希与失败 manifest |
 | `finetune_mace/collect.py` | 检查 VASP 完整性、SCF/离子收敛和 E/F/stress；固定 seed 划分 → train/valid/all extxyz、坏样本清单 | B | `dft-labeling` dataset assembly；改为无顶层副作用的 CLI，参数化阈值和是否取终态 |
-| `finetune_mace/{finetune.sh,convert.sh}` | extxyz/foundation model → MACE 微调模型/LAMMPS 导出 | C | `mlip-training.mace` + model export；CUDA、路径、资源迁至 backend profile |
+| `finetune_mace/{finetune.sh,convert.sh}` | extxyz/foundation model → MACE 微调模型/LAMMPS 导出 | C | `mlip-training.mace` + model export；抽象资源由 node 声明，CUDA/module/launcher/程序路径迁至站点远端模板 |
 | `MD/ase_MD/ase_md_only_multi_calc.py` | MACE/CHGNet/M3GNet/EMT/LJ，NPT/NVT → trajectory/log/metadata | D | `ionic-transport` MD adapter；关键参数、device/dtype/seed 必须显式，禁止覆盖轨迹，增加恢复点 |
 | `MD/lammps_MD/generate_md.py` | 结构/模型/多温度/seed/超胞 → MACE-LAMMPS data 与 NPT/NVT/MSD 输入 | B/C | `ionic-transport`；去除 `Li type 1`、framework `2 3` 和 `data.LYC` 假设 |
-| `MD/lammps_MD/submit_mace_cond.sh` | 模块加载并调用绝对路径 LAMMPS | E | 只把资源意图迁入用户 backend profile，不复用脚本文本 |
+| `MD/lammps_MD/submit_mace_cond.sh` | 模块加载并调用绝对路径 LAMMPS | E | 只把抽象资源意图迁入 node；站点 module/launcher 由远端模板重建，不复用脚本文本 |
 | `MD/AIMD/generate_input.py` | pymatgen MITMDSet → NVT/NPT VASP 输入 | D | 已提炼为 `dft-labeling.vasp-prepare` 的显式 `aimd` contract；POTCAR 只由用户 `PMG_VASP_PSP_DIR` 运行时组装且禁止 collect/入库 |
 | `diffusion_analysis/ionic_conductivity.py` | ASE/LAMMPS/VASP/MSD 多源；漂移、多时间原点、MSD、D、Nernst–Einstein、Arrhenius → CSV/JSON/HTML | C | `ionic-transport` 首选薄适配器；显式拟合窗、维度、体积、电荷、Haven ratio、replica 聚合与外推警告 |
 | `skill/{direct-sampling,mace-sft,ase-md,diffusion_analysis}/SKILL.md` | 旧 Agent 操作说明 | D | 只提炼领域决策，重新编写九个 MLIPFlow Skills |

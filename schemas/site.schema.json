@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mlipflow:schema:site:1.0",
+  "title": "MLIPFlow local site configuration",
+  "description": "User-local named cluster profiles. This file is a control-plane input and is never part of a project or repository.",
+  "type": "object",
+  "required": ["schema_version", "clusters"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "clusters": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[a-z0-9][a-z0-9._-]*$"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["backend", "ssh_profile", "remote_template_root", "work_root"],
+        "properties": {
+          "backend": {"const": "ssh-slurm"},
+          "ssh_profile": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+          "remote_template_root": {"$ref": "#/$defs/remote_path"},
+          "work_root": {"$ref": "#/$defs/remote_path"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "remote_path": {
+      "type": "string",
+      "pattern": "^(?!/$)(?!.*(?:^|/)\\.\\.(?:/|$))/[A-Za-z0-9_./+\\-]+$",
+      "description": "Safe non-root absolute POSIX path. Runtime validation additionally requires remote_template_root and work_root to be disjoint."
+    }
+  }
+}

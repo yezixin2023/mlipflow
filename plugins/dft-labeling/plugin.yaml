@@ -4,7 +4,7 @@
   "id": "dft-labeling",
   "name": "DFT input preparation, labeling, and dataset assembly",
   "display_name": "DFT input preparation, labeling, and dataset assembly",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "api_version": 1,
   "description": "Deterministic pymatgen VASP input preparation plus separately approved local or controlled SSH-SLURM VASP labeling with bounded staging, fetch, and pinned scientific checks.",
   "category": "labeling",
@@ -27,8 +27,9 @@
     "limitations": [
       "vasp-prepare generates POSCAR, INCAR, KPOINTS, and runtime-only POTCAR files in a fresh local attempt but never launches VASP or submits a scheduler job.",
       "POTCAR is assembled only from the user's licensed PMG_VASP_PSP_DIR, is fingerprinted, and is explicitly excluded from portable collection, reports, packages, and repository content.",
-      "The first scheduled runner is intentionally limited to one fresh static VASP calculation per node; relax, AIMD, continuation, arrays, and multi-structure batching remain pending.",
-      "SSH-SLURM staging accepts only a basename allowlist, verifies every staged SHA-256, never fetches POTCAR, and requires a second approved advance before bounded output fetch and scientific check.",
+      "The first scheduled contract is intentionally limited to one fresh static VASP calculation per node; relax, AIMD, continuation, arrays, and multi-structure batching remain pending.",
+      "SSH-SLURM staging accepts only a basename input allowlist, verifies every staged SHA-256, never fetches POTCAR, and requires a second approved advance before bounded output fetch and scientific check.",
+      "Cluster-specific modules, executable paths, launchers, partitions, and environment initialization belong only to the selected remote vasp/run.sh and slurm templates, not plugin or project parameters.",
       "Real historical VASP numerical parity remains pending even when a local integration smoke succeeds.",
       "The manuscript static preset preserves EDIFF=5e-6 numerically while recording that the SI labels it eV/atom although VASP EDIFF is an absolute electronic threshold."
     ]
@@ -56,16 +57,12 @@
     {"name": "dft-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Optional prepared-input binding consumed by the separate label operation."}
   ],
   "parameters": [
-    {"name": "operation", "type": "string", "required": true, "description": "vasp-prepare generates inputs; label runs the separately approved user command."},
+    {"name": "operation", "type": "string", "required": true, "description": "vasp-prepare generates inputs; label runs either a separately approved local user command or a site-template-backed scheduled calculation."},
     {"name": "interpreter-argv", "type": "array", "required": false, "description": "Local-only interpreter argv; vasp-prepare requires an absolute executable non-symlink file and local label requires one non-shell executable."},
     {"name": "engine", "type": "string", "required": true, "description": "Must be vasp for vasp-prepare; explicit engine identifier for label."},
     {"name": "output-subdir", "type": "string", "required": false, "description": "Fresh attempt-relative input directory for vasp-prepare.", "default": "vasp-inputs"},
     {"name": "max-structures", "type": "integer", "required": false, "description": "Positive preparation bound, capped at 10000.", "default": 10000},
-    {"name": "label-script", "type": "string", "required": false, "description": "Project-relative user labeling command, required only by label; it must not call sbatch."},
-    {"name": "scheduler-runner", "type": "string", "required": false, "description": "SSH-SLURM label currently requires bundled-vasp-static-v1."},
-    {"name": "remote-python", "type": "string", "required": false, "description": "Approved remote Python executable used only for the self-contained runner/wrapper."},
-    {"name": "modules", "type": "array", "required": false, "description": "Strict module-name allowlist loaded by the generated Slurm script."},
-    {"name": "vasp-argv", "type": "array", "required": false, "description": "Exact shell-free VASP launch argv within the allocated job, for example srun --ntasks=4 vasp_std."},
+    {"name": "label-script", "type": "string", "required": false, "description": "Project-relative command required for local label only; it must not call sbatch and is forbidden for ssh-slurm."},
     {"name": "completion-policy", "type": "object", "required": false, "description": "Required only by label: reviewed electronic/ionic completion criteria."},
     {"name": "units", "type": "object", "required": false, "description": "Required only by label: explicit energy, force, stress, and length units."},
     {"name": "result-manifest", "type": "string", "required": false, "description": "Safe attempt-relative result path; defaults by operation."}

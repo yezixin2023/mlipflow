@@ -1,0 +1,368 @@
+"""Pure validation, fingerprinting and context assembly shared by both
+execution paths.
+
+Nothing here talks to a backend or mutates workflow state; these are the checks
+that must hold identically whether a node runs locally or through a scheduler.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from pathlib import Path
+from typing import Any
+
+from ..artifacts import fingerprint
+from ..config import Project
+from ..errors import ConfigError, PluginError
+from ..io import load_mapping
+from ..plugins import PluginSpec
+from ..site import ClusterProfile, load_site_config
+from ..state import RunState, StateStore, utc_now
+from .paths import attempt_directory, state_path
+
+
+_SAFE_REMOTE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+\-]*")
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _project_scoped_result_path(project: Project, path: Path) -> Path:
+    if path.is_symlink():
+        raise ConfigError(f"result manifest must not be a symlink: {path}")
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(project.root.resolve())
+    except ValueError as exc:
+        raise ConfigError(f"result manifest escapes the project root: {path}") from exc
+    return resolved
+
+
+def _load_result(
+    result_path: Path, expected_identity: dict[str, Any] | None = None
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    result = load_mapping(result_path)
+    if result.get("schema_version") != 1:
+        raise ConfigError(f"unsupported replay result schema in {result_path}")
+    scientific_state = result.get("state", result.get("status"))
+    if not isinstance(scientific_state, str):
+        raise ConfigError(f"result manifest has no explicit state/status in {result_path}")
+    if scientific_state.upper() != RunState.OK.value:
+        raise ConfigError(
+            f"result manifest is not scientifically successful: {scientific_state!r}"
+        )
+    if expected_identity is not None:
+        for key, expected in expected_identity.items():
+            if result.get(key) != expected:
+                raise ConfigError(
+                    f"result identity mismatch for {key}: expected {expected!r}, "
+                    f"got {result.get(key)!r}"
+                )
+    raw_artifacts = result.get("artifacts", [])
+    if not isinstance(raw_artifacts, list):
+        raise ConfigError(f"replay artifacts must be a list in {result_path}")
+    artifacts: list[dict[str, Any]] = []
+    for item in raw_artifacts:
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            raise ConfigError(f"invalid replay artifact in {result_path}: {item!r}")
+        portable = Path(item["path"])
+        if portable.is_absolute() or ".." in portable.parts:
+            raise ConfigError(
+                f"result artifact must be portable and relative to its manifest: {portable}"
+            )
+        path = result_path.parent / portable
+        if path.is_symlink():
+            raise ConfigError(f"result artifact must not be a symlink: {path}")
+        path = path.resolve()
+        try:
+            path.relative_to(result_path.parent.resolve())
+        except ValueError as exc:
+            raise ConfigError(f"result artifact escapes its manifest directory: {path}") from exc
+        if not path.is_file():
+            raise ConfigError(f"replay artifact does not exist: {path}")
+        artifacts.append({**fingerprint(path), "role": item.get("role", "output")})
+    return result, artifacts
+
+
+def _scheduled_contract(
+    project: Project,
+    plugin: PluginSpec,
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    adapter_plan = plan.get("adapter_plan")
+    scheduled = adapter_plan.get("scheduled_execution") if isinstance(adapter_plan, dict) else None
+    if not isinstance(scheduled, dict) or scheduled.get("schema_version") != 2:
+        raise PluginError("scheduled adapter plan requires scheduled_execution schema_version=2")
+    if set(scheduled) != {
+        "schema_version",
+        "template_family",
+        "staged_files",
+        "fetch_outputs",
+    }:
+        raise PluginError(
+            "scheduled_execution may contain only schema_version, template_family, "
+            "staged_files, and fetch_outputs"
+        )
+    template_family = scheduled.get("template_family")
+    if not isinstance(template_family, str) or not re.fullmatch(
+        r"[a-z0-9][a-z0-9._-]*", template_family
+    ):
+        raise PluginError("scheduled_execution.template_family is unsafe")
+    staged = scheduled.get("staged_files")
+    if not isinstance(staged, list) or not staged:
+        raise PluginError("scheduled_execution.staged_files must be a non-empty list")
+    allowed_roots = (project.root.resolve(), plugin.path.parent.resolve())
+    names: set[str] = set()
+    normalized_stage: list[dict[str, Any]] = []
+    for index, item in enumerate(staged):
+        if not isinstance(item, dict):
+            raise PluginError(f"scheduled staged file {index} must be a mapping")
+        source_value = item.get("source")
+        remote_name = item.get("remote_name")
+        declared = item.get("sha256")
+        size_bytes = item.get("size_bytes")
+        if not isinstance(source_value, str) or not isinstance(remote_name, str):
+            raise PluginError(f"scheduled staged file {index} lacks source/remote_name")
+        if not _SAFE_REMOTE_NAME.fullmatch(remote_name) or remote_name in names:
+            raise PluginError(f"unsafe or duplicate remote staging name: {remote_name!r}")
+        names.add(remote_name)
+        source = Path(source_value).expanduser().absolute()
+        if source.is_symlink() or not source.is_file():
+            raise PluginError(f"staging source must be an ordinary file: {source}")
+        resolved = source.resolve()
+        if not any(_is_within(resolved, root) for root in allowed_roots):
+            raise PluginError(f"staging source is outside the project/plugin roots: {source}")
+        if not isinstance(declared, str) or declared != _sha256_file(source):
+            raise PluginError(f"staging source fingerprint changed: {source}")
+        if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes != source.stat().st_size:
+            raise PluginError(f"staging source size changed: {source}")
+        normalized_stage.append(
+            {**item, "source": str(source), "remote_name": remote_name}
+        )
+    outputs = scheduled.get("fetch_outputs")
+    if not isinstance(outputs, list) or not outputs:
+        raise PluginError("scheduled_execution.fetch_outputs must be a non-empty list")
+    output_names: set[str] = set()
+    normalized_outputs: list[dict[str, Any]] = []
+    for index, item in enumerate(outputs):
+        if not isinstance(item, dict):
+            raise PluginError(f"scheduled fetch output {index} must be a mapping")
+        remote_name = item.get("remote_name")
+        local_name = item.get("local_name")
+        required = item.get("required")
+        maximum = item.get("max_bytes")
+        if (
+            not isinstance(remote_name, str)
+            or not _SAFE_REMOTE_NAME.fullmatch(remote_name)
+            or remote_name in output_names
+            or not isinstance(local_name, str)
+            or not _SAFE_REMOTE_NAME.fullmatch(local_name)
+            or type(required) is not bool
+            or isinstance(maximum, bool)
+            or not isinstance(maximum, int)
+            or maximum < 1
+        ):
+            raise PluginError(f"invalid scheduled fetch output {index}")
+        output_names.add(remote_name)
+        normalized_outputs.append(
+            {
+                **item,
+                "remote_path": f"output/{remote_name}",
+            }
+        )
+    normalized_outputs.extend(
+        [
+            {
+                "remote_name": "completion.json",
+                "remote_path": "completion.json",
+                "local_name": "completion.json",
+                "required": True,
+                "max_bytes": 1024 * 1024,
+                "role": "scheduler-completion",
+            },
+            {
+                "remote_name": "stdout.log",
+                "remote_path": "logs/stdout.log",
+                "local_name": "stdout.log",
+                "required": False,
+                "max_bytes": 16 * 1024 * 1024,
+                "role": "scheduler-log",
+            },
+            {
+                "remote_name": "stderr.log",
+                "remote_path": "logs/stderr.log",
+                "local_name": "stderr.log",
+                "required": False,
+                "max_bytes": 16 * 1024 * 1024,
+                "role": "scheduler-log",
+            },
+        ]
+    )
+    return {
+        "schema_version": 2,
+        "template_family": template_family,
+        "staged_files": normalized_stage,
+        "fetch_outputs": normalized_outputs,
+    }
+
+
+def _cluster_profile(
+    node: dict[str, Any], site_path: Path | None
+) -> ClusterProfile:
+    site = load_site_config(site_path)
+    return site.cluster(node.get("backend_profile"))
+
+
+def _planned_attempt(project: Project, node_id: str) -> int:
+    database = state_path(project)
+    if not database.is_file():
+        return 1
+    with StateStore(database, readonly=True) as store:
+        return store.latest_step(project.project_id, node_id).attempt
+
+
+def _adapter_context(project: Project, node: dict[str, Any], attempt: int) -> dict[str, Any]:
+    return {
+        "project_root": str(project.root),
+        "attempt_dir": str(attempt_directory(project, str(node["id"]), attempt)),
+        "inputs": node.get("inputs", {}),
+        "parameters": node.get("parameters", {}),
+        "backend": node.get("backend", "local"),
+        "resources": node.get("resources", {}),
+    }
+
+
+def _adapter_command_fingerprints(
+    project: Project, adapter_plan: Any
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(adapter_plan, dict):
+        return {}
+    if isinstance(adapter_plan.get("scheduled_execution"), dict):
+        # Scheduled scientific inputs are exhaustively fingerprinted by
+        # staged_files.  Site-owned executable/launcher identity belongs to the
+        # selected remote templates, so no adapter argv is resolved locally.
+        return {}
+    argv = adapter_plan.get("argv")
+    if not isinstance(argv, list):
+        return {}
+    raw_cwd = adapter_plan.get("cwd")
+    base = Path(raw_cwd) if isinstance(raw_cwd, str) else project.root
+    threshold = int(project.raw.get("fingerprints", {}).get("full_hash_max_bytes", 67108864))
+    captured: dict[str, dict[str, Any]] = {}
+    for index, raw in enumerate(argv):
+        if not isinstance(raw, str) or not raw or "\x00" in raw:
+            continue
+        candidate = Path(raw)
+        candidate = candidate if candidate.is_absolute() else base / candidate
+        if candidate.exists():
+            captured[str(index)] = fingerprint(
+                candidate, full_hash_max_bytes=threshold
+            )
+    return captured
+
+
+def _normalize_adapter_artifacts(
+    project: Project, attempt_dir: Path, raw_artifacts: Any
+) -> list[dict[str, Any]]:
+    if not isinstance(raw_artifacts, list):
+        raise PluginError("adapter artifacts must be a list")
+    threshold = int(project.raw.get("fingerprints", {}).get("full_hash_max_bytes", 67108864))
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_artifacts):
+        if not isinstance(item, dict):
+            raise PluginError(f"adapter artifact {index} must be a mapping")
+        role = str(item.get("role", "output"))
+        path_value = item.get("path")
+        if isinstance(path_value, str):
+            path = Path(path_value)
+            path = path if path.is_absolute() else attempt_dir / path
+            if path.is_symlink():
+                raise PluginError(f"adapter artifact must not be a symlink: {path}")
+            resolved = path.resolve()
+            try:
+                resolved.relative_to(attempt_dir.resolve())
+            except ValueError as exc:
+                raise PluginError(
+                    f"adapter artifact escapes the fresh attempt directory: {path}"
+                ) from exc
+            if not resolved.is_file():
+                raise PluginError(f"adapter artifact does not exist: {path}")
+            artifact = fingerprint(resolved, full_hash_max_bytes=threshold)
+            artifact["role"] = role
+            if isinstance(item.get("media_type"), str):
+                artifact["media_type"] = item["media_type"]
+            normalized.append(artifact)
+            continue
+        uri = item.get("uri")
+        external_fingerprint = item.get("fingerprint")
+        if not isinstance(uri, str) or not isinstance(external_fingerprint, str):
+            raise PluginError(
+                f"adapter artifact {index} needs either path or uri plus fingerprint"
+            )
+        normalized.append(
+            {
+                "role": role,
+                "uri": uri,
+                "media_type": item.get("media_type"),
+                "fingerprint": external_fingerprint,
+                "fingerprint_mode": "external",
+                "size_bytes": item.get("size_bytes"),
+                "mtime_ns": None,
+                "metadata": item.get("metadata", {}),
+            }
+        )
+    return normalized
+
+
+def _manifest_context(
+    project: Project,
+    node: dict[str, Any],
+    plugin: PluginSpec,
+    store: StateStore,
+    run_id: str,
+    *,
+    finished: bool,
+) -> dict[str, Any]:
+    step = store.step_by_run_id(run_id)
+    dependencies = []
+    for dependency_id in node.get("needs", []):
+        dependency = store.latest_step(project.project_id, dependency_id)
+        dependencies.append(
+            {
+                "node_id": dependency_id,
+                "run_id": dependency.run_id,
+                "required_states": [RunState.OK.value],
+            }
+        )
+    max_attempts = plugin.raw.get("retry", {}).get("max_attempts")
+    max_retries = max(0, int(max_attempts) - 1) if isinstance(max_attempts, int) else None
+    previous = store.previous_step(project.project_id, str(node["id"]), step.attempt)
+    return {
+        "backend_profile": node.get("backend_profile"),
+        "timestamps": {
+            "created_at": step.created_at,
+            "updated_at": utc_now(),
+            "submitted_at": step.submitted_at,
+            "started_at": step.started_at,
+            "finished_at": utc_now() if finished else None,
+        },
+        "retry_count": step.retry_count,
+        "max_retries": max_retries,
+        "previous_run_id": previous.run_id if previous is not None else None,
+        "dependencies": dependencies,
+        "source_root": str(project.root),
+    }
