@@ -238,6 +238,66 @@ class HpcArchitectureTests(unittest.TestCase):
                 required=frozenset({"RUN_DIR"}),
             )
 
+    def _render(self, text: str) -> str:
+        return render_template(
+            text,
+            {"RUN_DIR": "/work/attempt-0001", "ATTEMPT": "0001"},
+            template_name="probe",
+            required=frozenset({"RUN_DIR"}),
+        )
+
+    def test_ordinary_shell_and_json_braces_are_not_template_syntax(self) -> None:
+        """A real VASP/JSON template must be writable.
+
+        The renderer used to reject any surviving ``{{`` or ``}}``, which made
+        these ordinary constructs impossible: a shell expansion immediately
+        before a literal brace, and a JSON object closing after a nested one.
+        """
+
+        cases = {
+            "brace expansion then json close": (
+                'cd {{RUN_DIR}}\n'
+                'printf \'{"attempt": %s}\\n\' "${value}"\n'
+                'cat <<EOF\n{"a": "${value}"}\nEOF\n'
+            ),
+            "nested json object": 'cd {{RUN_DIR}}\necho \'{"outer":{"inner":1}}\'\n',
+            "expansion directly before closing brace": (
+                'cd {{RUN_DIR}}\necho "{\\"n\\": ${count}}"\n'
+            ),
+            "awk field program": "cd {{RUN_DIR}}\nsha256sum f | awk '{print $1}'\n",
+            "arithmetic base ten": "cd {{RUN_DIR}}\nattempt=$((10#{{ATTEMPT}}))\n",
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                rendered = self._render(text)
+                self.assertIn("/work/attempt-0001", rendered)
+                self.assertNotIn("{{RUN_DIR}}", rendered)
+
+    def test_residual_placeholder_syntax_is_still_rejected(self) -> None:
+        """Anything that tried to be a placeholder and was not recognised."""
+
+        cases = {
+            "lowercase name": "cd {{RUN_DIR}}\necho {{run_dir}}\n",
+            "padded name": "cd {{RUN_DIR}}\necho {{ RUN_DIR }}\n",
+            "jinja filter": "cd {{RUN_DIR}}\necho {{RUN_DIR|upper}}\n",
+            "empty placeholder": "cd {{RUN_DIR}}\necho {{}}\n",
+            "dotted path": "cd {{RUN_DIR}}\necho {{node.id}}\n",
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                with self.assertRaisesRegex(ConfigError, "unsupported template syntax"):
+                    self._render(text)
+
+    def test_rejection_message_quotes_the_offending_fragment(self) -> None:
+        with self.assertRaisesRegex(ConfigError, r"\{\{ RUN_DIR \}\}"):
+            self._render("cd {{RUN_DIR}}\necho {{ RUN_DIR }}\n")
+
+    def test_unknown_uppercase_placeholder_is_still_caught_first(self) -> None:
+        """The narrower residual check must not weaken the explicit checks."""
+
+        with self.assertRaisesRegex(ConfigError, "unknown variables"):
+            self._render("cd {{RUN_DIR}}\necho {{ARBITRARY_CODE}}\n")
+
     def test_missing_resource_requirement_fails(self) -> None:
         with self.assertRaisesRegex(ConfigError, "resources lack"):
             validate_hpc_resources({"cpus": 4, "gpus": 0, "memory": "8G"})

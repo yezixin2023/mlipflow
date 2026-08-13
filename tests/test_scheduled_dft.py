@@ -181,35 +181,253 @@ def prepared_fixture(root: Path) -> tuple[dict[str, Any], Path]:
     return parameters, write_site(root)
 
 
-def write_vasp_outputs(remote: Path, *, converged: bool = True) -> None:
-    output = remote / "output"
-    logs = remote / "logs"
-    output.mkdir(parents=True)
-    logs.mkdir()
-    (output / "OUTCAR").write_text(
-        "vasp.6.3.0\nGeneral timing and accounting informations for this job:\n",
-        encoding="utf-8",
-    )
-    (output / "OSZICAR").write_text(
-        " 1 F= -.150000E+01 E0= -.150000E+01\n", encoding="utf-8"
-    )
-    steps = "<scstep/>" if converged else "".join("<scstep/>" for _ in range(2))
-    nelm = 700 if converged else 2
-    (output / "vasprun.xml").write_text(
+OUTCAR_FOOTER = "General timing and accounting informations for this job:"
+RELAX_MARKER = "reached required accuracy - stopping structural energy minimisation"
+
+
+def vasprun_xml(
+    *,
+    nelm: int = 700,
+    frames: int = 1,
+    electronic_steps: int = 1,
+    scale: float = 3.0,
+    species: tuple[str, ...] = ("Li",),
+) -> str:
+    """Build a vasprun.xml that mirrors real VASP 5.4.x layout.
+
+    Two quirks a hand-written minimal XML hides, and that a real cluster run
+    exposed, are reproduced here: NELM appears twice under <parameters>, and the
+    per-ionic-step energy lives in the last <scstep> while the trailing
+    <calculation><energy> block reports the electronic entropy in e_0_energy.
+    Each <calculation> also carries its own <structure>, which is what makes an
+    AIMD trajectory readable frame by frame.
+    """
+
+    atoms = "".join(f"<rc><c>{symbol}</c></rc>" for symbol in species)
+    positions = "".join("<v>0 0 0</v>" for _ in species)
+    forces = "".join("<v>0 0 0</v>" for _ in species)
+    calculations = []
+    for index in range(frames):
+        step_energy = -1.5 - 0.01 * index
+        scstep_block = "".join(
+            "<scstep><energy>"
+            f'<i name="e_fr_energy">{step_energy - 0.0005}</i>'
+            f'<i name="e_wo_entrp">{step_energy + 0.0005}</i>'
+            f'<i name="e_0_energy">{step_energy}</i>'
+            "</energy></scstep>"
+            for _ in range(electronic_steps)
+        )
+        calculations.append(
+            f"<calculation>{scstep_block}"
+            "<structure><crystal><varray name=\"basis\">"
+            f"<v>{scale} 0 0</v><v>0 {scale} 0</v><v>0 0 {scale}</v>"
+            "</varray></crystal>"
+            f'<varray name="positions">{positions}</varray></structure>'
+            f'<varray name="forces">{forces}</varray>'
+            '<varray name="stress"><v>1 0 0</v><v>0 1 0</v><v>0 0 1</v></varray>'
+            "<energy>"
+            f'<i name="e_fr_energy">{step_energy - 0.0005}</i>'
+            f'<i name="e_wo_entrp">{step_energy}</i>'
+            '<i name="e_0_energy">-0.00081482</i>'
+            "</energy>"
+            "</calculation>"
+        )
+    return (
         "<modeling>"
-        f'<parameters><separator><i name="NELM">{nelm}</i></separator></parameters>'
-        '<atominfo><array name="atoms"><set><rc><c>Li</c></rc></set></array></atominfo>'
-        '<structure name="finalpos"><crystal><varray name="basis">'
-        '<v>3 0 0</v><v>0 3 0</v><v>0 0 3</v></varray></crystal>'
-        '<varray name="positions"><v>0 0 0</v></varray></structure>'
-        f'<calculation>{steps}<energy><i name="e_0_energy">-1.5</i></energy>'
-        '<varray name="forces"><v>0 0 0</v></varray>'
-        '<varray name="stress"><v>1 0 0</v><v>0 1 0</v><v>0 0 1</v></varray>'
-        "</calculation></modeling>",
+        "<parameters>"
+        '<separator name="electronic convergence">'
+        f'<i type="int" name="NELM">{nelm}</i>'
+        "</separator>"
+        '<separator name="response functions">'
+        '<i type="int" name="NELM">1</i>'
+        "</separator>"
+        "</parameters>"
+        f'<atominfo><array name="atoms"><set>{atoms}</set></array></atominfo>'
+        + "".join(calculations)
+        + '<structure name="finalpos"><crystal><varray name="basis">'
+        f"<v>{scale} 0 0</v><v>0 {scale} 0</v><v>0 0 {scale}</v></varray></crystal>"
+        f'<varray name="positions">{positions}</varray></structure>'
+        "</modeling>"
+    )
+
+
+def contcar_text(scale: float = 3.0) -> str:
+    return (
+        "Li1\n1.0\n"
+        f"  {scale} 0.0 0.0\n  0.0 {scale} 0.0\n  0.0 0.0 {scale}\n"
+        "Li\n1\nDirect\n 0.0 0.0 0.0\n"
+    )
+
+
+def write_calculation_outputs(
+    remote: Path,
+    calc_id: str = "calc-0001",
+    *,
+    calculation_type: str = "static",
+    converged: bool = True,
+    frames: int = 1,
+    nelm: int = 700,
+    ionic_converged: bool = True,
+    scale: float = 3.0,
+    footer: bool = True,
+) -> None:
+    """Write one calculation's outputs under output/<calc_id>/."""
+
+    directory = remote / "output" / calc_id
+    directory.mkdir(parents=True, exist_ok=True)
+    (remote / "logs").mkdir(parents=True, exist_ok=True)
+    outcar = "vasp.5.4.4.18Apr17\n"
+    if calculation_type == "relax" and ionic_converged:
+        outcar += RELAX_MARKER + "\n"
+    if footer:
+        outcar += OUTCAR_FOOTER + "\n"
+    (directory / "OUTCAR").write_text(outcar, encoding="utf-8")
+    (directory / "OSZICAR").write_text(" 1 F= -.150000E+01 E0= -.150000E+01\n", encoding="utf-8")
+    (directory / "vasprun.xml").write_text(
+        vasprun_xml(
+            nelm=nelm,
+            frames=frames,
+            electronic_steps=1 if converged else nelm,
+            scale=scale,
+        ),
         encoding="utf-8",
     )
-    (logs / "stdout.log").write_text("done\n", encoding="utf-8")
-    (logs / "stderr.log").write_text("", encoding="utf-8")
+    if calculation_type == "relax":
+        (directory / "CONTCAR").write_text(contcar_text(scale), encoding="utf-8")
+    for stream in ("stdout", "stderr"):
+        (remote / "logs" / f"{calc_id}.{stream}").write_text("", encoding="utf-8")
+
+
+def write_completion(
+    remote: Path,
+    project_id: str,
+    node_id: str,
+    attempt: int,
+    calc_ids: tuple[str, ...] = ("calc-0001",),
+    exit_codes: tuple[int, ...] | None = None,
+) -> None:
+    codes = exit_codes if exit_codes is not None else tuple(0 for _ in calc_ids)
+    write_json(
+        remote / "completion.json",
+        {
+            "schema_version": 1,
+            "status": "COMPLETED",
+            "exit_code": 0,
+            "project_id": project_id,
+            "node_id": node_id,
+            "attempt": attempt,
+            "calculations": [
+                {"id": calc_id, "exit_code": code}
+                for calc_id, code in zip(calc_ids, codes)
+            ],
+        },
+    )
+
+
+def write_vasp_outputs(remote: Path, *, converged: bool = True) -> None:
+    """Single static calculation, the shape the first real smoke produced."""
+
+    (remote / "logs").mkdir(parents=True, exist_ok=True)
+    write_calculation_outputs(remote, "calc-0001", converged=converged)
+    (remote / "logs" / "stdout.log").write_text("done\n", encoding="utf-8")
+    (remote / "logs" / "stderr.log").write_text("", encoding="utf-8")
+
+
+class RealVasprunParsingTests(unittest.TestCase):
+    """Guards for two VASP 5.4.x layouts that a real cluster run exposed.
+
+    Both defects were invisible to an idealised fixture and both fail silently
+    in the wrong direction: one rejects every converged run, the other records
+    an energy three orders of magnitude off as a training label.
+    """
+
+    def setUp(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "dft_labeling_probe", PLUGINS / "dft-labeling" / "adapter.py"
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.parse = module._parse_scheduled_vasprun
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def _write(self, remote: Path, *, converged: bool = True) -> Path:
+        write_vasp_outputs(remote, converged=converged)
+        return remote / "output" / "calc-0001" / "vasprun.xml"
+
+    def test_nelm_comes_from_electronic_convergence_not_response_functions(self) -> None:
+        parsed = self.parse(self._write(self.root / "run"))
+        self.assertIsNotNone(parsed)
+        self.assertEqual(700, parsed["nelm"])
+        self.assertEqual(1, parsed["electronic_steps"])
+        self.assertLess(parsed["electronic_steps"], parsed["nelm"])
+
+    def test_energy_is_the_scstep_sigma_zero_value_not_the_entropy(self) -> None:
+        parsed = self.parse(self._write(self.root / "run"))
+        self.assertIsNotNone(parsed)
+        self.assertAlmostEqual(-1.5, parsed["energy_ev"], places=10)
+        self.assertNotAlmostEqual(-0.00081482, parsed["energy_ev"], places=8)
+
+    def test_non_converged_run_is_still_detected(self) -> None:
+        parsed = self.parse(self._write(self.root / "run", converged=False))
+        self.assertIsNotNone(parsed)
+        self.assertGreaterEqual(parsed["electronic_steps"], parsed["nelm"])
+
+    def test_contcar_and_vasprun_lattices_compare_at_printed_precision(self) -> None:
+        """CONTCAR carries ~16 digits, vasprun prints 8; the same cell differs.
+
+        A real relaxation on a cluster produced 1.7141491381523322 in CONTCAR and
+        1.71414914 in vasprun.xml.  The 1e-10 tolerance used when re-parsing one
+        file twice rejects that, so the cross-format comparison has its own bound.
+        """
+
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "dft_labeling_lattice", PLUGINS / "dft-labeling" / "adapter.py"
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        contcar = [[-1.7141491381523322, 1.7141491381523322, 1.7141491381523322]]
+        vasprun = [[-1.71414914, 1.71414914, 1.71414914]]
+        self.assertTrue(module._same_lattice_across_formats(contcar, vasprun))
+        # The strict comparator is still strict; it is used for same-file checks.
+        self.assertFalse(module._same_numeric_tree(contcar, vasprun))
+        # A genuinely different cell must still be rejected.
+        self.assertFalse(
+            module._same_lattice_across_formats(contcar, [[-1.72, 1.72, 1.72]])
+        )
+        self.assertFalse(module._same_lattice_across_formats(contcar, [[1.0, 2.0]]))
+
+    def test_energy_falls_back_when_scsteps_carry_no_energy_block(self) -> None:
+        path = self.root / "bare.xml"
+        path.write_text(
+            "<modeling>"
+            '<parameters><separator name="electronic convergence">'
+            '<i type="int" name="NELM">60</i></separator></parameters>'
+            '<atominfo><array name="atoms"><set><rc><c>Li</c></rc></set></array></atominfo>'
+            '<structure name="finalpos"><crystal><varray name="basis">'
+            "<v>3 0 0</v><v>0 3 0</v><v>0 0 3</v></varray></crystal>"
+            '<varray name="positions"><v>0 0 0</v></varray></structure>'
+            "<calculation><scstep/>"
+            '<energy><i name="e_wo_entrp">-2.25</i>'
+            '<i name="e_0_energy">-0.0009</i></energy>'
+            '<varray name="forces"><v>0 0 0</v></varray>'
+            '<varray name="stress"><v>1 0 0</v><v>0 1 0</v><v>0 0 1</v></varray>'
+            "</calculation></modeling>",
+            encoding="utf-8",
+        )
+        parsed = self.parse(path)
+        self.assertIsNotNone(parsed)
+        self.assertAlmostEqual(-2.25, parsed["energy_ev"], places=10)
 
 
 class ScheduledDftTests(unittest.TestCase):
@@ -231,7 +449,7 @@ class ScheduledDftTests(unittest.TestCase):
                 project, "label-li", PLUGINS, plan["plan_digest"], site, library
             )
         staged_paths = {item[1] for item in staged.call_args.args[1]}
-        self.assertIn("input/POTCAR", staged_paths)
+        self.assertIn("input/calc-0001/POTCAR", staged_paths)
         self.assertIn("submit.sbatch", staged_paths)
         self.assertIn("run.sh", staged_paths)
         self.assertNotIn("POTCAR", plan["adapter_plan"]["approval_summary"]["fetch_allowlist"])
@@ -272,17 +490,7 @@ class ScheduledDftTests(unittest.TestCase):
             )
             remote = root / "fake-remote"
             write_vasp_outputs(remote)
-            write_json(
-                remote / "completion.json",
-                {
-                    "schema_version": 1,
-                    "status": "COMPLETED",
-                    "exit_code": 0,
-                    "project_id": project.project_id,
-                    "node_id": "label-li",
-                    "attempt": 1,
-                },
-            )
+            write_completion(remote, project.project_id, "label-li", 1)
             inspect, fetch = self._inventory_hooks(remote)
             with patch(
                 "mlipflow.services.SshSlurmBackend.status",
@@ -313,7 +521,7 @@ class ScheduledDftTests(unittest.TestCase):
             attempt = root / ".mlipflow/runs/label-li/attempt-1"
             self.assertTrue((attempt / "dft-labeling-result.json").is_file())
             self.assertTrue((attempt / "labels.json").is_file())
-            self.assertFalse((attempt / "POTCAR").is_file())
+            self.assertFalse((attempt / "calc-0001" / "POTCAR").is_file())
 
     def test_scheduler_completed_but_scientific_check_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -321,17 +529,7 @@ class ScheduledDftTests(unittest.TestCase):
             project, _, site, _ = self._submit(root)
             remote = root / "fake-remote"
             write_vasp_outputs(remote, converged=False)
-            write_json(
-                remote / "completion.json",
-                {
-                    "schema_version": 1,
-                    "status": "COMPLETED",
-                    "exit_code": 0,
-                    "project_id": project.project_id,
-                    "node_id": "label-li",
-                    "attempt": 1,
-                },
-            )
+            write_completion(remote, project.project_id, "label-li", 1)
             inspect, fetch = self._inventory_hooks(remote)
             patches = (
                 patch(
@@ -386,17 +584,7 @@ class ScheduledDftTests(unittest.TestCase):
             project, _, site, _ = self._submit(root)
             remote = root / "fake-remote"
             write_vasp_outputs(remote)
-            write_json(
-                remote / "completion.json",
-                {
-                    "schema_version": 1,
-                    "status": "COMPLETED",
-                    "exit_code": 0,
-                    "project_id": project.project_id,
-                    "node_id": "label-li",
-                    "attempt": 999,
-                },
-            )
+            write_completion(remote, project.project_id, "label-li", 999)
             inspect, fetch = self._inventory_hooks(remote)
             with patch(
                 "mlipflow.services.SshSlurmBackend.status",
@@ -465,17 +653,7 @@ class ScheduledDftTests(unittest.TestCase):
 
             remote = root / "fake-remote"
             write_vasp_outputs(remote)
-            write_json(
-                remote / "completion.json",
-                {
-                    "schema_version": 1,
-                    "status": "COMPLETED",
-                    "exit_code": 0,
-                    "project_id": project.project_id,
-                    "node_id": "label-li",
-                    "attempt": 1,
-                },
-            )
+            write_completion(remote, project.project_id, "label-li", 1)
             inspect, _ = self._inventory_hooks(remote)
             with patch(
                 "mlipflow.services.SshSlurmBackend.status",
@@ -619,7 +797,7 @@ class ScheduledDftTests(unittest.TestCase):
                         for item in plan["adapter_plan"]["scheduled_execution"][
                             "staged_files"
                         ]
-                        if item["remote_name"] == "POSCAR"
+                        if item["remote_name"] == "calc-0001/POSCAR"
                     ),
                 )
             self.assertEqual(digests[0], digests[1])

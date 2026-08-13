@@ -3,13 +3,22 @@
 This module is intentionally framework-free.  It translates reviewed,
 explicit context fields into an argv list for a user-owned wrapper and parses
 only a versioned result manifest.  It never invokes a shell or a trainer.
+
+Two execution shapes are supported.  On the ``local`` backend the adapter plans
+argv for a user-owned wrapper.  On the ``ssh-slurm`` backend it plans one
+scheduler job for a DeepMD fresh training run: the reviewed training config and
+a logical dataset reference are staged, a site-owned remote template launches
+``dp train``, and only bounded, declared artifacts come back.  Neither path
+imports or reimplements a training framework, and neither path may carry a
+site-specific absolute path into the approval plan.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -20,11 +29,33 @@ FRAMEWORK_OPERATIONS = {
     "chgnet": frozenset({"train", "finetune"}),
     "mace": frozenset({"train", "finetune"}),
 }
-EXECUTION_BACKENDS = frozenset({"local"})
+LOCAL_BACKEND = "local"
+SCHEDULED_BACKEND = "ssh-slurm"
+EXECUTION_BACKENDS = frozenset({LOCAL_BACKEND, SCHEDULED_BACKEND})
+# Only DeepMD fresh training has a verified scheduler contract; the other three
+# frameworks stay on the local wrapper path until their own remote template and
+# completion evidence exist.
+SCHEDULED_FRAMEWORKS = {"deepmd": frozenset({"train"})}
+TEMPLATE_FAMILIES = {"deepmd": "deepmd"}
 SHELL_EXECUTABLES = frozenset(
     {"bash", "csh", "cmd", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "tcsh", "zsh"}
 )
 MAX_JSON_BYTES = 8 * 1024 * 1024
+MAX_CONFIG_BYTES = 4 * 1024 * 1024
+MAX_LCURVE_BYTES = 32 * 1024 * 1024
+MAX_TRAINING_LOG_BYTES = 64 * 1024 * 1024
+MAX_CHECKPOINT_INDEX_BYTES = 64 * 1024 * 1024
+# A validation/reproduction run, not production training.  The bound is a
+# refusal, never a silent truncation.
+MAX_SCHEDULED_STEPS = 20000
+MAX_CURVE_RECORDS = 4096
+MAX_DATASET_SYSTEMS = 4096
+# Restarting from a checkpoint would make an "early training trajectory" claim
+# meaningless, so a scheduled plan refuses any resume-shaped key outright.
+RESTART_KEYS = frozenset({"init_model", "restart", "init_frz_model", "finetune", "auto_prob_style"})
+DATA_PREFIX = "data"
+SCHEDULED_RESULT_SCHEMA = 2
+DEEPMD_FINISH_MARKER = "finished training"
 
 
 def _diagnostic(level: str, code: str, message: str) -> dict[str, str]:

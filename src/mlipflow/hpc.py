@@ -32,6 +32,18 @@ SUBMIT_REQUIRED = frozenset(
 )
 RUN_REQUIRED = frozenset({"RUN_DIR", "INPUT_DIR", "OUTPUT_DIR"})
 PLACEHOLDER = re.compile(r"{{([A-Z][A-Z0-9_]*)}}")
+# After substitution, only a *residual placeholder* is an error: something that
+# tried to be MLIPFlow template syntax and was not recognised, such as
+# ``{{lowercase}}``, ``{{ NAME }}`` or a Jinja-style ``{{NAME|filter}}``.
+#
+# The previous check rejected any surviving ``{{`` or ``}}`` anywhere in the
+# rendered text, which made ordinary shell and JSON impossible to write: a JSON
+# object closing after a nested one (``{"a":{"b":1}}``) or a brace expansion
+# directly before a literal brace (``"${value}}"``) both end in ``}}`` without
+# any templating involved.  Requiring a matching ``{{ ... }}`` pair with no
+# braces between keeps the guard against unsupported templating while letting
+# those through.
+RESIDUAL_TEMPLATE = re.compile(r"\{\{[^{}]*\}\}")
 TEMPLATE_FAMILY = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 MEMORY = re.compile(r"^[1-9][0-9]*(?:[KMGTP](?:i?B)?)?$")
 WALLTIME = re.compile(r"^[0-9]{2,3}:[0-5][0-9]:[0-5][0-9]$")
@@ -155,8 +167,12 @@ def render_template(
             f"remote template {template_name} has unresolved variables: {', '.join(unavailable)}"
         )
     rendered = PLACEHOLDER.sub(lambda match: variables[match.group(1)], text)
-    if "{{" in rendered or "}}" in rendered:
-        raise ConfigError(f"remote template {template_name} contains unsupported template syntax")
+    residual = RESIDUAL_TEMPLATE.search(rendered)
+    if residual is not None:
+        raise ConfigError(
+            f"remote template {template_name} contains unsupported template syntax: "
+            f"{residual.group(0)}"
+        )
     normalized = rendered.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n") + "\n"
     return normalized
 

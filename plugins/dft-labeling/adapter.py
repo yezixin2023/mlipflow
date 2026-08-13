@@ -518,18 +518,35 @@ def _validate_label(context: Mapping[str, Any]) -> list[dict[str, str]]:
         "stress": "kbar-vasp-3x3",
     }:
         diagnostics.append(_diagnostic("error", "parameters.units", "bundled static runner 固定输出 eV/angstrom/kbar-vasp-3x3 单位。"))
-    if backend == "ssh-slurm" and isinstance(completion, Mapping) and completion.get(
-        "require_ionic_convergence"
-    ) is not False:
-        diagnostics.append(_diagnostic("error", "parameters.completion_policy", "bundled static runner 要求 require_ionic_convergence=false。"))
     if backend == "ssh-slurm":
         config_path = _mapping(context.get("inputs")).get("labeling_config")
+        config: Mapping[str, Any] | None = None
         if _safe_relative(config_path):
             config, _ = _parse_labeling_contract(
                 _path(context.get("project_root"), config_path)
             )
-            if isinstance(config, Mapping) and config.get("calculation_type") != "static":
-                diagnostics.append(_diagnostic("error", "inputs.labeling_config", "bundled scheduler runner 当前只支持 static。"))
+        calculation_type = (
+            config.get("calculation_type") if isinstance(config, Mapping) else None
+        )
+        if calculation_type is not None and calculation_type not in SCHEDULED_TYPES:
+            diagnostics.append(
+                _diagnostic("error", "inputs.labeling_config", "scheduler runner 支持 static、relax 与 aimd。")
+            )
+        # Ionic convergence is a completion criterion for relax and only for
+        # relax: static has a single ionic step, and AIMD is a trajectory rather
+        # than a structural optimisation.
+        expected_ionic = calculation_type == RELAX_TYPE
+        if isinstance(completion, Mapping) and completion.get(
+            "require_ionic_convergence"
+        ) is not expected_ionic:
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    "parameters.completion_policy",
+                    f"{calculation_type or 'scheduled'} 计算要求 require_ionic_convergence="
+                    f"{str(expected_ionic).lower()}。",
+                )
+            )
     return diagnostics
 
 
@@ -670,8 +687,15 @@ def _staged_record(source: Path, remote_name: str, *, sensitive: bool = False) -
 def _plan_scheduled_label(
     context: Mapping[str, Any], diagnostics: list[dict[str, str]]
 ) -> dict[str, Any]:
+    """Plan one scheduler job covering 1..N VASP calculations.
+
+    Calculation order is taken from the prepare manifest and frozen into
+    calc-0001..calc-N, so the remote layout is deterministic and never depends
+    on directory iteration order.  The calculation type is shared by the whole
+    batch; it selects which outputs are required, not how the job is launched.
+    """
+
     inputs = _mapping(context["inputs"])
-    parameters = _mapping(context["parameters"])
     project_root = Path(str(context["project_root"])).expanduser().absolute().resolve()
     paths = {
         "structures_manifest": _path(project_root, inputs["structures_manifest"]),
@@ -683,15 +707,18 @@ def _plan_scheduled_label(
             diagnostics.append(_diagnostic("error", f"inputs.{name}", f"{name} 必须是 project_root 内的普通小文件。"))
     prepared, read_error = _read_json(paths["dft_input_manifest"])
     calculations = prepared.get("calculations") if isinstance(prepared, Mapping) else None
+    calculation_type = (
+        prepared.get("calculation_type") if isinstance(prepared, Mapping) else None
+    )
     if (
         not isinstance(prepared, Mapping)
         or prepared.get("status") != "OK"
         or prepared.get("operation") != PREPARE_OPERATION
         or prepared.get("engine") != "vasp"
-        or prepared.get("calculation_type") != "static"
+        or calculation_type not in SCHEDULED_TYPES
         or not isinstance(calculations, list)
-        or len(calculations) != 1
-        or not isinstance(calculations[0], Mapping)
+        or not 1 <= len(calculations) <= MAX_SCHEDULED_CALCULATIONS
+        or any(not isinstance(item, Mapping) for item in calculations)
     ):
         diagnostics.append(
             _diagnostic(
@@ -700,50 +727,109 @@ def _plan_scheduled_label(
                 str(
                     read_error["message"]
                     if read_error
-                    else "bundled scheduler runner 需要一个 OK 的单结构 static prepare manifest。"
+                    else "scheduler runner 需要一个 OK 的 static/relax/aimd prepare manifest，"
+                    f"且 calculation 数量在 1..{MAX_SCHEDULED_CALCULATIONS}。"
                 ),
             )
         )
     if _errors(diagnostics):
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": diagnostics}
     assert isinstance(prepared, Mapping) and isinstance(calculations, list)
-    calculation = calculations[0]
-    assert isinstance(calculation, Mapping)
-    files = calculation.get("files")
-    if not isinstance(files, Mapping) or set(files) != EXPECTED_FILE_NAMES:
-        diagnostics.append(_diagnostic("error", "inputs.dft_input_manifest.files", "prepared calculation 必须且只能声明四个 VASP 输入。"))
+    assert isinstance(calculation_type, str)
+
+    config, config_error = _parse_labeling_contract(paths["labeling_config"])
+    if config is None or config.get("calculation_type") != calculation_type:
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "inputs.labeling_config",
+                str(config_error or "labeling_config 与 prepare manifest 的 calculation_type 不一致。"),
+            )
+        )
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": diagnostics}
+
     prepared_root = paths["dft_input_manifest"].parent
-    staged_vasp: list[dict[str, Any]] = []
-    for name in ("POSCAR", "INCAR", "KPOINTS", "POTCAR"):
-        record = files.get(name)
-        relative = record.get("path") if isinstance(record, Mapping) else None
-        declared = record.get("sha256") if isinstance(record, Mapping) else None
-        if not _safe_relative(relative):
-            diagnostics.append(_diagnostic("error", f"inputs.dft_input_manifest.{name}", f"{name} 路径不安全。"))
-            continue
-        source = prepared_root / str(relative)
-        if (
-            not _ordinary_project_file(source, project_root)
-            or not _fingerprint(declared)
-            or _sha256(source) != declared
-        ):
-            diagnostics.append(_diagnostic("error", f"inputs.dft_input_manifest.{name}", f"{name} 缺失或指纹与 prepare manifest 不一致。"))
-            continue
-        staged_vasp.append(_staged_record(source, name, sensitive=name == "POTCAR"))
-    if _errors(diagnostics):
-        return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": diagnostics}
-    staged = [
+    staged: list[dict[str, Any]] = [
         _staged_record(paths["structures_manifest"], "structures.json"),
         _staged_record(paths["labeling_config"], "labeling.json"),
         _staged_record(paths["dft_input_manifest"], "dft-input-manifest.json"),
-        *staged_vasp,
     ]
-    fetch_outputs = [
-        {"remote_name": "OUTCAR", "local_name": "OUTCAR", "required": True, "max_bytes": 128 * 1024 * 1024},
-        {"remote_name": "OSZICAR", "local_name": "OSZICAR", "required": True, "max_bytes": 16 * 1024 * 1024},
-        {"remote_name": "vasprun.xml", "local_name": "vasprun.xml", "required": True, "max_bytes": 256 * 1024 * 1024},
-    ]
+    planned: list[dict[str, Any]] = []
+    for index, calculation in enumerate(calculations):
+        calc_id = _calculation_id(index)
+        files = calculation.get("files")
+        if not isinstance(files, Mapping) or set(files) != EXPECTED_FILE_NAMES:
+            diagnostics.append(
+                _diagnostic("error", f"inputs.dft_input_manifest.{calc_id}.files", f"{calc_id} 必须且只能声明四个 VASP 输入。")
+            )
+            continue
+        for name in ("POSCAR", "INCAR", "KPOINTS", "POTCAR"):
+            record = files.get(name)
+            relative = record.get("path") if isinstance(record, Mapping) else None
+            declared = record.get("sha256") if isinstance(record, Mapping) else None
+            if not _safe_relative(relative):
+                diagnostics.append(_diagnostic("error", f"inputs.dft_input_manifest.{calc_id}.{name}", f"{calc_id} 的 {name} 路径不安全。"))
+                continue
+            source = prepared_root / str(relative)
+            if (
+                not _ordinary_project_file(source, project_root)
+                or not _fingerprint(declared)
+                or _sha256(source) != declared
+            ):
+                diagnostics.append(
+                    _diagnostic("error", f"inputs.dft_input_manifest.{calc_id}.{name}", f"{calc_id} 的 {name} 缺失或指纹与 prepare manifest 不一致。")
+                )
+                continue
+            # Nested remote name: calc-0001/POSCAR.  POTCAR is licensed, so it is
+            # staged but marked non-fetchable here and never appears in outputs.
+            staged.append(
+                _staged_record(source, f"{calc_id}/{name}", sensitive=name == "POTCAR")
+            )
+        planned.append(
+            {
+                "id": calc_id,
+                "structure_id": calculation.get("structure_id"),
+                "atom_count": calculation.get("atom_count"),
+            }
+        )
+    if _errors(diagnostics):
+        return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": diagnostics}
+
+    required, optional, limits = _scheduled_output_spec(calculation_type)
+    fetch_outputs: list[dict[str, Any]] = []
+    for item in planned:
+        calc_id = str(item["id"])
+        for name in required:
+            fetch_outputs.append(
+                {
+                    "remote_name": f"{calc_id}/{name}",
+                    "local_name": f"{calc_id}/{name}",
+                    "required": True,
+                    "max_bytes": limits[name],
+                    "role": "vasp-output",
+                }
+            )
+        for name in optional:
+            fetch_outputs.append(
+                {
+                    "remote_name": f"{calc_id}/{name}",
+                    "local_name": f"{calc_id}/{name}",
+                    "required": False,
+                    "max_bytes": limits[name],
+                    "role": "vasp-output",
+                }
+            )
+        for stream in ("stdout", "stderr"):
+            fetch_outputs.append(
+                {
+                    "remote_name": f"{calc_id}.{stream}",
+                    "remote_path": f"logs/{calc_id}.{stream}",
+                    "local_name": f"{calc_id}/{stream}.log",
+                    "required": False,
+                    "max_bytes": 16 * 1024 * 1024,
+                    "role": "scheduler-log",
+                }
+            )
     return {
         "plugin_id": PLUGIN_ID,
         "status": "READY",
@@ -753,30 +839,24 @@ def _plan_scheduled_label(
         "expected_outputs": [item["remote_name"] for item in fetch_outputs if item["required"]],
         "diagnostics": diagnostics,
         "operation": LABEL_OPERATION,
+        "calculation_type": calculation_type,
+        "calculations": planned,
+        "approval_summary": {
+            "calculation_type": calculation_type,
+            "calculation_count": len(planned),
+            "runs_vasp": True,
+            "submits_jobs": True,
+            # POTCAR is staged but licensed, so it never appears here and never
+            # becomes a fetched or collected artifact.
+            "fetch_allowlist": sorted({*required, *optional}),
+            "staged_file_count": len(staged),
+        },
         "input_fingerprints": _file_fingerprints(paths),
         "scheduled_execution": {
             "schema_version": 2,
             "template_family": "vasp",
             "staged_files": staged,
             "fetch_outputs": fetch_outputs,
-        },
-        "approval_summary": {
-            "expensive": True,
-            "runs_vasp": True,
-            "submits_scheduler_job": True,
-            "engine": "vasp",
-            "backend": "ssh-slurm",
-            "calculation_type": "static",
-            "structure_count": 1,
-            "resources": context["resources"],
-            "template_family": "vasp",
-            "completion_policy": parameters["completion_policy"],
-            "prepared_input_manifest": inputs["dft_input_manifest"],
-            "staged_file_count": len(staged),
-            "staged_bytes": sum(int(item["size_bytes"]) for item in staged),
-            "potcar_staged": True,
-            "potcar_fetch_allowed": False,
-            "fetch_allowlist": [item["remote_name"] for item in fetch_outputs],
         },
     }
 
@@ -1134,45 +1214,214 @@ def _same_numeric_tree(actual: Any, expected: Any) -> bool:
     return actual == expected
 
 
-def _parse_scheduled_vasprun(path: Path) -> dict[str, Any] | None:
-    try:
-        root = ET.parse(path).getroot()
-        calculations = root.findall("./calculation")
-        final = calculations[-1]
-        nelm_nodes = root.findall(".//parameters//i[@name='NELM']")
-        nelm = int(float(str(nelm_nodes[-1].text)))
-        energy_node = final.find("./energy/i[@name='e_0_energy']")
-        energy = float(str(energy_node.text)) if energy_node is not None else math.nan
-        structures = root.findall("./structure")
-        structure = next(
-            (item for item in reversed(structures) if item.get("name") == "finalpos"),
-            structures[-1],
+# ---------------------------------------------------------------------------
+# Multi-calculation scheduled execution.
+#
+# One node -> one attempt -> one scheduler job -> 1..N VASP calculations run
+# sequentially.  Calculation identity is positional and deterministic: the order
+# of ``calculations`` in the prepare manifest defines calc-0001..calc-N, so the
+# remote layout never depends on a glob.
+# ---------------------------------------------------------------------------
+
+STATIC_TYPE = "static"
+RELAX_TYPE = "relax"
+AIMD_TYPE = "aimd"
+SCHEDULED_TYPES = frozenset({STATIC_TYPE, RELAX_TYPE, AIMD_TYPE})
+MAX_SCHEDULED_CALCULATIONS = 64
+MAX_AIMD_FRAMES = 5000
+
+# static/relax keep the original conservative bounds.  AIMD gets its own larger
+# but still bounded policy: a trajectory legitimately produces far more output,
+# and pretending the static limits apply would either truncate silently or fail
+# for the wrong reason.  Exceeding a bound is a hard failure, never a truncation.
+_STATIC_RELAX_LIMITS = {
+    "OUTCAR": 128 * 1024 * 1024,
+    "OSZICAR": 16 * 1024 * 1024,
+    "vasprun.xml": 256 * 1024 * 1024,
+    "CONTCAR": 4 * 1024 * 1024,
+}
+_AIMD_LIMITS = {
+    "OUTCAR": 512 * 1024 * 1024,
+    "OSZICAR": 64 * 1024 * 1024,
+    "vasprun.xml": 1024 * 1024 * 1024,
+    "XDATCAR": 512 * 1024 * 1024,
+}
+RELAX_CONVERGENCE_MARKER = "reached required accuracy"
+
+
+def _calculation_id(index: int) -> str:
+    return f"calc-{index + 1:04d}"
+
+
+def _scheduled_output_spec(
+    calculation_type: str,
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, int]]:
+    """Required outputs, optional outputs and byte bounds for one type."""
+
+    if calculation_type == RELAX_TYPE:
+        return (
+            ("OUTCAR", "OSZICAR", "vasprun.xml", "CONTCAR"),
+            (),
+            dict(_STATIC_RELAX_LIMITS),
         )
-        species = [
-            str(row.findtext("c", default="")).strip()
-            for row in root.findall("./atominfo/array[@name='atoms']/set/rc")
-        ]
-        value = {
-            "energy_ev": energy,
-            "species": species,
-            "lattice_angstrom": _xml_rows(structure.find("./crystal/varray[@name='basis']")),
-            "fractional_coordinates": _xml_rows(structure.find("./varray[@name='positions']")),
-            "forces_ev_per_angstrom": _xml_rows(final.find("./varray[@name='forces']")),
-            "stress_kbar_vasp_3x3": _xml_rows(final.find("./varray[@name='stress']")),
-            "electronic_steps": len(final.findall("./scstep")),
-            "nelm": nelm,
-        }
+    if calculation_type == AIMD_TYPE:
+        return (
+            ("OUTCAR", "OSZICAR", "vasprun.xml"),
+            ("XDATCAR",),
+            dict(_AIMD_LIMITS),
+        )
+    return ("OUTCAR", "OSZICAR", "vasprun.xml"), (), dict(_STATIC_RELAX_LIMITS)
+
+
+def _frame_from_calculation(element: ET.Element) -> dict[str, Any] | None:
+    """Build one ionic-step frame from a single ``<calculation>`` element."""
+
+    scsteps = element.findall("./scstep")
+    energy = math.nan
+    if scsteps:
+        node = scsteps[-1].find("./energy/i[@name='e_0_energy']")
+        if node is not None:
+            energy = float(str(node.text))
+    if not math.isfinite(energy):
+        fallback = element.find("./energy/i[@name='e_wo_entrp']")
+        energy = float(str(fallback.text)) if fallback is not None else math.nan
+    structure = element.find("./structure")
+    lattice = (
+        _xml_rows(structure.find("./crystal/varray[@name='basis']"))
+        if structure is not None
+        else None
+    )
+    positions = (
+        _xml_rows(structure.find("./varray[@name='positions']"))
+        if structure is not None
+        else None
+    )
+    forces = _xml_rows(element.find("./varray[@name='forces']"))
+    stress = _xml_rows(element.find("./varray[@name='stress']"))
+    # lattice/positions may be absent when a writer emits only a document-level
+    # finalpos structure; the caller fills the final frame from it.
+    if not math.isfinite(energy) or forces is None or not scsteps:
+        return None
+    return {
+        "energy_ev": energy,
+        "lattice_angstrom": lattice,
+        "fractional_coordinates": positions,
+        "forces_ev_per_angstrom": forces,
+        # AIMD steps do not always carry a stress tensor; that is legitimate and
+        # is recorded as absent rather than invented.
+        "stress_kbar_vasp_3x3": stress,
+        "electronic_steps": len(scsteps),
+    }
+
+
+def _parse_vasprun_trajectory(
+    path: Path, max_frames: int = MAX_AIMD_FRAMES
+) -> dict[str, Any] | None:
+    """Stream every ionic step out of one vasprun.xml.
+
+    ``iterparse`` is used and each ``<calculation>`` is released as soon as its
+    frame has been extracted, so a long AIMD trajectory is never materialised as
+    one in-memory tree.  ``NELM`` and ``atominfo`` both precede the calculations
+    in VASP's output, so a single forward pass suffices.
+    """
+
+    nelm: int | None = None
+    species: list[str] = []
+    frames: list[dict[str, Any]] = []
+    final_lattice: Any = None
+    final_positions: Any = None
+    exceeded = False
+    try:
+        for _, element in ET.iterparse(str(path), events=("end",)):
+            tag = element.tag
+            if tag == "separator" and element.get("name") == "electronic convergence":
+                node = element.find("./i[@name='NELM']")
+                if node is not None and nelm is None:
+                    nelm = int(float(str(node.text)))
+                element.clear()
+            elif tag == "atominfo":
+                if not species:
+                    species = [
+                        str(row.findtext("c", default="")).strip()
+                        for row in element.findall("./array[@name='atoms']/set/rc")
+                    ]
+                element.clear()
+            elif tag == "structure" and element.get("name") == "finalpos":
+                # Document-level final structure; only used to complete the last
+                # frame when the writer omitted a per-calculation structure.
+                final_lattice = _xml_rows(
+                    element.find("./crystal/varray[@name='basis']")
+                )
+                final_positions = _xml_rows(element.find("./varray[@name='positions']"))
+                element.clear()
+            elif tag == "calculation":
+                if len(frames) >= max_frames:
+                    exceeded = True
+                    break
+                frame = _frame_from_calculation(element)
+                if frame is None:
+                    return None
+                frames.append(frame)
+                element.clear()
     except (ET.ParseError, OSError, ValueError, IndexError):
         return None
-    if (
-        not math.isfinite(value["energy_ev"])
-        or not value["species"]
-        or any(value[key] is None for key in (
+    if nelm is None or not species or not frames:
+        return None
+    if frames[-1]["lattice_angstrom"] is None:
+        frames[-1]["lattice_angstrom"] = final_lattice
+    if frames[-1]["fractional_coordinates"] is None:
+        frames[-1]["fractional_coordinates"] = final_positions
+    if any(
+        frame["lattice_angstrom"] is None or frame["fractional_coordinates"] is None
+        for frame in frames
+    ):
+        return None
+    return {
+        "nelm": nelm,
+        "species": species,
+        "frames": frames,
+        "frame_limit_exceeded": exceeded,
+        # The document-level finalpos is the geometry *after* the last ionic
+        # update, so it matches CONTCAR but not the last force evaluation.  It is
+        # reported separately rather than mixed into the frames.
+        "final_lattice_angstrom": final_lattice,
+        "final_fractional_coordinates": final_positions,
+    }
+
+
+def _parse_scheduled_vasprun(path: Path) -> dict[str, Any] | None:
+    """Final-frame view of one vasprun.xml, used by the single-frame paths.
+
+    Built on the streaming trajectory parser so static, relax and AIMD all read
+    NELM and the sigma->0 energy through exactly one implementation.  Two real
+    VASP 5.4.x layouts are handled there and must stay handled: NELM appears
+    twice (electronic convergence, and 1 under response functions), and the
+    final <calculation><energy> block reports the electronic entropy in
+    e_0_energy while the real E0 lives in the last <scstep>.
+    """
+
+    parsed = _parse_vasprun_trajectory(path)
+    if parsed is None or parsed["frame_limit_exceeded"]:
+        return None
+    final = parsed["frames"][-1]
+    value = {
+        "energy_ev": final["energy_ev"],
+        "species": parsed["species"],
+        "lattice_angstrom": final["lattice_angstrom"],
+        "fractional_coordinates": final["fractional_coordinates"],
+        "forces_ev_per_angstrom": final["forces_ev_per_angstrom"],
+        "stress_kbar_vasp_3x3": final["stress_kbar_vasp_3x3"],
+        "electronic_steps": final["electronic_steps"],
+        "nelm": parsed["nelm"],
+    }
+    if any(
+        value[key] is None
+        for key in (
             "lattice_angstrom",
             "fractional_coordinates",
             "forces_ev_per_angstrom",
             "stress_kbar_vasp_3x3",
-        ))
+        )
     ):
         return None
     return value
@@ -1263,39 +1512,294 @@ def _verify_scheduled_vasp_result(
     return diagnostics
 
 
-def _scheduled_raw_check(
-    context: Mapping[str, Any]
+def _scheduled_calculation_type(context: Mapping[str, Any]) -> str:
+    """Calculation type of the approved plan, defaulting to static."""
+
+    planned = _mapping(_mapping(context.get("execution")).get("plan"))
+    declared = planned.get("calculation_type")
+    if declared in SCHEDULED_TYPES:
+        return str(declared)
+    prepared, _ = _read_json(
+        _path(context["project_root"], _mapping(context["inputs"])["dft_input_manifest"])
+    )
+    value = prepared.get("calculation_type") if isinstance(prepared, Mapping) else None
+    return str(value) if value in SCHEDULED_TYPES else STATIC_TYPE
+
+
+def _requested_nsw(context: Mapping[str, Any]) -> int | None:
+    config, _ = _parse_labeling_contract(
+        _path(context["project_root"], _mapping(context["inputs"])["labeling_config"])
+    )
+    if config is None:
+        return None
+    value = _mapping(config.get("effective_incar")).get("NSW")
+    return int(value) if _positive_int(value) else None
+
+
+def _check_one_calculation(
+    attempt: Path,
+    calc_id: str,
+    calculation_type: str,
+    expected_atoms: Any,
+    requested_nsw: int | None,
 ) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
+    """Scientific completion for a single calculation.
+
+    Every diagnostic is prefixed with the calculation id, so a batch failure
+    names the calculation and the reason instead of collapsing into
+    "batch failed".
+    """
+
     diagnostics: list[dict[str, str]] = []
-    attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
-    for name in ("OUTCAR", "OSZICAR", "vasprun.xml"):
-        path = attempt / name
+    directory = attempt / calc_id
+    required, _, limits = _scheduled_output_spec(calculation_type)
+    for name in required:
+        path = directory / name
         if not _ordinary_file(path) or path.stat().st_size == 0:
             diagnostics.append(
-                _diagnostic("error", f"raw.{name}", f"缺少非空的 {name}。")
+                _diagnostic("error", f"{calc_id}.raw.{name}", f"{calc_id} 缺少非空的 {name}。")
+            )
+        elif path.stat().st_size > limits.get(name, 0):
+            diagnostics.append(
+                _diagnostic("error", f"{calc_id}.raw.{name}", f"{calc_id} 的 {name} 超过已批准的大小上限。")
             )
     if _errors(diagnostics):
         return diagnostics, None
-    outcar = (attempt / "OUTCAR").read_text(encoding="utf-8", errors="replace")
+
+    outcar = (directory / "OUTCAR").read_text(encoding="utf-8", errors="replace")
     if "General timing and accounting informations for this job:" not in outcar:
-        diagnostics.append(_diagnostic("error", "completion.outcar", "OUTCAR 不含正常结束 footer。"))
-    parsed = _parse_scheduled_vasprun(attempt / "vasprun.xml")
+        diagnostics.append(
+            _diagnostic("error", f"{calc_id}.completion.outcar", f"{calc_id} 的 OUTCAR 不含正常结束 footer。")
+        )
+    max_frames = MAX_AIMD_FRAMES if calculation_type == AIMD_TYPE else 1024
+    parsed = _parse_vasprun_trajectory(directory / "vasprun.xml", max_frames)
     if parsed is None:
-        diagnostics.append(_diagnostic("error", "completion.vasprun", "vasprun.xml 无法完整解析。"))
+        diagnostics.append(
+            _diagnostic("error", f"{calc_id}.completion.vasprun", f"{calc_id} 的 vasprun.xml 无法完整解析。")
+        )
         return diagnostics, None
-    if not (0 < parsed["electronic_steps"] < parsed["nelm"]):
-        diagnostics.append(_diagnostic("error", "completion.electronic", "电子步达到 NELM 或为空。"))
-    prepared_path = _path(
-        context["project_root"], _mapping(context["inputs"])["dft_input_manifest"]
+    if parsed["frame_limit_exceeded"]:
+        diagnostics.append(
+            _diagnostic("error", f"{calc_id}.completion.frames", f"{calc_id} 的 ionic step 数超过已批准上限 {max_frames}。")
+        )
+        return diagnostics, None
+
+    frames = parsed["frames"]
+    nelm = parsed["nelm"]
+    # Electronic convergence is required for every ionic step, not just the last
+    # one: a single unconverged SCF step poisons that frame's forces.
+    for position, frame in enumerate(frames, start=1):
+        if not 0 < frame["electronic_steps"] < nelm:
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    f"{calc_id}.completion.electronic",
+                    f"{calc_id} 的第 {position} 个 ionic step 电子步达到 NELM({nelm}) 或为空。",
+                )
+            )
+    species = parsed["species"]
+    if _positive_int(expected_atoms) and len(species) != int(expected_atoms):
+        diagnostics.append(
+            _diagnostic("error", f"{calc_id}.result.atom_count", f"{calc_id} 的原子数与准备清单不一致。")
+        )
+    for position, frame in enumerate(frames, start=1):
+        if len(frame["fractional_coordinates"]) != len(species) or len(
+            frame["forces_ev_per_angstrom"]
+        ) != len(species):
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    f"{calc_id}.result.frame_shape",
+                    f"{calc_id} 的第 {position} 帧原子数与 species 不一致。",
+                )
+            )
+
+    ionic_converged: bool | None = None
+    if calculation_type == STATIC_TYPE:
+        if len(frames) != 1:
+            diagnostics.append(
+                _diagnostic("error", f"{calc_id}.completion.ionic", f"{calc_id} 是 static，必须恰好一个 ionic step。")
+            )
+    elif calculation_type == RELAX_TYPE:
+        # VASP states ionic convergence explicitly; a zero exit code does not.
+        ionic_converged = RELAX_CONVERGENCE_MARKER in outcar
+        if not ionic_converged:
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    f"{calc_id}.completion.ionic",
+                    f"{calc_id} 的离子步未收敛：OUTCAR 未报告 reached required accuracy。",
+                )
+            )
+        if requested_nsw is not None and len(frames) > requested_nsw:
+            diagnostics.append(
+                _diagnostic("error", f"{calc_id}.completion.ionic_steps", f"{calc_id} 的 ionic step 数超过 NSW。")
+            )
+        contcar = directory / "CONTCAR"
+        if not _ordinary_file(contcar) or contcar.stat().st_size == 0:
+            diagnostics.append(
+                _diagnostic("error", f"{calc_id}.raw.CONTCAR", f"{calc_id} 缺少非空的 CONTCAR。")
+            )
+        else:
+            contcar_lattice = _contcar_lattice(contcar)
+            # CONTCAR holds the geometry *after* the final ionic update, which is
+            # what vasprun reports as finalpos -- not the geometry the last
+            # forces were evaluated at.  Comparing it against the last frame
+            # would flag every converged relaxation as inconsistent.
+            reference = parsed.get("final_lattice_angstrom") or frames[-1]["lattice_angstrom"]
+            if contcar_lattice is None:
+                diagnostics.append(
+                    _diagnostic("error", f"{calc_id}.result.contcar", f"{calc_id} 的 CONTCAR 无法解析。")
+                )
+            elif not _same_lattice_across_formats(contcar_lattice, reference):
+                diagnostics.append(
+                    _diagnostic(
+                        "error",
+                        f"{calc_id}.result.contcar",
+                        f"{calc_id} 的 CONTCAR 晶格与 vasprun finalpos 不一致。",
+                    )
+                )
+    elif calculation_type == AIMD_TYPE:
+        # AIMD is not a structural optimisation, so ionic convergence is not a
+        # completion criterion; the trajectory being complete is.
+        if requested_nsw is None:
+            diagnostics.append(
+                _diagnostic("error", f"{calc_id}.completion.nsw", f"{calc_id} 的 labeling_config 未声明可用的 NSW。")
+            )
+        elif len(frames) != requested_nsw:
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    f"{calc_id}.completion.trajectory",
+                    f"{calc_id} 完成 {len(frames)} 个 ionic step，与请求的 NSW={requested_nsw} 不一致。",
+                )
+            )
+    return diagnostics, {
+        "calc_id": calc_id,
+        "calculation_type": calculation_type,
+        "species": species,
+        "nelm": nelm,
+        "frames": frames,
+        "ionic_converged": ionic_converged,
+        "final_lattice_angstrom": parsed.get("final_lattice_angstrom"),
+        "final_fractional_coordinates": parsed.get("final_fractional_coordinates"),
+        "outcar_text_head": outcar[:4096],
+    }
+
+
+def _same_lattice_across_formats(actual: Any, expected: Any) -> bool:
+    """Compare a CONTCAR lattice with a vasprun lattice.
+
+    These are two different files at two different printed precisions: CONTCAR
+    carries ~16 significant digits while vasprun.xml prints 8 decimals, so the
+    same cell differs by ~1e-9.  The strict 1e-10 tolerance used elsewhere is
+    correct when re-parsing one file twice, but here it would reject every real
+    relaxation.  The bound below is tied to vasprun's printed precision.
+    """
+
+    if not isinstance(actual, list) or not isinstance(expected, list):
+        return False
+    if len(actual) != len(expected):
+        return False
+    for actual_row, expected_row in zip(actual, expected):
+        if not isinstance(actual_row, list) or len(actual_row) != len(expected_row):
+            return False
+        for left, right in zip(actual_row, expected_row):
+            if not _finite_number(left) or not _finite_number(right):
+                return False
+            if not math.isclose(float(left), float(right), rel_tol=1e-6, abs_tol=1e-6):
+                return False
+    return True
+
+
+def _contcar_lattice(path: Path) -> list[list[float]] | None:
+    """Read the three lattice vectors from a CONTCAR, scale applied."""
+
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        scale = float(lines[1].split()[0])
+        rows = [[float(x) * scale for x in lines[i].split()[:3]] for i in (2, 3, 4)]
+    except (OSError, ValueError, IndexError):
+        return None
+    if any(len(row) != 3 for row in rows):
+        return None
+    return rows
+
+
+def _scheduled_calculations_check(
+    context: Mapping[str, Any]
+) -> tuple[list[dict[str, str]], list[dict[str, Any]] | None]:
+    """Check every calculation in the batch; all must pass for the node to pass."""
+
+    diagnostics: list[dict[str, str]] = []
+    attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
+    calculation_type = _scheduled_calculation_type(context)
+    requested_nsw = _requested_nsw(context)
+    prepared, _ = _read_json(
+        _path(context["project_root"], _mapping(context["inputs"])["dft_input_manifest"])
     )
-    prepared, _ = _read_json(prepared_path)
     calculations = prepared.get("calculations") if isinstance(prepared, Mapping) else None
-    calculation = calculations[0] if isinstance(calculations, list) and calculations else None
-    if not isinstance(calculation, Mapping) or calculation.get("atom_count") != len(
-        parsed["species"]
-    ):
-        diagnostics.append(_diagnostic("error", "result.atom_count", "VASP 输出原子数与准备清单不一致。"))
-    return diagnostics, parsed
+    if not isinstance(calculations, list) or not calculations:
+        diagnostics.append(_diagnostic("error", "result.calculations", "准备清单缺少 calculations。"))
+        return diagnostics, None
+    completion_diagnostics = _verify_completion_calculations(context, calculations)
+    diagnostics.extend(completion_diagnostics)
+    analyses: list[dict[str, Any]] = []
+    for index, calculation in enumerate(calculations):
+        calc_id = _calculation_id(index)
+        expected_atoms = (
+            calculation.get("atom_count") if isinstance(calculation, Mapping) else None
+        )
+        calc_diagnostics, analysis = _check_one_calculation(
+            attempt, calc_id, calculation_type, expected_atoms, requested_nsw
+        )
+        diagnostics.extend(calc_diagnostics)
+        if analysis is not None:
+            analysis["structure_id"] = (
+                calculation.get("structure_id") if isinstance(calculation, Mapping) else None
+            )
+            analyses.append(analysis)
+    if _errors(diagnostics):
+        return diagnostics, None
+    return diagnostics, analyses
+
+
+def _verify_completion_calculations(
+    context: Mapping[str, Any], calculations: list[Any]
+) -> list[dict[str, str]]:
+    """Cross-check the remote completion record against the approved batch.
+
+    The core only guarantees project/node/attempt identity and the overall exit
+    status; the per-calculation list is a plugin-level contract, so it is
+    verified here rather than in the scheduler lifecycle.
+    """
+
+    diagnostics: list[dict[str, str]] = []
+    attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
+    completion, _ = _read_json(attempt / "completion.json")
+    if not isinstance(completion, Mapping):
+        return diagnostics
+    reported = completion.get("calculations")
+    if reported is None:
+        return diagnostics
+    expected_ids = [_calculation_id(index) for index in range(len(calculations))]
+    if not isinstance(reported, list) or [
+        item.get("id") if isinstance(item, Mapping) else None for item in reported
+    ] != expected_ids:
+        diagnostics.append(
+            _diagnostic("error", "completion.calculations", "completion.json 的 calculation 列表与批准计划不一致。")
+        )
+        return diagnostics
+    for item in reported:
+        if item.get("exit_code") != 0:
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    f"{item.get('id')}.completion.exit_code",
+                    f"{item.get('id')} 的 VASP 进程退出码为 {item.get('exit_code')!r}。",
+                )
+            )
+    return diagnostics
 
 
 def _write_fresh_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -1308,79 +1812,126 @@ def _write_fresh_json(path: Path, value: Mapping[str, Any]) -> None:
 
 
 def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
-    diagnostics, parsed = _scheduled_raw_check(context)
-    if _errors(diagnostics) or parsed is None:
+    """Build the labelled dataset for a whole batch.
+
+    Label cardinality follows the calculation type: static and relax yield one
+    label per source structure (the single, respectively final converged,
+    configuration), while AIMD yields one label per ionic step.  Every label
+    carries back-references so a row can be traced to its source structure,
+    calculation and ionic step.
+    """
+
+    diagnostics, analyses = _scheduled_calculations_check(context)
+    if _errors(diagnostics) or analyses is None:
         return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
     parameters = _mapping(context["parameters"])
     inputs = _mapping(context["inputs"])
-    prepared_path = _path(context["project_root"], inputs["dft_input_manifest"])
-    prepared, _ = _read_json(prepared_path)
-    calculations = prepared.get("calculations") if isinstance(prepared, Mapping) else None
-    calculation = calculations[0] if isinstance(calculations, list) and calculations else {}
+    calculation_type = _scheduled_calculation_type(context)
+
+    records: list[dict[str, Any]] = []
+    frame_count = 0
+    for analysis in analyses:
+        frames = analysis["frames"]
+        selected = (
+            list(enumerate(frames, start=1))
+            if calculation_type == AIMD_TYPE
+            # static has one frame; relax labels only the final converged
+            # configuration.  Intermediate relaxation steps are deliberately not
+            # treated as training labels in this change.
+            else [(len(frames), frames[-1])]
+        )
+        frame_count += len(frames)
+        for ionic_step, frame in selected:
+            records.append(
+                {
+                    "structure_id": analysis.get("structure_id"),
+                    "calculation_id": analysis["calc_id"],
+                    "calculation_type": calculation_type,
+                    "ionic_step": ionic_step,
+                    "species": analysis["species"],
+                    "energy_ev": frame["energy_ev"],
+                    "lattice_angstrom": frame["lattice_angstrom"],
+                    "fractional_coordinates": frame["fractional_coordinates"],
+                    "forces_ev_per_angstrom": frame["forces_ev_per_angstrom"],
+                    "stress_kbar_vasp_3x3": frame["stress_kbar_vasp_3x3"],
+                }
+            )
     labels_path = attempt / "labels.json"
-    label = {
-        "schema_version": 1,
-        "records": [
-            {
-                "structure_id": calculation.get("structure_id"),
-                **{
-                    key: parsed[key]
-                    for key in (
-                        "energy_ev",
-                        "species",
-                        "lattice_angstrom",
-                        "fractional_coordinates",
-                        "forces_ev_per_angstrom",
-                        "stress_kbar_vasp_3x3",
-                    )
-                },
+    _write_fresh_json(
+        labels_path,
+        {"schema_version": 2, "records": records, "units": parameters["units"]},
+    )
+
+    raw_outputs: dict[str, Any] = {}
+    required, optional, _ = _scheduled_output_spec(calculation_type)
+    for analysis in analyses:
+        calc_id = analysis["calc_id"]
+        for name in (*required, *optional):
+            path = attempt / calc_id / name
+            if not _ordinary_file(path):
+                continue
+            raw_outputs[f"{calc_id}/{name}"] = {
+                "path": f"{calc_id}/{name}",
+                "fingerprint": _sha256(path),
+                "size_bytes": path.stat().st_size,
             }
-        ],
-        "units": parameters["units"],
-    }
-    _write_fresh_json(labels_path, label)
-    outcar = (attempt / "OUTCAR").read_text(encoding="utf-8", errors="replace")
-    version = re.search(r"\bvasp\.([0-9][A-Za-z0-9._-]*)", outcar, re.I)
-    raw_outputs = {
-        name: {
-            "path": name,
-            "fingerprint": _sha256(attempt / name),
-            "size_bytes": (attempt / name).stat().st_size,
-        }
-        for name in ("OUTCAR", "OSZICAR", "vasprun.xml")
-    }
+    first = analyses[0]
+    version = re.search(r"\bvasp\.([0-9][A-Za-z0-9._-]*)", first["outcar_text_head"], re.I)
+    ionic_required = calculation_type == RELAX_TYPE
+    ionic_converged = (
+        all(item["ionic_converged"] is True for item in analyses) if ionic_required else None
+    )
     execution_context = _mapping(context.get("execution"))
     hpc_execution = _mapping(execution_context.get("hpc_execution"))
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "plugin_id": PLUGIN_ID,
         "status": "OK",
         "engine": "vasp",
+        "calculation_type": calculation_type,
         "input_fingerprints": {
             name: _sha256(_path(context["project_root"], inputs[name]))
-            for name in (
-                "structures_manifest",
-                "labeling_config",
-                "dft_input_manifest",
-            )
+            for name in ("structures_manifest", "labeling_config", "dft_input_manifest")
         },
         "completion": {
             "scheduler_success": True,
             "electronic_converged": True,
-            "ionic_convergence_required": False,
-            "ionic_converged": None,
+            "ionic_convergence_required": ionic_required,
+            "ionic_converged": ionic_converged,
             "truncated": False,
         },
         "units": parameters["units"],
-        "source_structure_count": 1,
-        "label_count": 1,
+        "source_count": len(analyses),
+        "calculation_count": len(analyses),
+        "frame_count": frame_count,
+        "label_count": len(records),
+        "labels": "labels.json",
         "execution": {
             "template_family": "vasp",
             "templates": hpc_execution.get("templates"),
             "vasp_version": version.group(1) if version else "UNKNOWN",
-            "electronic_steps": parsed["electronic_steps"],
-            "nelm": parsed["nelm"],
+            "calculations": [
+                {
+                    "id": item["calc_id"],
+                    "structure_id": item.get("structure_id"),
+                    "nelm": item["nelm"],
+                    "ionic_steps": len(item["frames"]),
+                    "ionic_converged": item["ionic_converged"],
+                    # For relax, the labelled frame is the last force evaluation
+                    # while the relaxed geometry is the subsequent finalpos; both
+                    # identities are recorded so a row stays traceable.
+                    "relaxed_structure": (
+                        {
+                            "lattice_angstrom": item["final_lattice_angstrom"],
+                            "fractional_coordinates": item["final_fractional_coordinates"],
+                        }
+                        if calculation_type == RELAX_TYPE
+                        else None
+                    ),
+                }
+                for item in analyses
+            ],
         },
         "raw_outputs": raw_outputs,
         "artifacts": [
@@ -1392,36 +1943,110 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
             }
         ],
     }
-    result_path = attempt / str(
-        parameters.get("result_manifest", "dft-labeling-result.json")
-    )
+    result_path = attempt / str(parameters.get("result_manifest", "dft-labeling-result.json"))
     _write_fresh_json(result_path, manifest)
-    diagnostics.extend(_verify_label_result(context, manifest, verify_files=True))
+    diagnostics.extend(_verify_scheduled_label_result(context, manifest))
     if _errors(diagnostics):
         return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
     return {
         "plugin_id": PLUGIN_ID,
         "status": "OK",
         "diagnostics": diagnostics,
+        "result_manifest": str(result_path),
+        "metrics": {
+            "source_count": float(len(analyses)),
+            "calculation_count": float(len(analyses)),
+            "frame_count": float(frame_count),
+            "label_count": float(len(records)),
+        },
         "artifacts": [
+            {"path": "labels.json", "role": "labels", "media_type": "application/json"},
             {
-                "name": "dft-labeling-result",
-                "path": result_path.name,
-                "media_type": "application/json",
-            },
-            {
-                "name": "labels-json",
-                "path": "labels.json",
+                "path": str(result_path.name),
+                "role": "dft-label-result",
                 "media_type": "application/json",
             },
         ],
-        "metrics": {
-            "source_structure_count": 1,
-            "label_count": 1,
-            "electronic_converged": True,
-            "ionic_converged": None,
-        },
     }
+
+
+def _verify_scheduled_label_result(
+    context: Mapping[str, Any], manifest: Mapping[str, Any]
+) -> list[dict[str, str]]:
+    """Schema-2 verification of a scheduled result manifest.
+
+    Kept separate from the local wrapper contract (schema 1), whose
+    "one label per source structure" rule is only correct for single static
+    calculations and is wrong for AIMD.
+    """
+
+    diagnostics: list[dict[str, str]] = []
+    parameters = _mapping(context["parameters"])
+    attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
+    calculation_type = manifest.get("calculation_type")
+    if calculation_type not in SCHEDULED_TYPES:
+        diagnostics.append(_diagnostic("error", "result.calculation_type", "calculation_type 必须显式且受支持。"))
+        return diagnostics
+    if manifest.get("units") != parameters.get("units"):
+        diagnostics.append(_diagnostic("error", "result.units", "结果单位与批准 units 不一致。"))
+    completion = _mapping(manifest.get("completion"))
+    if completion.get("scheduler_success") is not True or completion.get("electronic_converged") is not True:
+        diagnostics.append(_diagnostic("error", "result.completion", "completion 状态不安全。"))
+    if calculation_type == RELAX_TYPE and completion.get("ionic_converged") is not True:
+        diagnostics.append(_diagnostic("error", "completion.ionic", "relax 结果必须报告 ionic_converged=true。"))
+    if calculation_type != RELAX_TYPE and completion.get("ionic_convergence_required") is not False:
+        diagnostics.append(_diagnostic("error", "completion.ionic_policy", "仅 relax 要求 ionic convergence。"))
+    source_count = manifest.get("source_count")
+    calculation_count = manifest.get("calculation_count")
+    frame_count = manifest.get("frame_count")
+    label_count = manifest.get("label_count")
+    if not _positive_int(source_count) or calculation_count != source_count:
+        diagnostics.append(_diagnostic("error", "result.calculation_count", "calculation_count 必须等于 source_count。"))
+    if not _positive_int(frame_count) or not _positive_int(label_count):
+        diagnostics.append(_diagnostic("error", "result.counts", "frame_count/label_count 必须是正整数。"))
+    elif calculation_type == AIMD_TYPE:
+        if label_count != frame_count:
+            diagnostics.append(_diagnostic("error", "result.label_count", "AIMD 每个 frame 必须恰有一个标签。"))
+    elif label_count != source_count:
+        diagnostics.append(_diagnostic("error", "result.label_count", "static/relax 每个源结构必须恰有一个标签。"))
+    labels_path = attempt / str(manifest.get("labels", "labels.json"))
+    labels, _ = _read_json(labels_path)
+    records = labels.get("records") if isinstance(labels, Mapping) else None
+    if not isinstance(records, list) or len(records) != label_count:
+        diagnostics.append(_diagnostic("error", "result.labels", "labels.json 记录数与 label_count 不一致。"))
+        return diagnostics
+    for index, record in enumerate(records):
+        if not isinstance(record, Mapping):
+            diagnostics.append(_diagnostic("error", f"labels[{index}]", "标签必须是对象。"))
+            continue
+        if record.get("calculation_type") != calculation_type or not _plain_string(
+            record.get("calculation_id")
+        ):
+            diagnostics.append(
+                _diagnostic("error", f"labels[{index}].traceability", "标签必须记录 calculation id 与 calculation_type。")
+            )
+        if not _positive_int(record.get("ionic_step")):
+            diagnostics.append(_diagnostic("error", f"labels[{index}].ionic_step", "标签必须记录 ionic step。"))
+        if not _finite_number(record.get("energy_ev")):
+            diagnostics.append(_diagnostic("error", f"labels[{index}].energy", "标签能量必须是有限数。"))
+    raw = manifest.get("raw_outputs")
+    if not isinstance(raw, Mapping) or not raw:
+        diagnostics.append(_diagnostic("error", "result.raw_outputs", "必须声明 raw VASP 输出。"))
+        return diagnostics
+    for name, record in raw.items():
+        if "POTCAR" in str(name):
+            diagnostics.append(_diagnostic("error", "result.raw_outputs.potcar", "POTCAR 不得出现在结果产物中。"))
+            continue
+        path = attempt / str(name)
+        if (
+            not isinstance(record, Mapping)
+            or record.get("path") != name
+            or not _fingerprint(record.get("fingerprint"))
+            or not _ordinary_file(path)
+            or _sha256(path) != record.get("fingerprint")
+        ):
+            diagnostics.append(_diagnostic("error", f"result.raw_outputs.{name}", "原始 VASP 输出记录无效。"))
+    return diagnostics
 
 
 class Adapter:
@@ -1475,7 +2100,7 @@ class Adapter:
             return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
         assert isinstance(context, Mapping)
         if context.get("backend") == "ssh-slurm" and _operation(context) == LABEL_OPERATION:
-            raw_diagnostics, _ = _scheduled_raw_check(context)
+            raw_diagnostics, _ = _scheduled_calculations_check(context)
             diagnostics.extend(raw_diagnostics)
             return {
                 "plugin_id": PLUGIN_ID,

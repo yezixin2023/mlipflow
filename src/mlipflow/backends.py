@@ -309,12 +309,27 @@ class SshSlurmBackend:
         if not files:
             raise BackendError("remote workspace staging requires at least one file")
         parent = str(run_path.parent)
+        # A node may now stage several calculations, each in its own
+        # subdirectory.  Every parent directory is derived from the validated
+        # relative paths and created up front, in sorted order, so the adapter
+        # never has to issue its own ssh/mkdir and staging stays one deterministic
+        # sequence of operations.
+        nested: set[str] = set()
+        for _, remote_relative, _ in files:
+            _validate_remote_relative(remote_relative)
+            for ancestor in PurePosixPath(remote_relative).parents:
+                if str(ancestor) not in {".", "/"}:
+                    nested.add(str(run_path / ancestor))
+        directories = [
+            str(run_path / "input"),
+            str(run_path / "output"),
+            str(run_path / "logs"),
+        ]
+        directories.extend(sorted(nested - set(directories)))
         create = (
             f"mkdir -p -- {_quote_remote(parent)} && "
             f"mkdir -- {_quote_remote(remote_run_dir)} && "
-            f"mkdir -- {_quote_remote(str(run_path / 'input'))} "
-            f"{_quote_remote(str(run_path / 'output'))} "
-            f"{_quote_remote(str(run_path / 'logs'))}"
+            "mkdir -p -- " + " ".join(_quote_remote(item) for item in directories)
         )
         completed = subprocess.run(
             ["ssh", "--", self.profile, create],

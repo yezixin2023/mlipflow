@@ -26,6 +26,22 @@ from .paths import attempt_directory, state_path
 _SAFE_REMOTE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+\-]*")
 
 
+def _safe_remote_relative(value: Any) -> bool:
+    """True for a bounded relative path such as ``calc-0001/POSCAR``.
+
+    A scheduled node may now carry several calculations, so staged and fetched
+    names are relative paths rather than basenames — otherwise every
+    calculation's ``POSCAR`` would collide.  Each segment must still be an
+    ordinary safe name, which keeps absolute paths, ``..``, empty segments and
+    anything shell-significant out.
+    """
+
+    if not isinstance(value, str) or not value or value.endswith("/"):
+        return False
+    segments = value.split("/")
+    return all(_SAFE_REMOTE_NAME.fullmatch(segment) for segment in segments)
+
+
 def _portable_roots(
     project: Project,
     plugin: PluginSpec | None = None,
@@ -166,7 +182,9 @@ def _scheduled_contract(
         size_bytes = item.get("size_bytes")
         if not isinstance(source_value, str) or not isinstance(remote_name, str):
             raise PluginError(f"scheduled staged file {index} lacks source/remote_name")
-        if not _SAFE_REMOTE_NAME.fullmatch(remote_name) or remote_name in names:
+        # Uniqueness is on the full relative path, so calc-0001/POSCAR and
+        # calc-0002/POSCAR coexist while a genuine duplicate is still refused.
+        if not _safe_remote_relative(remote_name) or remote_name in names:
             raise PluginError(f"unsafe or duplicate remote staging name: {remote_name!r}")
         names.add(remote_name)
         source = Path(source_value).expanduser().absolute()
@@ -194,23 +212,30 @@ def _scheduled_contract(
         local_name = item.get("local_name")
         required = item.get("required")
         maximum = item.get("max_bytes")
+        # ``remote_path`` defaults to output/<remote_name>; an adapter may state
+        # it explicitly to reach a per-calculation log under logs/.  Either way
+        # it stays a bounded relative path inside the attempt workspace.
+        explicit_path = item.get("remote_path")
         if (
             not isinstance(remote_name, str)
-            or not _SAFE_REMOTE_NAME.fullmatch(remote_name)
+            or not _safe_remote_relative(remote_name)
             or remote_name in output_names
             or not isinstance(local_name, str)
-            or not _SAFE_REMOTE_NAME.fullmatch(local_name)
+            or not _safe_remote_relative(local_name)
             or type(required) is not bool
             or isinstance(maximum, bool)
             or not isinstance(maximum, int)
             or maximum < 1
+            or (explicit_path is not None and not _safe_remote_relative(explicit_path))
         ):
             raise PluginError(f"invalid scheduled fetch output {index}")
         output_names.add(remote_name)
         normalized_outputs.append(
             {
                 **item,
-                "remote_path": f"output/{remote_name}",
+                "remote_path": explicit_path
+                if isinstance(explicit_path, str)
+                else f"output/{remote_name}",
             }
         )
     normalized_outputs.extend(
