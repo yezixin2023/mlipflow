@@ -117,7 +117,7 @@ class PluginManifestTests(unittest.TestCase):
                 self.assertIn(execution["mode"], {"external-command", "python-library"})
                 expected_backends = (
                     ["local", "ssh-slurm"]
-                    if manifest["id"] == "dft-labeling"
+                    if manifest["id"] in {"dft-labeling", "mlip-training"}
                     else ["local"]
                 )
                 self.assertEqual(expected_backends, execution["backends"])
