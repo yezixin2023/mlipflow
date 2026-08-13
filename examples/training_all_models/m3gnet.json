@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "framework": "m3gnet",
+  "m3gnet": {
+    "data": {"cutoff": 5.0, "stress_unit": "kbar"},
+    "model": {"element_types": ["Li", "P", "S"], "is_intensive": false, "dim_node_embedding": 64, "dim_edge_embedding": 64, "nblocks": 3, "units": 64, "cutoff": 5.0, "threebody_cutoff": 4.0},
+    "trainer": {"energy_weight": 1.0, "force_weight": 1.0, "stress_weight": 0.1, "loss": "huber_loss", "lr": 0.001, "batch_size": 16, "max_epochs": 100, "trainer_kwargs": {"enable_progress_bar": true}, "loader_kwargs": {"frac_list": [0.8, 0.1, 0.1], "shuffle": true, "num_workers": 0}}
+  }
+}
