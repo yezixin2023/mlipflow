@@ -7,8 +7,9 @@ PYTHON_BIN=/ABS/PATH/TO/python
 LAMMPS_BIN=/ABS/PATH/TO/lmp
 MODEL_ROOT=/ABS/PATH/TO/site/model-registry
 # JSON argv placed before LAMMPS_BIN, e.g. ["srun","--ntasks=1"] or [].
-# For MACE/MatGL GPU v0.2 use exactly one LAMMPS rank/GPU.
+# For MACE/MatGL GPU v0.3 use exactly one LAMMPS rank/GPU.
 # For DeepMD multi-GPU, the site may choose one rank per GPU.
+# Keep this launcher stable across restart attempts: v0.3 fingerprints it.
 LAMMPS_LAUNCHER_JSON='["srun","--ntasks=1"]'
 
 # Standard MLIPFlow template variables are deliberately visible here:
@@ -27,7 +28,7 @@ EOF
 trap write_completion EXIT
 
 set +e
-"$PYTHON_BIN" "{{INPUT_DIR}}/lammps_cluster.py" --project "{{INPUT_DIR}}/project.yaml" --node-id "{{NODE_ID}}" --input-dir "{{INPUT_DIR}}" --output-dir "{{OUTPUT_DIR}}" --model-root "$MODEL_ROOT" --lammps-bin "$LAMMPS_BIN" --launcher-json "$LAMMPS_LAUNCHER_JSON" > "{{LOG_DIR}}/lammps-runner.stdout.log" 2> "{{LOG_DIR}}/lammps-runner.stderr.log"
+"$PYTHON_BIN" "{{INPUT_DIR}}/lammps_cluster_restart.py" --project "{{INPUT_DIR}}/project.yaml" --node-id "{{NODE_ID}}" --input-dir "{{INPUT_DIR}}" --output-dir "{{OUTPUT_DIR}}" --model-root "$MODEL_ROOT" --lammps-bin "$LAMMPS_BIN" --launcher-json "$LAMMPS_LAUNCHER_JSON" --attempt "{{ATTEMPT}}" > "{{LOG_DIR}}/lammps-runner.stdout.log" 2> "{{LOG_DIR}}/lammps-runner.stderr.log"
 completion_code=$?
 set -e
 if [ "$completion_code" -eq 0 ]; then
