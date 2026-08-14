@@ -22,7 +22,7 @@ from typing import Any
 
 CALCULATORS = ("deepmd", "m3gnet", "chgnet", "mace")
 DEVICES = ("cpu", "cuda")
-DTYPES = ("float32", "float64", "model")
+DTYPES = ("float32", "float64")
 RESULT_SCHEMA_VERSION = 1
 
 
@@ -59,8 +59,6 @@ def framework_version(calculator: str) -> str:
 def _build_calculator(calculator: str, model: Path, device: str, default_dtype: str):
     """Create a calculator only from an explicit local model artifact."""
     if calculator == "deepmd":
-        if default_dtype != "model":
-            raise AseMDError("DeepMD ASE MD uses model-native precision; set default_dtype=model")
         from deepmd.calculator import DP
 
         return DP(model=str(model))
@@ -71,16 +69,12 @@ def _build_calculator(calculator: str, model: Path, device: str, default_dtype: 
 
         return CHGNetCalculator.from_file(str(model), use_device=device)
     if calculator == "mace":
-        if default_dtype not in {"float32", "float64"}:
-            raise AseMDError("MACE ASE MD requires default_dtype=float32 or float64")
         from mace.calculators import MACECalculator
 
         return MACECalculator(
             model_path=str(model), device=device, default_dtype=default_dtype
         )
     if calculator == "m3gnet":
-        if default_dtype not in {"float32", "float64"}:
-            raise AseMDError("M3GNet/MatGL ASE MD requires default_dtype=float32 or float64")
         import matgl
         import torch
         from matgl.ext.ase import PESCalculator
@@ -132,13 +126,7 @@ def run_md(
     if device not in DEVICES:
         raise AseMDError("device must be cpu or cuda")
     if default_dtype not in DTYPES:
-        raise AseMDError("default_dtype must be float32, float64, or model")
-    if calculator == "deepmd" and default_dtype != "model":
-        raise AseMDError("DeepMD ASE MD uses model-native precision; set default_dtype=model")
-    if calculator == "chgnet" and default_dtype != "float32":
-        raise AseMDError("CHGNet ASE MD requires default_dtype=float32")
-    if calculator in {"m3gnet", "mace"} and default_dtype not in {"float32", "float64"}:
-        raise AseMDError(f"{calculator} requires default_dtype=float32 or float64")
+        raise AseMDError("default_dtype must be float32 or float64")
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise AseMDError("seed must be a non-negative integer")
     if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
