@@ -1,96 +1,121 @@
 ---
 name: lammps-md
-description: Prepare and verify portable LAMMPS input bundles for explicit LAMMPS-ready DeepMD, MACE, or MatGL/M3GNet models. Use when the user wants CPU/GPU LAMMPS input files, model/type mapping, NVT/NPT deck generation, or a later LAMMPS execution workflow.
+description: Prepare, submit, and verify portable LAMMPS MLIP workflows for explicit LAMMPS-ready DeepMD, MACE, or MatGL/M3GNet models. Use for CPU/GPU LAMMPS input generation or reviewed ssh-slurm NVT/NPT execution.
 ---
 
-# LAMMPS MLIP input preparation
+# LAMMPS MLIP molecular dynamics
 
-Use the `lammps-md` plugin as the implementation source of truth. Version 0.1 is **prepare-only**: it generates and verifies LAMMPS inputs locally but never launches LAMMPS, MPI, Kokkos, CUDA, SSH, or Slurm.
+Use the `lammps-md` plugin as the implementation source of truth. Version 0.2 has two deliberately separate operations:
+
+- `lammps-prepare`: local input generation and verification only;
+- `execute`: separately approved `ssh-slurm` execution of one already prepared CPU or GPU target.
+
+Never treat preparation success as evidence that LAMMPS ran.
 
 ## Decide whether the model is LAMMPS-ready
 
-Accept only an explicit `model_reference` with a content fingerprint, supported element list, site-root-relative path, and framework-specific exported artifact format.
+Accept only an explicit model reference with a content fingerprint, supported element list, site-root-relative path, and framework-specific exported artifact format.
 
 Supported contracts:
 
-- `deepmd` + `artifact_format: deepmd-lammps-model`.
-- `mace` + `artifact_format: mace-lammps-torchscript`.
+- `deepmd` + `artifact_format: deepmd-lammps-model`;
+- `mace` + `artifact_format: mace-lammps-torchscript`;
 - `m3gnet` + `artifact_format: matgl-lammps-torchscript`.
 
-Do not treat a raw MACE or MatGL training checkpoint as a LAMMPS model. MACE and MatGL require their own LAMMPS export steps before this preparation contract.
+Do not treat a raw MACE or MatGL training checkpoint as a LAMMPS model. Require the framework's reviewed LAMMPS export step first.
 
-Do not generate a native CHGNet pair style in version 0.1. The adapter deliberately blocks legacy CHGNet references because no native CHGNet LAMMPS export/pair-style contract is pinned here. Suggest the existing `$ase-md` path instead unless a separate reviewed bridge is introduced.
+Do not invent a CHGNet pair style. Version 0.2 still blocks CHGNet because no native export/pair-style bridge is pinned by this repository; use `$ase-md` unless a separate bridge is reviewed.
 
-## Require explicit MD input
+## Preparation contract
 
-Require an `lammps_config` with:
+Require an explicit `lammps_config` with ensemble `nvt` or `npt-isotropic`, CPU/GPU targets, type map, temperature, timestep, total steps, thermo/dump intervals, positive velocity seed, thermostat damping, and NPT pressure/barostat damping when applicable.
 
-- `schema_version: 1` and `engine: lammps`;
-- ensemble `nvt` or `npt-isotropic`;
-- explicit `targets` containing `cpu`, `gpu`, or both;
-- explicit `type_map` in LAMMPS atom-type order;
-- target temperature in kelvin;
-- timestep in femtoseconds;
-- total step count;
-- thermo and dump intervals;
-- positive LAMMPS velocity seed;
-- thermostat damping in femtoseconds;
-- for NPT, explicit pressure in GPa and barostat damping in femtoseconds.
+Do not invent physical inputs from the composition. The generator converts workflow units to LAMMPS `metal` units: fs to ps and GPa to bar.
 
-Do not invent physical parameters from the material composition. Preparation converts workflow units into LAMMPS `metal` units: fs to ps and GPa to bar.
+Version 0.2 still requires one full-rank three-dimensional periodic atomic structure. Do not silently generate molecular topology, charges, bonded terms, hybrid potentials, long-range electrostatics, or nonperiodic boundaries.
 
-Version 0.1 requires one full-rank three-dimensional periodic atomic structure. Do not silently generate molecular topology, charges, bonded terms, hybrid potentials, electrostatics, or nonperiodic boundary conditions.
+The execution-ready preparation wrapper must produce `preparation_contract: lammps-md-input-v2`. Every requested deck must contain `${MODEL_FILE}` and an exact `MLIPFLOW_LAMMPS_COMPLETED step=<steps>` print command placed after `final.data` and `final.restart` writes. The manifest must record that exact marker and every generated file SHA-256/size.
 
 ## CPU/GPU framework routing
 
 DeepMD:
 
-- CPU deck: `pair_style deepmd`.
-- GPU deck: still `pair_style deepmd`.
-- GPU ownership belongs to the DeePMD-enabled LAMMPS runtime; do not add a Kokkos suffix just because `gpu` was requested.
+- CPU and GPU decks both use `pair_style deepmd`.
+- Do not add a Kokkos suffix just because GPU was requested.
+- Scheduled GPU execution may request more than one GPU, but the site launcher must map at most one GPU to each MPI rank.
 
-MACE version 0.1:
+MACE:
 
-- Require a pre-exported ML-MACE TorchScript artifact.
-- CPU deck: `pair_style mace`.
-- GPU deck: `pair_style mace no_domain_decomposition`.
-- GPU launcher metadata uses one Kokkos GPU (`-k on g 1 -sf kk`).
-- Do not silently substitute the newer ML-IAP interface; add it later as an explicit interface contract because it uses a different exported artifact and build/runtime requirements.
+- Require the reviewed ML-MACE TorchScript artifact.
+- CPU deck uses `pair_style mace`.
+- GPU deck uses `pair_style mace no_domain_decomposition` with `-k on g 1 -sf kk` launcher metadata.
+- Version 0.2 requires exactly one scheduled GPU for this path.
+- Do not silently substitute ML-IAP; it is a separate future interface contract.
 
 MatGL/M3GNet:
 
-- Require a file exported by `mgl create-lammps-model`.
-- CPU deck: `pair_style matgl`.
-- GPU deck: `pair_style matgl/kk`.
-- Version 0.1 treats the Kokkos path as single-GPU/single-rank.
+- Require a file exported for MatGL LAMMPS.
+- CPU deck uses `pair_style matgl`.
+- GPU deck uses `pair_style matgl/kk` with Kokkos launcher metadata.
+- Version 0.2 requires exactly one scheduled GPU and treats this path as single-rank/single-GPU.
 
-## Keep model paths portable
+## Keep execution portable
 
-Generated decks must reference `${MODEL_FILE}` and must never contain the cluster model root or `model_reference.relative_path`.
+Generated decks must reference `${MODEL_FILE}` and must not contain `model_reference.relative_path` or an absolute cluster path.
 
-A later scheduled execution layer must:
+For operation `execute`, require exactly:
 
-1. resolve the approved logical model below a site-owned model root;
-2. recompute and match the approved model fingerprint;
-3. call the site-owned LAMMPS executable;
-4. inject `-var MODEL_FILE <resolved-model-path>`;
-5. own MPI/Kokkos/CUDA/module/conda details outside the portable project.
+- `backend: ssh-slurm` and a named `backend_profile`;
+- `inputs.lammps_input_manifest` pointing to a project-scoped `lammps-md-input-v2` manifest;
+- `parameters.operation: execute`;
+- explicit `parameters.target: cpu|gpu`;
+- explicit full `parameters.input_manifest_fingerprint`;
+- resources containing exactly `cpus`, `gpus`, `memory`, and `walltime`.
 
-Do not put SSH hosts, partitions, QoS, executable paths, module names, CUDA architectures, or absolute model paths into this preparation workflow.
+CPU execution requires `gpus: 0`. GPU execution requires at least one GPU; MACE/MatGL are restricted to exactly one in v0.2.
 
-## Verify preparation
+The execute adapter must re-read the prepared manifest, recompute its SHA, recompute `structure.data` and selected deck SHA/size, verify the target launcher/model contract, and reject any changed bundle before submission.
 
-A successful preparation must produce exactly:
+## Site boundary
 
-- `structure.data`;
-- `lammps-input-manifest.json`;
-- `in.cpu.lammps` when CPU was requested;
-- `in.gpu.lammps` when GPU was requested.
+Never put SSH host, account, partition, QoS, module/conda setup, LAMMPS path, MPI/srun command, CUDA architecture, MODEL_ROOT, template root, or work root in the project node.
 
-The checker must recompute the three source-input SHA-256 values and every generated file SHA-256/size. It must also require `${MODEL_FILE}` in each deck and reject embedded site model paths.
+The selected template family is one of:
 
-Treat a successfully generated deck as **prepared input only**, not evidence that the remote LAMMPS build contains the required pair style or that an MD run has completed.
+- `lammps-deepmd-cpu`
+- `lammps-deepmd-gpu`
+- `lammps-mace-cpu`
+- `lammps-mace-gpu`
+- `lammps-m3gnet-cpu`
+- `lammps-m3gnet-gpu`
 
-## Next execution boundary
+Each site's `run.sh` owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, and a JSON launcher argv. The bundled remote runner parses launcher JSON and launches with `shell=False`.
 
-When scheduled LAMMPS execution is added, keep it as a new approval boundary, analogous to `dft-labeling` preparation versus actual VASP labeling. Reuse the current MLIPFlow ssh-slurm core rather than embedding Slurm commands inside the generated LAMMPS deck.
+The compute-node runner must resolve the prepared model relative path only below MODEL_ROOT, verify its SHA before execution, inject the resolved path through `-var MODEL_FILE`, and verify the model SHA again after execution.
+
+## Approval lifecycle
+
+The execute approval must show framework, target, model id/fingerprint/artifact format, prepared-manifest fingerprint, ensemble, temperature, timestep, steps/simulated duration, type map, required package family, resources, and selected template family.
+
+Scheduler `COMPLETED` is not scientific success. After completion, use the normal second `advance --dry-run` approval. The core must inventory and bounded-fetch only the declared outputs before the plugin checker runs.
+
+A successful execute attempt requires:
+
+- `lammps-execution-result.json` and `cluster-run-report.json` with matching approved identities;
+- non-empty bounded `trajectory.lammpstrj`, `final.data`, `final.restart`, `lammps.log`, and `lammps.screen.log`;
+- matching size/SHA-256 records for every required execution artifact;
+- a recorded LAMMPS version;
+- `steps_completed == approved steps`;
+- the exact approved completion marker in the fetched `lammps.log`.
+
+A zero scheduler exit code alone is insufficient. The marker is intentionally printed only after the final data/restart writes.
+
+If LAMMPS or the scheduler fails, failure salvage may fetch only the already approved diagnostic subset: cluster report and logs. Do not promote a partial trajectory, final data file, or binary restart to scientific success.
+
+## Restart boundary
+
+Version 0.2 collects `final.restart` but does not resume it. Do not reuse the ASE-MD JSON checkpoint logic for LAMMPS binary restarts. LAMMPS restart files are tied to the LAMMPS executable/platform contract and some fixes/commands must be reissued, so restart support must be introduced as a separate reviewed contract.
+
+## Scientific interpretation
+
+`lammps-md` generates/runs trajectories. It does not establish equilibration, diffusion, ionic conductivity, phase stability, or model validity by itself. Keep transport analysis and multi-temperature orchestration separate until those stages are explicitly connected.
