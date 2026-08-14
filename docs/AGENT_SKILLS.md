@@ -9,7 +9,7 @@
 | `$pes-sampling` | 监督 DIRECT 代表构型选择、LASP/SSW 随机行走采样、历史 archive 归一化和受控 SSH-SLURM 执行 | `pes-sampling` |
 | `$dft-labeling` | 用 pymatgen 准备 static/relax/AIMD VASP 输入，并以独立审批监督 local 或受控 SSH-SLURM static 标注 | `dft-labeling` |
 | `$mlip-training` | 选择并监督 DeepMD/M3GNet/CHGNet/MACE 的训练、微调、数据/基础模型绑定和 SSH-SLURM 生命周期 | `mlip-training` |
-| `$ase-md` | 用显式 DeepMD/M3GNet/CHGNet/MACE 模型在集群上运行受控 ASE NVT 轨迹 | `ase-md` |
+| `$ase-md` | 用显式 DeepMD/M3GNet/CHGNet/MACE 模型在集群上运行受控 ASE NVT Langevin 或各向同性 MTK NPT 轨迹 | `ase-md` |
 | `$mlip-benchmark` | 产生机器可读 benchmark/ranking | `mlip-benchmark` |
 | `$ionic-transport` | MD→MSD→D/电导/Arrhenius | `ionic-transport` |
 | `$composition-screening` | 大超胞组分筛选与 top-k 验证 | `composition-screening` |
@@ -33,9 +33,13 @@ Agent 负责根据用户选择或 benchmark/routing 证据提出 framework/opera
 
 ## ASE molecular dynamics
 
-`$ase-md` 是独立的 trajectory 生成能力，不是 `$ionic-transport` 的别名。0.1 版只运行单温度 `nvt-langevin`，支持 DeepMD、M3GNet/MatGL、CHGNet、MACE 四种显式本地模型。项目只绑定结构 SHA-256 与 `model_reference`；后者包含逻辑 model id、site-owned `MODEL_ROOT` 下的相对路径、file/directory kind 和模型内容 fingerprint。任何会触发 Hub/网络/包缓存自动下载的模型名都不能进入 scheduled contract。
+`$ase-md` 是独立的 trajectory 生成能力，不是 `$ionic-transport` 的别名。0.2 版支持单温度 `nvt-langevin` 与 `npt-isotropic-mtk`，支持 DeepMD、M3GNet/MatGL、CHGNet、MACE 四种显式本地模型。项目只绑定结构 SHA-256 与 `model_reference`；后者包含逻辑 model id、site-owned `MODEL_ROOT` 下的相对路径、file/directory kind 和模型内容 fingerprint。任何会触发 Hub/网络/包缓存自动下载的模型名都不能进入 scheduled contract。
 
-每个 calculator 使用独立 site template family：`ase-md-deepmd`、`ase-md-m3gnet`、`ase-md-chgnet`、`ase-md-mace`。Agent 必须要求用户显式给出温度、timestep、steps、trajectory/thermo interval、seed、Langevin friction、COM policy、device/dtype 和抽象资源，不得根据材料体系擅自补科学参数。Scheduler `COMPLETED` 后仍需第二次审批；checker 会核对完成步数、trajectory/thermo step-time schedule、有限热力学值、模型/结构 identity 和全部输出 SHA-256。NPT、restart、多温度和 transport 暂不自动串接。
+每个 calculator 使用独立 site template family：`ase-md-deepmd`、`ase-md-m3gnet`、`ase-md-chgnet`、`ase-md-mace`。两种 ensemble 都必须显式声明温度、timestep、steps、trajectory/thermo interval、seed、COM policy、device/dtype 和抽象资源。NVT 额外要求 Langevin friction；NPT 不接受 friction，而要求显式 `pressure_gpa`、`thermostat_damping_fs`、`barostat_damping_fs`，并固定为各向同性 MTK volume fluctuation。
+
+NPT 只能用于 full-rank 3D 周期 cell，`fix_com` 必须为 false，且不能带 ASE constraints。Framework 名称本身不作为 stress 证据：cluster runner 在第一步积分前必须确认具体 calculator/model 声明 stress 并实际返回有限 3x3 stress，否则立即失败。0.2 将 thermostat/barostat chain 长度固定为 3/3，chain integration substeps 固定为 1/1，并把这些值写入 approval/provenance。
+
+Scheduler `COMPLETED` 后仍需第二次审批；checker 会核对完成步数、trajectory/thermo step-time schedule、有限热力学值、模型/结构 identity 和全部输出 SHA-256。NPT 还会核对 target pressure/damping identity，并要求 thermo 中的 pressure 有限、volume/cell lengths 为正。restart、多温度和 transport 暂不自动串接。
 
 ## Skill validation
 
