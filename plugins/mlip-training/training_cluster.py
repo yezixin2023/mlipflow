@@ -44,6 +44,15 @@ def _safe_relative(value: Any) -> str:
     return value
 
 
+def _valid_fingerprint(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and value.startswith(FINGERPRINT_PREFIX)
+        and len(value) == 71
+        and all(char in "0123456789abcdef" for char in value[7:])
+    )
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -72,6 +81,13 @@ def fingerprint(path: Path) -> str:
     return FINGERPRINT_PREFIX + digest.hexdigest()
 
 
+def _site_root(cli_value: str | None, env_name: str) -> Path:
+    value = cli_value or os.environ.get(env_name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"site template must provide {env_name} or the matching CLI root")
+    return Path(value).expanduser()
+
+
 def _resolve_under(root: Path, relative: str, kind: str) -> Path:
     root = root.expanduser().resolve()
     if not root.is_dir():
@@ -95,15 +111,19 @@ def _reference(path: Path, *, id_key: str, default_kind: str) -> dict[str, str]:
     artifact_id = raw.get(id_key)
     if not isinstance(artifact_id, str) or not artifact_id:
         raise ValueError(f"{path.name} requires {id_key}")
-    relative = raw.get("relative_path", artifact_id)
-    relative = _safe_relative(relative)
+    relative = _safe_relative(raw.get("relative_path", artifact_id))
     kind = raw.get("kind", default_kind)
     if kind not in {"file", "directory"}:
         raise ValueError(f"{path.name} kind must be file or directory")
     declared = raw.get("fingerprint")
-    if not isinstance(declared, str) or not declared.startswith(FINGERPRINT_PREFIX) or len(declared) != 71:
-        raise ValueError(f"{path.name} fingerprint must be sha256:<64 hex>")
-    return {"id": artifact_id, "relative_path": relative, "kind": kind, "fingerprint": declared}
+    if not _valid_fingerprint(declared):
+        raise ValueError(f"{path.name} fingerprint must be sha256:<64 lowercase hex>")
+    return {
+        "id": artifact_id,
+        "relative_path": relative,
+        "kind": kind,
+        "fingerprint": str(declared),
+    }
 
 
 def _project_node(project: Path, node_id: str) -> dict[str, Any]:
@@ -132,7 +152,11 @@ def _write_report(output_dir: Path, payload: dict[str, Any]) -> None:
 def run(args: argparse.Namespace) -> int:
     input_dir = Path(args.input_dir).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
-    report: dict[str, Any] = {"schema_version": 1, "status": "FAIL", "node_id": args.node_id}
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "status": "FAIL",
+        "node_id": args.node_id,
+    }
     try:
         node = _project_node(Path(args.project).expanduser().resolve(), args.node_id)
         parameters = node.get("parameters")
@@ -145,6 +169,7 @@ def run(args: argparse.Namespace) -> int:
         seed = parameters.get("seed")
         if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
             raise ValueError("seed must be a non-negative integer")
+
         config = input_dir / "training-config.json"
         dataset_file = input_dir / "dataset-reference.json"
         if not config.is_file() or not dataset_file.is_file():
@@ -160,47 +185,73 @@ def run(args: argparse.Namespace) -> int:
         )
         if dataset_ref["fingerprint"] != parameters.get("dataset_fingerprint"):
             raise ValueError("dataset reference fingerprint differs from approved parameters")
-        data_root = Path(args.data_root or os.environ.get("MLIPFLOW_DATA_ROOT", ""))
-        data_path = _resolve_under(data_root, dataset_ref["relative_path"], dataset_ref["kind"])
+        data_root = _site_root(args.data_root, "MLIPFLOW_DATA_ROOT")
+        data_path = _resolve_under(
+            data_root, dataset_ref["relative_path"], dataset_ref["kind"]
+        )
         observed_dataset = fingerprint(data_path)
         if observed_dataset != dataset_ref["fingerprint"]:
             raise ValueError("cluster dataset content fingerprint differs from approved reference")
 
         wrapper_args = [
-            "--framework", str(framework),
-            "--operation", str(operation),
-            "--config", str(config),
-            "--data", str(data_path),
-            "--output", str(output_dir / "model-artifact"),
-            "--result-manifest", str(output_dir / "training-result.json"),
-            "--seed", str(seed),
-            "--device", str(parameters.get("device")),
-            "--precision", str(parameters.get("precision")),
-            "--dataset-fingerprint", observed_dataset,
-            "--config-fingerprint", config_fingerprint,
+            "--framework",
+            str(framework),
+            "--operation",
+            str(operation),
+            "--config",
+            str(config),
+            "--data",
+            str(data_path),
+            "--output",
+            str(output_dir / "model-artifact"),
+            "--result-manifest",
+            str(output_dir / "training-result.json"),
+            "--seed",
+            str(seed),
+            "--device",
+            str(parameters.get("device")),
+            "--precision",
+            str(parameters.get("precision")),
+            "--dataset-fingerprint",
+            observed_dataset,
+            "--config-fingerprint",
+            config_fingerprint,
         ]
         foundation_ref: dict[str, str] | None = None
-        foundation_path: Path | None = None
+        foundation_report: dict[str, str] | None = None
         if operation == "finetune":
             foundation_file = input_dir / "foundation-model-reference.json"
             if not foundation_file.is_file():
                 raise ValueError("finetune requires foundation-model-reference.json")
             default_kind = "directory" if framework == "m3gnet" else "file"
             foundation_ref = _reference(
-                foundation_file, id_key="model_id", default_kind=default_kind
+                foundation_file,
+                id_key="model_id",
+                default_kind=default_kind,
             )
             approved_foundation = parameters.get("foundation_model_fingerprint")
             if foundation_ref["fingerprint"] != approved_foundation:
                 raise ValueError("foundation reference fingerprint differs from approved parameters")
-            model_root = Path(args.model_root or os.environ.get("MLIPFLOW_MODEL_ROOT", ""))
+            model_root = _site_root(args.model_root, "MLIPFLOW_MODEL_ROOT")
             foundation_path = _resolve_under(
-                model_root, foundation_ref["relative_path"], foundation_ref["kind"]
+                model_root,
+                foundation_ref["relative_path"],
+                foundation_ref["kind"],
             )
             observed_foundation = fingerprint(foundation_path)
             if observed_foundation != foundation_ref["fingerprint"]:
                 raise ValueError("cluster foundation model fingerprint differs from approved reference")
+            foundation_report = {
+                **foundation_ref,
+                "observed_fingerprint": observed_foundation,
+            }
             wrapper_args.extend(
-                ["--foundation-model", str(foundation_path), "--foundation-model-fingerprint", observed_foundation]
+                [
+                    "--foundation-model",
+                    str(foundation_path),
+                    "--foundation-model-fingerprint",
+                    observed_foundation,
+                ]
             )
 
         sys.path.insert(0, str(input_dir))
@@ -209,7 +260,9 @@ def run(args: argparse.Namespace) -> int:
         output_dir.mkdir(parents=True, exist_ok=True)
         stdout_path = output_dir / "training.stdout.log"
         stderr_path = output_dir / "training.stderr.log"
-        with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
+        with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open(
+            "w", encoding="utf-8"
+        ) as stderr:
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 return_code = int(training_wrapper.main(wrapper_args))
         result_path = output_dir / "training-result.json"
@@ -222,8 +275,10 @@ def run(args: argparse.Namespace) -> int:
                 "operation": operation,
                 "dataset": {**dataset_ref, "observed_fingerprint": observed_dataset},
                 "config_fingerprint": config_fingerprint,
-                "foundation_model": foundation_ref,
-                "framework_version": result.get("framework_version") if isinstance(result, dict) else None,
+                "foundation_model": foundation_report,
+                "framework_version": result.get("framework_version")
+                if isinstance(result, dict)
+                else None,
             }
         )
         _write_report(output_dir, report)
@@ -236,7 +291,9 @@ def run(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run an approved MLIP training node on a cluster")
+    parser = argparse.ArgumentParser(
+        description="Run an approved MLIP training node on a cluster"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     execute = sub.add_parser("run")
     execute.add_argument("--project", required=True)
