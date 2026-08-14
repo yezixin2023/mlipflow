@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "model_id": "m3gnet-lips-v1",
+  "framework": "m3gnet",
+  "relative_path": "m3gnet/lips-v1/model-lammps.pt",
+  "kind": "file",
+  "fingerprint": "sha256:REPLACE_WITH_64_LOWERCASE_HEX",
+  "artifact_format": "matgl-lammps-torchscript",
+  "elements": ["Li", "P", "S"]
+}
