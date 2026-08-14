@@ -17,12 +17,12 @@ Do not silently substitute this contract when the user requests NPT, NVE, restar
 
 Accept one explicit model family:
 
-- `deepmd`: an explicit DeepMD model file, loaded through the ASE DeepMD calculator.
+- `deepmd`: an explicit DeepMD model file, loaded through the ASE DeepMD calculator. The calculator uses the precision encoded in the model; do not claim that `default_dtype` recasts it.
 - `m3gnet`: an explicit local MatGL model directory, loaded as a MatGL potential and attached through its ASE PES calculator.
 - `chgnet`: an explicit CHGNet model file, loaded through `CHGNetCalculator.from_file`; require `default_dtype: float32`.
 - `mace`: an explicit MACE model file, loaded through `MACECalculator`.
 
-Never choose a network model name, pretrained alias, package cache entry, or remote Hub model on the user's behalf. Scheduled MD is network-free and requires an approved model content fingerprint.
+Never choose a network model name, pretrained alias, package cache entry, or remote Hub model on the user's behalf. Scheduled MD is network-free and requires an approved model content fingerprint. The model may come from MLIPFlow training or any other user/site-owned training process; version 0.1 does not require an upstream `mlip-training` node.
 
 ## Bind the model without cluster paths
 
@@ -52,7 +52,7 @@ Do not infer scientific MD settings. Require the user/workflow to declare:
 - `default_dtype`
 - the exact structure SHA-256 and model fingerprint
 
-`device: cuda` requires at least one scheduled GPU. Do not invent a timestep, thermostat friction, duration, or temperature from the chemical system.
+`device: cuda` requires at least one scheduled GPU. Do not invent a timestep, thermostat friction, duration, or temperature from the chemical system. For DeepMD, treat `default_dtype` only as cross-framework workflow metadata in version 0.1; the model remains at its native precision.
 
 The runner seeds both Maxwell-Boltzmann velocity initialization and the ASE Langevin RNG. Explain that framework/GPU kernels are not promised to be bitwise deterministic.
 
