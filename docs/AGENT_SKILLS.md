@@ -10,7 +10,7 @@
 | `$dft-labeling` | 用 pymatgen 准备 static/relax/AIMD VASP 输入，并以独立审批监督 local 或受控 SSH-SLURM static 标注 | `dft-labeling` |
 | `$mlip-training` | 选择并监督 DeepMD/M3GNet/CHGNet/MACE 的训练、微调、数据/基础模型绑定和 SSH-SLURM 生命周期 | `mlip-training` |
 | `$ase-md` | 用显式 DeepMD/M3GNet/CHGNet/MACE 模型运行集群 ASE NVT/NPT，并监督 checkpoint salvage 与断点续跑 | `ase-md` |
-| `$lammps-md` | 为 LAMMPS-ready DeepMD/MACE/MatGL-M3GNet 模型生成可审核 CPU/GPU NVT/NPT 输入 bundle | `lammps-md` |
+| `$lammps-md` | 为 LAMMPS-ready DeepMD/MACE/MatGL-M3GNet 准备 CPU/GPU NVT/NPT 输入并监督 SSH-SLURM 执行 | `lammps-md` |
 | `$mlip-benchmark` | 产生机器可读 benchmark/ranking | `mlip-benchmark` |
 | `$ionic-transport` | MD→MSD→D/电导/Arrhenius | `ionic-transport` |
 | `$composition-screening` | 大超胞组分筛选与 top-k 验证 | `composition-screening` |
@@ -46,13 +46,21 @@ NPT 只能用于 full-rank 3D 周期 cell，`fix_com` 必须为 false，且不�
 
 每个 retry attempt 都生成独立 trajectory/thermo segment，使用连续的 global step/time 编号；0.3 暂不自动拼接 segment。成功完成后仍需第二次 `advance` 审批，checker 会核对 total completed steps、segment schedule、模型/结构/restart identity、checkpoint SHA，以及 NVT/NPT 对应热力学约束。多温度和 transport 仍不自动串接。
 
-## LAMMPS MLIP input preparation
+## LAMMPS molecular dynamics
 
-`$lammps-md` 0.1 是与 VASP `vasp-prepare` 类似的 prepare boundary：只生成输入并绑定 provenance，不执行 LAMMPS。输入是一个周期结构、一个 LAMMPS-ready `model_reference` 和一个显式 `lammps_config`；输出是 `structure.data`、`lammps-input-manifest.json` 以及请求的 `in.cpu.lammps` / `in.gpu.lammps`。
+`$lammps-md` 0.2 也采用与 VASP 类似的 prepare/execute 双边界。`lammps-prepare` 只在 local fresh attempt 中生成并审核输入；`execute` 必须重新 plan/approve，消费一个已经 fingerprint 的 `lammps-md-input-v2` bundle，并通过 `ssh-slurm` 运行一个明确的 CPU 或 GPU target。
 
-DeepMD 使用 `pair_style deepmd`，CPU/GPU 的差异留给 site-owned DeePMD/LAMMPS runtime；MACE 0.1 使用已导出的 ML-MACE TorchScript，CPU 为 `pair_style mace`、GPU 为单 GPU Kokkos `mace no_domain_decomposition`；MatGL/M3GNet 使用 `mgl create-lammps-model` 导出的 TorchScript，CPU 为 `pair_style matgl`、GPU 为 `pair_style matgl/kk`。CHGNet 暂不生成 native LAMMPS deck，因为当前 contract 没有固定一个可信的原生 export/pair-style bridge，继续使用 `$ase-md`。
+Preparation bundle 仍由周期结构、LAMMPS-ready model reference 和显式 NVT/NPT config 生成。DeepMD CPU/GPU 均使用 `pair_style deepmd`；MACE 使用已导出的 ML-MACE TorchScript，CPU 为 `pair_style mace`、GPU 为单 GPU Kokkos `mace no_domain_decomposition`；MatGL/M3GNet 使用导出的 LAMMPS TorchScript，CPU 为 `pair_style matgl`、GPU 为单 GPU `pair_style matgl/kk`。CHGNet 继续由 `$ase-md` 处理，不能由 agent 猜一个未审核的 native LAMMPS bridge。
 
-模型绝对路径永远不写进 input deck。生成文件只引用 `${MODEL_FILE}`；后续 scheduler execution 必须在新的审批边界中从 site-owned model registry 解析并重新 fingerprint 模型，然后通过 `-var MODEL_FILE <resolved-path>` 注入。Version 0.1 支持 NVT 和各向同性 NPT，并把 workflow 的 fs/GPa 显式转换到 LAMMPS `metal` units 的 ps/bar；不自动生成 hybrid potential、charge/topology、long-range electrostatics 或 restart orchestration。
+v2 input deck 永远只引用 `${MODEL_FILE}`。每个 deck 在 `final.data` 和 `final.restart` 写完之后才输出绑定总 step 数的 `MLIPFLOW_LAMMPS_COMPLETED` marker。Execute plan 会重新核对 prepared manifest、`structure.data`、所选 deck 的 SHA/size，并将 model id/fingerprint、target、ensemble、steps、type map、resources 与 site template family 放入审批。
+
+集群模板族为 `lammps-deepmd-cpu/gpu`、`lammps-mace-cpu/gpu`、`lammps-m3gnet-cpu/gpu`。`PYTHON_BIN`、`LAMMPS_BIN`、`MODEL_ROOT`、MPI/srun argv、modules/conda 和 CUDA/Kokkos 环境都必须保留在 site-owned `run.sh`。Compute-node runner 只在 MODEL_ROOT 下解析模型，执行前后都重算 SHA，并通过 LAMMPS `-var MODEL_FILE` 注入模型路径。
+
+CPU target 要求 `gpus=0`；MACE/MatGL GPU v0.2 要求恰好一张 GPU。DeepMD 可以申请多 GPU，但 site launcher 负责保持每个 MPI rank 最多使用一张 GPU；项目暂不加入独立 MPI-rank 参数。
+
+Scheduler `COMPLETED` 后仍必须第二次 `advance` 审批。Checker 要求 `lammps-execution-result.json`、`cluster-run-report.json`、trajectory、`final.data`、`final.restart`、LAMMPS log/screen log 在已批准大小范围内并匹配 SHA；同时要求记录 LAMMPS version、completed steps 等于批准 steps，且 fetched `lammps.log` 中存在完全一致的 completion marker。Scheduler/LAMMPS 失败时只允许 salvage 已审核的 diagnostic log/report 子集，不把 partial trajectory 或 restart 误判为成功。
+
+0.2 虽然收集 `final.restart`，但还没有实现 LAMMPS restart/resume。LAMMPS binary restart 与写出它的 executable/platform 有兼容边界，而且部分 fixes/commands 需要重新声明，因此后续 restart 必须单独设计，不能直接套 ASE-MD JSON checkpoint 逻辑。
 
 ## Skill validation
 
