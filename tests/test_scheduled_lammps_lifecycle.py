@@ -248,7 +248,7 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
             side_effect=self._inspect,
         ):
             approved = make_advance_plan(self.project, PLUGINS, self.site)
-        self.assertEqual(approved["actions"][0]["action"], "adapter-finalize")
+        self.assertEqual(approved["details"]["transitions"][0]["action"], "adapter-finalize")
         self.assertFalse((attempt / "lammps-execution-result.json").exists())
 
         with patch(
