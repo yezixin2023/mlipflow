@@ -155,6 +155,21 @@ def _write_report(output_dir: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def _normalize_result_artifacts(output_dir: Path, result: dict[str, Any]) -> None:
+    """Keep checkpoint provenance separate from the stable four-artifact MD set."""
+    artifacts = result.get("artifacts")
+    if isinstance(artifacts, list):
+        result["artifacts"] = [
+            item
+            for item in artifacts
+            if not (isinstance(item, dict) and item.get("name") == "checkpoint")
+        ]
+    (output_dir / "md-result.json").write_text(
+        json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     input_dir = Path(args.input_dir).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
@@ -232,6 +247,7 @@ def run(args: argparse.Namespace) -> int:
             input_format=parameters.get("input_format"),
             input_index=str(parameters.get("input_index", "-1")),
         )
+        _normalize_result_artifacts(output_dir, result)
         model_after = fingerprint(model)
         if model_after != model_before:
             raise ValueError("model artifact changed while running inference")
