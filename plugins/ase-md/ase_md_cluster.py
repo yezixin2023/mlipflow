@@ -1,9 +1,9 @@
 """Remote-side resolver for scheduled ASE MD.
 
-The portable project contains only a structure and a model-reference manifest.
-The site-owned run template supplies the cluster-local model root. This module
-resolves the approved relative model path below that root, recomputes its
-content fingerprint, and invokes the staged ase_md.py implementation in-process.
+The portable project contains a structure, a model-reference manifest and,
+for approved retries, an explicitly staged restart checkpoint. The site-owned
+run template supplies the cluster-local model root. This module resolves the
+approved model content and invokes the staged ase_md.py implementation in-process.
 """
 from __future__ import annotations
 
@@ -199,6 +199,11 @@ def run(args: argparse.Namespace) -> int:
         if model_before != model_ref["fingerprint"]:
             raise ValueError("cluster model content fingerprint differs from approved reference")
 
+        restart_path = input_dir / "restart" / "md-checkpoint.json"
+        restart_checkpoint = restart_path if restart_path.is_file() else None
+        if restart_path.exists() and restart_checkpoint is None:
+            raise ValueError("staged restart checkpoint is not a regular file")
+
         runner = _load_runner(input_dir)
         result = runner.run_md(
             structure=structure,
@@ -214,6 +219,8 @@ def run(args: argparse.Namespace) -> int:
             steps=parameters.get("steps"),
             trajectory_interval=parameters.get("trajectory_interval"),
             thermo_interval=parameters.get("thermo_interval"),
+            checkpoint_interval=parameters.get("checkpoint_interval"),
+            restart_checkpoint=restart_checkpoint,
             seed=parameters.get("seed"),
             device=parameters.get("device"),
             default_dtype=parameters.get("default_dtype"),
@@ -236,6 +243,8 @@ def run(args: argparse.Namespace) -> int:
                 "model": {**model_ref, "observed_fingerprint": model_after},
                 "structure_fingerprint": structure_fp,
                 "steps_completed": result.get("steps_completed"),
+                "segment_start_step": result.get("segment_start_step"),
+                "restart": result.get("restart"),
                 "result_sha256": _sha256_file(output_dir / "md-result.json"),
             }
         )
