@@ -10,7 +10,7 @@
 | `$dft-labeling` | 用 pymatgen 准备 static/relax/AIMD VASP 输入，并以独立审批监督 local 或受控 SSH-SLURM static 标注 | `dft-labeling` |
 | `$mlip-training` | 选择并监督 DeepMD/M3GNet/CHGNet/MACE 的训练、微调、数据/基础模型绑定和 SSH-SLURM 生命周期 | `mlip-training` |
 | `$ase-md` | 用显式 DeepMD/M3GNet/CHGNet/MACE 模型运行集群 ASE NVT/NPT，并监督 checkpoint salvage 与断点续跑 | `ase-md` |
-| `$lammps-md` | 为 LAMMPS-ready DeepMD/MACE/MatGL-M3GNet 准备 CPU/GPU NVT/NPT 输入并监督 SSH-SLURM 执行 | `lammps-md` |
+| `$lammps-md` | 为 LAMMPS-ready DeepMD/MACE/MatGL-M3GNet 准备和执行 CPU/GPU NVT/NPT，并监督 binary restart salvage 与断点续跑 | `lammps-md` |
 | `$mlip-benchmark` | 产生机器可读 benchmark/ranking | `mlip-benchmark` |
 | `$ionic-transport` | MD→MSD→D/电导/Arrhenius | `ionic-transport` |
 | `$composition-screening` | 大超胞组分筛选与 top-k 验证 | `composition-screening` |
@@ -48,19 +48,19 @@ NPT 只能用于 full-rank 3D 周期 cell，`fix_com` 必须为 false，且不�
 
 ## LAMMPS molecular dynamics
 
-`$lammps-md` 0.2 也采用与 VASP 类似的 prepare/execute 双边界。`lammps-prepare` 只在 local fresh attempt 中生成并审核输入；`execute` 必须重新 plan/approve，消费一个已经 fingerprint 的 `lammps-md-input-v2` bundle，并通过 `ssh-slurm` 运行一个明确的 CPU 或 GPU target。
+`$lammps-md` 0.3 采用 prepare/execute 双审批边界，并增加 runtime-bound binary restart。`lammps-prepare` 仍只在 local fresh attempt 中生成并审核 `lammps-md-input-v2`；`execute` 重新 plan/approve 后，通过六个 `lammps-<framework>-<cpu|gpu>` site template 运行 DeepMD、MACE 或 MatGL/M3GNet。CHGNet 仍不能由 agent 猜一个未审核 native pair-style bridge，继续使用 `$ase-md`。
 
-Preparation bundle 仍由周期结构、LAMMPS-ready model reference 和显式 NVT/NPT config 生成。DeepMD CPU/GPU 均使用 `pair_style deepmd`；MACE 使用已导出的 ML-MACE TorchScript，CPU 为 `pair_style mace`、GPU 为单 GPU Kokkos `mace no_domain_decomposition`；MatGL/M3GNet 使用导出的 LAMMPS TorchScript，CPU 为 `pair_style matgl`、GPU 为单 GPU `pair_style matgl/kk`。CHGNet 继续由 `$ase-md` 处理，不能由 agent 猜一个未审核的 native LAMMPS bridge。
+Prepared deck 永远只引用 `${MODEL_FILE}`，并在 `final.data` 与 `final.restart` 写完之后才输出绑定全局总 step 的 completion marker。Execute plan 重新核对 prepared manifest、`structure.data`、所选 deck 的 SHA/size；MODEL_ROOT、LAMMPS executable、MPI/srun launcher、module/conda、CUDA/Kokkos 与远端目录都留在 site-owned `run.sh`。
 
-v2 input deck 永远只引用 `${MODEL_FILE}`。每个 deck 在 `final.data` 和 `final.restart` 写完之后才输出绑定总 step 数的 `MLIPFLOW_LAMMPS_COMPLETED` marker。Execute plan 会重新核对 prepared manifest、`structure.data`、所选 deck 的 SHA/size，并将 model id/fingerprint、target、ensemble、steps、type map、resources 与 site template family 放入审批。
+长作业可显式设置 `checkpoint_interval` 和 `restart_policy: auto-from-previous-attempt`。Runner 不修改用户物理参数，只在 reviewed fresh deck 的 run 前增加 `restart N checkpoint.1.restart checkpoint.2.restart`，让两个 fixed binary restart 文件轮换。长进程开始前还写 `restart-runtime.json`，绑定 framework/target、prepared manifest SHA、model SHA、checkpoint cadence、resources、LAMMPS executable SHA、site/prepared launcher identity 与平台 system/machine/byteorder。
 
-集群模板族为 `lammps-deepmd-cpu/gpu`、`lammps-mace-cpu/gpu`、`lammps-m3gnet-cpu/gpu`。`PYTHON_BIN`、`LAMMPS_BIN`、`MODEL_ROOT`、MPI/srun argv、modules/conda 和 CUDA/Kokkos 环境都必须保留在 site-owned `run.sh`。Compute-node runner 只在 MODEL_ROOT 下解析模型，执行前后都重算 SHA，并通过 LAMMPS `-var MODEL_FILE` 注入模型路径。
+当 Slurm `TIMEOUT`、`PREEMPTED`、`NODE_FAIL`、`OUT_OF_MEMORY` 等 scheduler terminal failure 发生时，必须先 `advance --dry-run` 对 failure-salvage 做 remote size/SHA 审批，再 bounded fetch 可用的两个 checkpoint、runtime sidecar 和 diagnostics。原 attempt 仍保持 `FAIL/STOPPED`。之后 `retry` 创建 fresh attempt，只接受立即上一 attempt 已经本地 salvage 的 runtime/checkpoint，并把其 SHA/size、来源 attempt、上一 executable/platform identity 重新纳入 approval。Scheduler `COMPLETED` 后的普通科学 FAIL 不自动 resume；首个 checkpoint 之前就中断则 retry 必须 BLOCKED，不能偷偷 fresh-start。
 
-CPU target 要求 `gpus=0`；MACE/MatGL GPU v0.2 要求恰好一张 GPU。DeepMD 可以申请多 GPU，但 site launcher 负责保持每个 MPI rank 最多使用一张 GPU；项目暂不加入独立 MPI-rank 参数。
+控制面不解析 LAMMPS binary restart。新 attempt 在 compute node 上先要求 executable SHA、平台、launcher、resources、model/prepared manifest、target 与 cadence 和 salvaged runtime 完全匹配，再用同一个 LAMMPS executable 探测已审批候选，选择 timestep 最大且落在 approved cadence、低于 global target 的有效 restart。Resume deck 使用 `read_restart ${RESTART_FILE}`，重新声明 MLIP `pair_style/pair_coeff`，原样复用同一 `fix mlipflow all nvt/npt ...` ID/style/参数，不执行原 fresh `velocity create`，并用 `run <original-total-steps> upto` 继续到原总步数。
 
-Scheduler `COMPLETED` 后仍必须第二次 `advance` 审批。Checker 要求 `lammps-execution-result.json`、`cluster-run-report.json`、trajectory、`final.data`、`final.restart`、LAMMPS log/screen log 在已批准大小范围内并匹配 SHA；同时要求记录 LAMMPS version、completed steps 等于批准 steps，且 fetched `lammps.log` 中存在完全一致的 completion marker。Scheduler/LAMMPS 失败时只允许 salvage 已审核的 diagnostic log/report 子集，不把 partial trajectory 或 restart 误判为成功。
+成功 completion 仍需要二次 `advance` 才 fetch/check。Checker 继续核对 result/report、trajectory、`final.data`、`final.restart`、logs、LAMMPS version、completion marker 和所有 SHA；resume 另外核对 selected checkpoint SHA 属于新审批候选、segment start 合法、source attempt/runtime identity 一致。正常成功后临时 periodic checkpoint 与 runtime sidecar 被移除，只保留 `final.restart`；失败时它们才作为 recovery artifacts salvage。
 
-0.2 虽然收集 `final.restart`，但还没有实现 LAMMPS restart/resume。LAMMPS binary restart 与写出它的 executable/platform 有兼容边界，而且部分 fixes/commands 需要重新声明，因此后续 restart 必须单独设计，不能直接套 ASE-MD JSON checkpoint 逻辑。
+LAMMPS binary restart 不被描述为跨平台 portable checkpoint。即使 executable/platform/launcher/resources 都一致，MPI decomposition 和浮点顺序仍可能导致恢复轨迹与 uninterrupted run 数值分叉，所以 0.3 显式记录 `bitwise_exact_guaranteed: false`。能力定义是 **pinned compatible runtime 下的 state-continuous restart**。当前仍不自动 stitching 多 attempt trajectory/log segment，也不自动进入 transport 分析。
 
 ## Skill validation
 
