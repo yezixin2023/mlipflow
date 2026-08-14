@@ -28,7 +28,7 @@ dft = ["pymatgen>=2024.5"]
 mlipflow = "mlipflow.cli:main"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = {"" = "src"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -47,7 +47,7 @@ where = ["src"]
 "share/mlipflow/examples/training_all_models" = ["examples/training_all_models/*.md", "examples/training_all_models/*.json"]
 "share/mlipflow/examples/training_all_models/cluster" = ["examples/training_all_models/cluster/*.example"]
 "share/mlipflow/examples/ase_md_cluster" = ["examples/ase_md_cluster/*.md", "examples/ase_md_cluster/*.example"]
-"share/mlipflow/examples/lammps_mlip_inputs" = ["examples/lammps_mlip_inputs/*.md", "examples/lammps_mlip_inputs/*.json"]
+"share/mlipflow/examples/lammps_mlip_inputs" = ["examples/lammps_mlip_inputs/*.md", "examples/lammps_mlip_inputs/*.json", "examples/lammps_mlip_inputs/*.example"]
 "share/mlipflow/plugins/high-entropy-structure" = ["plugins/high-entropy-structure/*.yaml", "plugins/high-entropy-structure/*.py"]
 "share/mlipflow/plugins/pes-sampling" = ["plugins/pes-sampling/*.yaml", "plugins/pes-sampling/*.py"]
 "share/mlipflow/plugins/dft-labeling" = ["plugins/dft-labeling/*.yaml", "plugins/dft-labeling/*.py"]
