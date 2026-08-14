@@ -135,6 +135,64 @@ def _scheduler_expected_identity(step: StepRun) -> dict[str, Any]:
     }
 
 
+def _failure_salvage_outputs(
+    plan: dict[str, Any], scheduled: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Return the approved bounded output subset that may be fetched on failure.
+
+    Plugins cannot introduce new paths here.  Every requested name must already
+    exist in the validated scheduled fetch allowlist, and salvage treats missing
+    files as optional because a hard failure may happen before the first checkpoint.
+    """
+
+    adapter_plan = plan.get("adapter_plan")
+    salvage = adapter_plan.get("failure_salvage") if isinstance(adapter_plan, dict) else None
+    if salvage is None:
+        return []
+    if (
+        not isinstance(salvage, dict)
+        or salvage.get("schema_version") != 1
+        or set(salvage) != {"schema_version", "fetch_remote_names"}
+    ):
+        raise ConfigError("adapter failure_salvage must use schema_version=1 and fetch_remote_names")
+    names = salvage.get("fetch_remote_names")
+    if (
+        not isinstance(names, list)
+        or not names
+        or any(not isinstance(name, str) or not name for name in names)
+        or len(set(names)) != len(names)
+    ):
+        raise ConfigError("failure_salvage.fetch_remote_names must be a non-empty unique string list")
+    allowed = {
+        str(item["remote_name"]): item
+        for item in scheduled.get("fetch_outputs", [])
+        if isinstance(item, dict) and isinstance(item.get("remote_name"), str)
+    }
+    missing = [name for name in names if name not in allowed]
+    if missing:
+        raise ConfigError(
+            "failure salvage may reference only validated fetch outputs: " + ", ".join(missing)
+        )
+    return [{**allowed[name], "required": False} for name in names]
+
+
+def _approved_workspace(
+    approved_plan: dict[str, Any], step: StepRun
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    hpc_execution = approved_plan.get("hpc_execution")
+    cluster_record = (
+        hpc_execution.get("cluster_profile") if isinstance(hpc_execution, dict) else None
+    )
+    workspace = hpc_execution.get("workspace") if isinstance(hpc_execution, dict) else None
+    if (
+        not isinstance(cluster_record, dict)
+        or not isinstance(workspace, dict)
+        or step.remote_dir != workspace.get("run_dir")
+    ):
+        raise BackendError("persisted remote workspace differs from the approved plan")
+    return cluster_record, workspace
+
+
 def _observe_scheduled_step(
     project: Project,
     step: StepRun,
@@ -204,12 +262,72 @@ def _observe_scheduled_step(
         "PREEMPTED",
         "BOOT_FAIL",
         "DEADLINE",
+        "CANCELLED",
+        "REVOKED",
     }:
-        observation["target_state"] = RunState.FAIL.value
-        observation["reason"] = f"scheduler terminal failure: {raw_state}"
-    elif raw_state in {"CANCELLED", "REVOKED"}:
-        observation["target_state"] = RunState.STOPPED.value
-        observation["reason"] = f"scheduler reports cancellation: {raw_state}"
+        target = (
+            RunState.STOPPED
+            if raw_state in {"CANCELLED", "REVOKED"}
+            else RunState.FAIL
+        )
+        approved_plan_path = (
+            attempt_directory(project, step.node_id, step.attempt) / "approved-plan.json"
+        )
+        if approved_plan_path.is_file() and plugin_root is not None:
+            try:
+                approved_plan, plugin, scheduled = _load_pinned_scheduled_plan(
+                    project, step, plugin_root, site_path
+                )
+                salvage_outputs = _failure_salvage_outputs(approved_plan, scheduled)
+                if salvage_outputs:
+                    cluster_record, workspace = _approved_workspace(approved_plan, step)
+                    backend = scheduler_from_cluster_record(cluster_record, factory=factory)
+                    inventory = _remote_output_inventory_items(
+                        backend, workspace, salvage_outputs
+                    )
+                    observation["adapter_finalization"] = {
+                        "approved_plan_identity": content_identity(
+                            approved_plan_path, root=project.root
+                        ),
+                        "plugin_id": plugin.plugin_id,
+                        "remote_run_dir": workspace["run_dir"],
+                        "outputs": inventory,
+                        "failure_salvage": True,
+                        "terminal_target": target.value,
+                    }
+                    existing = [
+                        str(item["remote_name"])
+                        for item in inventory
+                        if item.get("exists") and not item.get("oversized")
+                    ]
+                    oversized = [
+                        str(item["remote_name"])
+                        for item in inventory
+                        if item.get("oversized")
+                    ]
+                    detail = (
+                        "approved failure salvage is ready for: " + ", ".join(existing)
+                        if existing
+                        else "no approved salvage output exists yet"
+                    )
+                    if oversized:
+                        detail += "; oversized: " + ", ".join(oversized)
+                    observation["reason"] = (
+                        f"scheduler terminal state {raw_state}; {detail}"
+                    )
+                    return observation
+            except Exception as exc:
+                observation["target_state"] = target.value
+                observation["reason"] = (
+                    f"scheduler terminal state {raw_state}; failure salvage unavailable: {exc}"
+                )
+                return observation
+        observation["target_state"] = target.value
+        observation["reason"] = (
+            f"scheduler terminal failure: {raw_state}"
+            if target == RunState.FAIL
+            else f"scheduler reports cancellation: {raw_state}"
+        )
     elif raw_state == "COMPLETED":
         approved_plan_path = (
             attempt_directory(project, step.node_id, step.attempt) / "approved-plan.json"
@@ -224,25 +342,7 @@ def _observe_scheduled_step(
                 approved_plan, plugin, scheduled = _load_pinned_scheduled_plan(
                     project, step, plugin_root, site_path
                 )
-                hpc_execution = approved_plan.get("hpc_execution")
-                cluster_record = (
-                    hpc_execution.get("cluster_profile")
-                    if isinstance(hpc_execution, dict)
-                    else None
-                )
-                workspace = (
-                    hpc_execution.get("workspace")
-                    if isinstance(hpc_execution, dict)
-                    else None
-                )
-                if (
-                    not isinstance(cluster_record, dict)
-                    or not isinstance(workspace, dict)
-                    or step.remote_dir != workspace.get("run_dir")
-                ):
-                    raise BackendError(
-                        "persisted remote workspace differs from the approved plan"
-                    )
+                cluster_record, workspace = _approved_workspace(approved_plan, step)
                 backend = scheduler_from_cluster_record(cluster_record, factory=factory)
                 inventory = _remote_output_inventory(backend, workspace, scheduled)
                 observation["adapter_finalization"] = {
@@ -296,17 +396,11 @@ def _observe_scheduled_step(
     return observation
 
 
-def _remote_output_inventory(
-    backend: Any, workspace: dict[str, Any], scheduled: dict[str, Any]
+def _remote_output_inventory_items(
+    backend: Any, workspace: dict[str, Any], outputs: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Read the bounded identity of every approved output without mutating it.
-
-    ``advance --dry-run`` and ``advance --approve`` must produce byte-identical
-    inventories for the fetch to be allowed, so both go through this one function.
-    """
-
     inventory: list[dict[str, Any]] = []
-    for item in scheduled["fetch_outputs"]:
+    for item in outputs:
         observed = backend.inspect_file(
             str(workspace["run_dir"]), str(item["remote_path"])
         )
@@ -317,6 +411,20 @@ def _remote_output_inventory(
             record["oversized"] = True
         inventory.append(record)
     return inventory
+
+
+def _remote_output_inventory(
+    backend: Any, workspace: dict[str, Any], scheduled: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Read the bounded identity of every approved output without mutating it.
+
+    ``advance --dry-run`` and ``advance --approve`` must produce byte-identical
+    inventories for the fetch to be allowed, so both go through this one function.
+    """
+
+    return _remote_output_inventory_items(
+        backend, workspace, list(scheduled["fetch_outputs"])
+    )
 
 
 def _load_pinned_scheduled_plan(
@@ -416,8 +524,15 @@ def _finalize_scheduled_adapter(
     approved_inventory = details.get("outputs")
     if not isinstance(approved_inventory, list):
         raise StateError("advance plan lacks the approved remote output inventory")
+    failure_salvage = details.get("failure_salvage") is True
     backend = scheduler_from_cluster_record(cluster_record, factory=factory)
-    current_inventory = _remote_output_inventory(backend, workspace, scheduled)
+    if failure_salvage:
+        output_contract = _failure_salvage_outputs(plan, scheduled)
+        current_inventory = _remote_output_inventory_items(
+            backend, workspace, output_contract
+        )
+    else:
+        current_inventory = _remote_output_inventory(backend, workspace, scheduled)
     if current_inventory != approved_inventory:
         raise StateError("remote outputs changed after the approved advance plan")
     fetched: list[dict[str, Any]] = []
@@ -440,56 +555,68 @@ def _finalize_scheduled_adapter(
             fingerprint(destination)
             | {"role": str(item.get("role", "scheduler-output"))}
         )
-    node = project.node(step.node_id)
-    context = _adapter_context(project, node, step.attempt)
-    context["execution"] = {
-        "returncode": 0,
-        "scheduler_state": "COMPLETED",
-        "remote_output_inventory": current_inventory,
-        # Resolve portable tokens so the pinned checker reads the same absolute
-        # paths its planning half emitted.
-        "plan": to_runtime(
-            plan["adapter_plan"],
-            _portable_roots(project, plugin, step.node_id, step.attempt),
-        ),
-        "hpc_execution": hpc_execution,
-    }
-    adapter = load_adapter(plugin)
-    collected: dict[str, Any] | None = None
-    checked: dict[str, Any] | None = None
+
     metrics: dict[str, Any] = {}
     reason: str
-    completion_error = _validate_hpc_completion(attempt_dir / "completion.json", step)
-    if fetch_errors:
-        final = RunState.FAIL
-        reason = "; ".join(fetch_errors)
-    elif completion_error is not None:
-        final = RunState.FAIL
-        reason = completion_error
-    else:
-        checked = adapter.check(context)
-        if not isinstance(checked, dict) or checked.get("status") != RunState.OK.value:
-            final = RunState.FAIL
-            reason = f"pinned plugin completion check did not return OK: {checked}"
+    if failure_salvage:
+        raw_target = details.get("terminal_target")
+        if raw_target not in {RunState.FAIL.value, RunState.STOPPED.value}:
+            raise StateError("failure salvage lacks a valid terminal target")
+        final = RunState(str(raw_target))
+        if fetch_errors:
+            reason = str(change.get("reason", "scheduler terminal failure")) + "; " + "; ".join(fetch_errors)
         else:
-            collected = adapter.collect(context)
-            if not isinstance(collected, dict) or collected.get("status") != RunState.OK.value:
+            reason = str(change.get("reason", "scheduler terminal failure"))
+    else:
+        node = project.node(step.node_id)
+        context = _adapter_context(project, node, step.attempt)
+        context["execution"] = {
+            "returncode": 0,
+            "scheduler_state": "COMPLETED",
+            "remote_output_inventory": current_inventory,
+            # Resolve portable tokens so the pinned checker reads the same absolute
+            # paths its planning half emitted.
+            "plan": to_runtime(
+                plan["adapter_plan"],
+                _portable_roots(project, plugin, step.node_id, step.attempt),
+            ),
+            "hpc_execution": hpc_execution,
+        }
+        adapter = load_adapter(plugin)
+        collected: dict[str, Any] | None = None
+        checked: dict[str, Any] | None = None
+        completion_error = _validate_hpc_completion(attempt_dir / "completion.json", step)
+        if fetch_errors:
+            final = RunState.FAIL
+            reason = "; ".join(fetch_errors)
+        elif completion_error is not None:
+            final = RunState.FAIL
+            reason = completion_error
+        else:
+            checked = adapter.check(context)
+            if not isinstance(checked, dict) or checked.get("status") != RunState.OK.value:
                 final = RunState.FAIL
-                reason = f"pinned plugin collection did not return OK: {collected}"
+                reason = f"pinned plugin completion check did not return OK: {checked}"
             else:
-                normalized = _normalize_adapter_artifacts(
-                    project, attempt_dir, collected.get("artifacts", [])
-                )
-                known = {str(item["uri"]) for item in fetched}
-                fetched.extend(
-                    item for item in normalized if str(item["uri"]) not in known
-                )
-                raw_metrics = collected.get("metrics", {})
-                metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
-                final = RunState.OK
-                reason = (
-                    "scheduler completed; bounded fetch and pinned plugin checks succeeded"
-                )
+                collected = adapter.collect(context)
+                if not isinstance(collected, dict) or collected.get("status") != RunState.OK.value:
+                    final = RunState.FAIL
+                    reason = f"pinned plugin collection did not return OK: {collected}"
+                else:
+                    normalized = _normalize_adapter_artifacts(
+                        project, attempt_dir, collected.get("artifacts", [])
+                    )
+                    known = {str(item["uri"]) for item in fetched}
+                    fetched.extend(
+                        item for item in normalized if str(item["uri"]) not in known
+                    )
+                    raw_metrics = collected.get("metrics", {})
+                    metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+                    final = RunState.OK
+                    reason = (
+                        "scheduler completed; bounded fetch and pinned plugin checks succeeded"
+                    )
+
     initial_artifacts = store.artifacts(step.run_id)
     artifacts = [
         {
@@ -507,7 +634,7 @@ def _finalize_scheduled_adapter(
     known_uris = {str(item["uri"]) for item in artifacts}
     artifacts.extend(item for item in fetched if str(item["uri"]) not in known_uris)
     current_state = RunState(step.state)
-    if current_state in {RunState.SUBMITTED, RunState.PENDING}:
+    if not failure_salvage and current_state in {RunState.SUBMITTED, RunState.PENDING}:
         step = store.transition(
             step.run_id,
             RunState.RUNNING,
@@ -525,12 +652,13 @@ def _finalize_scheduled_adapter(
             artifact.get("size_bytes"),
             artifact.get("metadata", {}),
         )
+    scheduler_state = str(change.get("scheduler_state", "UNKNOWN"))
     final_manifest = _finalize_scheduler_manifest(
         project,
         step,
         final,
         reason,
-        "COMPLETED",
+        scheduler_state,
         artifacts,
         metrics,
     )
