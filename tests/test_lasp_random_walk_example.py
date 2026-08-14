@@ -9,6 +9,7 @@ PLUGIN = ROOT / "plugins" / "pes-sampling"
 WRAPPER = PLUGIN / "lasp_ssw.py"
 ALIAS = PLUGIN / "lasp_random_walk.py"
 EXAMPLE = ROOT / "examples" / "lasp_random_walk" / "lasp.in"
+RERUN_EXAMPLE = ROOT / "examples" / "lasp_random_walk" / "lasp-rerun.in"
 
 
 def _load(path: Path, name: str):
@@ -19,12 +20,13 @@ def _load(path: Path, name: str):
     return module
 
 
-def test_lasp_random_walk_example_is_valid_ssw_contract():
+def test_lasp_random_walk_examples_are_valid_ssw_contracts():
     module = _load(WRAPPER, "lasp_ssw_example_test")
-    parameters = module._parse_lasp_input(EXAMPLE)
-    module._validate_ssw_input(parameters)
-    assert str(parameters["explore_type"]).lower() == "ssw"
-    assert int(parameters["SSW.SSWsteps"]) > 0
+    for path in (EXAMPLE, RERUN_EXAMPLE):
+        parameters = module._parse_lasp_input(path)
+        module._validate_ssw_input(parameters)
+        assert str(parameters["explore_type"]).lower() == "ssw"
+        assert int(parameters["SSW.SSWsteps"]) > 0
 
 
 def test_lasp_random_walk_alias_defaults_to_execute():
