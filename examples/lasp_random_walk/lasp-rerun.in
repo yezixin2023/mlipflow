@@ -1,0 +1,17 @@
+# LASP SSW rerun/random-walk example derived from the repository's audited
+# Li10M7P8S32/rerun/run/11113 input shape. Replace potential/DFT setup and
+# auxiliary files with those for your own licensed LASP case.
+potential vasp
+explore_type ssw
+Run_type 5
+SSW.SSWsteps 6
+SSW.MaxOptstep 300
+SSW.mdfreq 3
+MD.initial_T 500
+MD.target_T 800
+MD.ttotal 4000
+MD.dt 2
+MD.print_strfreq 250
+SSW.LowTemp 600
+SSW.HighTemp 800
+SSW.TempCycle 3
