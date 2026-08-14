@@ -1,0 +1,6 @@
+# Minimal LASP SSW/random-walk contract example for MLIPFlow.
+# Replace the potential setup and add any licensed LASP auxiliary inputs required by your case.
+potential vasp
+explore_type ssw
+SSW.SSWsteps 20
+SSW.Temp 300
