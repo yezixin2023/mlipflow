@@ -1,1 +1,0 @@
-print('mlipflow training example')
