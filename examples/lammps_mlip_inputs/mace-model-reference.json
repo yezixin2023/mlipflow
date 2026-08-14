@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "model_id": "mace-lips-v1",
+  "framework": "mace",
+  "relative_path": "mace/lips-v1/model-lammps.pt",
+  "kind": "file",
+  "fingerprint": "sha256:REPLACE_WITH_64_LOWERCASE_HEX",
+  "artifact_format": "mace-lammps-torchscript",
+  "elements": ["Li", "P", "S"]
+}
