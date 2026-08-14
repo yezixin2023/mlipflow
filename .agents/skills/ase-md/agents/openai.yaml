@@ -1,4 +1,4 @@
 interface:
   display_name: "ASE molecular dynamics"
-  short_description: "Plan and supervise fingerprinted MLIP-driven ASE NVT jobs on ssh-slurm"
-  default_prompt: "$ase-md Plan, submit, or verify one explicit-model ASE NVT trajectory with portable model identity, site-owned cluster execution, and bounded post-run checks."
+  short_description: "Plan and supervise fingerprinted MLIP-driven ASE NVT/NPT jobs on ssh-slurm"
+  default_prompt: "$ase-md Plan, submit, or verify one explicit-model ASE NVT Langevin or isotropic MTK NPT trajectory with portable model identity, site-owned cluster execution, and bounded post-run checks."
