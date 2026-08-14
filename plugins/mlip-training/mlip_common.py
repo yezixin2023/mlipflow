@@ -99,14 +99,15 @@ def write_result(args, status, framework_version, metrics, media_type, provenanc
         raise TrainingError("model output must remain under result directory")
     clean = {}
     for key, value in metrics.items():
-        if (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and math.isfinite(float(value))
-        ):
-            clean[re.sub(r"[^A-Za-z0-9_]+", "_", str(key)).strip("_").lower() or "metric"] = float(
-                value
-            )
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TrainingError(f"metric {key!r} must be a numeric int or float")
+        try:
+            numeric = float(value)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise TrainingError(f"metric {key!r} must be a finite number") from exc
+        if not math.isfinite(numeric):
+            raise TrainingError(f"metric {key!r} must be a finite number")
+        clean[re.sub(r"[^A-Za-z0-9_]+", "_", str(key)).strip("_").lower() or "metric"] = numeric
     payload = {
         "schema_version": 1,
         "plugin_id": PLUGIN_ID,

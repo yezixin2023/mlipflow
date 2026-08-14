@@ -1,10 +1,61 @@
 """CHGNet scratch training and checkpoint fine-tuning."""
 
+import math
 import random
+from collections.abc import Mapping
+from numbers import Real
 from pathlib import Path
 from mlip_common import TrainingError, mapping, records, section, work_dir
 
 TARGETS = {"e", "ef", "efs", "efm", "efsm"}
+
+
+def _require_finite_history(value, path):
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _require_finite_history(item, f"{path}.{key}")
+        return
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _require_finite_history(item, f"{path}[{index}]")
+        return
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TrainingError(f"CHGNet training history {path} must be numeric")
+    if not math.isfinite(float(value)):
+        raise TrainingError(f"CHGNet training history {path} is non-finite")
+
+
+def _validate_training_completion(trainer):
+    epochs = getattr(trainer, "epochs", None)
+    starting_epoch = getattr(trainer, "starting_epoch", None)
+    if (
+        isinstance(epochs, bool)
+        or not isinstance(epochs, int)
+        or isinstance(starting_epoch, bool)
+        or not isinstance(starting_epoch, int)
+        or starting_epoch < 0
+        or epochs <= starting_epoch
+    ):
+        raise TrainingError("CHGNet trainer must request at least one epoch")
+    expected = epochs - starting_epoch
+    targets = getattr(trainer, "targets", None)
+    history = getattr(trainer, "training_history", None)
+    if not isinstance(targets, str) or not targets or not isinstance(history, Mapping):
+        raise TrainingError("CHGNet trainer did not expose its training history")
+    for target in targets:
+        target_history = history.get(target)
+        if not isinstance(target_history, Mapping):
+            raise TrainingError(f"CHGNet training history is missing target {target!r}")
+        for split in ("train", "val"):
+            values = target_history.get(split)
+            if not isinstance(values, list):
+                raise TrainingError(f"CHGNet training history is missing {target}.{split}")
+            if len(values) != expected:
+                raise TrainingError(
+                    f"CHGNet training completed {len(values)} of {expected} requested epochs "
+                    f"for {target}.{split}"
+                )
+    _require_finite_history(history, "training_history")
 
 
 def plan(args, config, data_path):
@@ -98,6 +149,7 @@ def run(args, config, config_path, data_path):
     )
     work = work_dir(Path(args.result_manifest).absolute(), "chgnet")
     trainer.train(train, valid, test_loader=None, save_dir=str(work / "checkpoints"))
+    _validate_training_completion(trainer)
     output = Path(args.output).absolute()
     output.parent.mkdir(parents=True, exist_ok=True)
     trainer.save(filename=str(output))
