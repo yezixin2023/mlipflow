@@ -1,7 +1,7 @@
 """Shared validation and provenance helpers for bundled MLIP runners."""
 import hashlib, importlib.metadata, json, math, os, random, re
 from pathlib import Path
-FRAMEWORKS=("deepmd","m3gnet","chgnet","mace","lasp"); OPERATIONS=("train","finetune"); PLUGIN_ID="mlip-training"
+FRAMEWORKS=("deepmd","m3gnet","chgnet","mace"); OPERATIONS=("train","finetune"); PLUGIN_ID="mlip-training"
 class TrainingError(RuntimeError): pass
 
 def mapping(value,field):
