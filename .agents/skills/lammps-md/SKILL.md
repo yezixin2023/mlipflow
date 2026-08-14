@@ -1,20 +1,21 @@
 ---
 name: lammps-md
-description: Prepare, submit, and verify portable LAMMPS MLIP workflows for explicit LAMMPS-ready DeepMD, MACE, or MatGL/M3GNet models. Use for CPU/GPU LAMMPS input generation or reviewed ssh-slurm NVT/NPT execution.
+description: Prepare, submit, verify, and restart portable LAMMPS MLIP workflows for explicit LAMMPS-ready DeepMD, MACE, or MatGL/M3GNet models. Use for CPU/GPU NVT/NPT input generation, reviewed ssh-slurm execution, periodic binary restart salvage, or walltime/preemption continuation.
 ---
 
 # LAMMPS MLIP molecular dynamics
 
-Use the `lammps-md` plugin as the implementation source of truth. Version 0.2 has two deliberately separate operations:
+Use the `lammps-md` plugin as the implementation source of truth. Version 0.3 has two deliberately separate operations plus an optional restart protocol:
 
 - `lammps-prepare`: local input generation and verification only;
-- `execute`: separately approved `ssh-slurm` execution of one already prepared CPU or GPU target.
+- `execute`: separately approved `ssh-slurm` execution of one already prepared CPU or GPU target;
+- execute may opt into periodic binary checkpointing and `auto-from-previous-attempt` restart after scheduler interruption.
 
-Never treat preparation success as evidence that LAMMPS ran.
+Never treat preparation success as evidence that LAMMPS ran. Never treat scheduler `COMPLETED` as scientific success before bounded fetch/check.
 
-## Decide whether the model is LAMMPS-ready
+## Model readiness
 
-Accept only an explicit model reference with a content fingerprint, supported element list, site-root-relative path, and framework-specific exported artifact format.
+Accept only an explicit model reference with content fingerprint, supported elements, site-root-relative path, and framework-specific LAMMPS export format.
 
 Supported contracts:
 
@@ -22,65 +23,64 @@ Supported contracts:
 - `mace` + `artifact_format: mace-lammps-torchscript`;
 - `m3gnet` + `artifact_format: matgl-lammps-torchscript`.
 
-Do not treat a raw MACE or MatGL training checkpoint as a LAMMPS model. Require the framework's reviewed LAMMPS export step first.
-
-Do not invent a CHGNet pair style. Version 0.2 still blocks CHGNet because no native export/pair-style bridge is pinned by this repository; use `$ase-md` unless a separate bridge is reviewed.
+Do not pass raw MACE/MatGL training checkpoints directly to LAMMPS. Do not invent a CHGNet pair style; version 0.3 still blocks native CHGNet LAMMPS and should route CHGNet MD to `$ase-md` unless a separately reviewed bridge exists.
 
 ## Preparation contract
 
-Require an explicit `lammps_config` with ensemble `nvt` or `npt-isotropic`, CPU/GPU targets, type map, temperature, timestep, total steps, thermo/dump intervals, positive velocity seed, thermostat damping, and NPT pressure/barostat damping when applicable.
+Require explicit NVT or isotropic NPT configuration, target list, type map, temperature, timestep, total global steps, thermo/dump intervals, positive velocity seed, thermostat damping, and NPT pressure/barostat damping when applicable.
 
-Do not invent physical inputs from the composition. The generator converts workflow units to LAMMPS `metal` units: fs to ps and GPa to bar.
+Do not invent physical parameters from composition. Preparation converts fs to ps and GPa to bar for LAMMPS `metal` units.
 
-Version 0.2 still requires one full-rank three-dimensional periodic atomic structure. Do not silently generate molecular topology, charges, bonded terms, hybrid potentials, long-range electrostatics, or nonperiodic boundaries.
+Require one full-rank 3D periodic atomic structure. Do not silently generate molecular topology, charges, bonded terms, hybrid potentials, long-range electrostatics, or nonperiodic boundaries.
 
-The execution-ready preparation wrapper must produce `preparation_contract: lammps-md-input-v2`. Every requested deck must contain `${MODEL_FILE}` and an exact `MLIPFLOW_LAMMPS_COMPLETED step=<steps>` print command placed after `final.data` and `final.restart` writes. The manifest must record that exact marker and every generated file SHA-256/size.
+The execution-ready prepare wrapper must produce `preparation_contract: lammps-md-input-v2`. Requested decks must use `${MODEL_FILE}` and contain the exact `MLIPFLOW_LAMMPS_COMPLETED step=<total>` print command only after `final.data` and `final.restart` writes.
 
 ## CPU/GPU framework routing
 
 DeepMD:
 
-- CPU and GPU decks both use `pair_style deepmd`.
-- Do not add a Kokkos suffix just because GPU was requested.
-- Scheduled GPU execution may request more than one GPU, but the site launcher must map at most one GPU to each MPI rank.
+- CPU/GPU decks both use `pair_style deepmd`;
+- do not add a Kokkos suffix solely because GPU was selected;
+- the site launcher owns MPI/GPU mapping and must respect the supported GPU/rank mapping.
 
 MACE:
 
-- Require the reviewed ML-MACE TorchScript artifact.
-- CPU deck uses `pair_style mace`.
-- GPU deck uses `pair_style mace no_domain_decomposition` with `-k on g 1 -sf kk` launcher metadata.
-- Version 0.2 requires exactly one scheduled GPU for this path.
-- Do not silently substitute ML-IAP; it is a separate future interface contract.
+- require the reviewed ML-MACE TorchScript artifact;
+- CPU uses `pair_style mace`;
+- GPU uses `pair_style mace no_domain_decomposition` and Kokkos launcher metadata;
+- version 0.3 requires one scheduled GPU for this path;
+- do not silently substitute ML-IAP.
 
 MatGL/M3GNet:
 
-- Require a file exported for MatGL LAMMPS.
-- CPU deck uses `pair_style matgl`.
-- GPU deck uses `pair_style matgl/kk` with Kokkos launcher metadata.
-- Version 0.2 requires exactly one scheduled GPU and treats this path as single-rank/single-GPU.
+- require a LAMMPS-exported MatGL model;
+- CPU uses `pair_style matgl`;
+- GPU uses `pair_style matgl/kk`;
+- version 0.3 requires one GPU for this path.
 
-## Keep execution portable
+## Execute contract
 
-Generated decks must reference `${MODEL_FILE}` and must not contain `model_reference.relative_path` or an absolute cluster path.
+For `operation: execute`, require:
 
-For operation `execute`, require exactly:
+- `backend: ssh-slurm` and a named backend profile;
+- exactly one project-scoped `inputs.lammps_input_manifest`;
+- explicit `target: cpu|gpu`;
+- exact `input_manifest_fingerprint`;
+- resources containing exactly `cpus`, `gpus`, `memory`, `walltime`;
+- optional `checkpoint_interval`;
+- optional `restart_policy`, either `disabled` or `auto-from-previous-attempt`.
 
-- `backend: ssh-slurm` and a named `backend_profile`;
-- `inputs.lammps_input_manifest` pointing to a project-scoped `lammps-md-input-v2` manifest;
-- `parameters.operation: execute`;
-- explicit `parameters.target: cpu|gpu`;
-- explicit full `parameters.input_manifest_fingerprint`;
-- resources containing exactly `cpus`, `gpus`, `memory`, and `walltime`.
+`auto-from-previous-attempt` requires a positive `checkpoint_interval` no greater than the prepared total steps.
 
-CPU execution requires `gpus: 0`. GPU execution requires at least one GPU; MACE/MatGL are restricted to exactly one in v0.2.
+CPU requires `gpus: 0`. GPU requires at least one GPU; MACE/MatGL are restricted to one GPU in this contract.
 
-The execute adapter must re-read the prepared manifest, recompute its SHA, recompute `structure.data` and selected deck SHA/size, verify the target launcher/model contract, and reject any changed bundle before submission.
+The adapter must revalidate the prepared manifest, `structure.data`, selected deck, launcher/model contract, and their SHA/size before submission.
 
 ## Site boundary
 
-Never put SSH host, account, partition, QoS, module/conda setup, LAMMPS path, MPI/srun command, CUDA architecture, MODEL_ROOT, template root, or work root in the project node.
+Never put SSH host, account, partition, QoS, module/conda setup, LAMMPS executable, MPI/srun command, CUDA architecture, MODEL_ROOT, template root, or remote work root in the project node.
 
-The selected template family is one of:
+Template families remain:
 
 - `lammps-deepmd-cpu`
 - `lammps-deepmd-gpu`
@@ -89,33 +89,106 @@ The selected template family is one of:
 - `lammps-m3gnet-cpu`
 - `lammps-m3gnet-gpu`
 
-Each site's `run.sh` owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, and a JSON launcher argv. The bundled remote runner parses launcher JSON and launches with `shell=False`.
+The v0.3 site `run.sh` invokes the staged `lammps_cluster_restart.py`. The site owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, and JSON launcher argv. Keep executable and launcher stable across restart attempts; version 0.3 fingerprints them.
 
-The compute-node runner must resolve the prepared model relative path only below MODEL_ROOT, verify its SHA before execution, inject the resolved path through `-var MODEL_FILE`, and verify the model SHA again after execution.
+The compute-node runner resolves the prepared model only below MODEL_ROOT, verifies its SHA before execution, passes it via `-var MODEL_FILE`, and verifies it again after execution.
 
-## Approval lifecycle
+## Periodic restart policy
 
-The execute approval must show framework, target, model id/fingerprint/artifact format, prepared-manifest fingerprint, ensemble, temperature, timestep, steps/simulated duration, type map, required package family, resources, and selected template family.
+When `checkpoint_interval` is present, the runner derives an active deck from the reviewed fresh deck and adds exactly:
 
-Scheduler `COMPLETED` is not scientific success. After completion, use the normal second `advance --dry-run` approval. The core must inventory and bounded-fetch only the declared outputs before the plugin checker runs.
+```lammps
+restart <interval> checkpoint.1.restart checkpoint.2.restart
+```
 
-A successful execute attempt requires:
+Do not replace this with a single overwrite file. The two fixed names alternate, preserving another candidate if interruption occurs during a checkpoint write.
 
-- `lammps-execution-result.json` and `cluster-run-report.json` with matching approved identities;
-- non-empty bounded `trajectory.lammpstrj`, `final.data`, `final.restart`, `lammps.log`, and `lammps.screen.log`;
-- matching size/SHA-256 records for every required execution artifact;
-- a recorded LAMMPS version;
-- `steps_completed == approved steps`;
-- the exact approved completion marker in the fetched `lammps.log`.
+Before starting the long LAMMPS subprocess, write a bounded `restart-runtime.json` that binds:
 
-A zero scheduler exit code alone is insufficient. The marker is intentionally printed only after the final data/restart writes.
+- attempt;
+- framework/target;
+- prepared manifest SHA;
+- model SHA;
+- checkpoint cadence;
+- exact abstract resource object;
+- resolved LAMMPS executable SHA;
+- site launcher prefix identity;
+- prepared launcher identity;
+- platform system/machine/byteorder.
 
-If LAMMPS or the scheduler fails, failure salvage may fetch only the already approved diagnostic subset: cluster report and logs. Do not promote a partial trajectory, final data file, or binary restart to scientific success.
+These are failure-recovery artifacts, not normal successful outputs. After normal success, periodic checkpoint files and the runtime sidecar are removed; `final.restart` remains the ordinary successful restart artifact.
 
-## Restart boundary
+## Failure salvage before retry
 
-Version 0.2 collects `final.restart` but does not resume it. Do not reuse the ASE-MD JSON checkpoint logic for LAMMPS binary restarts. LAMMPS restart files are tied to the LAMMPS executable/platform contract and some fixes/commands must be reissued, so restart support must be introduced as a separate reviewed contract.
+For a scheduler-terminal `TIMEOUT`, `PREEMPTED`, `NODE_FAIL`, `OUT_OF_MEMORY`, `FAILED`, `DEADLINE`, `CANCELLED`, or `REVOKED`, do not immediately run `retry`.
+
+First create the normal `advance --dry-run` failure-salvage plan. The core must inventory only allowlisted outputs and bind observed SHA/size before fetching. With periodic restart enabled, the salvage subset may include:
+
+- `checkpoint.1.restart` when present;
+- `checkpoint.2.restart` when present;
+- `restart-runtime.json` when present;
+- approved diagnostic report/logs.
+
+Do not salvage partial trajectory/final state as successful science.
+
+After salvage approval/fetch, the original attempt remains `FAIL` or `STOPPED`. Only then create `retry`, which creates a fresh attempt.
+
+If no periodic checkpoint exists because interruption occurred before the first checkpoint, auto restart must be BLOCKED. Do not silently fresh-start, do not rebuild from `final.data`, and do not reinitialize velocities while calling the result a restart.
+
+A scheduler `COMPLETED` run that later fails its scientific checker is not auto-restart eligible.
+
+## Retry planning
+
+For attempt N > 1 with `auto-from-previous-attempt`, accept only the immediately previous attempt and require:
+
+- previous final manifest state is FAIL/STOPPED;
+- scheduler terminal state is restart-eligible;
+- `restart-runtime.json` was locally salvaged;
+- at least one alternating checkpoint was locally salvaged;
+- previous runtime identity matches the new plan's framework, target, prepared manifest, model, checkpoint interval, and resources.
+
+Stage every approved available candidate plus the runtime sidecar into the new fresh attempt. Bind each candidate SHA/size, source attempt, previous executable SHA, and previous platform into the new approval plan.
+
+The control plane must not parse the binary LAMMPS restart or guess its timestep.
+
+## Compute-node resume
+
+Before `read_restart`, require current runtime to match the salvaged sidecar for executable SHA, platform, site launcher identity, prepared launcher identity, resources, framework/target, prepared manifest, model, and checkpoint interval.
+
+Use the same LAMMPS executable to inspect each approved salvaged binary candidate. Ignore corrupt/unreadable/out-of-contract candidates and choose the largest valid timestep that lies on the approved checkpoint cadence and is below the global total step.
+
+The derived resume deck must:
+
+- `read_restart ${RESTART_FILE}`;
+- reissue the reviewed MLIP `pair_style` and `pair_coeff`;
+- reissue timestep/thermo/dump settings;
+- reuse the exact fresh-deck `fix mlipflow all nvt ...` or `fix mlipflow all npt ...` line with the same fix ID/style/arguments;
+- never run the fresh `velocity create` line;
+- re-enable the same periodic checkpoint cadence;
+- `run <original-total-steps> upto`;
+- write normal final data/restart and completion marker after reaching the original global target.
+
+`steps` always means the entire trajectory target. A retry runs only the remainder represented by the binary restart timestep.
+
+## Reproducibility statement
+
+Do not promise universal bitwise trajectory identity for LAMMPS restart. Binary restart is runtime-bound, and processor decomposition / floating-point ordering can still alter the resumed numerical trajectory. Record `bitwise_exact_guaranteed: false` even after compatibility checks.
+
+Describe the feature as **state-continuous restart under a pinned compatible runtime**, not cross-platform portable checkpointing.
+
+## Completion
+
+Normal successful execute still requires:
+
+- matching `lammps-execution-result.json` and `cluster-run-report.json`;
+- bounded `trajectory.lammpstrj`, `final.data`, `final.restart`, `lammps.log`, `lammps.screen.log`;
+- matching output SHA/size records;
+- recorded LAMMPS version;
+- `steps_completed == approved global steps`;
+- exact completion marker in fetched `lammps.log`.
+
+For a resumed attempt, additionally require the selected checkpoint SHA to be one of the newly approved salvaged candidates, a valid periodic start step, the expected source attempt, runtime compatibility confirmation, and cluster/result restart identities that agree.
 
 ## Scientific interpretation
 
-`lammps-md` generates/runs trajectories. It does not establish equilibration, diffusion, ionic conductivity, phase stability, or model validity by itself. Keep transport analysis and multi-temperature orchestration separate until those stages are explicitly connected.
+`lammps-md` produces trajectories. It does not prove equilibration, diffusion, ionic conductivity, phase stability, or model validity. Version 0.3 also does not stitch trajectory/log segments automatically; keep stitching, multi-temperature orchestration, and transport analysis separate until explicitly implemented.
