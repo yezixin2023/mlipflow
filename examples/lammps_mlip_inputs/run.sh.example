@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Site-owned values. Install this skeleton separately as run.sh under each
+# lammps-<framework>-<target> template family and customize modules/launcher.
+PYTHON_BIN=/ABS/PATH/TO/python
+LAMMPS_BIN=/ABS/PATH/TO/lmp
+MODEL_ROOT=/ABS/PATH/TO/site/model-registry
+# JSON argv placed before LAMMPS_BIN, e.g. ["srun","--ntasks=1"] or [].
+# For MACE/MatGL GPU v0.2 use exactly one LAMMPS rank/GPU.
+# For DeepMD multi-GPU, the site may choose one rank per GPU.
+LAMMPS_LAUNCHER_JSON='["srun","--ntasks=1"]'
+
+# Standard MLIPFlow template variables are deliberately visible here:
+# project={{PROJECT_ID}} node={{NODE_ID}} attempt={{ATTEMPT}}
+# run={{RUN_DIR}} input={{INPUT_DIR}} output={{OUTPUT_DIR}} logs={{LOG_DIR}}
+# resources cpus={{CPUS}} gpus={{GPUS}} memory={{MEMORY}} walltime={{WALLTIME}}
+mkdir -p "{{OUTPUT_DIR}}" "{{LOG_DIR}}"
+attempt_num=$((10#{{ATTEMPT}}))
+completion_status=FAILED
+completion_code=1
+write_completion() {
+  cat > "{{RUN_DIR}}/completion.json" <<EOF
+{"schema_version":1,"status":"${completion_status}","exit_code":${completion_code},"project_id":"{{PROJECT_ID}}","node_id":"{{NODE_ID}}","attempt":${attempt_num}}
+EOF
+}
+trap write_completion EXIT
+
+set +e
+"$PYTHON_BIN" "{{INPUT_DIR}}/lammps_cluster.py" --project "{{INPUT_DIR}}/project.yaml" --node-id "{{NODE_ID}}" --input-dir "{{INPUT_DIR}}" --output-dir "{{OUTPUT_DIR}}" --model-root "$MODEL_ROOT" --lammps-bin "$LAMMPS_BIN" --launcher-json "$LAMMPS_LAUNCHER_JSON" > "{{LOG_DIR}}/lammps-runner.stdout.log" 2> "{{LOG_DIR}}/lammps-runner.stderr.log"
+completion_code=$?
+set -e
+if [ "$completion_code" -eq 0 ]; then
+  completion_status=COMPLETED
+fi
+exit "$completion_code"
