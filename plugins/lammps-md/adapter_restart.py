@@ -94,6 +94,35 @@ def _read_json(path: Path, max_bytes: int) -> dict[str, Any]:
     return raw
 
 
+def _pin_facade_helpers(plan: dict[str, Any]) -> dict[str, Any]:
+    """Bind dynamic control-plane dependencies into the approval digest."""
+
+    if plan.get("status") != "READY":
+        return plan
+    fingerprints = plan.setdefault("input_fingerprints", {})
+    if not isinstance(fingerprints, dict):
+        return {
+            "plugin_id": PLUGIN_ID,
+            "status": "BLOCKED",
+            "executable": False,
+            "diagnostics": [_diagnostic("error", "lammps.facade_fingerprints", "plan input_fingerprints must be an object")],
+        }
+    for filename, key in (
+        ("adapter_execute.py", "adapter_execute"),
+        ("adapter.py", "adapter_legacy"),
+    ):
+        path = Path(__file__).resolve().with_name(filename)
+        if not base._ordinary_file(path):
+            return {
+                "plugin_id": PLUGIN_ID,
+                "status": "BLOCKED",
+                "executable": False,
+                "diagnostics": [_diagnostic("error", "lammps.facade_helper", f"missing bundled helper: {filename}")],
+            }
+        fingerprints[key] = base._sha256(path)
+    return plan
+
+
 def _validate(context: dict[str, Any]) -> list[dict[str, str]]:
     diagnostics = list(base.Adapter().validate(_proxy(context)))
     if base._operation(context) != EXECUTE:
@@ -204,7 +233,7 @@ def _plan_execute(context: dict[str, Any]) -> dict[str, Any]:
     diagnostics = _validate(context)
     if diagnostics:
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": diagnostics}
-    plan = base.Adapter().plan(_proxy(context))
+    plan = _pin_facade_helpers(base.Adapter().plan(_proxy(context)))
     if plan.get("status") != "READY":
         return plan
 
@@ -418,7 +447,7 @@ class Adapter:
         if not isinstance(context, dict):
             return base.Adapter().plan(context)
         if base._operation(context) != EXECUTE:
-            return base.Adapter().plan(context)
+            return _pin_facade_helpers(base.Adapter().plan(context))
         return _plan_execute(context)
 
     def prepare(self, context: Any, plan: Any) -> dict[str, Any]:
