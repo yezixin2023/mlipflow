@@ -1,7 +1,7 @@
 """Remote-side resolver for scheduled ASE MD.
 
 The portable project contains only a structure and a model-reference manifest.
-The site-owned run template supplies the cluster-local model root.  This module
+The site-owned run template supplies the cluster-local model root. This module
 resolves the approved relative model path below that root, recomputes its
 content fingerprint, and invokes the staged ase_md.py implementation in-process.
 """
@@ -18,6 +18,7 @@ from typing import Any
 
 FINGERPRINT_PREFIX = "sha256:"
 MODEL_KINDS = {"deepmd": "file", "m3gnet": "directory", "chgnet": "file", "mace": "file"}
+ENSEMBLES = {"nvt-langevin", "npt-isotropic-mtk"}
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:
@@ -172,6 +173,9 @@ def run(args: argparse.Namespace) -> int:
         calculator = parameters.get("calculator")
         if calculator not in MODEL_KINDS:
             raise ValueError("unsupported ASE MD calculator")
+        ensemble = parameters.get("ensemble", "nvt-langevin")
+        if ensemble not in ENSEMBLES:
+            raise ValueError("unsupported ASE MD ensemble")
 
         structure_reference = _reference(inputs.get("structure"))
         structure_name = Path(structure_reference).name
@@ -201,6 +205,7 @@ def run(args: argparse.Namespace) -> int:
             model=model,
             output_dir=output_dir,
             calculator=str(calculator),
+            ensemble=str(ensemble),
             model_id=model_ref["id"],
             model_fingerprint=model_before,
             structure_fingerprint=structure_fp,
@@ -214,6 +219,9 @@ def run(args: argparse.Namespace) -> int:
             default_dtype=parameters.get("default_dtype"),
             friction_per_fs=parameters.get("friction_per_fs"),
             fix_com=parameters.get("fix_com"),
+            pressure_gpa=parameters.get("pressure_gpa"),
+            thermostat_damping_fs=parameters.get("thermostat_damping_fs"),
+            barostat_damping_fs=parameters.get("barostat_damping_fs"),
             input_format=parameters.get("input_format"),
             input_index=str(parameters.get("input_index", "-1")),
         )
@@ -224,16 +232,21 @@ def run(args: argparse.Namespace) -> int:
             {
                 "status": "OK",
                 "calculator": calculator,
-                "ensemble": "nvt-langevin",
-                "model": {
-                    **model_ref,
-                    "observed_fingerprint": model_after,
-                },
+                "ensemble": ensemble,
+                "model": {**model_ref, "observed_fingerprint": model_after},
                 "structure_fingerprint": structure_fp,
                 "steps_completed": result.get("steps_completed"),
                 "result_sha256": _sha256_file(output_dir / "md-result.json"),
             }
         )
+        if ensemble == "npt-isotropic-mtk":
+            report.update(
+                {
+                    "pressure_GPa": result.get("pressure_GPa"),
+                    "thermostat_damping_fs": result.get("thermostat_damping_fs"),
+                    "barostat_damping_fs": result.get("barostat_damping_fs"),
+                }
+            )
         _write_report(output_dir, report)
         return 0
     except Exception as exc:
