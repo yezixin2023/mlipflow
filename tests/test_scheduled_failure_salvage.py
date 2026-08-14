@@ -16,6 +16,8 @@ from .test_scheduled_dft import PLUGINS, FakeTemplateLibrary, write_site
 
 ASE_MD_RUN_TEMPLATE = """#!/bin/bash
 # ASE MD test template
+# inputs={{INPUT_DIR}}
+# outputs={{OUTPUT_DIR}}
 cd {{RUN_DIR}}
 """
 

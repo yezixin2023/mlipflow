@@ -124,26 +124,26 @@ walltime
 |---|---|
 | 本地 `local` backend | 可执行 |
 | replay 工作流 | 可执行 |
-| 内置科学 Adapter | 默认 `local`；`dft-labeling.label` 可提供 static VASP 科学输入/输出合同给通用 `ssh-slurm` backend |
+| 内置科学 Adapter | 默认 `local`；具备完整受控 `ssh-slurm` 科学合同的能力见下表 |
 | core `slurm` backend | 已实现 `sbatch/squeue/sacct/scancel` 抽象 |
 | core `ssh-slurm` backend | 已实现 SSH alias、远端 scheduler 查询/提交/fetch 基础能力 |
 | 科学 Adapter 直接 `backend: slurm` | **当前被核心显式阻止** |
-| 其他科学 Adapter 直接 `backend: ssh-slurm` | **当前被核心显式阻止** |
-| profile -> template -> attempt workspace -> submit -> monitor -> fetch -> scientific check | 通用软件合同和 fake E2E 已实现；真实 HPC 验证待单独记录 |
+| 受控 `ssh-slurm` 科学 Adapter | static `dft-labeling.label`、四框架 `mlip-training`、scheduled LASP execute、`ase-md`、`lammps-md.execute` |
+| profile -> template -> attempt workspace -> submit -> monitor -> fetch -> scientific check | 通用软件合同和 fake E2E 已实现；一个真实站点已完成 CPU tiny smoke 和一次 DeePMD 训练 |
 | 在 Slurm 分配到的计算节点中运行 `backend: local` | 当前最实际的集群科学执行方式 |
 
 当前仓库状态明确记录为：
 
 ```text
-REAL_HPC_INTEGRATION = EXTERNAL_VALIDATION_PENDING
+REAL_HPC_INTEGRATION = SCIENTIFIC_PROGRAM_VERIFIED_ON_ONE_SITE
 ```
 
 因此：
 
-- **现在可以在集群 CPU/GPU 计算节点上真正运行科学 Adapter**；
-- 但当前方法是让 SLURM 先分配资源，然后 MLIPFlow 在该计算节点内以 `backend: local` 执行；
-- 当前 `dft-labeling.label` static 是首个接入该通用合同的科学插件；
-- 其他插件不能靠修改 manifest 切换 scheduler backend；本地 `slurm` Adapter、relax/AIMD、array 和 continuation 尚未开放。
+- `backend: local` 仍可在已分配的计算节点内使用；
+- 上表列出的插件还可通过明确的 staged-files/fetch/check/collect 合同使用 `ssh-slurm`；
+- 真实站点科学验证仍只覆盖单节点、单进程 CPU 的 DeePMD 500 步训练；ASE、LAMMPS、LASP 和其他训练框架的新 scheduler 合同尚未真实验证；
+- 本地 `slurm` Adapter、DFT relax/AIMD scheduler、array 和通用 continuation 尚未开放。
 
 ---
 
@@ -173,14 +173,16 @@ ionic transport      composition screening   voltage analysis
                     high-fidelity validation
 ```
 
-当前八个科学插件：
+当前十个科学插件：
 
 | 插件 | 操作 | 主要依赖 | 当前 backend |
 |---|---|---|---|
 | `high-entropy-structure` | `generate-sqs` | ASE + icet | `local` |
-| `pes-sampling` | `direct-select` / `lasp-ssw-execute` / `lasp-ssw-normalize-replay` | MAML/ASE/pymatgen 或用户 LASP | `local` |
+| `pes-sampling` | `direct-select` / `lasp-ssw-execute` / `lasp-ssw-normalize-replay` | MAML/ASE/pymatgen 或用户 LASP | `local`；LASP execute 可用受控 `ssh-slurm` |
 | `dft-labeling` | `vasp-prepare` / `label` | pymatgen；用户 DFT wrapper + VASP | `local`；单结构 static `label` 可用受控 `ssh-slurm` |
-| `mlip-training` | `train` / `finetune` | 用户训练 wrapper + DeepMD/M3GNet/CHGNet/MACE | `local` |
+| `mlip-training` | `train` / `finetune` | DeepMD/M3GNet/CHGNet/MACE | `local` / 受控 `ssh-slurm` |
+| `ase-md` | 单温 NVT Langevin / isotropic MTK NPT + checkpoint restart | ASE + 显式 DeepMD/M3GNet/CHGNet/MACE 模型 | 受控 `ssh-slurm` |
+| `lammps-md` | `lammps-prepare` / `execute` + binary restart | ASE + LAMMPS-ready DeepMD/MACE/MatGL 模型 | prepare `local`；execute 受控 `ssh-slurm` |
 | `mlip-benchmark` | benchmark normalize/evaluate | 内置或用户 prediction wrapper | `local` |
 | `ionic-transport` | `analyze-existing` / bounded `md-smoke-and-analyze` | trajectory/MSD + 可选 ASE calculator | `local` |
 | `composition-screening` | deterministic top-k | 已有候选和指标 | `local` |
@@ -678,7 +680,9 @@ LASP version identity
 可选 mpirun/mpiexec
 ```
 
-当前 LASP execute 是 `local` wrapper contract，所以在集群上应先获得计算节点 allocation，再运行该节点。
+LASP execute 同时支持 `local` wrapper contract 和受控 `ssh-slurm` 合同。下面是 local
+示例；scheduled 模式由站点模板提供 LASP/MPI 路径，详见
+`examples/lasp_random_walk/CLUSTER.md`。
 
 示意配置：
 
@@ -2417,9 +2421,9 @@ clone/install
 -> 再扩大到生产规模
 ```
 
-当前 static DFT 是首个接入通用 `ssh-slurm` lifecycle 的科学合同。其他科学 Adapter
-继续使用 `local`，直到其明确提供 scientific staged-files/fetch/check/collect 合同；不得
-把 `submit_script` 或 `remote_cwd` 塞回参数绕过 profile/template/workspace 分层。
+当前 static DFT、四框架训练、scheduled LASP、ASE MD 和 LAMMPS execute 均已提供明确的
+scientific staged-files/fetch/check/collect 合同；真实站点验证仍只覆盖 CPU DeePMD 训练。
+不得把 `submit_script` 或 `remote_cwd` 塞回参数绕过 profile/template/workspace 分层。
 
 ---
 

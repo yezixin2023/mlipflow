@@ -8,7 +8,6 @@ import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
-from typing import Any
 
 from mlipflow.config import load_project
 from mlipflow.services import initialize, make_run_plan
@@ -133,7 +132,10 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         self.assertEqual("lasp-ssw", adapter["scheduled_execution"]["template_family"])
         staged = {item["remote_name"] for item in adapter["scheduled_execution"]["staged_files"]}
         self.assertTrue({"project.yaml", "input.arc", "lasp.in", "lasp_ssw.py", "lasp_cluster.py"}.issubset(staged))
-        self.assertNotIn("lasp_executable", json.dumps(adapter))
+        self.assertNotIn("lasp_executable", staged)
+        self.assertNotIn("lasp_executable", adapter["input_fingerprints"])
+        self.assertNotIn("lasp_executable", adapter["lasp_scheduled_identity"])
+        self.assertTrue(adapter["assumptions"]["cluster_lasp_executable_is_site_owned"])
         fetched = {item["remote_name"] for item in adapter["scheduled_execution"]["fetch_outputs"]}
         self.assertTrue({"cluster-run-report.json", "sampling-result.json", "selected-structures.tar.gz", "allstr.arc"}.issubset(fetched))
 
@@ -147,14 +149,18 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         self.assertIn("selected-structures.tar.gz", names)
 
     def test_scheduled_plan_rejects_local_lasp_executable(self) -> None:
-        project = json.loads((self.root / "project.yaml").read_text(encoding="utf-8"))
-        project["workflow"]["nodes"][0]["inputs"]["lasp_executable"] = "/site/lasp"
-        write_json(self.root / "project.yaml", project)
-        current = load_project(self.root)
-        plan = make_run_plan(current, "lasp-walk", PLUGINS, self.site, library())
-        self.assertEqual("BLOCKED", plan["adapter_plan"]["status"])
-        codes = {item["code"] for item in plan["adapter_plan"]["diagnostics"]}
-        self.assertIn("input.unknown", codes)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            site = build_project(root)
+            project = json.loads((root / "project.yaml").read_text(encoding="utf-8"))
+            project["workflow"]["nodes"][0]["inputs"]["lasp_executable"] = "/site/lasp"
+            write_json(root / "project.yaml", project)
+            initialize(root)
+            current = load_project(root)
+            plan = make_run_plan(current, "lasp-walk", PLUGINS, site, library())
+            self.assertEqual("BLOCKED", plan["adapter_plan"]["status"])
+            codes = {item["code"] for item in plan["adapter_plan"]["diagnostics"]}
+            self.assertIn("input.unknown", codes)
 
 
 class LaspRemoteRunnerTests(unittest.TestCase):

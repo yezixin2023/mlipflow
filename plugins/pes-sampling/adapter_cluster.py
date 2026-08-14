@@ -139,7 +139,7 @@ def _validate_scheduled(context: Any) -> list[dict[str, str]]:
         diagnostics.append(_diag("ERROR", "path.input_structure", "input_structure must be an ordinary project file"))
     else:
         try:
-            if len(LEGACY._arc_frames(structure, 1)) != 1:
+            if len(LEGACY._read_arc_frames(structure, 1)) != 1:
                 raise ValueError("not exactly one frame")
         except Exception as exc:
             diagnostics.append(_diag("ERROR", "input.structure_arc", f"input_structure must contain one LASP ARC frame: {exc}"))
@@ -353,7 +353,7 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
         if archive_record.get("sha256") != _sha256(archive) or archive_record.get("size_bytes") != archive.stat().st_size:
             raise ValueError("selected archive identity differs from cluster report")
 
-        frames = LEGACY._arc_frames(allstr, int(identity["max_frames"]))
+        frames = LEGACY._read_arc_frames(allstr, int(identity["max_frames"]))
         records = structures.get("structures")
         selected_records = selected.get("structures")
         if not isinstance(records, list) or not isinstance(selected_records, list) or len(records) != len(frames):
@@ -419,13 +419,17 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
             best = root / "raw-run" / "best.arc"
             if not _ordinary(best, MAX_ARC_BYTES):
                 raise ValueError("approved best.arc output is missing")
-            if counts.get("aimd_seed_candidate_count") != len(LEGACY._arc_frames(best, int(identity["max_frames"]))):
+            if counts.get("aimd_seed_candidate_count") != len(
+                LEGACY._read_arc_frames(best, int(identity["max_frames"]))
+            ):
                 raise ValueError("best.arc count differs from result")
         if identity.get("include_md_arc"):
             md = root / "raw-run" / "md.arc"
             if not _ordinary(md, MAX_ARC_BYTES):
                 raise ValueError("approved md.arc output is missing")
-            if counts.get("md_structure_count") != len(LEGACY._arc_frames(md, int(identity["max_frames"]))):
+            if counts.get("md_structure_count") != len(
+                LEGACY._read_arc_frames(md, int(identity["max_frames"]))
+            ):
                 raise ValueError("md.arc count differs from result")
     except Exception as exc:
         diagnostics.append(_diag("ERROR", "lasp.scheduled_result", str(exc)))
