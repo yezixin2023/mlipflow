@@ -26,6 +26,7 @@
       "Version 0.1 intentionally implements only one fresh single-temperature NVT Langevin trajectory per workflow node; NPT/NVE, restart/resume, replica exchange, multi-temperature orchestration, and transport analysis are separate future contracts.",
       "Every MLIP model must be an explicit site-owned artifact with an approved content fingerprint. Implicit pretrained-model downloads, network lookup, package caches, and model names that trigger remote loading are not accepted.",
       "M3GNet/MatGL models are directory artifacts; DeepMD, CHGNet, and MACE models are file artifacts. CHGNet is restricted to float32 in this adapter.",
+      "DeepMD's ASE DP calculator uses the precision encoded by the model; version 0.1 records default_dtype for cross-framework workflow identity but does not recast a DeepMD model.",
       "GPU and framework kernels are not claimed to be bitwise deterministic even though velocity initialization and the ASE Langevin RNG are seeded explicitly.",
       "No numerical parity claim is made across ASE, calculator-framework, hardware, or accelerator versions."
     ]
@@ -60,7 +61,7 @@
     {"name": "thermo-interval", "type": "integer", "required": true, "description": "Positive interval in MD steps for recording temperature and energies."},
     {"name": "seed", "type": "integer", "required": true, "description": "Explicit non-negative seed used for Maxwell-Boltzmann initialization and Langevin stochastic forces."},
     {"name": "device", "type": "string", "required": true, "description": "cpu or cuda; cuda requires at least one scheduled GPU."},
-    {"name": "default-dtype", "type": "string", "required": true, "description": "float32 or float64; CHGNet requires float32."},
+    {"name": "default-dtype", "type": "string", "required": true, "description": "float32 or float64. MACE/MatGL apply it directly, CHGNet requires float32, and DeepMD records it only while the loaded model retains its native precision."},
     {"name": "friction-per-fs", "type": "number", "required": true, "description": "Finite positive Langevin friction coefficient expressed in inverse femtoseconds."},
     {"name": "fix-com", "type": "boolean", "required": true, "description": "Whether to append ASE FixCom to keep center-of-mass motion constrained without relying on deprecated Langevin fixcm behavior."},
     {"name": "model-fingerprint", "type": "string", "required": true, "description": "Approved fingerprint that must match the model-reference manifest and cluster-resolved model content."},
@@ -75,7 +76,7 @@
     {"name": "md-result", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Pinned model/structure/integrator identity, versions, completed steps, and output fingerprints."}
   ],
   "dependencies": {
-    "upstream_plugins": ["mlip-training"],
+    "upstream_plugins": [],
     "python_packages": [
       {"name": "ase", "required": true, "bundled": false, "purpose": "Atoms IO, velocity initialization, Langevin integration, and trajectory output on the compute node."},
       {"name": "deepmd-kit", "required": false, "bundled": false, "purpose": "deepmd.calculator.DP when calculator=deepmd."},
@@ -98,7 +99,7 @@
   "completion": {
     "status": "implemented",
     "checks": [
-      {"id": "md-identity", "implemented": true, "description": "Require calculator, model fingerprint, structure fingerprint, seed, integrator settings, device, dtype, and requested/completed steps to match the approved plan."},
+      {"id": "md-identity", "implemented": true, "description": "Require calculator, model fingerprint, structure fingerprint, seed, integrator settings, device, dtype request, and requested/completed steps to match the approved plan."},
       {"id": "md-artifacts", "implemented": true, "description": "Require trajectory, trajectory index, thermodynamics, final structure, and cluster report with matching size and SHA-256 records."},
       {"id": "md-schedule", "implemented": true, "description": "Require trajectory and thermo step/time schedules to be exactly the deterministic intervals plus the final requested step."},
       {"id": "md-thermodynamics", "implemented": true, "description": "Reject non-finite temperature, energy, time, or volume records and inconsistent time-step conversion."}
@@ -117,7 +118,7 @@
     "notes": ["Version 0.1 always retries as a fresh trajectory; checkpoint resume is not silently inferred."]
   },
   "computational_backends": [
-    {"id": "deepmd", "family": "DeepMD ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit local DeepMD model file through deepmd.calculator.DP."]},
+    {"id": "deepmd", "family": "DeepMD ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit local DeepMD model file through deepmd.calculator.DP; calculator precision remains model-native in version 0.1."]},
     {"id": "m3gnet", "family": "M3GNet/MatGL ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit local MatGL model directory through matgl.load_model and PESCalculator; implicit Hub loading is forbidden."]},
     {"id": "chgnet", "family": "CHGNet ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit CHGNet model file through CHGNetCalculator.from_file and requires float32."]},
     {"id": "mace", "family": "MACE ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit MACE model file through MACECalculator."]}
