@@ -4,16 +4,16 @@
   "id": "pes-sampling",
   "name": "Potential-energy-surface sampling",
   "display_name": "Potential-energy-surface sampling",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "api_version": 1,
-  "description": "Safe local argv adapters for the reviewed MAML DIRECT selector and for user-supplied LASP/SSW execution or historical-output normalization; LASP is not bundled.",
+  "description": "Safe local DIRECT/LASP sampling plus scheduler-backed LASP stochastic-surface-walking execution through MLIPFlow's ssh-slurm lifecycle; LASP remains user/site supplied and is never bundled.",
   "category": "sampling",
   "contract": {
     "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
   },
   "implementation": {
     "kind": "python-adapter",
-    "entrypoint": "adapter.py:Adapter",
+    "entrypoint": "adapter_cluster.py:Adapter",
     "status": "adapter-ready",
     "source_classification": ["B", "D", "new"],
     "source_references": [
@@ -21,19 +21,20 @@
       "inventory://remote-mlp/Li10M7P8S32/lasp-ssw"
     ],
     "limitations": [
-      "LASP/SSW support is a local wrapper contract around an explicit user-supplied executable, input.arc, lasp.in, and auxiliary inputs. It does not implement SSW, bundle or license LASP, or submit scheduler jobs.",
+      "LASP/SSW is wrapped rather than reimplemented. Local execution accepts an explicit licensed LASP executable; ssh-slurm execution obtains the LASP executable, modules, MPI launcher, and other site-specific setup from the pinned site-owned lasp-ssw/run.sh template.",
       "The historical normalizer reproduces the reviewed Energy-frame split, energy filter, accepted-order stride, structure ordering, and provenance contract. This is post-processing parity, not LASP numerical parity.",
       "The reviewed LASP inputs and scripts did not record a random seed. LASP operations therefore require seed_status=HISTORICAL_PARAMETER_UNKNOWN and explicit acknowledgement; no seed is reconstructed.",
       "AIMD and MLIP-MD execution remain separate and out of scope. best.arc and md.arc may only be normalized as structure lineage evidence.",
-      "DIRECT still uses the reviewed source CLI, which has no seed flag and deletes an existing --out-dir; the adapter requires a fresh confined output directory.",
-      "Only a fake-executable LASP contract smoke and a bounded historical-output replay have run locally. Authorized LASP numerical execution, scheduler integration, and same-input scientific parity remain pending.",
+      "DIRECT remains local-only and still uses the reviewed source CLI, which has no seed flag and deletes an existing --out-dir; the adapter requires a fresh confined output directory.",
+      "Scheduled LASP uses the generic two-approval ssh-slurm lifecycle and a fixed bounded fetch allowlist. Dynamically selected ARC structures are returned as selected-structures.tar.gz plus manifests so the fetch inventory is known before transfer.",
+      "Authorized LASP numerical execution and site-specific scheduler validation must still be performed on the user's cluster; repository tests use fake scheduler/LASP fixtures and do not establish SSW numerical parity.",
       "LASP completion is rebound to approved input fingerprints and reparsed source ARC frames; output manifests cannot replace or self-sign around the approved source files."
     ]
   },
   "execution": {
     "mode": "external-command",
-    "backends": ["local"],
-    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
+    "backends": ["local", "ssh-slurm"],
+    "entrypoint": {"path": "adapter_cluster.py", "object": "Adapter"},
     "operations": [
       "direct-select",
       "lasp-ssw-execute",
@@ -42,7 +43,7 @@
     "shell": false,
     "executes_external_programs": true,
     "writes_files": true,
-    "submits_jobs": false
+    "submits_jobs": true
   },
   "replay": {
     "supported": true,
@@ -55,14 +56,14 @@
     {"name": "input-dirs", "kind": "directory", "required": false, "description": "DIRECT only: one or more existing local structure directories; runtime key input_dirs."},
     {"name": "historical-run-dir", "kind": "directory", "required": false, "description": "LASP normalize only: read-only directory containing allstr.arc and optional best.arc/md.arc; runtime key historical_run_dir."},
     {"name": "lasp-input", "kind": "file", "required": false, "description": "LASP operations: explicit lasp.in template that is copied or fingerprinted, never synthesized; runtime key lasp_input."},
-    {"name": "lasp-executable", "kind": "file", "required": false, "description": "LASP execute only: licensed user-supplied executable; runtime key lasp_executable."},
-    {"name": "input-structure", "kind": "file", "required": false, "media_type": "chemical/x-biosym-archive", "description": "LASP execute only: explicit ARC structure staged as input.arc; runtime key input_structure."},
-    {"name": "lasp-auxiliary-files", "kind": "value", "required": false, "description": "LASP execute only: mapping of safe destination basenames to explicit input files such as INCAR/KPOINTS/POTCAR; runtime key lasp_auxiliary_files. No auxiliary file is bundled."},
+    {"name": "lasp-executable", "kind": "file", "required": false, "description": "Local LASP execute only: licensed user-supplied executable. ssh-slurm obtains the executable from the site-owned lasp-ssw/run.sh template instead of the project manifest."},
+    {"name": "input-structure", "kind": "file", "required": false, "media_type": "chemical/x-biosym-archive", "description": "LASP execute: explicit single-frame ARC structure staged as input.arc."},
+    {"name": "lasp-auxiliary-files", "kind": "value", "required": false, "description": "LASP execute: mapping of safe destination basenames to explicit project files such as INCAR/KPOINTS/POTCAR. Scheduled execution stages only these approved files; none are bundled."},
     {"name": "result-manifest", "kind": "file", "required": false, "description": "Explicit sampling-result.json for read-only LASP check/collect outside normal execution; DIRECT check/collect continues to accept manifest.csv. During execution it must equal the plan-declared result path."}
   ],
   "parameters": [
     {"name": "operation", "type": "string", "required": false, "description": "direct-select (default), lasp-ssw-execute, or lasp-ssw-normalize-replay."},
-    {"name": "output_subdir", "type": "string", "required": false, "description": "Fresh relative subdirectory below attempt_dir."},
+    {"name": "output_subdir", "type": "string", "required": false, "description": "Fresh relative subdirectory below attempt_dir; scheduled LASP currently pins this to lasp-ssw."},
     {"name": "globs", "type": "array", "required": false, "description": "DIRECT only: non-empty relative file patterns."},
     {"name": "recursive", "type": "boolean", "required": false, "description": "DIRECT only: recursive input discovery."},
     {"name": "stride", "type": "integer", "required": false, "description": "DIRECT only: positive multi-frame input stride."},
@@ -82,16 +83,16 @@
     {"name": "seed_status", "type": "string", "required": false, "description": "LASP operations: must be HISTORICAL_PARAMETER_UNKNOWN for the reviewed source."},
     {"name": "acknowledge_uncontrolled_seed", "type": "boolean", "required": false, "description": "DIRECT and LASP operations: must be true to acknowledge the source seed limitation."},
     {"name": "preserve_historical_order", "type": "boolean", "required": false, "description": "LASP operations: must be true; the normalizer never reorders structures by inferred quality."},
-    {"name": "lasp_version", "type": "string", "required": false, "description": "LASP execute only: explicit user-reported LASP version identity."},
-    {"name": "mpi_processes", "type": "integer", "required": false, "description": "LASP execute only: positive process count used only with resources.mpi_launcher=mpirun/mpiexec."}
+    {"name": "lasp_version", "type": "string", "required": false, "description": "LASP execute: explicit version identity recorded in the approved plan and remote report."},
+    {"name": "mpi_processes", "type": "integer", "required": false, "description": "Local LASP only. Scheduled LASP derives process count from resources.cpus and the site-owned template."}
   ],
   "outputs": [
     {"name": "sample-manifest", "kind": "manifest", "required": true, "description": "DIRECT manifest.csv or LASP sampling-result.json, depending on operation."},
     {"name": "ssw-structure-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "LASP structure identities, source-frame order, energies, selection flags, and SHA-256 values."},
     {"name": "selected-structure-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "LASP selected subset with accepted-order stride provenance."},
-    {"name": "selected-structures", "kind": "artifact-reference", "required": true, "description": "DIRECT POSCAR or LASP BIOSYM ARC structures explicitly listed by the operation manifest."},
+    {"name": "selected-structures", "kind": "artifact-reference", "required": true, "description": "DIRECT POSCAR, local LASP ARC files, or scheduled LASP selected-structures.tar.gz plus its manifest."},
     {"name": "lasp-run-metadata", "kind": "manifest", "required": false, "media_type": "application/json", "description": "LASP template parameters, source fingerprints, execution identity, unknown seed marker, and scientific boundaries."},
-    {"name": "sampling-diagnostics", "kind": "artifact-reference", "required": false, "description": "Optional DIRECT PCA/FCS diagnostics or LASP best/md lineage manifests."}
+    {"name": "sampling-diagnostics", "kind": "artifact-reference", "required": false, "description": "Optional DIRECT diagnostics or LASP best/md/log lineage artifacts."}
   ],
   "dependencies": {
     "upstream_plugins": ["high-entropy-structure"],
@@ -102,7 +103,7 @@
       {"name": "plotly", "required": false, "bundled": false, "purpose": "DIRECT operation only: optional PCA/FCS diagnostics."}
     ],
     "external_programs": [
-      {"name": "LASP", "required": false, "bundled": false, "purpose": "Required only for lasp-ssw-execute. The licensed executable and all potential/DFT inputs are supplied by the user; historical normalization does not load LASP."}
+      {"name": "LASP", "required": false, "bundled": false, "purpose": "Required for lasp-ssw-execute. Local runs provide an explicit licensed executable; ssh-slurm uses the cluster's site-owned LASP installation referenced by the pinned lasp-ssw/run.sh template."}
     ]
   },
   "safety": {
@@ -111,11 +112,11 @@
     "network_access": false,
     "requires_approval_before_execution": true,
     "notes": [
-      "Every operation emits a string-list argv with shell=false and is confined to a fresh attempt subdirectory. LASP operations require resources.python_executable as an explicit absolute, executable, non-symlink file; both it and the bundled wrapper are fingerprinted in the approved plan.",
-      "LASP execute stages only explicit ordinary non-symlink files. Auxiliary destination names are allowlisted basenames; no credential, remote transport, or scheduler command is accepted.",
-      "Optional MPI launch requires an explicit ordinary executable path named mpirun/mpiexec and an integer -np value, so launcher identity is fingerprinted. The adapter itself declares only local execution.",
-      "Failed wrapper runs retain an INCOMPLETE.json marker inside the fresh attempt; successful completion requires that marker to be removed after sampling-result.json is written.",
-      "Retries use a new attempt directory; neither DIRECT inputs nor historical LASP directories are modified."
+      "Local operations retain string-list argv and shell=false. Scheduled LASP emits scheduled_execution schema v2; MLIPFlow core performs SSH staging, Slurm submission, status polling, second approval, bounded fetch, and finalization.",
+      "Scheduled LASP stages only explicit project/plugin files with pinned hashes. SSH targets, work roots, partitions, modules, LASP paths, and MPI launcher paths remain outside project.yaml in the user-local site profile and remote template library.",
+      "The scheduled fetch allowlist is fixed before submission. Dynamic selected structures are normalized remotely and packed into selected-structures.tar.gz; the local checker reparses fetched allstr.arc and verifies every tar member against the approved selection policy.",
+      "Failed local wrapper runs retain an INCOMPLETE.json marker inside the fresh attempt; scheduled failure is additionally governed by the core scheduler completion contract.",
+      "Retries use a new attempt directory and remote workspace; no historical LASP source or earlier attempt is overwritten."
     ]
   },
   "completion": {
@@ -123,7 +124,8 @@
     "checks": [
       {"id": "direct-manifest-and-structures", "implemented": true, "description": "DIRECT requires a readable manifest.csv and non-empty confined selected structures."},
       {"id": "lasp-file-contract", "implemented": true, "description": "LASP requires sampling-result identity, parsed allstr.arc evidence, complete counts, portable ordinary artifacts, and matching SHA-256/size values; stdout wording is never success evidence."},
-      {"id": "lasp-structure-lineage", "implemented": true, "description": "LASP structure IDs, finite energies, historical ordering, selection identity, selected-file hashes, and optional best/md manifest counts are cross-checked."}
+      {"id": "lasp-structure-lineage", "implemented": true, "description": "LASP structure IDs, finite energies, historical ordering, selection identity, selected-file hashes, and optional best/md manifest counts are cross-checked."},
+      {"id": "lasp-scheduled-finalization", "implemented": true, "description": "ssh-slurm LASP requires scheduler completion, bounded approved fetch, cluster-run-report identity, reparsed allstr.arc, recomputed energy/stride selection, and exact selected-structure tar member hashes before scientific OK."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"
@@ -136,7 +138,7 @@
     "requires_approval": true,
     "max_attempts": null,
     "limit_enforced": false,
-    "notes": ["A retry always uses a fresh attempt/output directory; no historical LASP source or earlier attempt is overwritten."]
+    "notes": ["A retry always uses a fresh local attempt and, for ssh-slurm, a fresh remote attempt workspace."]
   },
   "computational_backends": [
     {
@@ -145,15 +147,15 @@
       "status": "adapter-ready",
       "operations": ["direct-select"],
       "external_programs": ["reviewed direct.py with MAML"],
-      "limitations": ["The reviewed source CLI has no seed flag and its numerical parity fixture remains external-validation pending."]
+      "limitations": ["Local only; the reviewed source CLI has no seed flag and its numerical parity fixture remains external-validation pending."]
     },
     {
       "id": "lasp-ssw",
-      "family": "LASP stochastic surface walking",
+      "family": "LASP stochastic surface walking / random-walk PES sampling",
       "status": "adapter-ready",
       "operations": ["lasp-ssw-execute", "lasp-ssw-normalize-replay"],
-      "external_programs": ["user-supplied LASP"],
-      "limitations": ["The repository implements only a local execute/normalize contract; it neither implements SSW nor establishes LASP numerical parity."]
+      "external_programs": ["user/site-supplied licensed LASP"],
+      "limitations": ["Execute supports local and ssh-slurm; historical normalize-replay remains local. The repository wraps LASP SSW and validates output lineage but does not reimplement SSW or claim LASP numerical parity."]
     }
   ]
 }
