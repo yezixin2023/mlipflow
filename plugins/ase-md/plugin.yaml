@@ -1,0 +1,125 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "schema_version": 1,
+  "id": "ase-md",
+  "name": "ASE molecular dynamics",
+  "display_name": "ASE molecular dynamics with MLIP calculators",
+  "version": "0.1.0",
+  "api_version": 1,
+  "description": "Scheduled single-temperature ASE NVT molecular dynamics using an explicit fingerprinted DeepMD, M3GNet/MatGL, CHGNet, or MACE model from a site-owned cluster model registry.",
+  "category": "sampling",
+  "contract": {
+    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
+  },
+  "implementation": {
+    "kind": "python-adapter",
+    "entrypoint": "adapter.py:Adapter",
+    "status": "implemented",
+    "source_classification": ["D", "new"],
+    "source_references": [
+      "https://docs.deepmodeling.com/projects/deepmd/en/stable/third-party/ase.html",
+      "https://chgnet.lbl.gov/api",
+      "https://mace-docs.readthedocs.io/en/latest/guide/ase.html",
+      "https://matgl.ai/tutorials/Relaxations%20and%20Simulations%20using%20the%20M3GNet%20Universal%20Potential.html"
+    ],
+    "limitations": [
+      "Version 0.1 intentionally implements only one fresh single-temperature NVT Langevin trajectory per workflow node; NPT/NVE, restart/resume, replica exchange, multi-temperature orchestration, and transport analysis are separate future contracts.",
+      "Every MLIP model must be an explicit site-owned artifact with an approved content fingerprint. Implicit pretrained-model downloads, network lookup, package caches, and model names that trigger remote loading are not accepted.",
+      "M3GNet/MatGL models are directory artifacts; DeepMD, CHGNet, and MACE models are file artifacts. CHGNet is restricted to float32 in this adapter.",
+      "GPU and framework kernels are not claimed to be bitwise deterministic even though velocity initialization and the ASE Langevin RNG are seeded explicitly.",
+      "No numerical parity claim is made across ASE, calculator-framework, hardware, or accelerator versions."
+    ]
+  },
+  "execution": {
+    "mode": "python-library",
+    "backends": ["ssh-slurm"],
+    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
+    "operations": ["run"],
+    "shell": false,
+    "executes_external_programs": false,
+    "writes_files": true,
+    "submits_jobs": true
+  },
+  "replay": {
+    "supported": true,
+    "behavior": "parse-existing-artifacts",
+    "accepted_media_types": ["application/json", "text/csv", "application/octet-stream"],
+    "reason": "Replay re-runs only the bounded result/thermo/fingerprint checker on already fetched artifacts and never starts ASE dynamics."
+  },
+  "inputs": [
+    {"name": "structure", "kind": "file", "required": true, "description": "Project-scoped structure readable by ASE; the original basename/extension is preserved when staged."},
+    {"name": "model-reference", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Logical model id, site-root-relative path, artifact kind, and approved SHA-256/tree fingerprint. The model itself is not uploaded by MLIPFlow."}
+  ],
+  "parameters": [
+    {"name": "calculator", "type": "string", "required": true, "description": "One explicit calculator family: deepmd, m3gnet, chgnet, or mace."},
+    {"name": "ensemble", "type": "string", "required": true, "description": "Must be nvt-langevin in version 0.1."},
+    {"name": "temperature-k", "type": "number", "required": true, "description": "Finite positive target temperature in kelvin."},
+    {"name": "timestep-fs", "type": "number", "required": true, "description": "Finite positive ASE integration timestep no greater than 10 fs."},
+    {"name": "steps", "type": "integer", "required": true, "description": "Positive MD step count, bounded by the adapter contract."},
+    {"name": "trajectory-interval", "type": "integer", "required": true, "description": "Positive interval in MD steps for writing ASE trajectory frames."},
+    {"name": "thermo-interval", "type": "integer", "required": true, "description": "Positive interval in MD steps for recording temperature and energies."},
+    {"name": "seed", "type": "integer", "required": true, "description": "Explicit non-negative seed used for Maxwell-Boltzmann initialization and Langevin stochastic forces."},
+    {"name": "device", "type": "string", "required": true, "description": "cpu or cuda; cuda requires at least one scheduled GPU."},
+    {"name": "default-dtype", "type": "string", "required": true, "description": "float32 or float64; CHGNet requires float32."},
+    {"name": "friction-per-fs", "type": "number", "required": true, "description": "Finite positive Langevin friction coefficient expressed in inverse femtoseconds."},
+    {"name": "fix-com", "type": "boolean", "required": true, "description": "Whether to append ASE FixCom to keep center-of-mass motion constrained without relying on deprecated Langevin fixcm behavior."},
+    {"name": "model-fingerprint", "type": "string", "required": true, "description": "Approved fingerprint that must match the model-reference manifest and cluster-resolved model content."},
+    {"name": "structure-fingerprint", "type": "string", "required": true, "description": "Approved SHA-256 of the staged input structure."},
+    {"name": "input-format", "type": "string", "required": false, "description": "Optional explicit ASE reader format; otherwise ASE infers from the staged structure basename."},
+    {"name": "input-index", "type": "string", "required": false, "description": "ASE reader index string; defaults to -1 and must select exactly one Atoms object."}
+  ],
+  "outputs": [
+    {"name": "trajectory", "kind": "file", "required": true, "description": "ASE trajectory.traj containing the initial, scheduled, and final frames."},
+    {"name": "thermodynamics", "kind": "file", "required": true, "media_type": "text/csv", "description": "Finite step/time/temperature/energy/volume records on the approved schedule."},
+    {"name": "final-structure", "kind": "file", "required": true, "description": "Final ASE structure as extxyz."},
+    {"name": "md-result", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Pinned model/structure/integrator identity, versions, completed steps, and output fingerprints."}
+  ],
+  "dependencies": {
+    "upstream_plugins": ["mlip-training"],
+    "python_packages": [
+      {"name": "ase", "required": true, "bundled": false, "purpose": "Atoms IO, velocity initialization, Langevin integration, and trajectory output on the compute node."},
+      {"name": "deepmd-kit", "required": false, "bundled": false, "purpose": "deepmd.calculator.DP when calculator=deepmd."},
+      {"name": "matgl", "required": false, "bundled": false, "purpose": "Local MatGL potential loading and ASE PESCalculator when calculator=m3gnet."},
+      {"name": "chgnet", "required": false, "bundled": false, "purpose": "CHGNetCalculator.from_file when calculator=chgnet."},
+      {"name": "mace-torch", "required": false, "bundled": false, "purpose": "MACECalculator when calculator=mace."}
+    ],
+    "external_programs": []
+  },
+  "safety": {
+    "expensive": true,
+    "destructive": false,
+    "network_access": false,
+    "requires_approval_before_execution": true,
+    "notes": [
+      "The project carries only portable structure/model identities and abstract resources; SSH host, partition, modules, Python environment, model root, template root, and work root remain site-owned configuration.",
+      "Scheduler COMPLETED is not scientific success. Finalization requires a second approved bounded fetch followed by model/structure identity, trajectory schedule, thermo finiteness, completed-step, and SHA-256 checks."
+    ]
+  },
+  "completion": {
+    "status": "implemented",
+    "checks": [
+      {"id": "md-identity", "implemented": true, "description": "Require calculator, model fingerprint, structure fingerprint, seed, integrator settings, device, dtype, and requested/completed steps to match the approved plan."},
+      {"id": "md-artifacts", "implemented": true, "description": "Require trajectory, trajectory index, thermodynamics, final structure, and cluster report with matching size and SHA-256 records."},
+      {"id": "md-schedule", "implemented": true, "description": "Require trajectory and thermo step/time schedules to be exactly the deterministic intervals plus the final requested step."},
+      {"id": "md-thermodynamics", "implemented": true, "description": "Reject non-finite temperature, energy, time, or volume records and inconsistent time-step conversion."}
+    ],
+    "success_state": "OK",
+    "failure_state": "FAIL"
+  },
+  "retry": {
+    "status": "delegated-to-core",
+    "allowed_from": ["FAIL", "STOPPED"],
+    "creates_new_attempt": true,
+    "reuses_previous_run_directory": false,
+    "requires_approval": true,
+    "max_attempts": null,
+    "limit_enforced": false,
+    "notes": ["Version 0.1 always retries as a fresh trajectory; checkpoint resume is not silently inferred."]
+  },
+  "computational_backends": [
+    {"id": "deepmd", "family": "DeepMD ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit local DeepMD model file through deepmd.calculator.DP."]},
+    {"id": "m3gnet", "family": "M3GNet/MatGL ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit local MatGL model directory through matgl.load_model and PESCalculator; implicit Hub loading is forbidden."]},
+    {"id": "chgnet", "family": "CHGNet ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit CHGNet model file through CHGNetCalculator.from_file and requires float32."]},
+    {"id": "mace", "family": "MACE ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit MACE model file through MACECalculator."]}
+  ]
+}
