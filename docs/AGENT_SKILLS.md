@@ -9,7 +9,7 @@
 | `$pes-sampling` | 监督 DIRECT 代表构型选择、LASP/SSW 随机行走采样、历史 archive 归一化和受控 SSH-SLURM 执行 | `pes-sampling` |
 | `$dft-labeling` | 用 pymatgen 准备 static/relax/AIMD VASP 输入，并以独立审批监督 local 或受控 SSH-SLURM static 标注 | `dft-labeling` |
 | `$mlip-training` | 选择并监督 DeepMD/M3GNet/CHGNet/MACE 的训练、微调、数据/基础模型绑定和 SSH-SLURM 生命周期 | `mlip-training` |
-| `$ase-md` | 用显式 DeepMD/M3GNet/CHGNet/MACE 模型在集群上运行受控 ASE NVT Langevin 或各向同性 MTK NPT 轨迹 | `ase-md` |
+| `$ase-md` | 用显式 DeepMD/M3GNet/CHGNet/MACE 模型运行集群 ASE NVT/NPT，并监督 checkpoint salvage 与断点续跑 | `ase-md` |
 | `$mlip-benchmark` | 产生机器可读 benchmark/ranking | `mlip-benchmark` |
 | `$ionic-transport` | MD→MSD→D/电导/Arrhenius | `ionic-transport` |
 | `$composition-screening` | 大超胞组分筛选与 top-k 验证 | `composition-screening` |
@@ -33,13 +33,17 @@ Agent 负责根据用户选择或 benchmark/routing 证据提出 framework/opera
 
 ## ASE molecular dynamics
 
-`$ase-md` 是独立的 trajectory 生成能力，不是 `$ionic-transport` 的别名。0.2 版支持单温度 `nvt-langevin` 与 `npt-isotropic-mtk`，支持 DeepMD、M3GNet/MatGL、CHGNet、MACE 四种显式本地模型。项目只绑定结构 SHA-256 与 `model_reference`；后者包含逻辑 model id、site-owned `MODEL_ROOT` 下的相对路径、file/directory kind 和模型内容 fingerprint。任何会触发 Hub/网络/包缓存自动下载的模型名都不能进入 scheduled contract。
+`$ase-md` 是独立的 trajectory 生成能力，不是 `$ionic-transport` 的别名。0.3 版支持单温度 `nvt-langevin` 与 `npt-isotropic-mtk`，支持 DeepMD、M3GNet/MatGL、CHGNet、MACE 四种显式本地模型，并可通过周期 checkpoint 在 fresh scheduler attempts 之间断点续跑。项目只绑定结构 SHA-256 与 `model_reference`；后者包含逻辑 model id、site-owned `MODEL_ROOT` 下的相对路径、file/directory kind 和模型内容 fingerprint。任何会触发 Hub/网络/包缓存自动下载的模型名都不能进入 scheduled contract。
 
-每个 calculator 使用独立 site template family：`ase-md-deepmd`、`ase-md-m3gnet`、`ase-md-chgnet`、`ase-md-mace`。两种 ensemble 都必须显式声明温度、timestep、steps、trajectory/thermo interval、seed、COM policy、device/dtype 和抽象资源。NVT 额外要求 Langevin friction；NPT 不接受 friction，而要求显式 `pressure_gpa`、`thermostat_damping_fs`、`barostat_damping_fs`，并固定为各向同性 MTK volume fluctuation。
+每个 calculator 使用独立 site template family：`ase-md-deepmd`、`ase-md-m3gnet`、`ase-md-chgnet`、`ase-md-mace`。两种 ensemble 都必须显式声明温度、timestep、总 `steps`、trajectory/thermo interval、seed、COM policy、device/dtype 和抽象资源。NVT 额外要求 Langevin friction；NPT 不接受 friction，而要求显式 `pressure_gpa`、`thermostat_damping_fs`、`barostat_damping_fs`，并固定为各向同性 MTK volume fluctuation。
 
-NPT 只能用于 full-rank 3D 周期 cell，`fix_com` 必须为 false，且不能带 ASE constraints。Framework 名称本身不作为 stress 证据：cluster runner 在第一步积分前必须确认具体 calculator/model 声明 stress 并实际返回有限 3x3 stress，否则立即失败。0.2 将 thermostat/barostat chain 长度固定为 3/3，chain integration substeps 固定为 1/1，并把这些值写入 approval/provenance。
+NPT 只能用于 full-rank 3D 周期 cell，`fix_com` 必须为 false，且不能带 ASE constraints。Framework 名称本身不作为 stress 证据：cluster runner 在积分前必须确认具体 calculator/model 声明 stress 并实际返回有限 3x3 stress，否则立即失败。0.3 将 thermostat/barostat chain 长度固定为 3/3，chain integration substeps 固定为 1/1，并把这些值写入 approval/provenance。
 
-Scheduler `COMPLETED` 后仍需第二次审批；checker 会核对完成步数、trajectory/thermo step-time schedule、有限热力学值、模型/结构 identity 和全部输出 SHA-256。NPT 还会核对 target pressure/damping identity，并要求 thermo 中的 pressure 有限、volume/cell lengths 为正。restart、多温度和 transport 暂不自动串接。
+断点续跑必须显式配置 `checkpoint_interval` 与 `restart_policy: auto-from-previous-attempt`。Checkpoint 是原子替换的严格 JSON，而不是 pickle：NVT 保存 atom state 与 PCG64 RNG state；NPT 额外保存 MTK particle/cell、thermostat chain、barostat chain extended state，并要求 restart 时 ASE 版本完全一致。`steps` 始终表示整条 trajectory 的总目标；retry 只从 checkpoint 的 global completed step 跑剩余部分。
+
+当 Slurm 因 `TIMEOUT`、`PREEMPTED` 等终止时，core 不会直接把远端 checkpoint 当可信输入。`advance --dry-run` 先对 adapter 声明的 `failure_salvage` 子集做远端 size/SHA inventory；匹配审批后才 bounded fetch，并保持原 attempt 为 `FAIL/STOPPED`。随后 `retry` 创建 fresh attempt；新 run plan 只能 stage 立即上一 attempt 已经本地 salvage 的 checkpoint，并将 checkpoint SHA、来源 attempt、segment start/remaining steps 重新纳入审批。Scheduler `COMPLETED` 的普通科学 FAIL 不自动 resume。
+
+每个 retry attempt 都生成独立 trajectory/thermo segment，使用连续的 global step/time 编号；0.3 暂不自动拼接 segment。成功完成后仍需第二次 `advance` 审批，checker 会核对 total completed steps、segment schedule、模型/结构/restart identity、checkpoint SHA，以及 NVT/NPT 对应热力学约束。多温度和 transport 仍不自动串接。
 
 ## Skill validation
 
