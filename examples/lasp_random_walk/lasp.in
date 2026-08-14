@@ -1,0 +1,15 @@
+# LASP SSW/random-walk example derived from the repository's audited
+# Li10M7P8S32/run/11113 input shape. Replace the potential/DFT setup and
+# auxiliary files with those for your own licensed LASP case.
+potential vasp
+explore_type ssw
+Run_type 5
+SSW.SSWsteps 4
+SSW.MaxOptstep 300
+SSW.Temp 200.0000
+SSW.printdelay 2
+SSW.printselect 6
+SSW.printevery T
+SSW.output T
+SSW.DimerdR 0.010
+SSW.ftol 0.1000

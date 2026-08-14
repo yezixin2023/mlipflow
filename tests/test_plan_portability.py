@@ -44,15 +44,18 @@ EXAMPLE = ROOT / "examples" / "high_entropy_sulfide"
 # which still exercises the diagnostics path — an adapter that quotes the file it
 # could not find would leak an absolute path into a signed plan.
 PLUGIN_NODES = {
+    "ase-md": {"calculator": "mace", "ensemble": "nvt-langevin"},
     "composition-screening": {"operation": "rank-candidates"},
     "dft-labeling": {"operation": "vasp-prepare"},
     "electrochemical-voltage": {"operation": "compute-from-energies"},
     "high-entropy-structure": {"operation": "generate-sqs"},
     "ionic-transport": {"operation": "analyze-existing"},
+    "lammps-md": {"operation": "lammps-prepare"},
     "mlip-benchmark": {"operation": "evaluate-static"},
     "mlip-training": {"operation": "train"},
     "pes-sampling": {"operation": "direct-select"},
 }
+PLUGIN_BACKENDS = {"ase-md": "ssh-slurm"}
 
 # A BLOCKED adapter returns before it builds argv or cwd, so those plans contain
 # no paths at all and prove little on their own.  These two reach READY with
@@ -132,7 +135,7 @@ def build_checkout(
         "id": "n",
         "uses": f"{plugin_id}@0",
         "mode": "execute",
-        "backend": "local",
+        "backend": PLUGIN_BACKENDS.get(plugin_id, "local"),
         "inputs": inputs
         if inputs is not None
         else {
@@ -141,6 +144,14 @@ def build_checkout(
         },
         "parameters": parameters,
     }
+    if node["backend"] == "ssh-slurm":
+        node["backend_profile"] = "cluster-a"
+        node["resources"] = {
+            "cpus": 1,
+            "gpus": 0,
+            "memory": "1G",
+            "walltime": "00:01:00",
+        }
     write_json(root / "project.yaml", project_config([node]))
 
 

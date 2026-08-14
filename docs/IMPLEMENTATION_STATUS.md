@@ -1,6 +1,6 @@
 # 实现状态
 
-最后更新：2026-08-13。
+最后更新：2026-08-14。
 
 ## 六个独立状态轴
 
@@ -12,7 +12,7 @@
 | 状态轴 | 状态 | 已完成 | 尚未完成/不可声称 |
 |---|---|---|---|
 | `SOFTWARE_CORE` | DONE | 配置/schema、DAG、SQLite attempt lineage、审批摘要、plugin discovery；多 cluster local site control plane；remote template selection/fingerprinting；确定性 CPU/GPU rendering；fresh remote workspace；SSH-SLURM stage/submit/monitor/fetch/check/collect 状态机；evidence-gated routing 与只读命令语义均有软件测试 | 该状态不代表任何科学算法、远端模板或真实集群已验证 |
-| `SCIENTIFIC_INTEGRATION` | DONE | 六模型 benchmark 归一化；真实 SQS/icet 薄封装及两次 deterministic local smoke；pymatgen `vasp-prepare`（static/relax/AIMD）与独立 DFT label contract；训练 source auditor/wrapper contract；既有轨迹输运后处理；真实 ASE/MACE model-loading tiny MD→analysis 标准 Adapter 闭环；LASP/SSW 历史归一化 replay 与用户自备 LASP 的 local wrapper contract；247 候选 legacy normalization/ranking；电压 post-process 与标准 S11 replay | DONE 只表示本阶段代码/证据集成完成；VASP 输入生成不等于 DFT 已运行或数值 parity；极短 MD smoke 不是论文数值 parity，SQS smoke 不是 historical/production parity，DIRECT、真实 LASP/SSW、DFT、训练等逐项科学状态仍按验证表 pending/not-testable |
+| `SCIENTIFIC_INTEGRATION` | DONE | 六模型 benchmark 归一化；真实 SQS/icet 薄封装；pymatgen `vasp-prepare` 与 DFT label contract；四框架 bundled training runner 与通用 scheduled contract；scheduled LASP；ASE NVT/NPT checkpoint restart；LAMMPS prepare/execute/binary restart；既有轨迹输运后处理、247 候选 normalization/ranking、电压 post-process 与论文证据 replay | DONE 只表示本阶段代码/契约/本地 fixture 集成完成；新 scheduled 能力除一次 DeepMD CPU 训练外尚未真实集群验证，不能据此声称生产数值 parity |
 | `MANUSCRIPT_REPRODUCTION` | DONE | 紧凑真实论文证据可重建 static/transport/voltage 路由、三组 speedup、六模型 registry、247/247 大超胞筛选、top-1 历史输运连接与 unseen claim-level record；10 项自动验收通过，报告为 `REPLAY_VERIFIED` | DONE 只适用于 evidence-replay contract；top-1 AIMD/DFT 高保真仍 pending，unseen 仍不可数值验证，也不能声称重新计算论文 |
 | `LOCAL_NUMERICAL_PARITY` | PARTIAL | 历史 MACE/DeepMD `target.msd` 输运脚本与 stdout 已作条件真实证据 parity；历史 247 候选 ID/数值规范化和排序已比较；两套 LASP/SSW archive 已由本地 wrapper 实际重放并经 Adapter check=`OK` | SQS、DIRECT、真实 LASP/SSW 数值、DFT、训练、RDF/局域结构、全部六模型 fresh prediction、总能→电压和 unseen transfer 尚无 numerical parity |
 | `REAL_HPC_INTEGRATION` | SCIENTIFIC_PROGRAM_VERIFIED_ON_ONE_SITE | synthetic multi-cluster `site.yaml`、fake template library/backend 覆盖 resolution、attempt path、stage、scheduler reconciliation、fetch 与 scientific check/collect；同一个真实 SSH-SLURM 站点上先完成 CPU tiny smoke，**随后由 MLIPFlow 端到端执行一次真实 DeePMD-kit 训练**（job `27356151`、500 步 fresh training、scheduler `COMPLETED`、MLIPFlow `OK`），并与历史 run 的前 6 个 reporting step 逐位一致 | 已验证的科学程序只有 DeePMD `dp train` 一个，且限于 CPU、单节点、单进程、`se_e2_a`、一个数据集、500 步 bounded run；VASP/LAMMPS 仍未在调度器上运行；GPU、多节点、cancellation、排队/容错、生产规模训练与该站点之外的集群同样未验证 |
@@ -22,14 +22,16 @@
 `MANUSCRIPT_REPRODUCTION` 完成。当前两者均已按本阶段边界完成；
 `LOCAL_NUMERICAL_PARITY` 仍为 `PARTIAL` 的原因是上述缺失科学对照，而不是 HPC。
 
-## 八个科学插件的真实边界
+## 十个科学插件的真实边界
 
 | 插件 | 当前可执行能力 | 可重放证据 | 已有科学比较 | 当前边界 |
 |---|---|---|---|---|
 | `high-entropy-structure` | bundled、seeded `icet.generate_sqs_from_supercells` wrapper；显式 sublattice/count/cutoff/repeat/steps/output | 标准 generation manifest | 用真实 57 原子 prototype、ASE 3.28.0/icet 3.2 完成两次 100-step bounded smoke；结构/manifest byte-identical，成分正确 | `LOCAL_INTEGRATION_SMOKE_PASS` 不等于 production SQS 或历史 parity；历史脚本无 seed，外部 prototype 未复制 |
-| `pes-sampling` | 三个操作：历史 MAML DIRECT CLI；用户自备 LASP 的 `lasp-ssw-execute` 本地 `shell=False` 薄封装；已有 archive 的 `lasp-ssw-normalize-replay` | DIRECT result manifest；LASP `allstr.arc`，可选 `best.arc`/`md.arc`，以及归一化结构、manifest 和 provenance | 初始与重采样 archive 均实际本地 replay，wrapper rc=0、Adapter check=`OK`，计数分别为 6/5/5/2/0 与 66/25/9/1/17；fake executable local contract smoke 通过 | `reports/lasp_ssw_historical_replay.json` 为 sanitized `HISTORICAL_POSTPROCESS_REPLAY_PASS`；不捆绑或实现 LASP；真实授权 LASP 未执行；仅 local，不提交 scheduler；seed=`HISTORICAL_PARAMETER_UNKNOWN`，无 scientific numerical parity |
+| `pes-sampling` | 历史 MAML DIRECT CLI；用户自备 LASP 的 local `shell=False` wrapper 与受控 `ssh-slurm` scheduled execute；已有 archive 的 normalize replay | DIRECT result manifest；LASP `allstr.arc`、可选 `best.arc`/`md.arc`、归一化结构和 bounded scheduled artifacts | 两套历史 archive 实际本地 replay；fake executable local/scheduled contract 测试通过 | 不捆绑或实现 LASP；真实授权 LASP 和站点 scheduler 尚未执行；seed=`HISTORICAL_PARAMETER_UNKNOWN`，无 scientific numerical parity |
 | `dft-labeling` | 两个独立操作：bundled pymatgen `vasp-prepare` 生成 static/relax/AIMD 输入；`label` 支持 local user wrapper，static VASP 可向通用 `ssh-slurm` backend 提供 scientific stage/fetch/check/collect 合同 | `dft-input-manifest.json`、可收集的 POSCAR/INCAR/KPOINTS；标准标签与 raw-output hashes；远端 input/output/logs/completion allowlist | SI/历史单点参数只读 source audit；真实 pymatgen 生成 smoke；synthetic site + fake template/backend 完成 fresh stage/submit/reconcile/bounded fetch/pinned check E2E | POTCAR 只从 `PMG_VASP_PSP_DIR` 组装；远端可上传但永不 fetch/collect/入库；真实 VASP/HPC 尚未运行、无数值 parity；relax/AIMD scheduler、array/continuation pending |
-| `mlip-training` | DeepMD fresh train：本地 wrapper contract，以及已在真实 SSH-SLURM 站点执行过的 scheduled train；M3GNet/CHGNet/MACE train/finetune 的安全外部 wrapper contract | 既有标准 training result；新增一次真实 scheduled training 的标准 result 与 learning curve | 5 份历史入口/最终配置的只读 source audit；**一次真实 early-training 数值复现**：历史 `split_train/se_e2_a/para0` 与新 run 在 step 0/100/200/300/400/500 上 lr 与 total/energy/force RMSE（train 与 val）全部相对差 0.0 | 不导入框架；DeepMD fine-tune/restart 未声明；scheduled 路径只覆盖单节点 CPU fresh train；复现精度受历史 lcurve 只保留 3 位有效数字所限；历史 MACE scratch 命令有缺续行问题；M3GNet 源混用 API |
+| `mlip-training` | DeepMD、M3GNet/MatGL、CHGNet、MACE 的 bundled train/finetune runner；local compatibility path 与通用 `ssh-slurm` contract | 标准 training result、cluster run report、模型 artifact identity；一次真实 DeepMD scheduled learning curve | 5 份历史源审计；一次真实 DeepMD 500 步 early-training 数值复现逐 reporting step 一致 | 真实 scheduled 验证仅覆盖单节点 CPU DeepMD fresh train；其他框架、fine-tune、GPU、多节点和生产规模未验证 |
+| `ase-md` | 显式四框架模型的单温 NVT Langevin / isotropic MTK NPT；周期 JSON checkpoint、失败 salvage 和新 attempt 精确 restart | trajectory/index/thermo、checkpoint、final structure、result/cluster reports | fake scheduler 覆盖 NVT、NPT、checkpoint、TIMEOUT salvage 与 restart 身份 | 尚未在真实站点运行；不做轨迹拼接、温度序列或输运分析，NPT 必须由具体模型通过 finite-stress probe |
+| `lammps-md` | 本地生成 DeepMD/MACE/MatGL CPU/GPU NVT/NPT deck；受控 scheduled execute；交替 binary restart、salvage 与 runtime-bound resume | prepared manifest、trajectory/final data/restart/log/result；restart runtime identity | 本地 fixture 覆盖 prepare、scheduled lifecycle、completion 与 restart deck/identity | 尚未运行真实 LAMMPS；需要匹配模型接口的站点 build，restart 只保证 pinned runtime 下 state continuity，不保证跨平台 bitwise identity |
 | `mlip-benchmark` | 从 supplied reference/prediction pairs 重算 MAE/RMSE/Pearson r；不会加载模型 | DeepMD/CHGNet workbook、prepared JSON/CSV/XLSX、论文表 | 真实 workbook/表格均为 `REPLAY_VERIFIED`，不是 fresh prediction parity | M3GNet 真实 workbook 和 DPA-2 原始 pairs 缺失；CHGNet force/stress 源单位未声明 |
 | `ionic-transport` | 既有 trajectory/MSD → MSD/D/σ/Arrhenius post-process；`md-smoke-and-analyze` 有界编排历史 MD source 与 analysis CLI | 历史 stdout/标准结果；integration manifest | MACE legacy 与 DeepMD top-candidate 真实 evidence parity；MACE 0.3.15/Li3YCl6 的 3 温度×10 步真实 model-loading smoke 经 Adapter check/collect=OK | 极短轨迹不提供收敛输运数值；integration model 不是六模型 benchmark 的 exact checkpoint；历史 N=7 是需隔离的 bug-compatible 模式，corrected N=10 不冒充历史结果 |
 | `composition-screening` | legacy order normalization、显式单位、稳定排序/确定 tie-break、missing policy、top-k | candidate/transport/ranking manifests | 247/247 历史候选与 top-k 已本地比较 | 不生成候选、不执行 MLIP/MD、不替代 AIMD/DFT 高保真验证 |

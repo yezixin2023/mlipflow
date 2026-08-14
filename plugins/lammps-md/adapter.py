@@ -1,0 +1,435 @@
+"""MLIPFlow adapter for deterministic LAMMPS input preparation.
+
+Version 0.1 is deliberately prepare-only and local-only. It never launches
+LAMMPS, resolves a cluster model path, converts a model artifact, or submits a
+scheduler job. Validation reuses the bundled generator's pure contract helpers
+so a READY plan cannot drift from the wrapper that will materialize the files.
+"""
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+PLUGIN_ID = "lammps-md"
+OPERATION = "lammps-prepare"
+BUNDLED_PREPARE = Path(globals().get("__file__", "adapter.py")).absolute().with_name(
+    "lammps_prepare.py"
+)
+MAX_JSON_BYTES = 16 * 1024 * 1024
+MAX_STRUCTURE_BYTES = 128 * 1024 * 1024
+MAX_OUTPUT_BYTES = 256 * 1024 * 1024
+
+
+def _load_generator():
+    spec = importlib.util.spec_from_file_location("_mlipflow_lammps_prepare_contract", BUNDLED_PREPARE)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load bundled lammps_prepare.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+generator = _load_generator()
+
+
+def _diagnostic(level: str, code: str, message: str) -> dict[str, str]:
+    return {"level": level, "code": code, "message": message}
+
+
+def _errors(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [item for item in items if item.get("level") == "error"]
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _safe_relative(value: Any) -> bool:
+    if not isinstance(value, str) or not value or any(c in value for c in "\x00\r\n"):
+        return False
+    path = Path(value)
+    return path != Path(".") and not path.is_absolute() and ".." not in path.parts
+
+
+def _path(root: Any, relative: Any) -> Path:
+    return Path(str(root)).expanduser().absolute() / str(relative)
+
+
+def _ordinary_project_file(path: Path, root: Path, max_bytes: int) -> bool:
+    base = root.expanduser().absolute()
+    candidate = path.expanduser().absolute()
+    try:
+        relative = candidate.relative_to(base)
+    except ValueError:
+        return False
+    current = base
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return False
+    if candidate.is_symlink() or not candidate.is_file():
+        return False
+    return 0 < candidate.stat().st_size <= max_bytes
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
+
+
+def _read_json(path: Path, max_bytes: int = MAX_JSON_BYTES) -> tuple[dict[str, Any] | None, str | None]:
+    if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= max_bytes:
+        return None, "missing, unsafe or oversized JSON file"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return None, f"invalid UTF-8 JSON: {exc}"
+    return (value, None) if isinstance(value, dict) else (None, "JSON root must be an object")
+
+
+def _project_inputs(context: dict[str, Any]) -> tuple[Path, Path, Path]:
+    root = Path(str(context["project_root"])).expanduser().absolute()
+    inputs = _mapping(context["inputs"])
+    return (
+        _path(root, inputs["structure"]),
+        _path(root, inputs["model_reference"]),
+        _path(root, inputs["lammps_config"]),
+    )
+
+
+def _source_contract(model_ref: Path, config: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    try:
+        model = generator._model_reference(model_ref)
+        cfg = generator._config(config, model)
+    except generator.ContractError as exc:
+        raise ValueError(str(exc)) from exc
+    return model, cfg
+
+
+def _validate(context: Any, *, require_fresh_output: bool) -> list[dict[str, str]]:
+    if not isinstance(context, dict):
+        return [_diagnostic("error", "context.type", "context must be an object")]
+    diagnostics: list[dict[str, str]] = []
+    for key in ("project_root", "attempt_dir", "inputs", "parameters", "backend", "resources"):
+        if key not in context:
+            diagnostics.append(_diagnostic("error", "context.keys", f"missing context field: {key}"))
+    if context.get("backend") != "local":
+        diagnostics.append(
+            _diagnostic("error", "backend.unsupported", "lammps-prepare is local-only and never submits LAMMPS")
+        )
+    inputs = context.get("inputs")
+    parameters = context.get("parameters")
+    if not isinstance(inputs, dict) or not isinstance(parameters, dict):
+        diagnostics.append(_diagnostic("error", "context.mapping", "inputs and parameters must be objects"))
+        return diagnostics
+    if parameters.get("operation", OPERATION) != OPERATION:
+        diagnostics.append(_diagnostic("error", "parameters.operation", "operation must be lammps-prepare"))
+    unknown_parameters = set(parameters) - {"operation", "output_dir"}
+    if unknown_parameters:
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "parameters.unknown",
+                "unsupported parameters: " + ", ".join(sorted(str(item) for item in unknown_parameters)),
+            )
+        )
+    unknown_inputs = set(inputs) - {"structure", "model_reference", "lammps_config"}
+    if unknown_inputs:
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "inputs.unknown",
+                "unsupported inputs: " + ", ".join(sorted(str(item) for item in unknown_inputs)),
+            )
+        )
+    for name in ("structure", "model_reference", "lammps_config"):
+        if not _safe_relative(inputs.get(name)):
+            diagnostics.append(
+                _diagnostic("error", f"inputs.{name}", f"{name} must be a safe project-relative path")
+            )
+    output_dir = parameters.get("output_dir", "lammps-inputs")
+    if not _safe_relative(output_dir):
+        diagnostics.append(_diagnostic("error", "parameters.output_dir", "output_dir must be attempt-relative"))
+    root = Path(str(context.get("project_root", ""))).expanduser().absolute()
+    attempt = Path(str(context.get("attempt_dir", ""))).expanduser().absolute()
+    if not root.is_dir():
+        diagnostics.append(_diagnostic("error", "project_root", "project_root must exist"))
+        return diagnostics
+    try:
+        structure, model_ref, config = _project_inputs(context)
+    except KeyError:
+        return diagnostics
+    for name, path, limit in (
+        ("structure", structure, MAX_STRUCTURE_BYTES),
+        ("model_reference", model_ref, MAX_JSON_BYTES),
+        ("lammps_config", config, MAX_JSON_BYTES),
+    ):
+        if not _ordinary_project_file(path, root, limit):
+            diagnostics.append(
+                _diagnostic("error", f"inputs.{name}_file", f"{name} must be an ordinary bounded project file")
+            )
+    if _ordinary_project_file(model_ref, root, MAX_JSON_BYTES) and _ordinary_project_file(
+        config, root, MAX_JSON_BYTES
+    ):
+        try:
+            _source_contract(model_ref, config)
+        except ValueError as exc:
+            diagnostics.append(_diagnostic("error", "source.contract", str(exc)))
+    destination = attempt / str(output_dir)
+    if require_fresh_output and destination.exists():
+        diagnostics.append(_diagnostic("error", "output.exists", "fresh prepare output_dir must not already exist"))
+    return diagnostics
+
+
+class Adapter:
+    def validate(self, context: Any) -> list[dict[str, str]]:
+        return _validate(context, require_fresh_output=True)
+
+    def plan(self, context: Any) -> dict[str, Any]:
+        diagnostics = self.validate(context)
+        if _errors(diagnostics):
+            return {
+                "plugin_id": PLUGIN_ID,
+                "status": "BLOCKED",
+                "executable": False,
+                "diagnostics": diagnostics,
+            }
+        assert isinstance(context, dict)
+        structure, model_ref, config = _project_inputs(context)
+        model, cfg = _source_contract(model_ref, config)
+        output_dir = Path(str(context["attempt_dir"])).expanduser().absolute() / str(
+            _mapping(context["parameters"]).get("output_dir", "lammps-inputs")
+        )
+        targets = list(cfg["targets"])
+        expected = [
+            str(output_dir / "structure.data"),
+            str(output_dir / "lammps-input-manifest.json"),
+            *[str(output_dir / f"in.{target}.lammps") for target in targets],
+        ]
+        return {
+            "plugin_id": PLUGIN_ID,
+            "status": "READY",
+            "executable": True,
+            "argv": [
+                sys.executable,
+                str(BUNDLED_PREPARE),
+                "--structure",
+                str(structure),
+                "--model-reference",
+                str(model_ref),
+                "--config",
+                str(config),
+                "--output-dir",
+                str(output_dir),
+            ],
+            "cwd": str(Path(context["attempt_dir"]).expanduser().absolute()),
+            "expected_outputs": expected,
+            "diagnostics": diagnostics,
+            "approval_summary": {
+                "operation": OPERATION,
+                "framework": model["framework"],
+                "model_id": model["model_id"],
+                "model_fingerprint": model["fingerprint"],
+                "artifact_format": model["artifact_format"],
+                "ensemble": cfg["ensemble"],
+                "targets": targets,
+                "type_map": cfg["type_map"],
+                "temperature_K": cfg["temperature_k"],
+                "timestep_fs": cfg["timestep_fs"],
+                "steps": cfg["steps"],
+                "simulated_time_ps": float(cfg["timestep_fs"]) * int(cfg["steps"]) / 1000.0,
+                "executes_lammps": False,
+            },
+            "input_fingerprints": {
+                "structure": _sha256(structure),
+                "model_reference": _sha256(model_ref),
+                "lammps_config": _sha256(config),
+                "prepare_wrapper": _sha256(BUNDLED_PREPARE),
+            },
+        }
+
+    def prepare(self, context: Any, plan: Any) -> dict[str, Any]:
+        if not isinstance(plan, dict) or plan.get("status") != "READY":
+            return {
+                "plugin_id": PLUGIN_ID,
+                "status": "BLOCKED",
+                "executable": False,
+                "diagnostics": [_diagnostic("error", "plan.not_ready", "prepare requires a READY plan")],
+            }
+        return dict(plan)
+
+    def _output_dir(self, context: dict[str, Any]) -> Path:
+        return Path(str(context["attempt_dir"])).expanduser().absolute() / str(
+            _mapping(context["parameters"]).get("output_dir", "lammps-inputs")
+        )
+
+    def _verify(
+        self, context: dict[str, Any], manifest: dict[str, Any], verify_files: bool
+    ) -> list[dict[str, str]]:
+        diagnostics: list[dict[str, str]] = []
+        if manifest.get("schema_version") != 1 or manifest.get("plugin_id") != PLUGIN_ID:
+            diagnostics.append(
+                _diagnostic("error", "result.identity", "LAMMPS input manifest identity is invalid")
+            )
+        if manifest.get("operation") != OPERATION or manifest.get("status") != "OK":
+            diagnostics.append(
+                _diagnostic("error", "result.status", "prepare manifest must report lammps-prepare status=OK")
+            )
+        structure, model_ref, config = _project_inputs(context)
+        expected_inputs = {
+            "structure": _sha256(structure),
+            "model_reference": _sha256(model_ref),
+            "lammps_config": _sha256(config),
+        }
+        if manifest.get("input_fingerprints") != expected_inputs:
+            diagnostics.append(
+                _diagnostic("error", "result.inputs", "input fingerprints differ from current project inputs")
+            )
+        try:
+            model, cfg = _source_contract(model_ref, config)
+        except ValueError as exc:
+            diagnostics.append(_diagnostic("error", "result.source_contract", str(exc)))
+            return diagnostics
+        if manifest.get("model") != model:
+            diagnostics.append(_diagnostic("error", "result.model", "manifest model identity differs"))
+        if manifest.get("md") != cfg:
+            diagnostics.append(_diagnostic("error", "result.md", "manifest MD configuration differs"))
+        if manifest.get("runtime_model_variable") != "MODEL_FILE":
+            diagnostics.append(
+                _diagnostic("error", "result.model_variable", "runtime model variable must be MODEL_FILE")
+            )
+        files = manifest.get("generated_files")
+        if not isinstance(files, list):
+            diagnostics.append(_diagnostic("error", "result.files", "generated_files must be a list"))
+            return diagnostics
+        expected_names = {"structure.data", *{f"in.{target}.lammps" for target in cfg["targets"]}}
+        records = {
+            item.get("name"): item
+            for item in files
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        if set(records) != expected_names:
+            diagnostics.append(
+                _diagnostic("error", "result.file_set", "generated file set differs from approved targets")
+            )
+        if verify_files:
+            output_dir = self._output_dir(context)
+            for name in expected_names:
+                record = records.get(name)
+                path = output_dir / name
+                if (
+                    not isinstance(record, dict)
+                    or path.is_symlink()
+                    or not path.is_file()
+                    or not 0 < path.stat().st_size <= MAX_OUTPUT_BYTES
+                    or record.get("size_bytes") != path.stat().st_size
+                    or record.get("sha256") != _sha256(path)
+                ):
+                    diagnostics.append(
+                        _diagnostic(
+                            "error",
+                            f"result.file.{name}",
+                            f"generated file {name} is missing or fingerprint-mismatched",
+                        )
+                    )
+                    continue
+                if name.startswith("in."):
+                    try:
+                        text = path.read_text(encoding="utf-8")
+                    except (OSError, UnicodeError) as exc:
+                        diagnostics.append(
+                            _diagnostic("error", f"result.file.{name}.text", f"input deck is unreadable: {exc}")
+                        )
+                        continue
+                    if "${MODEL_FILE}" not in text:
+                        diagnostics.append(
+                            _diagnostic("error", f"result.file.{name}.model", "input deck must use ${MODEL_FILE}")
+                        )
+                    if str(model["relative_path"]) in text:
+                        diagnostics.append(
+                            _diagnostic(
+                                "error",
+                                f"result.file.{name}.path",
+                                "input deck must not embed the site model relative path",
+                            )
+                        )
+        launchers = manifest.get("launchers")
+        launcher_targets = {
+            item.get("target")
+            for item in launchers
+            if isinstance(item, dict) and isinstance(item.get("target"), str)
+        } if isinstance(launchers, list) else set()
+        if launcher_targets != set(cfg["targets"]):
+            diagnostics.append(
+                _diagnostic("error", "result.launchers", "launcher metadata must cover exactly the approved targets")
+            )
+        return diagnostics
+
+    def check(self, context: Any) -> dict[str, Any]:
+        diagnostics = _validate(context, require_fresh_output=False)
+        if _errors(diagnostics) or not isinstance(context, dict):
+            return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
+        manifest_path = self._output_dir(context) / "lammps-input-manifest.json"
+        manifest, error = _read_json(manifest_path)
+        if manifest is None:
+            return {
+                "plugin_id": PLUGIN_ID,
+                "status": "WAIT" if not manifest_path.exists() else "FAIL",
+                "diagnostics": [_diagnostic("error", "result.manifest", str(error))],
+            }
+        diagnostics.extend(self._verify(context, manifest, True))
+        return {
+            "plugin_id": PLUGIN_ID,
+            "status": "FAIL" if _errors(diagnostics) else "OK",
+            "diagnostics": diagnostics,
+            "result_manifest": str(manifest_path),
+        }
+
+    def collect(self, context: Any) -> dict[str, Any]:
+        checked = self.check(context)
+        if checked.get("status") != "OK" or not isinstance(context, dict):
+            return checked
+        output_dir = self._output_dir(context)
+        manifest, _ = _read_json(output_dir / "lammps-input-manifest.json")
+        assert manifest is not None
+        artifacts = [
+            {
+                "path": str(output_dir / "lammps-input-manifest.json"),
+                "role": "lammps-input-manifest",
+                "media_type": "application/json",
+            }
+        ]
+        for item in manifest["generated_files"]:
+            name = str(item["name"])
+            artifacts.append(
+                {
+                    "path": str(output_dir / name),
+                    "role": "lammps-structure" if name == "structure.data" else "lammps-input",
+                    "media_type": "text/plain",
+                }
+            )
+        return {
+            "plugin_id": PLUGIN_ID,
+            "status": "OK",
+            "diagnostics": [],
+            "artifacts": artifacts,
+            "metrics": {
+                "target_count": float(len(manifest["md"]["targets"])),
+                "steps": float(manifest["md"]["steps"]),
+                "simulated_time_ps": float(manifest["md"]["steps"])
+                * float(manifest["md"]["timestep_fs"])
+                / 1000.0,
+            },
+        }
+
+    def replay(self, context: Any) -> dict[str, Any]:
+        collected = self.collect(context)
+        collected["executable"] = False
+        return collected

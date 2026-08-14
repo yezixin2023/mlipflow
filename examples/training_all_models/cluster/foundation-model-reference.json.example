@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "model_id": "mace-foundation-v1",
+  "relative_path": "mace/foundation-v1.model",
+  "kind": "file",
+  "fingerprint": "sha256:REPLACE_WITH_CLUSTER_ARTIFACT_FINGERPRINT"
+}

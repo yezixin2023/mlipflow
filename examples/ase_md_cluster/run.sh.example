@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Site-owned values. Configure modules/conda above these lines if needed.
+PYTHON_BIN=/ABS/PATH/TO/python
+MODEL_ROOT=/ABS/PATH/TO/site/model-registry
+
+mkdir -p "{{OUTPUT_DIR}}" "{{LOG_DIR}}"
+attempt_num=$((10#{{ATTEMPT}}))
+completion_status=FAILED
+completion_code=1
+write_completion() {
+  cat > "{{RUN_DIR}}/completion.json" <<EOF
+{"schema_version":1,"status":"${completion_status}","exit_code":${completion_code},"project_id":"{{PROJECT_ID}}","node_id":"{{NODE_ID}}","attempt":${attempt_num}}
+EOF
+}
+trap write_completion EXIT
+
+set +e
+"$PYTHON_BIN" "{{INPUT_DIR}}/ase_md_cluster.py" --project "{{INPUT_DIR}}/project.yaml" --node-id "{{NODE_ID}}" --input-dir "{{INPUT_DIR}}" --output-dir "{{OUTPUT_DIR}}" --model-root "$MODEL_ROOT" > "{{LOG_DIR}}/md.stdout.log" 2> "{{LOG_DIR}}/md.stderr.log"
+completion_code=$?
+set -e
+if [ "$completion_code" -eq 0 ]; then
+  completion_status=COMPLETED
+fi
+exit "$completion_code"

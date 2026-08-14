@@ -1,6 +1,6 @@
 # HPC 验证状态
 
-最后更新：2026-08-13。
+最后更新：2026-08-14。
 
 ```text
 REAL_HPC_INTEGRATION = SCIENTIFIC_PROGRAM_VERIFIED_ON_ONE_SITE
@@ -32,7 +32,7 @@ GPU 已验证、多节点已验证、排队/容错行为已验证，或该站点
 | remote template library | CPU/GPU Slurm 模板选择、program-family `run.sh`、固定变量合同、模板 identity 与不完整模板失败均有 fake library 测试 |
 | remote workspace | `<work_root>/<project>/<node>/attempt-XXXX`、attempt 递增、fresh directory、input/output/logs/completion 分层与逐文件 SHA-256 staging 有 mock 测试 |
 | core scheduler lifecycle | resolve → render → stage → submit → persist job ID → monitor → inventory/fetch → check → collect 状态逻辑有本地 fixture/mock 测试 |
-| scientific adapters | `dft-labeling.label` static VASP 与 `mlip-training.train` DeepMD 已接入通用 `ssh-slurm` 合同，后者已在真实调度器上执行。LASP/SSW execute 仍为 local；scheduler `COMPLETED` 不会自动变成科学 `OK` |
+| scientific adapters | static `dft-labeling.label`、四框架 `mlip-training`、scheduled LASP、ASE MD 与 LAMMPS execute 已接入通用 `ssh-slurm` 合同；真实调度器仍只验证过 DeepMD CPU 训练，scheduler `COMPLETED` 不会自动变成科学 `OK` |
 | SSH/remote access | 已在一个真实站点执行只读探索与受控写入；写入全部限制在本次新建的独立 MLIPFlow root 内 |
 | remote staging | 真实站点已验证：fresh attempt workspace、逐文件 SHA-256 staging |
 | real `sbatch` submission | 已执行 CPU tiny job 与一次真实 DeePMD 训练 job，均取得并持久化 job ID |

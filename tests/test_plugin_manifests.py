@@ -12,9 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_ROOT = ROOT / "schemas"
 PLUGIN_ROOT = ROOT / "plugins"
 EXPECTED_PLUGINS = {
+    "ase-md",
     "high-entropy-structure",
     "pes-sampling",
     "dft-labeling",
+    "lammps-md",
     "mlip-training",
     "mlip-benchmark",
     "ionic-transport",
@@ -23,9 +25,13 @@ EXPECTED_PLUGINS = {
 }
 CONTRACT_METHODS = {"validate", "plan", "prepare", "check", "collect", "replay"}
 EXACT_EXECUTION_OPERATIONS = {
+    "ase-md": ["run"],
     "composition-screening": ["rank-candidates"],
     "dft-labeling": ["vasp-prepare", "label"],
+    "electrochemical-voltage": ["compute-from-energies", "replay-si-table-s11"],
     "high-entropy-structure": ["generate-sqs"],
+    "ionic-transport": ["analyze-existing", "md-smoke-and-analyze"],
+    "lammps-md": ["lammps-prepare", "execute"],
     "mlip-benchmark": ["evaluate-static", "normalize-replay", "normalize-execute"],
     "mlip-training": ["train", "finetune"],
     "pes-sampling": [
@@ -34,6 +40,19 @@ EXACT_EXECUTION_OPERATIONS = {
         "lasp-ssw-normalize-replay",
     ],
 }
+EXPECTED_EXECUTION_BACKENDS = {
+    "ase-md": ["ssh-slurm"],
+    "composition-screening": ["local"],
+    "dft-labeling": ["local", "ssh-slurm"],
+    "electrochemical-voltage": ["local"],
+    "high-entropy-structure": ["local"],
+    "ionic-transport": ["local"],
+    "lammps-md": ["local", "ssh-slurm"],
+    "mlip-benchmark": ["local"],
+    "mlip-training": ["local", "ssh-slurm"],
+    "pes-sampling": ["local", "ssh-slurm"],
+}
+JOB_SUBMITTING_PLUGINS = {"ase-md", "lammps-md", "mlip-training", "pes-sampling"}
 
 
 def load_json(path: Path) -> dict:
@@ -77,7 +96,10 @@ class PluginManifestTests(unittest.TestCase):
         ]
 
     def test_exact_builtin_plugin_set(self) -> None:
-        self.assertEqual(EXPECTED_PLUGINS, {path.parent.name for path, _ in self.manifests()})
+        discovered = {path.parent.name for path, _ in self.manifests()}
+        self.assertEqual(EXPECTED_PLUGINS, discovered)
+        self.assertEqual(EXPECTED_PLUGINS, set(EXACT_EXECUTION_OPERATIONS))
+        self.assertEqual(EXPECTED_PLUGINS, set(EXPECTED_EXECUTION_BACKENDS))
 
     def test_manifests_obey_static_contract(self) -> None:
         required = {
@@ -115,14 +137,14 @@ class PluginManifestTests(unittest.TestCase):
 
                 execution = manifest["execution"]
                 self.assertIn(execution["mode"], {"external-command", "python-library"})
-                expected_backends = (
-                    ["local", "ssh-slurm"]
-                    if manifest["id"] in {"dft-labeling", "mlip-training"}
-                    else ["local"]
+                self.assertEqual(
+                    EXPECTED_EXECUTION_BACKENDS[manifest["id"]], execution["backends"]
                 )
-                self.assertEqual(expected_backends, execution["backends"])
                 self.assertFalse(execution["shell"])
-                self.assertFalse(execution["submits_jobs"])
+                self.assertEqual(
+                    manifest["id"] in JOB_SUBMITTING_PLUGINS,
+                    execution["submits_jobs"],
+                )
                 self.assertTrue(execution["operations"])
 
                 replay = manifest["replay"]
@@ -197,18 +219,21 @@ class PluginManifestTests(unittest.TestCase):
                         called = node.func.id
                     self.assertNotIn(called, forbidden_calls)
 
-            namespace: dict = {}
+            namespace: dict = {
+                "__file__": str(adapter_path),
+                "__name__": f"manifest_contract_{path.parent.name.replace('-', '_')}",
+            }
             exec(compile(source, str(adapter_path), "exec"), namespace)
             adapter = namespace["Adapter"]()
             blocked = adapter.plan({})
             self.assertEqual("BLOCKED", blocked["status"])
             self.assertFalse(blocked["executable"])
 
-    def test_training_exposes_four_thin_framework_adapters_with_limitations(self) -> None:
+    def test_training_exposes_four_implemented_framework_adapters_with_limitations(self) -> None:
         training = load_json(PLUGIN_ROOT / "mlip-training" / "plugin.yaml")
         backends = {item["id"]: item for item in training["computational_backends"]}
         self.assertEqual({"deepmd", "m3gnet", "chgnet", "mace"}, set(backends))
-        self.assertTrue(all(item["status"] == "adapter-ready" for item in backends.values()))
+        self.assertTrue(all(item["status"] == "implemented" for item in backends.values()))
         self.assertTrue(all(item["limitations"] for item in backends.values()))
 
 

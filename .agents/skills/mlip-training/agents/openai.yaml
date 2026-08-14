@@ -1,0 +1,4 @@
+interface:
+  display_name: "MLIP training"
+  short_description: "Plan and supervise local or scheduled MLIP training and fine-tuning"
+  default_prompt: "$mlip-training Choose, plan, submit, or verify DeepMD, M3GNet, CHGNet, or MACE training/fine-tuning with explicit dataset/model fingerprints and scheduler approval boundaries."

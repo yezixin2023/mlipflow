@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "engine": "lammps",
+  "ensemble": "npt-isotropic",
+  "targets": ["cpu", "gpu"],
+  "type_map": ["Li", "P", "S"],
+  "temperature_k": 900.0,
+  "timestep_fs": 1.0,
+  "steps": 1000000,
+  "thermo_interval": 100,
+  "dump_interval": 100,
+  "seed": 20260814,
+  "thermostat_damping_fs": 100.0,
+  "pressure_gpa": 0.0,
+  "barostat_damping_fs": 1000.0
+}

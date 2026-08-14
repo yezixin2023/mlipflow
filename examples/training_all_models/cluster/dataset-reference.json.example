@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "dataset_id": "li-ps-labeled-v1",
+  "relative_path": "li-ps/labeled-v1/train.extxyz",
+  "kind": "file",
+  "fingerprint": "sha256:REPLACE_WITH_CLUSTER_ARTIFACT_FINGERPRINT"
+}

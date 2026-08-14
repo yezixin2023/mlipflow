@@ -1,0 +1,21 @@
+#!/bin/bash
+set -euo pipefail
+
+# Copy this file to <remote_template_root>/lasp-ssw/run.sh on the cluster.
+# These executable paths are site-owned on purpose; do not put them in project.yaml.
+PYTHON_BIN=/ABS/PATH/TO/python
+LASP_BIN=/ABS/PATH/TO/lasp
+MPI_BIN=/ABS/PATH/TO/mpirun
+
+mkdir -p "{{OUTPUT_DIR}}" "{{LOG_DIR}}"
+cd "{{RUN_DIR}}"
+
+write_completion() {
+    code="$1"
+    if [ "$code" -eq 0 ]; then status=COMPLETED; else status=FAILED; fi
+    attempt=$((10#{{ATTEMPT}}))
+    printf '{"schema_version":1,"status":"%s","exit_code":%d,"project_id":"{{PROJECT_ID}}","node_id":"{{NODE_ID}}","attempt":%d}\n' "$status" "$code" "$attempt" > "{{RUN_DIR}}/completion.json"
+}
+trap 'code=$?; write_completion "$code"' EXIT
+
+"$PYTHON_BIN" "{{INPUT_DIR}}/lasp_cluster.py" --project "{{INPUT_DIR}}/project.yaml" --node-id "{{NODE_ID}}" --input-dir "{{INPUT_DIR}}" --output-dir "{{OUTPUT_DIR}}" --lasp-executable "$LASP_BIN" --mpi-launcher "$MPI_BIN" --mpi-processes "{{CPUS}}"

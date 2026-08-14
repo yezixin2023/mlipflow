@@ -1,0 +1,30 @@
+#!/bin/bash
+# Copy this file to each site-owned template family that you enable:
+#   <remote_template_root>/mlip-deepmd/run.sh
+#   <remote_template_root>/mlip-m3gnet/run.sh
+#   <remote_template_root>/mlip-chgnet/run.sh
+#   <remote_template_root>/mlip-mace/run.sh
+# Then customize only site-owned environment/module paths below.
+set -uo pipefail
+
+RUN_DIR="{{RUN_DIR}}"
+INPUT_DIR="{{INPUT_DIR}}"
+OUTPUT_DIR="{{OUTPUT_DIR}}"
+PYTHON_BIN="/ABS/PATH/TO/FRAMEWORK_ENV/bin/python"
+DATA_ROOT="/ABS/CLUSTER/DATASETS"
+MODEL_ROOT="/ABS/CLUSTER/FOUNDATION_MODELS"
+
+mkdir -p "$OUTPUT_DIR" "{{LOG_DIR}}"
+export OMP_NUM_THREADS="{{CPUS}}"
+
+# The submit template owns partition/GPU/memory/walltime selection. These
+# comments deliberately bind the full approved resource contract as well:
+# project={{PROJECT_ID}} node={{NODE_ID}} attempt={{ATTEMPT}}
+# gpus={{GPUS}} memory={{MEMORY}} walltime={{WALLTIME}}
+
+"$PYTHON_BIN" "$INPUT_DIR/training_cluster.py" run --project "$INPUT_DIR/project.yaml" --node-id "{{NODE_ID}}" --input-dir "$INPUT_DIR" --output-dir "$OUTPUT_DIR" --data-root "$DATA_ROOT" --model-root "$MODEL_ROOT"
+code=$?
+if [ "$code" -eq 0 ]; then state="COMPLETED"; else state="FAILED"; fi
+attempt=$((10#{{ATTEMPT}}))
+printf '{"schema_version":1,"status":"%s","exit_code":%d,"project_id":"%s","node_id":"%s","attempt":%d}\n' "$state" "$code" "{{PROJECT_ID}}" "{{NODE_ID}}" "$attempt" > "$RUN_DIR/completion.json"
+exit "$code"
