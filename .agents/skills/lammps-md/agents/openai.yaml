@@ -1,0 +1,4 @@
+interface:
+  display_name: "LAMMPS molecular dynamics"
+  short_description: "Prepare fingerprinted CPU/GPU LAMMPS input decks for MLIP models"
+  default_prompt: "$lammps-md Prepare or verify portable CPU/GPU LAMMPS input files for an explicit LAMMPS-ready DeepMD, MACE, or MatGL/M3GNet model without launching LAMMPS."
