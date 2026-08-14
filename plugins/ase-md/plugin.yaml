@@ -4,37 +4,40 @@
   "id": "ase-md",
   "name": "ASE molecular dynamics",
   "display_name": "ASE molecular dynamics with MLIP calculators",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "api_version": 1,
-  "description": "Scheduled single-temperature ASE NVT molecular dynamics using an explicit fingerprinted DeepMD, M3GNet/MatGL, CHGNet, or MACE model from a site-owned cluster model registry.",
+  "description": "Scheduled single-temperature ASE NVT Langevin or isotropic MTK NPT molecular dynamics using an explicit fingerprinted DeepMD, M3GNet/MatGL, CHGNet, or MACE model from a site-owned cluster model registry.",
   "category": "sampling",
   "contract": {
     "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
   },
   "implementation": {
     "kind": "python-adapter",
-    "entrypoint": "adapter.py:Adapter",
+    "entrypoint": "adapter_npt.py:Adapter",
     "status": "implemented",
     "source_classification": ["D", "new"],
     "source_references": [
+      "https://docs.ase-lib.org/_modules/ase/md/nose_hoover_chain.html",
       "https://docs.deepmodeling.com/projects/deepmd/en/stable/third-party/ase.html",
       "https://chgnet.lbl.gov/api",
       "https://mace-docs.readthedocs.io/en/latest/guide/ase.html",
       "https://matgl.ai/tutorials/Relaxations%20and%20Simulations%20using%20the%20M3GNet%20Universal%20Potential.html"
     ],
     "limitations": [
-      "Version 0.1 intentionally implements only one fresh single-temperature NVT Langevin trajectory per workflow node; NPT/NVE, restart/resume, replica exchange, multi-temperature orchestration, and transport analysis are separate future contracts.",
+      "Version 0.2 implements one fresh single-temperature trajectory per workflow node: NVT Langevin or isotropic Martyna-Tobias-Klein NPT. NVE, anisotropic/full-cell NPT, restart/resume, replica exchange, multi-temperature orchestration, and transport analysis remain separate future contracts.",
+      "Isotropic MTK NPT requires a full-rank 3D periodic cell, no ASE constraints, and a concrete calculator/model that returns finite ASE stress. The compute-node runner probes stress before starting dynamics and fails closed when stress is unavailable.",
+      "The NPT chain configuration is version-pinned to thermostat/barostat chain lengths 3/3 and integration substeps 1/1; pressure, thermostat damping, and barostat damping remain explicit workflow parameters.",
       "Every MLIP model must be an explicit site-owned artifact with an approved content fingerprint. Implicit pretrained-model downloads, network lookup, package caches, and model names that trigger remote loading are not accepted.",
       "M3GNet/MatGL models are directory artifacts; DeepMD, CHGNet, and MACE models are file artifacts. CHGNet is restricted to float32 in this adapter.",
-      "DeepMD's ASE DP calculator uses the precision encoded by the model; version 0.1 records default_dtype for cross-framework workflow identity but does not recast a DeepMD model.",
-      "GPU and framework kernels are not claimed to be bitwise deterministic even though velocity initialization and the ASE Langevin RNG are seeded explicitly.",
-      "No numerical parity claim is made across ASE, calculator-framework, hardware, or accelerator versions."
+      "DeepMD's ASE DP calculator uses the precision encoded by the model; default_dtype is recorded for cross-framework workflow identity but does not recast a DeepMD model.",
+      "NVT seeds both initial velocities and the Langevin stochastic force. MTK NPT uses the seed for initial velocities only; the subsequent MTK thermostat/barostat integration is deterministic for a fixed calculator/hardware trajectory.",
+      "GPU and framework kernels are not claimed to be bitwise deterministic. No numerical parity claim is made across ASE, calculator-framework, hardware, or accelerator versions."
     ]
   },
   "execution": {
     "mode": "python-library",
     "backends": ["ssh-slurm"],
-    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
+    "entrypoint": {"path": "adapter_npt.py", "object": "Adapter"},
     "operations": ["run"],
     "shell": false,
     "executes_external_programs": false,
@@ -53,17 +56,20 @@
   ],
   "parameters": [
     {"name": "calculator", "type": "string", "required": true, "description": "One explicit calculator family: deepmd, m3gnet, chgnet, or mace."},
-    {"name": "ensemble", "type": "string", "required": true, "description": "Must be nvt-langevin in version 0.1."},
+    {"name": "ensemble", "type": "string", "required": true, "description": "Explicit nvt-langevin or npt-isotropic-mtk."},
     {"name": "temperature-k", "type": "number", "required": true, "description": "Finite positive target temperature in kelvin."},
     {"name": "timestep-fs", "type": "number", "required": true, "description": "Finite positive ASE integration timestep no greater than 10 fs."},
     {"name": "steps", "type": "integer", "required": true, "description": "Positive MD step count, bounded by the adapter contract."},
     {"name": "trajectory-interval", "type": "integer", "required": true, "description": "Positive interval in MD steps for writing ASE trajectory frames."},
-    {"name": "thermo-interval", "type": "integer", "required": true, "description": "Positive interval in MD steps for recording temperature and energies."},
-    {"name": "seed", "type": "integer", "required": true, "description": "Explicit non-negative seed used for Maxwell-Boltzmann initialization and Langevin stochastic forces."},
+    {"name": "thermo-interval", "type": "integer", "required": true, "description": "Positive interval in MD steps for recording thermodynamics."},
+    {"name": "seed", "type": "integer", "required": true, "description": "Explicit non-negative seed. NVT uses it for initial velocities and Langevin noise; NPT uses it for initial velocities only."},
     {"name": "device", "type": "string", "required": true, "description": "cpu or cuda; cuda requires at least one scheduled GPU."},
-    {"name": "default-dtype", "type": "string", "required": true, "description": "float32 or float64. MACE/MatGL apply it directly, CHGNet requires float32, and DeepMD records it only while the loaded model retains its native precision."},
-    {"name": "friction-per-fs", "type": "number", "required": true, "description": "Finite positive Langevin friction coefficient expressed in inverse femtoseconds."},
-    {"name": "fix-com", "type": "boolean", "required": true, "description": "Whether to append ASE FixCom to keep center-of-mass motion constrained without relying on deprecated Langevin fixcm behavior."},
+    {"name": "default-dtype", "type": "string", "required": true, "description": "float32 or float64. MACE/MatGL apply it directly, CHGNet requires float32, and DeepMD records it while retaining model-native precision."},
+    {"name": "friction-per-fs", "type": "number", "required": false, "description": "NVT-only finite positive Langevin friction coefficient in inverse femtoseconds; must be omitted for NPT."},
+    {"name": "pressure-gpa", "type": "number", "required": false, "description": "NPT-only finite external hydrostatic pressure in GPa."},
+    {"name": "thermostat-damping-fs", "type": "number", "required": false, "description": "NPT-only finite positive MTK thermostat damping time in fs."},
+    {"name": "barostat-damping-fs", "type": "number", "required": false, "description": "NPT-only finite positive MTK barostat damping time in fs."},
+    {"name": "fix-com", "type": "boolean", "required": true, "description": "NVT may append ASE FixCom. NPT requires false because IsotropicMTKNPT does not support constraints."},
     {"name": "model-fingerprint", "type": "string", "required": true, "description": "Approved fingerprint that must match the model-reference manifest and cluster-resolved model content."},
     {"name": "structure-fingerprint", "type": "string", "required": true, "description": "Approved SHA-256 of the staged input structure."},
     {"name": "input-format", "type": "string", "required": false, "description": "Optional explicit ASE reader format; otherwise ASE infers from the staged structure basename."},
@@ -71,18 +77,18 @@
   ],
   "outputs": [
     {"name": "trajectory", "kind": "file", "required": true, "description": "ASE trajectory.traj containing the initial, scheduled, and final frames."},
-    {"name": "thermodynamics", "kind": "file", "required": true, "media_type": "text/csv", "description": "Finite step/time/temperature/energy/volume records on the approved schedule."},
+    {"name": "thermodynamics", "kind": "file", "required": true, "media_type": "text/csv", "description": "Finite scheduled thermodynamic records. NPT additionally records pressure and cell lengths."},
     {"name": "final-structure", "kind": "file", "required": true, "description": "Final ASE structure as extxyz."},
-    {"name": "md-result", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Pinned model/structure/integrator identity, versions, completed steps, and output fingerprints."}
+    {"name": "md-result", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Pinned model/structure/integrator identity, versions, completed steps, ensemble parameters, and output fingerprints."}
   ],
   "dependencies": {
     "upstream_plugins": [],
     "python_packages": [
-      {"name": "ase", "required": true, "bundled": false, "purpose": "Atoms IO, velocity initialization, Langevin integration, and trajectory output on the compute node."},
-      {"name": "deepmd-kit", "required": false, "bundled": false, "purpose": "deepmd.calculator.DP when calculator=deepmd."},
-      {"name": "matgl", "required": false, "bundled": false, "purpose": "Local MatGL potential loading and ASE PESCalculator when calculator=m3gnet."},
-      {"name": "chgnet", "required": false, "bundled": false, "purpose": "CHGNetCalculator.from_file when calculator=chgnet."},
-      {"name": "mace-torch", "required": false, "bundled": false, "purpose": "MACECalculator when calculator=mace."}
+      {"name": "ase", "required": true, "bundled": false, "purpose": "Atoms IO, velocity initialization, Langevin NVT, IsotropicMTKNPT, stress access, and trajectory output on the compute node."},
+      {"name": "deepmd-kit", "required": false, "bundled": false, "purpose": "deepmd.calculator.DP when calculator=deepmd; its ASE calculator exposes energy, forces, and stress."},
+      {"name": "matgl", "required": false, "bundled": false, "purpose": "Local MatGL potential loading and ASE PESCalculator when calculator=m3gnet; NPT still requires the concrete model stress probe to pass."},
+      {"name": "chgnet", "required": false, "bundled": false, "purpose": "CHGNetCalculator.from_file when calculator=chgnet; the ASE calculator exposes stress."},
+      {"name": "mace-torch", "required": false, "bundled": false, "purpose": "MACECalculator when calculator=mace; NPT requires the concrete loaded calculator/model stress probe to pass."}
     ],
     "external_programs": []
   },
@@ -93,16 +99,18 @@
     "requires_approval_before_execution": true,
     "notes": [
       "The project carries only portable structure/model identities and abstract resources; SSH host, partition, modules, Python environment, model root, template root, and work root remain site-owned configuration.",
-      "Scheduler COMPLETED is not scientific success. Finalization requires a second approved bounded fetch followed by model/structure identity, trajectory schedule, thermo finiteness, completed-step, and SHA-256 checks."
+      "Scheduler COMPLETED is not scientific success. Finalization requires a second approved bounded fetch followed by model/structure identity, trajectory schedule, thermo finiteness, completed-step, and SHA-256 checks.",
+      "For NPT, successful scheduler completion is also insufficient unless the pre-run stress probe passed and every recorded pressure, volume, and cell length is finite with positive cell metrics."
     ]
   },
   "completion": {
     "status": "implemented",
     "checks": [
-      {"id": "md-identity", "implemented": true, "description": "Require calculator, model fingerprint, structure fingerprint, seed, integrator settings, device, dtype request, and requested/completed steps to match the approved plan."},
+      {"id": "md-identity", "implemented": true, "description": "Require calculator, ensemble, model fingerprint, structure fingerprint, seed, integrator settings, device, dtype request, and requested/completed steps to match the approved plan."},
       {"id": "md-artifacts", "implemented": true, "description": "Require trajectory, trajectory index, thermodynamics, final structure, and cluster report with matching size and SHA-256 records."},
       {"id": "md-schedule", "implemented": true, "description": "Require trajectory and thermo step/time schedules to be exactly the deterministic intervals plus the final requested step."},
-      {"id": "md-thermodynamics", "implemented": true, "description": "Reject non-finite temperature, energy, time, or volume records and inconsistent time-step conversion."}
+      {"id": "md-thermodynamics", "implemented": true, "description": "Reject non-finite temperature, energy, time, or volume records and inconsistent time-step conversion; NPT additionally requires finite pressure and positive cell lengths."},
+      {"id": "npt-stress-capability", "implemented": true, "description": "Before NPT integration, require the concrete loaded calculator/model to advertise stress and return a finite 3x3 ASE stress tensor."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"
@@ -115,12 +123,12 @@
     "requires_approval": true,
     "max_attempts": null,
     "limit_enforced": false,
-    "notes": ["Version 0.1 always retries as a fresh trajectory; checkpoint resume is not silently inferred."]
+    "notes": ["Version 0.2 always retries as a fresh trajectory; checkpoint resume is not silently inferred."]
   },
   "computational_backends": [
-    {"id": "deepmd", "family": "DeepMD ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit local DeepMD model file through deepmd.calculator.DP; calculator precision remains model-native in version 0.1."]},
-    {"id": "m3gnet", "family": "M3GNet/MatGL ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit local MatGL model directory through matgl.load_model and PESCalculator; implicit Hub loading is forbidden."]},
-    {"id": "chgnet", "family": "CHGNet ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit CHGNet model file through CHGNetCalculator.from_file and requires float32."]},
-    {"id": "mace", "family": "MACE ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit MACE model file through MACECalculator."]}
+    {"id": "deepmd", "family": "DeepMD ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit local DeepMD model file through deepmd.calculator.DP; calculator precision remains model-native. DeePMD's ASE calculator declares stress support, but the NPT runner still probes the concrete model result before integration."]},
+    {"id": "m3gnet", "family": "M3GNet/MatGL ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit local MatGL model directory through matgl.load_model and PESCalculator; implicit Hub loading is forbidden and NPT requires the concrete model stress probe to pass."]},
+    {"id": "chgnet", "family": "CHGNet ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit CHGNet model file through CHGNetCalculator.from_file, requires float32, and exposes ASE stress for NPT subject to the runtime probe."]},
+    {"id": "mace", "family": "MACE ASE calculator", "status": "implemented", "operations": ["run"], "external_programs": [], "limitations": ["Uses an explicit MACE model file through MACECalculator. NPT is allowed only when the concrete loaded calculator/model advertises and returns finite stress."]}
   ]
 }
