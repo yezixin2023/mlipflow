@@ -92,6 +92,64 @@ def _context(tmp_path: Path, framework: str, operation: str) -> dict:
     }
 
 
+def _completed_finetune_context(tmp_path: Path, module) -> tuple[dict, Path]:
+    context = _context(tmp_path, "chgnet", "finetune")
+    plan = module.Adapter().plan(context)
+    assert plan["status"] == "READY"
+    identity = plan["training_identity"]
+    attempt = Path(context["attempt_dir"])
+    attempt.mkdir(parents=True)
+    model = attempt / "model-artifact"
+    model.write_bytes(b"trained-model")
+    result_name = context["parameters"]["result_manifest"]
+    _write_json(
+        attempt / result_name,
+        {
+            "schema_version": 1,
+            "plugin_id": "mlip-training",
+            "status": "OK",
+            "framework": identity["framework"],
+            "framework_version": "0.4.0",
+            "operation": identity["operation"],
+            "seed": identity["seed"],
+            "device": identity["device"],
+            "precision": identity["precision"],
+            "dataset_fingerprint": identity["dataset"]["fingerprint"],
+            "config_fingerprint": identity["config_fingerprint"],
+            "foundation_model_fingerprint": identity["foundation_model"]["fingerprint"],
+            "metrics": {"loss": 0.125},
+            "model_artifact": {
+                "path": "model-artifact",
+                "media_type": "application/x-pytorch",
+                "sha256": _sha(model),
+                "size_bytes": model.stat().st_size,
+            },
+        },
+    )
+    report_path = attempt / "cluster-run-report.json"
+    _write_json(
+        report_path,
+        {
+            "schema_version": 1,
+            "status": "OK",
+            "return_code": 0,
+            "framework": identity["framework"],
+            "operation": identity["operation"],
+            "config_fingerprint": identity["config_fingerprint"],
+            "dataset": {
+                **identity["dataset"],
+                "observed_fingerprint": identity["dataset"]["fingerprint"],
+            },
+            "foundation_model": {
+                **identity["foundation_model"],
+                "observed_fingerprint": identity["foundation_model"]["fingerprint"],
+            },
+        },
+    )
+    context["execution"] = {"plan": plan}
+    return context, report_path
+
+
 @pytest.mark.parametrize("framework", ["deepmd", "m3gnet", "chgnet", "mace"])
 @pytest.mark.parametrize("operation", ["train", "finetune"])
 def test_generic_scheduler_matrix_is_ready(tmp_path: Path, framework: str, operation: str) -> None:
@@ -131,6 +189,39 @@ def test_chgnet_scheduled_float64_is_rejected(tmp_path: Path) -> None:
     plan = module.Adapter().plan(context)
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "training.chgnet_precision" for item in plan["diagnostics"])
+
+
+def test_finetune_cluster_foundation_identity_is_accepted(tmp_path: Path) -> None:
+    module = _load("mlip_training_cluster_adapter_foundation_ok", PLUGIN / "adapter_cluster.py")
+    context, _ = _completed_finetune_context(tmp_path, module)
+
+    result = module.Adapter().check(context)
+
+    assert result["status"] == "OK", result.get("diagnostics")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", "other-foundation"),
+        ("observed_fingerprint", "sha256:" + "3" * 64),
+    ],
+)
+def test_finetune_cluster_foundation_identity_mismatch_fails(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    module = _load("mlip_training_cluster_adapter_foundation_bad", PLUGIN / "adapter_cluster.py")
+    context, report_path = _completed_finetune_context(tmp_path, module)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["foundation_model"][field] = value
+    _write_json(report_path, report)
+
+    result = module.Adapter().check(context)
+
+    assert result["status"] == "FAIL"
+    assert any(
+        item["code"] == "training.cluster_foundation_identity" for item in result["diagnostics"]
+    )
 
 
 def test_cluster_fingerprint_is_stable_for_files_and_trees(tmp_path: Path) -> None:

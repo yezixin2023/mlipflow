@@ -467,6 +467,24 @@ def _check_generic(context: Mapping[str, Any]) -> tuple[list[dict[str, str]], di
     else:
         if dataset.get("id") != approved_dataset.get("id") or dataset.get("observed_fingerprint") != approved_dataset.get("fingerprint"):
             diagnostics.append(_diag("error", "training.cluster_dataset_identity", "cluster dataset content differs from approved identity"))
+    if identity.get("operation") == "finetune":
+        reported_foundation = report.get("foundation_model")
+        approved_foundation = identity.get("foundation_model")
+        if not isinstance(reported_foundation, Mapping) or not isinstance(approved_foundation, Mapping):
+            diagnostics.append(
+                _diag("error", "training.cluster_foundation", "cluster report lacks foundation model identity")
+            )
+        elif (
+            reported_foundation.get("id") != approved_foundation.get("id")
+            or reported_foundation.get("observed_fingerprint") != approved_foundation.get("fingerprint")
+        ):
+            diagnostics.append(
+                _diag(
+                    "error",
+                    "training.cluster_foundation_identity",
+                    "cluster foundation model content differs from approved identity",
+                )
+            )
     metrics = result.get("metrics", {})
     if not isinstance(metrics, Mapping):
         diagnostics.append(_diag("error", "training.metrics", "metrics must be an object"))
