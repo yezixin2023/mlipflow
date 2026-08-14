@@ -1,6 +1,6 @@
 # Agent Skills 使用说明
 
-十个仓库 Skills 位于 `.agents/skills/`。它们面向 Codex 等能读仓库规则、调用 CLI 和解析 JSON 的 tool-using Agent。
+仓库 Skills 位于 `.agents/skills/`。它们面向 Codex 等能读仓库规则、调用 CLI 和解析 JSON 的 tool-using Agent。
 
 | Skill | 何时使用 | 对应计算插件 |
 |---|---|---|
@@ -10,6 +10,7 @@
 | `$dft-labeling` | 用 pymatgen 准备 static/relax/AIMD VASP 输入，并以独立审批监督 local 或受控 SSH-SLURM static 标注 | `dft-labeling` |
 | `$mlip-training` | 选择并监督 DeepMD/M3GNet/CHGNet/MACE 的训练、微调、数据/基础模型绑定和 SSH-SLURM 生命周期 | `mlip-training` |
 | `$ase-md` | 用显式 DeepMD/M3GNet/CHGNet/MACE 模型运行集群 ASE NVT/NPT，并监督 checkpoint salvage 与断点续跑 | `ase-md` |
+| `$lammps-md` | 为 LAMMPS-ready DeepMD/MACE/MatGL-M3GNet 模型生成可审核 CPU/GPU NVT/NPT 输入 bundle | `lammps-md` |
 | `$mlip-benchmark` | 产生机器可读 benchmark/ranking | `mlip-benchmark` |
 | `$ionic-transport` | MD→MSD→D/电导/Arrhenius | `ionic-transport` |
 | `$composition-screening` | 大超胞组分筛选与 top-k 验证 | `composition-screening` |
@@ -44,6 +45,14 @@ NPT 只能用于 full-rank 3D 周期 cell，`fix_com` 必须为 false，且不�
 当 Slurm 因 `TIMEOUT`、`PREEMPTED` 等终止时，core 不会直接把远端 checkpoint 当可信输入。`advance --dry-run` 先对 adapter 声明的 `failure_salvage` 子集做远端 size/SHA inventory；匹配审批后才 bounded fetch，并保持原 attempt 为 `FAIL/STOPPED`。随后 `retry` 创建 fresh attempt；新 run plan 只能 stage 立即上一 attempt 已经本地 salvage 的 checkpoint，并将 checkpoint SHA、来源 attempt、segment start/remaining steps 重新纳入审批。Scheduler `COMPLETED` 的普通科学 FAIL 不自动 resume。
 
 每个 retry attempt 都生成独立 trajectory/thermo segment，使用连续的 global step/time 编号；0.3 暂不自动拼接 segment。成功完成后仍需第二次 `advance` 审批，checker 会核对 total completed steps、segment schedule、模型/结构/restart identity、checkpoint SHA，以及 NVT/NPT 对应热力学约束。多温度和 transport 仍不自动串接。
+
+## LAMMPS MLIP input preparation
+
+`$lammps-md` 0.1 是与 VASP `vasp-prepare` 类似的 prepare boundary：只生成输入并绑定 provenance，不执行 LAMMPS。输入是一个周期结构、一个 LAMMPS-ready `model_reference` 和一个显式 `lammps_config`；输出是 `structure.data`、`lammps-input-manifest.json` 以及请求的 `in.cpu.lammps` / `in.gpu.lammps`。
+
+DeepMD 使用 `pair_style deepmd`，CPU/GPU 的差异留给 site-owned DeePMD/LAMMPS runtime；MACE 0.1 使用已导出的 ML-MACE TorchScript，CPU 为 `pair_style mace`、GPU 为单 GPU Kokkos `mace no_domain_decomposition`；MatGL/M3GNet 使用 `mgl create-lammps-model` 导出的 TorchScript，CPU 为 `pair_style matgl`、GPU 为 `pair_style matgl/kk`。CHGNet 暂不生成 native LAMMPS deck，因为当前 contract 没有固定一个可信的原生 export/pair-style bridge，继续使用 `$ase-md`。
+
+模型绝对路径永远不写进 input deck。生成文件只引用 `${MODEL_FILE}`；后续 scheduler execution 必须在新的审批边界中从 site-owned model registry 解析并重新 fingerprint 模型，然后通过 `-var MODEL_FILE <resolved-path>` 注入。Version 0.1 支持 NVT 和各向同性 NPT，并把 workflow 的 fs/GPa 显式转换到 LAMMPS `metal` units 的 ps/bar；不自动生成 hybrid potential、charge/topology、long-range electrostatics 或 restart orchestration。
 
 ## Skill validation
 
