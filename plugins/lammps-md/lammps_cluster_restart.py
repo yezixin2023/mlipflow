@@ -28,11 +28,20 @@ RUNTIME_CONTRACT = "lammps-restart-runtime-v1"
 RESTART_DISABLED = "disabled"
 RESTART_AUTO = "auto-from-previous-attempt"
 RESTART_POLICIES = {RESTART_DISABLED, RESTART_AUTO}
-RESTART_STEP = re.compile(r"Current\s+(?:time\s*)?step\s*:\s*([0-9]+)", re.IGNORECASE)
+# -restart2info runs read_restart + info system/group/computes/fixes.  Current
+# LAMMPS info.cpp prints "Current timestep number = N"; accepting the normal
+# run-setup "Current step : N" spelling too makes the parser tolerant without
+# weakening the numeric/cadence checks that follow.
+RESTART_STEP = re.compile(
+    r"Current\s+(?:time\s*)?step(?:\s+number)?\s*(?:=|:)\s*([0-9]+)",
+    re.IGNORECASE,
+)
 
 
 def _json_sha(value: Any) -> str:
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    payload = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
@@ -100,7 +109,9 @@ def _runtime_identity(
         "resources": resources,
         "lammps_executable_sha256": base._sha256(executable),
         "launcher_prefix_sha256": _json_sha(launcher_prefix),
-        "prepared_launcher_sha256": _json_sha(prepared_launcher.get("argv_after_executable", [])),
+        "prepared_launcher_sha256": _json_sha(
+            prepared_launcher.get("argv_after_executable", [])
+        ),
         "platform": {
             "system": platform.system(),
             "machine": platform.machine(),
@@ -109,11 +120,18 @@ def _runtime_identity(
     }
 
 
-def _validate_previous_runtime(previous: dict[str, Any], current: dict[str, Any], attempt: int) -> None:
-    if previous.get("schema_version") != 1 or previous.get("runtime_contract") != RUNTIME_CONTRACT:
+def _validate_previous_runtime(
+    previous: dict[str, Any], current: dict[str, Any], attempt: int
+) -> None:
+    if (
+        previous.get("schema_version") != 1
+        or previous.get("runtime_contract") != RUNTIME_CONTRACT
+    ):
         raise ValueError("previous restart runtime contract is invalid")
     if previous.get("attempt") != attempt - 1:
-        raise ValueError("previous restart runtime does not come from the immediately preceding attempt")
+        raise ValueError(
+            "previous restart runtime does not come from the immediately preceding attempt"
+        )
     for key in (
         "framework",
         "target",
@@ -140,8 +158,15 @@ def _restart_probe_options(prepared_launcher: dict[str, Any]) -> list[str]:
         raise ValueError("prepared launcher lacks -in") from exc
     options = argv[:stop]
     if any(token in {"-var", "-v"} for token in options):
-        raise ValueError("prepared launcher has variables before -in and cannot be probed safely")
+        raise ValueError(
+            "prepared launcher has variables before -in and cannot be probed safely"
+        )
     return list(options)
+
+
+def _parse_restart_step(text: str) -> int | None:
+    match = RESTART_STEP.search(text)
+    return int(match.group(1)) if match is not None else None
 
 
 def _restart_step(executable: Path, options: list[str], candidate: Path) -> int | None:
@@ -158,11 +183,10 @@ def _restart_step(executable: Path, options: list[str], candidate: Path) -> int 
     )
     if completed.returncode != 0:
         return None
-    text = (completed.stdout + b"\n" + completed.stderr).decode("utf-8", errors="replace")
-    match = RESTART_STEP.search(text)
-    if match is None:
-        return None
-    return int(match.group(1))
+    text = (completed.stdout + b"\n" + completed.stderr).decode(
+        "utf-8", errors="replace"
+    )
+    return _parse_restart_step(text)
 
 
 def _select_restart(
@@ -183,8 +207,12 @@ def _select_restart(
             continue
         candidates.append((step, name, path))
     if not candidates:
-        raise ValueError("no valid approved periodic LAMMPS restart candidate can be resumed")
-    step, _name, path = sorted(candidates, key=lambda item: (item[0], item[1]))[-1]
+        raise ValueError(
+            "no valid approved periodic LAMMPS restart candidate can be resumed"
+        )
+    step, _name, path = sorted(
+        candidates, key=lambda item: (item[0], item[1])
+    )[-1]
     return path, step, base._sha256(path)
 
 
@@ -206,7 +234,9 @@ def _active_launcher(
         raise ValueError("prepared launcher -in has no input filename")
     argv[index + 1] = input_name
     if restart_path is not None:
-        argv.extend(["-var", restart_deck.RESTART_VARIABLE, str(restart_path)])
+        argv.extend(
+            ["-var", restart_deck.RESTART_VARIABLE, str(restart_path)]
+        )
     return argv
 
 
@@ -230,16 +260,25 @@ def run(args: argparse.Namespace) -> int:
     input_dir = Path(args.input_dir).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    report: dict[str, Any] = {"schema_version": 1, "status": "FAIL", "node_id": args.node_id}
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "status": "FAIL",
+        "node_id": args.node_id,
+    }
     try:
         attempt = _attempt(args.attempt, output_dir)
-        node = base._project_node(Path(args.project).expanduser().resolve(), args.node_id)
+        node = base._project_node(
+            Path(args.project).expanduser().resolve(), args.node_id
+        )
         if str(node.get("uses", "")).split("@", 1)[0] != "lammps-md":
             raise ValueError("scheduled node does not use lammps-md")
         if node.get("backend") != "ssh-slurm":
             raise ValueError("scheduled LAMMPS execute requires ssh-slurm")
         parameters = node.get("parameters")
-        if not isinstance(parameters, dict) or parameters.get("operation") != "execute":
+        if (
+            not isinstance(parameters, dict)
+            or parameters.get("operation") != "execute"
+        ):
             raise ValueError("scheduled LAMMPS node must declare operation=execute")
         target = parameters.get("target")
         if target not in base.TARGETS:
@@ -249,16 +288,30 @@ def run(args: argparse.Namespace) -> int:
             raise ValueError("restart_policy is invalid")
         interval = parameters.get("checkpoint_interval")
         if policy == RESTART_AUTO:
-            if isinstance(interval, bool) or not isinstance(interval, int) or interval <= 0:
-                raise ValueError("auto restart requires a positive checkpoint_interval")
-        elif interval is not None and (isinstance(interval, bool) or not isinstance(interval, int) or interval <= 0):
+            if (
+                isinstance(interval, bool)
+                or not isinstance(interval, int)
+                or interval <= 0
+            ):
+                raise ValueError(
+                    "auto restart requires a positive checkpoint_interval"
+                )
+        elif interval is not None and (
+            isinstance(interval, bool)
+            or not isinstance(interval, int)
+            or interval <= 0
+        ):
             raise ValueError("checkpoint_interval must be positive when provided")
 
         manifest_path = input_dir / "lammps-input-manifest.json"
         manifest = base._read_mapping(manifest_path)
-        expected_manifest_sha = base._fingerprint(parameters.get("input_manifest_fingerprint"))
+        expected_manifest_sha = base._fingerprint(
+            parameters.get("input_manifest_fingerprint")
+        )
         if base._sha256(manifest_path) != expected_manifest_sha:
-            raise ValueError("staged LAMMPS input manifest fingerprint differs from approved parameters")
+            raise ValueError(
+                "staged LAMMPS input manifest fingerprint differs from approved parameters"
+            )
         if (
             manifest.get("schema_version") != 1
             or manifest.get("plugin_id") != "lammps-md"
@@ -267,7 +320,9 @@ def run(args: argparse.Namespace) -> int:
             or manifest.get("preparation_contract") != base.PREPARATION_CONTRACT
             or manifest.get("runtime_model_variable") != "MODEL_FILE"
         ):
-            raise ValueError("staged LAMMPS input manifest is not execution-ready")
+            raise ValueError(
+                "staged LAMMPS input manifest is not execution-ready"
+            )
         marker = manifest.get("completion_marker")
         model = manifest.get("model")
         md = manifest.get("md")
@@ -282,27 +337,46 @@ def run(args: argparse.Namespace) -> int:
         if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
             raise ValueError("approved MD step count is invalid")
         if marker != f"MLIPFLOW_LAMMPS_COMPLETED step={steps}":
-            raise ValueError("completion marker does not bind the approved step count")
+            raise ValueError(
+                "completion marker does not bind the approved step count"
+            )
         if interval is not None and interval > steps:
-            raise ValueError("checkpoint_interval cannot exceed approved total steps")
+            raise ValueError(
+                "checkpoint_interval cannot exceed approved total steps"
+            )
 
         generated = base._generated_records(manifest)
         selected_name = f"in.{target}.lammps"
         for name in ("structure.data", selected_name):
             record = generated.get(name)
             staged = input_dir / "lammps" / name
-            if record is None or not base._ordinary_file(staged, base.MAX_INPUT_BYTES):
+            if record is None or not base._ordinary_file(
+                staged, base.MAX_INPUT_BYTES
+            ):
                 raise ValueError(f"staged prepared input is missing: {name}")
-            if staged.stat().st_size != record["size_bytes"] or base._sha256(staged) != record["sha256"]:
-                raise ValueError(f"staged prepared input fingerprint differs: {name}")
-        source_deck = (input_dir / "lammps" / selected_name).read_text(encoding="utf-8")
+            if (
+                staged.stat().st_size != record["size_bytes"]
+                or base._sha256(staged) != record["sha256"]
+            ):
+                raise ValueError(
+                    f"staged prepared input fingerprint differs: {name}"
+                )
+        source_deck = (input_dir / "lammps" / selected_name).read_text(
+            encoding="utf-8"
+        )
         if marker not in source_deck or "${MODEL_FILE}" not in source_deck:
-            raise ValueError("selected input deck lacks its approved portable runtime contract")
+            raise ValueError(
+                "selected input deck lacks its approved portable runtime contract"
+            )
         relative_model = str(model.get("relative_path", ""))
         if relative_model and relative_model in source_deck:
-            raise ValueError("selected input deck embeds the site-relative model path")
+            raise ValueError(
+                "selected input deck embeds the site-relative model path"
+            )
 
-        model_root = args.model_root or os.environ.get("MLIPFLOW_MODEL_ROOT", "")
+        model_root = args.model_root or os.environ.get(
+            "MLIPFLOW_MODEL_ROOT", ""
+        )
         model_path = base._resolve_model(model_root, model)
         model_before = base._sha256(model_path)
         prepared_launcher = base._launcher(manifest, str(target))
@@ -330,19 +404,32 @@ def run(args: argparse.Namespace) -> int:
             prepared_launcher=prepared_launcher,
         )
         if resumed:
-            previous_runtime = base._read_mapping(input_dir / "restart" / "restart-runtime.json")
+            previous_runtime = base._read_mapping(
+                input_dir / "restart" / "restart-runtime.json"
+            )
             _validate_previous_runtime(previous_runtime, current_runtime, attempt)
             restart_path, segment_start_step, restart_sha = _select_restart(
                 input_dir, executable, prepared_launcher, int(interval), steps
             )
             restart_from_attempt = attempt - 1
-            active_text = restart_deck.build_resume(source_deck, int(interval), steps)
+            active_text = restart_deck.build_resume(
+                source_deck, int(interval), steps
+            )
         elif interval is not None:
-            active_text = restart_deck.instrument_fresh(source_deck, int(interval), steps)
+            active_text = restart_deck.instrument_fresh(
+                source_deck, int(interval), steps
+            )
         else:
-            active_text = source_deck if source_deck.endswith("\n") else source_deck + "\n"
+            active_text = (
+                source_deck
+                if source_deck.endswith("\n")
+                else source_deck + "\n"
+            )
 
-        shutil.copy2(input_dir / "lammps" / "structure.data", output_dir / "structure.data")
+        shutil.copy2(
+            input_dir / "lammps" / "structure.data",
+            output_dir / "structure.data",
+        )
         active_name = "in.active.lammps"
         active_path = output_dir / active_name
         active_path.write_text(active_text, encoding="utf-8")
@@ -359,12 +446,22 @@ def run(args: argparse.Namespace) -> int:
         if interval is not None:
             _write_runtime(runtime_path, current_runtime)
 
-        launch_argv = _active_launcher(prepared_launcher, model_path, active_name, restart_path)
+        launch_argv = _active_launcher(
+            prepared_launcher, model_path, active_name, restart_path
+        )
         log_path = output_dir / "lammps.log"
         screen_path = output_dir / "lammps.screen.log"
         stdout_path = output_dir / "lammps.stdout.log"
         stderr_path = output_dir / "lammps.stderr.log"
-        command = [*launcher_prefix, str(executable), *launch_argv, "-log", log_path.name, "-screen", screen_path.name]
+        command = [
+            *launcher_prefix,
+            str(executable),
+            *launch_argv,
+            "-log",
+            log_path.name,
+            "-screen",
+            screen_path.name,
+        ]
         with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
             completed = subprocess.run(
                 command,
@@ -378,22 +475,50 @@ def run(args: argparse.Namespace) -> int:
         if completed.returncode != 0:
             raise ValueError(f"LAMMPS exited with code {completed.returncode}")
         if not base._contains_marker(log_path, str(marker)):
-            raise ValueError("LAMMPS log lacks the approved end-of-script completion marker")
-        lammps_version = base._version_from_logs(log_path, screen_path, stdout_path)
+            raise ValueError(
+                "LAMMPS log lacks the approved end-of-script completion marker"
+            )
+        lammps_version = base._version_from_logs(
+            log_path, screen_path, stdout_path
+        )
         if base._sha256(model_path) != model_before:
             raise ValueError("LAMMPS model artifact changed during execution")
 
         artifacts = [
-            base._artifact(output_dir / "trajectory.lammpstrj", "trajectory.lammpstrj", base.MAX_TRAJECTORY_BYTES),
-            base._artifact(output_dir / "final.data", "final.data", base.MAX_FINAL_DATA_BYTES),
-            base._artifact(output_dir / "final.restart", "final.restart", base.MAX_RESTART_BYTES),
-            base._artifact(log_path, "lammps.log", base.MAX_LOG_BYTES),
-            base._artifact(screen_path, "lammps.screen.log", base.MAX_LOG_BYTES),
+            base._artifact(
+                output_dir / "trajectory.lammpstrj",
+                "trajectory.lammpstrj",
+                base.MAX_TRAJECTORY_BYTES,
+            ),
+            base._artifact(
+                output_dir / "final.data",
+                "final.data",
+                base.MAX_FINAL_DATA_BYTES,
+            ),
+            base._artifact(
+                output_dir / "final.restart",
+                "final.restart",
+                base.MAX_RESTART_BYTES,
+            ),
+            base._artifact(
+                log_path, "lammps.log", base.MAX_LOG_BYTES
+            ),
+            base._artifact(
+                screen_path, "lammps.screen.log", base.MAX_LOG_BYTES
+            ),
         ]
         if base._ordinary_file(stdout_path, base.MAX_LOG_BYTES):
-            artifacts.append(base._artifact(stdout_path, "lammps.stdout.log", base.MAX_LOG_BYTES))
+            artifacts.append(
+                base._artifact(
+                    stdout_path, "lammps.stdout.log", base.MAX_LOG_BYTES
+                )
+            )
         if base._ordinary_file(stderr_path, base.MAX_LOG_BYTES):
-            artifacts.append(base._artifact(stderr_path, "lammps.stderr.log", base.MAX_LOG_BYTES))
+            artifacts.append(
+                base._artifact(
+                    stderr_path, "lammps.stderr.log", base.MAX_LOG_BYTES
+                )
+            )
 
         result = {
             "schema_version": 1,
@@ -416,8 +541,12 @@ def run(args: argparse.Namespace) -> int:
             "completion_marker": marker,
             "launcher": {
                 "site_launcher_used": bool(launcher_prefix),
-                "prepared_argv_after_executable": prepared_launcher["argv_after_executable"],
-                "required_packages": prepared_launcher.get("required_packages", []),
+                "prepared_argv_after_executable": prepared_launcher[
+                    "argv_after_executable"
+                ],
+                "required_packages": prepared_launcher.get(
+                    "required_packages", []
+                ),
             },
             "restart": {
                 "policy": policy,
@@ -426,7 +555,9 @@ def run(args: argparse.Namespace) -> int:
                 "from_attempt": restart_from_attempt,
                 "selected_checkpoint_sha256": restart_sha,
                 "runtime_compatibility_checked": resumed,
-                "lammps_executable_sha256": current_runtime["lammps_executable_sha256"],
+                "lammps_executable_sha256": current_runtime[
+                    "lammps_executable_sha256"
+                ],
                 "platform": current_runtime["platform"],
                 "bitwise_exact_guaranteed": False,
             },
@@ -462,7 +593,9 @@ def run(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run/restart reviewed LAMMPS MLIP input on a cluster")
+    parser = argparse.ArgumentParser(
+        description="Run/restart reviewed LAMMPS MLIP input on a cluster"
+    )
     parser.add_argument("--project", required=True)
     parser.add_argument("--node-id", required=True)
     parser.add_argument("--input-dir", required=True)
