@@ -8,9 +8,7 @@
   "api_version": 1,
   "description": "Prepare deterministic CPU/GPU LAMMPS data/input decks for explicit LAMMPS-ready DeepMD, MACE, or MatGL/M3GNet model artifacts without launching LAMMPS.",
   "category": "sampling",
-  "contract": {
-    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
-  },
+  "contract": {"methods": ["validate", "plan", "prepare", "check", "collect", "replay"]},
   "implementation": {
     "kind": "python-adapter",
     "entrypoint": "adapter.py:Adapter",
@@ -27,7 +25,7 @@
       "DeepMD requires a LAMMPS-loadable frozen model artifact declared as deepmd-lammps-model. CPU and GPU decks use the same pair_style deepmd; actual GPU selection belongs to the site-owned DeePMD/LAMMPS runtime.",
       "MACE version 0.1 uses the original ML-MACE TorchScript interface declared as mace-lammps-torchscript. CPU uses pair_style mace; GPU uses the documented single-GPU Kokkos no_domain_decomposition path. The newer MACE ML-IAP interface is intentionally deferred to a separate interface contract.",
       "MatGL/M3GNet requires a file exported by mgl create-lammps-model and declared as matgl-lammps-torchscript. CPU uses pair_style matgl; GPU uses pair_style matgl/kk and is treated as single-GPU/single-rank in version 0.1.",
-      "Legacy CHGNet model files are intentionally blocked because this repository does not yet pin a native CHGNet LAMMPS export/pair-style contract. CHGNet remains available through the existing ASE-MD plugin.",
+      "Legacy CHGNet model files are intentionally rejected by the adapter because version 0.1 does not pin a native CHGNet LAMMPS export/pair-style contract. CHGNet remains available through the existing ASE-MD plugin.",
       "Version 0.1 supports only full-rank 3D periodic atomic structures and NVT or isotropic NPT. It does not generate molecular topology, bonded force fields, charged atom styles, hybrid potentials, long-range electrostatics, replica workflows, or LAMMPS restart orchestration.",
       "The generated input deck never embeds a cluster model path. It references ${MODEL_FILE}; a later reviewed execution layer must resolve the approved site model artifact and inject it with LAMMPS -var MODEL_FILE."
     ]
@@ -92,7 +90,7 @@
     "failure_state": "FAIL"
   },
   "retry": {
-    "status": "fresh-only",
+    "status": "delegated-to-core",
     "allowed_from": ["FAIL", "STOPPED"],
     "creates_new_attempt": true,
     "reuses_previous_run_directory": false,
@@ -105,6 +103,6 @@
     {"id": "deepmd", "family": "DeePMD-kit LAMMPS pair_style deepmd", "status": "implemented", "operations": ["lammps-prepare"], "external_programs": [], "limitations": ["GPU selection is a later site-runtime concern; the input pair style is deepmd for both targets."]},
     {"id": "mace", "family": "MACE ML-MACE LAMMPS pair style", "status": "implemented", "operations": ["lammps-prepare"], "external_programs": [], "limitations": ["Requires a pre-exported MACE LAMMPS TorchScript file; GPU deck targets the documented single-GPU Kokkos path."]},
     {"id": "m3gnet", "family": "MatGL M3GNet LAMMPS pair style", "status": "implemented", "operations": ["lammps-prepare"], "external_programs": [], "limitations": ["Requires a pre-exported MatGL LAMMPS TorchScript file; Kokkos GPU is single-GPU/single-rank in this contract."]},
-    {"id": "chgnet", "family": "CHGNet", "status": "blocked", "operations": [], "external_programs": [], "limitations": ["No pinned native CHGNet LAMMPS export/pair-style contract is accepted in version 0.1; use ase-md instead."]}
+    {"id": "chgnet", "family": "CHGNet", "status": "declared-only", "operations": [], "external_programs": [], "limitations": ["The adapter rejects CHGNet until a native export/pair-style bridge is separately reviewed; use ase-md in the meantime."]}
   ]
 }
