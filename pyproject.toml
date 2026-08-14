@@ -28,7 +28,7 @@ dft = ["pymatgen>=2024.5"]
 mlipflow = "mlipflow.cli:main"
 
 [tool.setuptools]
-package-dir = {"" = "src"]
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
