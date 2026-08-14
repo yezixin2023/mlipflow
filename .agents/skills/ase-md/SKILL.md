@@ -1,28 +1,33 @@
 ---
 name: ase-md
-description: Supervise scheduled ASE molecular dynamics with explicit DeepMD, M3GNet/MatGL, CHGNet, or MACE model artifacts. Use when planning, submitting, or verifying MLIP-driven NVT trajectories on an MLIPFlow ssh-slurm cluster profile.
+description: Supervise scheduled ASE molecular dynamics with explicit DeepMD, M3GNet/MatGL, CHGNet, or MACE model artifacts. Use when planning, submitting, or verifying MLIP-driven NVT Langevin or isotropic MTK NPT trajectories on an MLIPFlow ssh-slurm cluster profile.
 ---
 
 # ASE molecular dynamics
 
 Use the `ase-md` plugin as the deterministic implementation. The Skill decides and explains workflow inputs; it does not implement an integrator or calculator itself.
 
-## Version 0.1 boundary
+## Version 0.2 boundary
 
-Version 0.1 supports exactly one fresh, single-temperature `nvt-langevin` trajectory per workflow node on `ssh-slurm`.
+Version 0.2 supports exactly one fresh, single-temperature trajectory per workflow node on `ssh-slurm`:
 
-Do not silently substitute this contract when the user requests NPT, NVE, restart/resume, replicas, a temperature sweep, diffusion fitting, conductivity, or Arrhenius analysis. Those are separate workflow capabilities. Keep the MD trajectory stage independent until the corresponding contract exists.
+- `nvt-langevin`: fixed-cell Langevin NVT.
+- `npt-isotropic-mtk`: isotropic Martyna-Tobias-Klein NPT using ASE `IsotropicMTKNPT`.
+
+Do not silently substitute either contract when the user requests NVE, anisotropic/full-cell NPT, restart/resume, replicas, a temperature sweep, diffusion fitting, conductivity, or Arrhenius analysis. Those remain separate workflow capabilities.
 
 ## Choose the calculator
 
 Accept one explicit model family:
 
-- `deepmd`: an explicit DeepMD model file, loaded through the ASE DeepMD calculator. The calculator uses the precision encoded in the model; do not claim that `default_dtype` recasts it.
-- `m3gnet`: an explicit local MatGL model directory, loaded as a MatGL potential and attached through its ASE PES calculator.
-- `chgnet`: an explicit CHGNet model file, loaded through `CHGNetCalculator.from_file`; require `default_dtype: float32`.
-- `mace`: an explicit MACE model file, loaded through `MACECalculator`.
+- `deepmd`: explicit DeepMD model file through the ASE DeepMD calculator.
+- `m3gnet`: explicit local MatGL model directory through its ASE PES calculator.
+- `chgnet`: explicit CHGNet model file through `CHGNetCalculator.from_file`; require `default_dtype: float32`.
+- `mace`: explicit MACE model file through `MACECalculator`.
 
-Never choose a network model name, pretrained alias, package cache entry, or remote Hub model on the user's behalf. Scheduled MD is network-free and requires an approved model content fingerprint. The model may come from MLIPFlow training or any other user/site-owned training process; version 0.1 does not require an upstream `mlip-training` node.
+Never choose a network model name, pretrained alias, package cache entry, or remote Hub model on the user's behalf. Scheduled MD is network-free and requires an approved model content fingerprint.
+
+For NPT, framework name alone is not sufficient evidence of stress capability. The compute-node runner must inspect the concrete loaded calculator's `implemented_properties` and successfully obtain a finite 3x3 ASE stress tensor before any NPT step. If that probe fails, the job must fail before dynamics.
 
 ## Bind the model without cluster paths
 
@@ -36,25 +41,50 @@ Require `inputs.model_reference` to point to a small project JSON manifest conta
 
 The portable project must never contain the cluster's absolute model path. The site-owned `ase-md-<calculator>/run.sh` supplies `MODEL_ROOT`. The compute-node resolver recomputes the model fingerprint before and after inference.
 
-## Require explicit MD physics
+## Require explicit common MD physics
 
-Do not infer scientific MD settings. Require the user/workflow to declare:
+For either ensemble, require the user/workflow to declare:
 
 - target `temperature_k`
 - `timestep_fs`
 - total `steps`
 - `trajectory_interval`
 - `thermo_interval`
-- non-negative stochastic `seed`
-- `friction_per_fs`
-- `fix_com`
+- non-negative `seed`
 - `device` (`cpu` or `cuda`)
 - `default_dtype`
-- the exact structure SHA-256 and model fingerprint
+- `fix_com`
+- exact structure SHA-256 and model fingerprint
 
-`device: cuda` requires at least one scheduled GPU. Do not invent a timestep, thermostat friction, duration, or temperature from the chemical system. For DeepMD, treat `default_dtype` only as cross-framework workflow metadata in version 0.1; the model remains at its native precision.
+`device: cuda` requires at least one scheduled GPU. Do not invent a timestep, duration, temperature, or resource request from the chemical system.
 
-The runner seeds both Maxwell-Boltzmann velocity initialization and the ASE Langevin RNG. Explain that framework/GPU kernels are not promised to be bitwise deterministic.
+DeepMD's ASE calculator uses model-native precision; `default_dtype` is recorded for cross-framework workflow identity but must not be described as recasting a DeepMD model.
+
+## NVT contract
+
+For `ensemble: nvt-langevin` also require an explicit positive `friction_per_fs`.
+
+`fix_com: true` uses ASE `FixCom` rather than deprecated Langevin `fixcm`. The seed controls both Maxwell-Boltzmann initialization and Langevin stochastic forces. Explain that GPU/framework kernels still are not promised bitwise deterministic.
+
+Do not add NPT pressure or damping parameters to an NVT node.
+
+## Isotropic NPT contract
+
+For `ensemble: npt-isotropic-mtk` require all of:
+
+- finite `pressure_gpa` (zero and negative pressure are not silently rejected);
+- positive `thermostat_damping_fs`;
+- positive `barostat_damping_fs`;
+- `fix_com: false`;
+- no `friction_per_fs`.
+
+Do not infer the damping times from the timestep. ASE documentation gives typical scales, but they remain scientific inputs and must be explicit in MLIPFlow.
+
+The NPT implementation is deliberately isotropic: only volume changes, preserving the initial cell shape. Version 0.2 pins thermostat/barostat chain lengths to 3/3 and chain integration substeps to 1/1; expose those values in approval/provenance rather than pretending they are user-selected.
+
+NPT requires a full-rank 3D periodic cell and no ASE constraints. Reject a molecular/nonperiodic or constrained structure rather than silently converting it. The seed controls initial Maxwell-Boltzmann velocities only; subsequent MTK integration has no stochastic thermostat RNG.
+
+NPT thermodynamics must additionally record finite `pressure_GPa`, positive `volume_A3`, and positive `cell_a_A`, `cell_b_A`, `cell_c_A` on the approved thermo schedule.
 
 ## Cluster boundary
 
@@ -73,7 +103,7 @@ Each site template may activate a separate framework environment while keeping t
 
 ## Approval and completion
 
-Before submission, show calculator/model identity, structure identity, NVT settings, simulated duration, frame/thermo record counts, device, resources, template family, and bounded fetch allowlist. Submit only after the matching normal MLIPFlow approval.
+Before submission, show calculator/model identity, structure identity, ensemble, temperature, timestep, simulated duration, frame/thermo record counts, device, resources, template family, and bounded fetch allowlist. For NVT also show friction. For NPT also show target pressure, both damping times, stress requirement, isotropic cell mode, no-constraints requirement, and pinned MTK chain configuration.
 
 A Slurm `COMPLETED` state is not scientific success. After completion, use the normal second `advance --dry-run` / approval boundary. The pinned checker must verify:
 
@@ -81,11 +111,12 @@ A Slurm `COMPLETED` state is not scientific success. After completion, use the n
 - model and structure fingerprints match the approved identities;
 - `trajectory-index.json` contains exactly step 0, every approved interval, and the final step;
 - `thermo.csv` contains the matching step/time schedule and only finite values;
-- `trajectory.traj`, index, thermo table, final extxyz, and reports match their recorded sizes and SHA-256 values;
+- NPT pressure and cell metrics satisfy the NPT contract;
+- trajectory, index, thermo table, final extxyz, and reports match recorded sizes and SHA-256 values;
 - calculator and ASE versions are recorded.
 
-Treat missing, oversized, changed, non-finite, or identity-mismatched output as `FAIL`, not a warning.
+Treat missing, oversized, changed, non-finite, stress-incompatible, or identity-mismatched output as `FAIL`, not a warning.
 
 ## Scientific interpretation
 
-The `ase-md` plugin produces trajectories; it does not by itself establish equilibration, diffusion, ionic conductivity, phase stability, or model validity. Do not report those quantities unless a separate reviewed analysis stage consumes the trajectory. Do not call a successful contract test or short trajectory numerical parity with historical calculations.
+The `ase-md` plugin produces trajectories; it does not by itself establish equilibration, diffusion, ionic conductivity, phase stability, or model validity. A stable pressure trace is not proof of a converged NPT ensemble. Do not report those conclusions unless a separate reviewed analysis stage supports them.
