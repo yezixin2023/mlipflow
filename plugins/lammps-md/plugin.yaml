@@ -1,0 +1,110 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "schema_version": 1,
+  "id": "lammps-md",
+  "name": "LAMMPS molecular dynamics",
+  "display_name": "LAMMPS input preparation for MLIP models",
+  "version": "0.1.0",
+  "api_version": 1,
+  "description": "Prepare deterministic CPU/GPU LAMMPS data/input decks for explicit LAMMPS-ready DeepMD, MACE, or MatGL/M3GNet model artifacts without launching LAMMPS.",
+  "category": "sampling",
+  "contract": {
+    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
+  },
+  "implementation": {
+    "kind": "python-adapter",
+    "entrypoint": "adapter.py:Adapter",
+    "status": "implemented",
+    "source_classification": ["D", "new"],
+    "source_references": [
+      "https://docs.deepmodeling.com/projects/deepmd/en/stable/third-party/lammps-command.html",
+      "https://mace-docs.readthedocs.io/en/latest/guide/lammps.html",
+      "https://github.com/materialyzeai/matgl/tree/main/lammps",
+      "https://github.com/CederGroupHub/chgnet/issues/57"
+    ],
+    "limitations": [
+      "Version 0.1 is prepare-only and local-only. It writes reviewable LAMMPS inputs but never launches LAMMPS, MPI, Kokkos, CUDA, SSH, or Slurm.",
+      "DeepMD requires a LAMMPS-loadable frozen model artifact declared as deepmd-lammps-model. CPU and GPU decks use the same pair_style deepmd; actual GPU selection belongs to the site-owned DeePMD/LAMMPS runtime.",
+      "MACE version 0.1 uses the original ML-MACE TorchScript interface declared as mace-lammps-torchscript. CPU uses pair_style mace; GPU uses the documented single-GPU Kokkos no_domain_decomposition path. The newer MACE ML-IAP interface is intentionally deferred to a separate interface contract.",
+      "MatGL/M3GNet requires a file exported by mgl create-lammps-model and declared as matgl-lammps-torchscript. CPU uses pair_style matgl; GPU uses pair_style matgl/kk and is treated as single-GPU/single-rank in version 0.1.",
+      "Legacy CHGNet model files are intentionally blocked because this repository does not yet pin a native CHGNet LAMMPS export/pair-style contract. CHGNet remains available through the existing ASE-MD plugin.",
+      "Version 0.1 supports only full-rank 3D periodic atomic structures and NVT or isotropic NPT. It does not generate molecular topology, bonded force fields, charged atom styles, hybrid potentials, long-range electrostatics, replica workflows, or LAMMPS restart orchestration.",
+      "The generated input deck never embeds a cluster model path. It references ${MODEL_FILE}; a later reviewed execution layer must resolve the approved site model artifact and inject it with LAMMPS -var MODEL_FILE."
+    ]
+  },
+  "execution": {
+    "mode": "python-library",
+    "backends": ["local"],
+    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
+    "operations": ["lammps-prepare"],
+    "shell": false,
+    "executes_external_programs": false,
+    "writes_files": true,
+    "submits_jobs": false
+  },
+  "replay": {
+    "supported": true,
+    "behavior": "parse-existing-artifacts",
+    "accepted_media_types": ["application/json", "text/plain"],
+    "reason": "Replay only revalidates generated input fingerprints and never launches LAMMPS."
+  },
+  "inputs": [
+    {"name": "structure", "kind": "file", "required": true, "description": "One project-scoped ASE-readable full-rank 3D periodic structure."},
+    {"name": "model-reference", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Logical model identity, site-root-relative path, LAMMPS artifact format, supported elements, and approved content fingerprint."},
+    {"name": "lammps-config", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Explicit ensemble, CPU/GPU target list, type map, temperature, timestep, step count, output intervals, seed, and thermostat/barostat parameters."}
+  ],
+  "parameters": [
+    {"name": "operation", "type": "string", "required": true, "description": "Must be lammps-prepare."},
+    {"name": "output-dir", "type": "string", "required": false, "description": "Fresh attempt-relative output directory; defaults to lammps-inputs."}
+  ],
+  "outputs": [
+    {"name": "lammps-input-manifest", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Pinned input identities, model/runtime contract, generated file SHA-256 values, and launcher metadata."},
+    {"name": "structure-data", "kind": "file", "required": true, "media_type": "text/plain", "description": "ASE-generated LAMMPS atomic data file with atom types ordered by the explicit type_map."},
+    {"name": "cpu-input", "kind": "file", "required": false, "media_type": "text/plain", "description": "Generated in.cpu.lammps when cpu is requested."},
+    {"name": "gpu-input", "kind": "file", "required": false, "media_type": "text/plain", "description": "Generated in.gpu.lammps when gpu is requested."}
+  ],
+  "dependencies": {
+    "upstream_plugins": [],
+    "python_packages": [
+      {"name": "ase", "required": true, "bundled": false, "purpose": "Read the source structure and deterministically write the LAMMPS atomic data file."}
+    ],
+    "external_programs": []
+  },
+  "safety": {
+    "expensive": false,
+    "destructive": false,
+    "network_access": false,
+    "requires_approval_before_execution": false,
+    "notes": [
+      "Preparation is local, deterministic, and does not execute a molecular-dynamics engine.",
+      "Model paths in generated decks are portable runtime variables; site-owned executables, MPI layout, CUDA architecture, module/conda setup, and absolute model roots are deliberately excluded."
+    ]
+  },
+  "completion": {
+    "status": "implemented",
+    "checks": [
+      {"id": "input-identity", "implemented": true, "description": "Recompute structure/model-reference/config SHA-256 values and require them to match the preparation manifest."},
+      {"id": "generated-files", "implemented": true, "description": "Require exactly structure.data plus the requested CPU/GPU input decks with matching size and SHA-256."},
+      {"id": "portable-model-binding", "implemented": true, "description": "Require every generated input deck to reference ${MODEL_FILE} and reject embedding the site model relative path."},
+      {"id": "framework-contract", "implemented": true, "description": "Require a framework-specific LAMMPS-ready artifact format and element/type-map compatibility before preparation."}
+    ],
+    "success_state": "OK",
+    "failure_state": "FAIL"
+  },
+  "retry": {
+    "status": "fresh-only",
+    "allowed_from": ["FAIL", "STOPPED"],
+    "creates_new_attempt": true,
+    "reuses_previous_run_directory": false,
+    "requires_approval": true,
+    "max_attempts": null,
+    "limit_enforced": false,
+    "notes": ["Preparation retry always regenerates a fresh immutable input bundle from current approved inputs."]
+  },
+  "computational_backends": [
+    {"id": "deepmd", "family": "DeePMD-kit LAMMPS pair_style deepmd", "status": "implemented", "operations": ["lammps-prepare"], "external_programs": [], "limitations": ["GPU selection is a later site-runtime concern; the input pair style is deepmd for both targets."]},
+    {"id": "mace", "family": "MACE ML-MACE LAMMPS pair style", "status": "implemented", "operations": ["lammps-prepare"], "external_programs": [], "limitations": ["Requires a pre-exported MACE LAMMPS TorchScript file; GPU deck targets the documented single-GPU Kokkos path."]},
+    {"id": "m3gnet", "family": "MatGL M3GNet LAMMPS pair style", "status": "implemented", "operations": ["lammps-prepare"], "external_programs": [], "limitations": ["Requires a pre-exported MatGL LAMMPS TorchScript file; Kokkos GPU is single-GPU/single-rank in this contract."]},
+    {"id": "chgnet", "family": "CHGNet", "status": "blocked", "operations": [], "external_programs": [], "limitations": ["No pinned native CHGNet LAMMPS export/pair-style contract is accepted in version 0.1; use ase-md instead."]}
+  ]
+}
