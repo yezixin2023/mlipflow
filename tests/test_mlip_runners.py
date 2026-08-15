@@ -61,6 +61,216 @@ def test_mace_plan(tmp_path):
     assert mlip_mace.plan(ns("mace"), cfg, tmp_path / "config.json", data)["framework"] == "mace"
 
 
+def test_mace_plan_matches_hfeshell_store_true_parser(tmp_path):
+    data = tmp_path / "train.xyz"
+    data.write_text("0\ncomment\n")
+    cfg = {
+        "framework": "mace",
+        "mace": {
+            "name": "demo",
+            "options": {"max_num_epochs": 1, "ema": True, "amsgrad": True},
+        },
+    }
+
+    argv = mlip_mace.plan(ns("mace"), cfg, tmp_path / "config.json", data)["argv"]
+
+    assert "--work_dir" not in argv
+    assert argv.count("--ema") == 1
+    assert argv.count("--amsgrad") == 1
+    assert "True" not in argv
+
+
+def test_mace_execute_falls_back_to_installed_main_and_restores_argv():
+    parsed = object()
+    calls = []
+
+    class Parser:
+        def parse_args(self, argv):
+            calls.append(("parse", list(argv)))
+            return parsed
+
+    tools = SimpleNamespace(build_default_arg_parser=lambda: Parser())
+
+    def main():
+        calls.append(("main", list(sys.argv)))
+
+    original = sys.argv
+    mlip_mace._execute_mace(tools, SimpleNamespace(main=main), ["--name", "demo"])
+
+    assert calls == [
+        ("parse", ["--name", "demo"]),
+        ("main", ["mace_run_train", "--name", "demo"]),
+    ]
+    assert sys.argv is original
+
+
+def test_mace_prepares_all_explicit_output_directories(tmp_path):
+    work = tmp_path / "mace-work"
+
+    mlip_mace._prepare_output_directories(work)
+
+    assert {path.name for path in work.iterdir()} == {
+        "models",
+        "logs",
+        "checkpoints",
+        "results",
+    }
+    assert all(path.is_dir() for path in work.iterdir())
+
+
+def test_mace_select_model_prefers_native_over_compiled(tmp_path):
+    native = tmp_path / "demo.model"
+    compiled = tmp_path / "demo_compiled.model"
+    native.write_bytes(b"native")
+    compiled.write_bytes(b"compiled")
+
+    assert mlip_mace._select_model(tmp_path, "demo") == native
+
+
+def test_mace_plan_preserves_historical_gpu_options_and_pins_test_file(tmp_path):
+    data = tmp_path / "train.xyz"
+    test_data = tmp_path / "test.xyz"
+    data.write_text("0\ntrain\n")
+    test_data.write_text("0\ntest\n")
+    cfg = {
+        "framework": "mace",
+        "mace": {
+            "name": "MACE",
+            "save_cpu": False,
+            "auxiliary_data": {
+                "test_file": {
+                    "relative_path": "test.xyz",
+                    "fingerprint": mlip_mace._sha256(test_data),
+                }
+            },
+            "options": {
+                "E0s": "foundation",
+                "amsgrad": True,
+                "batch_size": 48,
+                "ema": True,
+                "ema_decay": 0.99,
+                "energy_weight": 1.0,
+                "forces_weight": 1.0,
+                "lr": 0.01,
+                "max_num_epochs": 1,
+                "multiheads_finetuning": True,
+                "r_max": 5.0,
+                "scaling": "rms_forces_scaling",
+                "valid_batch_size": 10,
+                "valid_fraction": 0.05,
+                "weight_decay": 5e-7,
+            },
+        },
+    }
+
+    argv = mlip_mace.plan(ns("mace", "finetune"), cfg, tmp_path / "config.json", data)["argv"]
+
+    assert argv[argv.index("--test_file") + 1] == str(test_data)
+    assert argv[argv.index("--multiheads_finetuning") + 1] == "True"
+    assert argv[argv.index("--max_num_epochs") + 1] == "1"
+    assert argv[argv.index("--batch_size") + 1] == "48"
+    assert argv[argv.index("--lr") + 1] == "0.01"
+    assert "--save_cpu" not in argv
+
+
+def test_mace_fresh_plan_uses_dataset_energy_key_without_finetune_arguments(tmp_path):
+    data = tmp_path / "train.xyz"
+    test_data = tmp_path / "test.xyz"
+    data.write_text("0\nenergy=-1.0\n")
+    test_data.write_text("0\nenergy=-1.0\n")
+    cfg = {
+        "framework": "mace",
+        "mace": {
+            "name": "MACEFresh",
+            "auxiliary_data": {
+                "test_file": {
+                    "relative_path": "test.xyz",
+                    "fingerprint": mlip_mace._sha256(test_data),
+                }
+            },
+            "options": {
+                "E0s": "average",
+                "batch_size": 8,
+                "energy_key": "energy",
+                "max_num_epochs": 1,
+                "r_max": 5.0,
+            },
+        },
+    }
+
+    argv = mlip_mace.plan(ns("mace", "train"), cfg, tmp_path / "config.json", data)[
+        "argv"
+    ]
+
+    assert argv[argv.index("--E0s") + 1] == "average"
+    assert argv[argv.index("--energy_key") + 1] == "energy"
+    assert "--foundation_model" not in argv
+    assert "--multiheads_finetuning" not in argv
+    assert "--lora" not in argv
+    assert argv[argv.index("--max_num_epochs") + 1] == "1"
+    assert argv[argv.index("--batch_size") + 1] == "8"
+    assert "--save_cpu" in argv
+
+
+def test_mace_completion_accepts_one_finite_epoch(tmp_path):
+    logs = tmp_path / "logs"
+    results = tmp_path / "results"
+    logs.mkdir()
+    results.mkdir()
+    (logs / "MACE_run-3.log").write_text(
+        "Epoch 0: loss=0.25\nTraining complete\n", encoding="utf-8"
+    )
+    (results / "MACE_run-3_train.txt").write_text(
+        json.dumps(
+            {
+                "mode": "eval",
+                "epoch": 0,
+                "loss": 0.25,
+                "rmse_e_per_atom": 1.5,
+                "rmse_f": 0.04,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    metrics, evidence = mlip_mace._completion_evidence(tmp_path, 1)
+
+    assert metrics["requested_epochs"] == 1.0
+    assert metrics["completed_epochs"] == 1.0
+    assert metrics["final_rmse_f"] == 0.04
+    assert evidence["normal_completion"] is True
+    assert evidence["all_recorded_metrics_finite"] is True
+
+
+def test_mace_completion_rejects_early_exit(tmp_path):
+    logs = tmp_path / "logs"
+    results = tmp_path / "results"
+    logs.mkdir()
+    results.mkdir()
+    (logs / "MACE.log").write_text("Training complete\n", encoding="utf-8")
+    (results / "MACE_train.txt").write_text(
+        '{"mode":"eval","epoch":0,"loss":0.2}\n', encoding="utf-8"
+    )
+
+    with pytest.raises(TrainingError, match="completed epochs"):
+        mlip_mace._completion_evidence(tmp_path, 1)
+
+
+def test_mace_completion_rejects_non_finite_history(tmp_path):
+    logs = tmp_path / "logs"
+    results = tmp_path / "results"
+    logs.mkdir()
+    results.mkdir()
+    (logs / "MACE.log").write_text("Epoch 0: loss=nan\nTraining complete\n", encoding="utf-8")
+    (results / "MACE_train.txt").write_text(
+        '{"mode":"eval","epoch":0,"loss":NaN}\n', encoding="utf-8"
+    )
+
+    with pytest.raises(TrainingError, match="non-finite"):
+        mlip_mace._completion_evidence(tmp_path, 1)
+
+
 @pytest.mark.parametrize("metric", [True, "1.0", None, float("nan"), float("inf"), float("-inf")])
 def test_write_result_rejects_invalid_metrics_without_manifest(tmp_path, metric):
     args = ns("chgnet", precision="float32")

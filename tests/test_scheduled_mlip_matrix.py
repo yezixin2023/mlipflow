@@ -150,6 +150,90 @@ def _completed_finetune_context(tmp_path: Path, module) -> tuple[dict, Path]:
     return context, report_path
 
 
+def _completed_mace_finetune_context(tmp_path: Path, module) -> tuple[dict, Path]:
+    context = _context(tmp_path, "mace", "finetune")
+    config = tmp_path / context["inputs"]["training_config"]
+    _write_json(
+        config,
+        {
+            "framework": "mace",
+            "mace": {"options": {"max_num_epochs": 1}},
+        },
+    )
+    context["parameters"]["config_fingerprint"] = _sha(config)
+    plan = module.Adapter().plan(context)
+    assert plan["status"] == "READY"
+    identity = plan["training_identity"]
+    attempt = Path(context["attempt_dir"])
+    attempt.mkdir(parents=True)
+    model = attempt / "model-artifact"
+    model.write_bytes(b"mace-model")
+    result_path = attempt / context["parameters"]["result_manifest"]
+    _write_json(
+        result_path,
+        {
+            "schema_version": 1,
+            "plugin_id": "mlip-training",
+            "status": "OK",
+            "framework": "mace",
+            "framework_version": "0.3.12",
+            "operation": "finetune",
+            "seed": identity["seed"],
+            "device": identity["device"],
+            "precision": identity["precision"],
+            "dataset_fingerprint": identity["dataset"]["fingerprint"],
+            "config_fingerprint": identity["config_fingerprint"],
+            "foundation_model_fingerprint": identity["foundation_model"]["fingerprint"],
+            "metrics": {"requested_epochs": 1.0, "completed_epochs": 1.0},
+            "provenance": {
+                "completion": {
+                    "requested_epochs": 1,
+                    "completed_epochs": 1,
+                    "normal_completion": True,
+                    "all_recorded_metrics_finite": True,
+                    "native_model_reload": "OK",
+                },
+                "environment": {
+                    "compute_node": "gpu3",
+                    "python_version": "3.12.2",
+                    "mace_source_version": "0.3.12",
+                    "mace_dist_version": "0.3.12",
+                    "torch_version": "2.5.1",
+                    "torch_cuda_version": "11.8",
+                    "gpu_model": "NVIDIA A800 80GB PCIe",
+                },
+            },
+            "model_artifact": {
+                "path": "model-artifact",
+                "media_type": "application/x-pytorch",
+                "sha256": _sha(model),
+                "size_bytes": model.stat().st_size,
+            },
+        },
+    )
+    _write_json(
+        attempt / "cluster-run-report.json",
+        {
+            "schema_version": 1,
+            "status": "OK",
+            "return_code": 0,
+            "framework": "mace",
+            "operation": "finetune",
+            "config_fingerprint": identity["config_fingerprint"],
+            "dataset": {
+                **identity["dataset"],
+                "observed_fingerprint": identity["dataset"]["fingerprint"],
+            },
+            "foundation_model": {
+                **identity["foundation_model"],
+                "observed_fingerprint": identity["foundation_model"]["fingerprint"],
+            },
+        },
+    )
+    context["execution"] = {"plan": plan}
+    return context, result_path
+
+
 @pytest.mark.parametrize("framework", ["deepmd", "m3gnet", "chgnet", "mace"])
 @pytest.mark.parametrize("operation", ["train", "finetune"])
 def test_generic_scheduler_matrix_is_ready(tmp_path: Path, framework: str, operation: str) -> None:
@@ -222,6 +306,37 @@ def test_finetune_cluster_foundation_identity_mismatch_fails(
     assert any(
         item["code"] == "training.cluster_foundation_identity" for item in result["diagnostics"]
     )
+
+
+def test_mace_scheduled_completion_evidence_is_accepted(tmp_path: Path) -> None:
+    module = _load("mlip_training_cluster_adapter_mace_ok", PLUGIN / "adapter_cluster.py")
+    context, _ = _completed_mace_finetune_context(tmp_path, module)
+
+    result = module.Adapter().check(context)
+
+    assert result["status"] == "OK", result.get("diagnostics")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("completed_epochs", 0),
+        ("normal_completion", False),
+        ("all_recorded_metrics_finite", False),
+        ("native_model_reload", "FAIL"),
+    ],
+)
+def test_mace_scheduled_completion_mismatch_fails(tmp_path: Path, field: str, value) -> None:
+    module = _load("mlip_training_cluster_adapter_mace_bad", PLUGIN / "adapter_cluster.py")
+    context, result_path = _completed_mace_finetune_context(tmp_path, module)
+    manifest = json.loads(result_path.read_text(encoding="utf-8"))
+    manifest["provenance"]["completion"][field] = value
+    _write_json(result_path, manifest)
+
+    result = module.Adapter().check(context)
+
+    assert result["status"] == "FAIL"
+    assert any(item["code"] == f"training.mace_{field}" for item in result["diagnostics"])
 
 
 def test_cluster_fingerprint_is_stable_for_files_and_trees(tmp_path: Path) -> None:

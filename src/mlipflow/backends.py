@@ -462,7 +462,16 @@ class SshSlurmBackend:
         command = (
             f"active=$(squeue -h -j {job_id} -o '%T|%R' 2>/dev/null || true); "
             "if [ -n \"$active\" ]; then printf '%s\\n' \"$active\"; "
-            f"else sacct -n -X -j {job_id} -o State,Reason -P; fi"
+            f"else history=$(sacct -n -X -j {job_id} -o State,Reason -P "
+            "2>/dev/null || true); "
+            "if [ -n \"$history\" ]; then printf '%s\\n' \"$history\"; "
+            f"else control=$(scontrol show job -o {job_id} 2>/dev/null || true); "
+            "state=''; reason=''; "
+            "for field in $control; do case \"$field\" in "
+            "JobState=*) state=${field#JobState=} ;; "
+            "Reason=*) reason=${field#Reason=} ;; esac; done; "
+            "if [ -n \"$state\" ]; then printf '%s|%s\\n' \"$state\" \"$reason\"; fi; "
+            "fi; fi"
         )
         completed = subprocess.run(
             ["ssh", "--", self.profile, command],

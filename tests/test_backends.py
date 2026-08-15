@@ -139,6 +139,24 @@ class BackendTests(unittest.TestCase):
         self.assertIn("sacct", remote_command)
         self.assertIn("|| true", remote_command)
 
+    def test_ssh_status_falls_back_to_scontrol_when_accounting_is_unavailable(self) -> None:
+        backend = SshSlurmBackend("safe-profile")
+        completed = subprocess.CompletedProcess(
+            ["ssh"], 0, "FAILED|NonZeroExitCode\n", ""
+        )
+        with patch("mlipflow.backends.subprocess.run", return_value=completed) as invoked:
+            status = backend.status("893999")
+
+        self.assertEqual(
+            {"state": "FAILED", "detail": "NonZeroExitCode", "source": "remote"},
+            status,
+        )
+        remote_command = invoked.call_args.args[0][-1]
+        self.assertIn("sacct -n -X -j 893999", remote_command)
+        self.assertIn("scontrol show job -o 893999", remote_command)
+        self.assertIn("JobState=*", remote_command)
+        self.assertIn("Reason=*", remote_command)
+
 
 if __name__ == "__main__":
     unittest.main()
