@@ -375,6 +375,8 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
         "approval_summary": {
             "expensive": True,
             "submits_jobs": True,
+            "execution_model": "single-python",
+            "cpus_meaning": "threads-per-process",
             "calculator": calculator,
             "ensemble": "nvt-langevin",
             "temperature_K": identity["temperature_k"],
@@ -391,7 +393,8 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
             "template_family": TEMPLATE_FAMILIES[calculator],
         },
         "scheduled_execution": {
-            "schema_version": 2,
+            "schema_version": 3,
+            "execution_model": "single-python",
             "template_family": TEMPLATE_FAMILIES[calculator],
             "staged_files": staged,
             "fetch_outputs": fetch_outputs,

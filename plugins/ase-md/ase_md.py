@@ -40,6 +40,29 @@ class AseMDError(RuntimeError):
     pass
 
 
+def _prepare_output_directory(path: Path) -> Path:
+    """Claim a fresh output root under the common scheduled-runner contract.
+
+    Standalone callers may provide a path that does not exist. The ssh-slurm
+    backend instead pre-creates an empty output/ directory as part of its fresh
+    attempt workspace. Both forms are fresh; any existing content remains an
+    overwrite error.
+    """
+
+    candidate = path.expanduser()
+    if candidate.is_symlink():
+        raise AseMDError(f"output directory must not be a symlink: {candidate}")
+    resolved = candidate.resolve()
+    if resolved.exists():
+        if not resolved.is_dir():
+            raise AseMDError(f"output path is not a directory: {resolved}")
+        if next(resolved.iterdir(), None) is not None:
+            raise AseMDError(f"output directory is not empty: {resolved}")
+        return resolved
+    resolved.mkdir(parents=True)
+    return resolved
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -464,7 +487,7 @@ def run_md(
 
     structure = structure.expanduser().resolve()
     model = model.expanduser().resolve()
-    output_dir = output_dir.expanduser().resolve()
+    output_dir = output_dir.expanduser()
     restart_checkpoint = restart_checkpoint.expanduser().resolve() if restart_checkpoint else None
     if not structure.is_file():
         raise AseMDError(f"structure is not a regular file: {structure}")
@@ -473,9 +496,7 @@ def run_md(
             raise AseMDError("M3GNet/MatGL model must be a local model directory")
     elif not model.is_file():
         raise AseMDError(f"{calculator} model must be a local model file")
-    if output_dir.exists():
-        raise AseMDError(f"output directory already exists: {output_dir}")
-    output_dir.mkdir(parents=True)
+    output_dir = _prepare_output_directory(output_dir)
 
     import numpy as np
     from ase import units

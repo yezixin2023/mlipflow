@@ -395,6 +395,27 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
         self.assertEqual(
             adapter_plan["scheduled_execution"]["template_family"], "deepmd"
         )
+        self.assertEqual(adapter_plan["scheduled_execution"]["schema_version"], 3)
+        self.assertEqual(
+            adapter_plan["scheduled_execution"]["execution_model"], "single-python"
+        )
+        self.assertEqual(
+            adapter_plan["approval_summary"]["cpus_meaning"], "threads-per-process"
+        )
+        hpc = plan["hpc_execution"]
+        self.assertEqual(hpc["execution_model"], "single-python")
+        self.assertEqual(
+            hpc["templates"]["submit.sbatch"]["relative_path"],
+            "slurm/single-python/cpu.sbatch",
+        )
+        self.assertIn(
+            "#SBATCH --ntasks=1",
+            hpc["rendered_scripts"]["submit.sbatch"]["content"],
+        )
+        self.assertIn(
+            "#SBATCH --cpus-per-task=16",
+            hpc["rendered_scripts"]["submit.sbatch"]["content"],
+        )
 
     def test_plan_stages_exactly_the_config_and_dataset_reference(self) -> None:
         staged = self.plan()["adapter_plan"]["scheduled_execution"]["staged_files"]
@@ -472,6 +493,8 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
             project, plugin, plan, node_id="train-deepmd", attempt=1
         )
         self.assertEqual(contract["template_family"], "deepmd")
+        self.assertEqual(contract["schema_version"], 3)
+        self.assertEqual(contract["execution_model"], "single-python")
         self.assertEqual(len(contract["staged_files"]), 2)
         fetched = {item["remote_name"] for item in contract["fetch_outputs"]}
         self.assertIn("completion.json", fetched)

@@ -144,6 +144,13 @@ The selected template family is one of:
 
 Each site template may activate a separate framework environment while keeping the same MLIPFlow scheduler/restart contract.
 
+ASE MD has `execution_model: single-python`. `resources.cpus` is the CPU/thread
+budget for one Python process, and the site Slurm template must therefore use
+`--ntasks=1` with `--cpus-per-task={{CPUS}}`. Do not expose ASE `CPUS` as the
+Slurm task count; doing so makes Lightning-backed calculators look like an
+unconfigured distributed job. MPI execution models such as VASP/LAMMPS retain
+their separate rank-count semantics.
+
 ## Approval and completion
 
 Before submission, show calculator/model identity, structure identity, ensemble, temperature, timestep, total target duration, current segment start/remaining steps, frame/thermo record counts, checkpoint policy, device, resources, template family, and bounded fetch allowlist. For NVT also show friction. For NPT also show target pressure, both damping times, stress requirement, isotropic cell mode, no-constraints requirement, and pinned MTK chain configuration.

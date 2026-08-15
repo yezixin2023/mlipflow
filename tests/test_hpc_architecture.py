@@ -11,18 +11,30 @@ from mlipflow.hpc import (
     remote_attempt_workspace,
     render_template,
     validate_hpc_resources,
+    validate_slurm_cpu_semantics,
 )
 from mlipflow.site import load_site_config
 
 from .helpers import write_json
 
 
-SUBMIT = """#!/bin/bash
+MPI_SUBMIT = """#!/bin/bash
 # {{PROJECT_ID}} {{NODE_ID}} {{ATTEMPT}}
-# cpus={{CPUS}} gpus={{GPUS}} memory={{MEMORY}} time={{WALLTIME}}
+#SBATCH --ntasks={{CPUS}}
+#SBATCH --cpus-per-task=1
+# gpus={{GPUS}} memory={{MEMORY}} time={{WALLTIME}}
 # logs={{LOG_DIR}}
 cd {{RUN_DIR}}
 """
+SINGLE_PYTHON_SUBMIT = """#!/bin/bash
+# {{PROJECT_ID}} {{NODE_ID}} {{ATTEMPT}}
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task={{CPUS}}
+# gpus={{GPUS}} memory={{MEMORY}} time={{WALLTIME}}
+# logs={{LOG_DIR}}
+cd {{RUN_DIR}}
+"""
+SUBMIT = MPI_SUBMIT
 RUN = """#!/bin/bash
 # {{INPUT_DIR}} -> {{OUTPUT_DIR}}
 cd {{RUN_DIR}}
@@ -34,6 +46,10 @@ class FakeLibrary:
         self, values: dict[str, str] | None = None, *, root_exists: bool = True
     ):
         self.values = values or {
+            "slurm/mpi/cpu.sbatch": MPI_SUBMIT,
+            "slurm/mpi/gpu.sbatch": MPI_SUBMIT,
+            "slurm/single-python/cpu.sbatch": SINGLE_PYTHON_SUBMIT,
+            "slurm/single-python/gpu.sbatch": SINGLE_PYTHON_SUBMIT,
             "slurm/cpu.sbatch": SUBMIT,
             "slurm/gpu.sbatch": SUBMIT,
             "vasp/run.sh": RUN,
@@ -82,6 +98,18 @@ def site_file(root: Path) -> Path:
 
 
 class HpcArchitectureTests(unittest.TestCase):
+    def test_checked_in_site_examples_preserve_execution_model_cpu_semantics(self) -> None:
+        examples = Path(__file__).resolve().parents[1] / "examples" / "site_templates" / "slurm"
+        for execution_model in ("single-python", "mpi"):
+            for device in ("cpu", "gpu"):
+                template = examples / execution_model / f"{device}.sbatch.example"
+                self.assertTrue(template.is_file(), template)
+                validate_slurm_cpu_semantics(
+                    template.read_text(encoding="utf-8"),
+                    execution_model,
+                    template_name=str(template),
+                )
+
     def test_multi_cluster_site_config_and_profile_selection(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             site = load_site_config(site_file(Path(temporary)))
@@ -247,7 +275,14 @@ class HpcArchitectureTests(unittest.TestCase):
         self.assertIn(
             ("/srv/templates/a", "slurm/cpu.sbatch"), cpu_library.reads
         )
-        self.assertIn("# cpus=16 gpus=0 memory=64G time=04:00:00", cpu["rendered_scripts"]["submit.sbatch"]["content"])
+        self.assertIn(
+            "#SBATCH --ntasks=16",
+            cpu["rendered_scripts"]["submit.sbatch"]["content"],
+        )
+        self.assertIn(
+            "# gpus=0 memory=64G time=04:00:00",
+            cpu["rendered_scripts"]["submit.sbatch"]["content"],
+        )
         repeated = resolve_hpc_execution_plan(
             profile=profile,
             project_id="project-x",
@@ -276,6 +311,120 @@ class HpcArchitectureTests(unittest.TestCase):
         self.assertIn(
             ("/srv/templates/a", "slurm/gpu.sbatch"), gpu_library.reads
         )
+
+    def test_v3_execution_models_bind_distinct_cpu_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            profile = load_site_config(site_file(Path(temporary))).cluster("cluster-a")
+        resources = {
+            "cpus": 16,
+            "gpus": 0,
+            "memory": "64G",
+            "walltime": "04:00:00",
+        }
+        single_library = FakeLibrary()
+        single = resolve_hpc_execution_plan(
+            profile=profile,
+            project_id="project-x",
+            node_id="python-node",
+            attempt=1,
+            resources_value=resources,
+            scheduled_execution={
+                "schema_version": 3,
+                "execution_model": "single-python",
+                "template_family": "vasp",
+            },
+            library=single_library,
+        )
+        self.assertIn(
+            ("/srv/templates/a", "slurm/single-python/cpu.sbatch"),
+            single_library.reads,
+        )
+        single_submit = single["rendered_scripts"]["submit.sbatch"]["content"]
+        self.assertIn("#SBATCH --ntasks=1", single_submit)
+        self.assertIn("#SBATCH --cpus-per-task=16", single_submit)
+        self.assertEqual("threads-per-process", single["cpu_resource_semantics"]["cpus_meaning"])
+
+        mpi_library = FakeLibrary()
+        mpi = resolve_hpc_execution_plan(
+            profile=profile,
+            project_id="project-x",
+            node_id="mpi-node",
+            attempt=1,
+            resources_value=resources,
+            scheduled_execution={
+                "schema_version": 3,
+                "execution_model": "mpi",
+                "template_family": "vasp",
+            },
+            library=mpi_library,
+        )
+        self.assertIn(
+            ("/srv/templates/a", "slurm/mpi/cpu.sbatch"), mpi_library.reads
+        )
+        mpi_submit = mpi["rendered_scripts"]["submit.sbatch"]["content"]
+        self.assertIn("#SBATCH --ntasks=16", mpi_submit)
+        self.assertIn("#SBATCH --cpus-per-task=1", mpi_submit)
+        self.assertEqual("mpi-task-count", mpi["cpu_resource_semantics"]["cpus_meaning"])
+
+    def test_single_python_rejects_cpus_mapped_to_ntasks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            profile = load_site_config(site_file(Path(temporary))).cluster("cluster-a")
+        bad = FakeLibrary(
+            {
+                "slurm/single-python/cpu.sbatch": MPI_SUBMIT,
+                "vasp/run.sh": RUN,
+            }
+        )
+        with self.assertRaisesRegex(
+            ConfigError, "--ntasks=1 and --cpus-per-task=\\{\\{CPUS\\}\\}"
+        ):
+            resolve_hpc_execution_plan(
+                profile=profile,
+                project_id="project-x",
+                node_id="python-node",
+                attempt=1,
+                resources_value={
+                    "cpus": 64,
+                    "gpus": 0,
+                    "memory": "128G",
+                    "walltime": "01:00:00",
+                },
+                scheduled_execution={
+                    "schema_version": 3,
+                    "execution_model": "single-python",
+                    "template_family": "vasp",
+                },
+                library=bad,
+            )
+
+    def test_mpi_rejects_cpus_mapped_to_cpus_per_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            profile = load_site_config(site_file(Path(temporary))).cluster("cluster-a")
+        bad = FakeLibrary(
+            {
+                "slurm/mpi/cpu.sbatch": SINGLE_PYTHON_SUBMIT,
+                "vasp/run.sh": RUN,
+            }
+        )
+        with self.assertRaisesRegex(ConfigError, "--ntasks=\\{\\{CPUS\\}\\}"):
+            resolve_hpc_execution_plan(
+                profile=profile,
+                project_id="project-x",
+                node_id="mpi-node",
+                attempt=1,
+                resources_value={
+                    "cpus": 64,
+                    "gpus": 0,
+                    "memory": "128G",
+                    "walltime": "01:00:00",
+                },
+                scheduled_execution={
+                    "schema_version": 3,
+                    "execution_model": "mpi",
+                    "template_family": "vasp",
+                },
+                library=bad,
+            )
 
     def test_missing_or_incomplete_template_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

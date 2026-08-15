@@ -846,6 +846,8 @@ def _plan_scheduled_label(
             "calculation_count": len(planned),
             "runs_vasp": True,
             "submits_jobs": True,
+            "execution_model": "mpi",
+            "cpus_meaning": "mpi-task-count",
             # POTCAR is staged but licensed, so it never appears here and never
             # becomes a fetched or collected artifact.
             "fetch_allowlist": sorted({*required, *optional}),
@@ -853,7 +855,8 @@ def _plan_scheduled_label(
         },
         "input_fingerprints": _file_fingerprints(paths),
         "scheduled_execution": {
-            "schema_version": 2,
+            "schema_version": 3,
+            "execution_model": "mpi",
             "template_family": "vasp",
             "staged_files": staged,
             "fetch_outputs": fetch_outputs,

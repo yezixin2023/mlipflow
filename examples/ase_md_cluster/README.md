@@ -20,7 +20,7 @@ Copy `run.sh.example` into each calculator environment that you want to expose:
 
 Each family may activate a different module/conda environment. The site template owns the Python executable and `MODEL_ROOT`; the portable workflow never contains an SSH host, partition, module name, absolute model path, template root, or work root.
 
-The normal MLIPFlow scheduler templates `slurm/cpu.sbatch` and/or `slurm/gpu.sbatch` are still required.
+ASE MD declares `execution_model: single-python`; install `slurm/single-python/cpu.sbatch` and/or `slurm/single-python/gpu.sbatch`. The CPU template must use `--ntasks=1` and `--cpus-per-task={{CPUS}}`, because `resources.cpus` is the thread budget of one Python process.
 
 ## Model registry reference
 

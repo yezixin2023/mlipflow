@@ -112,7 +112,7 @@
     "network_access": false,
     "requires_approval_before_execution": true,
     "notes": [
-      "Local operations retain string-list argv and shell=false. Scheduled LASP emits scheduled_execution schema v2; MLIPFlow core performs SSH staging, Slurm submission, status polling, second approval, bounded fetch, and finalization.",
+      "Local operations retain string-list argv and shell=false. Scheduled LASP emits scheduled_execution schema v3 with execution_model=mpi; MLIPFlow core performs SSH staging, Slurm submission, status polling, second approval, bounded fetch, and finalization.",
       "Scheduled LASP stages only explicit project/plugin files with pinned hashes. SSH targets, work roots, partitions, modules, LASP paths, and MPI launcher paths remain outside project.yaml in the user-local site profile and remote template library.",
       "The scheduled fetch allowlist is fixed before submission. Dynamic selected structures are normalized remotely and packed into selected-structures.tar.gz; the local checker reparses fetched allstr.arc and verifies every tar member against the approved selection policy.",
       "Failed local wrapper runs retain an INCOMPLETE.json marker inside the fresh attempt; scheduled failure is additionally governed by the core scheduler completion contract.",

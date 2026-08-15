@@ -1,7 +1,7 @@
 """Cluster-aware facade for pes-sampling.
 
 Local DIRECT/LASP behavior is delegated unchanged to ``adapter.py``.  LASP SSW
-execution on ``ssh-slurm`` emits the generic scheduled_execution v2 contract so
+execution on ``ssh-slurm`` emits the generic scheduled_execution v3 MPI contract so
 MLIPFlow core owns staging, submission, polling, bounded fetch, and finalization.
 """
 from __future__ import annotations
@@ -282,6 +282,8 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
         "approval_summary": {
             "expensive": True,
             "submits_jobs": True,
+            "execution_model": "mpi",
+            "cpus_meaning": "mpi-task-count",
             "framework": "LASP",
             "sampling_method": "stochastic-surface-walking",
             "max_frames": parameters["max_frames"],
@@ -291,7 +293,8 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
         },
         "input_fingerprints": {item["remote_name"]: item["sha256"] for item in staged},
         "scheduled_execution": {
-            "schema_version": 2,
+            "schema_version": 3,
+            "execution_model": "mpi",
             "template_family": "lasp-ssw",
             "staged_files": staged,
             "fetch_outputs": fetch_outputs,

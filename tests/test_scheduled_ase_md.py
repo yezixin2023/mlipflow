@@ -102,7 +102,8 @@ def test_scheduler_matrix_is_ready(tmp_path: Path, calculator: str) -> None:
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["md_identity"]["calculator"] == calculator
     scheduled = plan["scheduled_execution"]
-    assert scheduled["schema_version"] == 2
+    assert scheduled["schema_version"] == 3
+    assert scheduled["execution_model"] == "single-python"
     assert scheduled["template_family"] == f"ase-md-{calculator}"
     staged = {item["remote_name"] for item in scheduled["staged_files"]}
     assert {"project.yaml", "model-reference.json", "ase_md.py", "ase_md_cluster.py", "structure/start.extxyz"} <= staged
@@ -127,6 +128,44 @@ def test_chgnet_requires_float32(tmp_path: Path) -> None:
     plan = module.Adapter().plan(context)
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "ase_md.chgnet_dtype" for item in plan["diagnostics"])
+
+
+def test_runner_accepts_scheduler_precreated_empty_output_root(tmp_path: Path) -> None:
+    runner = _load("ase_md_runner_output_contract", PLUGIN / "ase_md.py")
+    output = tmp_path / "attempt-0001" / "output"
+    output.mkdir(parents=True)
+
+    claimed = runner._prepare_output_directory(output)
+
+    assert claimed == output.resolve()
+    assert claimed.is_dir()
+
+    standalone_output = tmp_path / "standalone-output"
+    standalone_claimed = runner._prepare_output_directory(standalone_output)
+    assert standalone_claimed == standalone_output.resolve()
+    assert standalone_claimed.is_dir()
+
+
+def test_runner_output_root_still_has_no_overwrite_semantics(tmp_path: Path) -> None:
+    runner = _load("ase_md_runner_no_overwrite", PLUGIN / "ase_md.py")
+    output = tmp_path / "attempt-0001" / "output"
+    output.mkdir(parents=True)
+    (output / "thermo.csv").write_text("step\n0\n", encoding="utf-8")
+
+    with pytest.raises(runner.AseMDError, match="not empty"):
+        runner._prepare_output_directory(output)
+
+    ordinary_file = tmp_path / "output-file"
+    ordinary_file.write_text("occupied", encoding="utf-8")
+    with pytest.raises(runner.AseMDError, match="not a directory"):
+        runner._prepare_output_directory(ordinary_file)
+
+    empty_target = tmp_path / "empty-target"
+    empty_target.mkdir()
+    symlink = tmp_path / "output-link"
+    symlink.symlink_to(empty_target, target_is_directory=True)
+    with pytest.raises(runner.AseMDError, match="must not be a symlink"):
+        runner._prepare_output_directory(symlink)
 
 
 def test_m3gnet_reference_must_be_directory(tmp_path: Path) -> None:

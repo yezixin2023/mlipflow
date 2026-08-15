@@ -29,8 +29,21 @@ from .helpers import project_config, write_json
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
-SUBMIT_TEMPLATE = """#!/bin/bash
+MPI_SUBMIT_TEMPLATE = """#!/bin/bash
 # {{PROJECT_ID}} {{NODE_ID}} attempt {{ATTEMPT}}
+#SBATCH --ntasks={{CPUS}}
+#SBATCH --cpus-per-task=1
+#SBATCH --gpus={{GPUS}}
+#SBATCH --mem={{MEMORY}}
+#SBATCH --time={{WALLTIME}}
+#SBATCH --output={{LOG_DIR}}/stdout.log
+#SBATCH --error={{LOG_DIR}}/stderr.log
+cd {{RUN_DIR}}
+bash {{RUN_DIR}}/run.sh
+"""
+SINGLE_PYTHON_SUBMIT_TEMPLATE = """#!/bin/bash
+# {{PROJECT_ID}} {{NODE_ID}} attempt {{ATTEMPT}}
+#SBATCH --ntasks=1
 #SBATCH --cpus-per-task={{CPUS}}
 #SBATCH --gpus={{GPUS}}
 #SBATCH --mem={{MEMORY}}
@@ -40,6 +53,7 @@ SUBMIT_TEMPLATE = """#!/bin/bash
 cd {{RUN_DIR}}
 bash {{RUN_DIR}}/run.sh
 """
+SUBMIT_TEMPLATE = MPI_SUBMIT_TEMPLATE
 RUN_TEMPLATE = """#!/bin/bash
 # inputs={{INPUT_DIR}}
 # outputs={{OUTPUT_DIR}}
@@ -54,6 +68,11 @@ def sha256(path: Path) -> str:
 class FakeTemplateLibrary:
     def __init__(self, templates: dict[str, str] | None = None):
         self.templates = templates or {
+            "slurm/mpi/cpu.sbatch": MPI_SUBMIT_TEMPLATE,
+            "slurm/mpi/gpu.sbatch": MPI_SUBMIT_TEMPLATE,
+            "slurm/single-python/cpu.sbatch": SINGLE_PYTHON_SUBMIT_TEMPLATE,
+            "slurm/single-python/gpu.sbatch": SINGLE_PYTHON_SUBMIT_TEMPLATE,
+            # scheduled_execution v2 compatibility fixtures.
             "slurm/cpu.sbatch": SUBMIT_TEMPLATE,
             "slurm/gpu.sbatch": SUBMIT_TEMPLATE,
             "vasp/run.sh": RUN_TEMPLATE,
@@ -574,7 +593,7 @@ class ScheduledDftTests(unittest.TestCase):
                 plan["hpc_execution"]["workspace"]["run_dir"],
             )
             self.assertEqual(
-                "slurm/cpu.sbatch",
+                "slurm/mpi/cpu.sbatch",
                 plan["hpc_execution"]["templates"]["submit.sbatch"]["relative_path"],
             )
             remote = root / "fake-remote"

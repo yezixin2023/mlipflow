@@ -53,14 +53,25 @@ class Adapter:
 8. 与既有小样例输出做 parity test；
 9. 原脚本含 `rm/mv`、无限轮询或隐式提交时必须拆分，不能原样调用。
 
-内置 adapter 默认只允许 `local`。若要接入 `ssh-slurm`，adapter 只能声明科学合同：
-`schema_version: 2`、安全 `template_family`、已指纹化 `staged_files` 和有单文件上限的
+内置 adapter 默认只允许 `local`。若要接入 `ssh-slurm`，新 adapter 只能声明科学合同：
+`schema_version: 3`、明确的 `execution_model`、安全 `template_family`、已指纹化 `staged_files` 和有单文件上限的
 `fetch_outputs`。adapter 不得声明 host、partition、module、executable path、launcher、
 remote work root 或完整 sbatch；这些属于用户本地 cluster profile 与远端 template library。
 核心从持久 attempt state 解析 fresh workspace、渲染脚本、提交，并在第二次 `advance`
 审批后 fetch，再加载 pinned plugin 执行 `check/collect`。不要仅在 manifest 中增加 backend；
 缺少完整 scientific contract 的 scheduled adapter 会被核心拒绝。本地 `slurm` adapter
 仍未开放。
+
+`execution_model` 当前只能是：
+
+- `single-python`：一个 Python 进程；`resources.cpus` 是该进程的线程预算。Slurm 必须为
+  `--ntasks=1` 与 `--cpus-per-task={{CPUS}}`。
+- `mpi`：`resources.cpus` 是 MPI task/rank 数。Slurm 必须为
+  `--ntasks={{CPUS}}`，且不得再次把 `{{CPUS}}` 用作 `cpus-per-task`。
+
+核心按 execution model 选择不同的 `slurm/<execution-model>/{cpu,gpu}.sbatch` 并在 staging
+前检查上述映射。schema v2 和旧 `slurm/{cpu,gpu}.sbatch` 仅用于既有批准计划的兼容；新内置
+adapter 不再生成含糊的 v2 合同。
 
 LASP/SSW 是这条边界的一个具体例子：execute 只包装用户自备 executable，要求显式
 版本、ARC/`lasp.in`/辅助输入与 fresh attempt，使用 `shell=False`；可选 MPI 只接受

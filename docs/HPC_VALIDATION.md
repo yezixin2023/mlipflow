@@ -58,7 +58,7 @@ GPU 已验证、多节点已验证、排队/容错行为已验证，或该站点
 
 远端 template library 保存站点执行知识：
 
-- `slurm/cpu.sbatch` 与 `slurm/gpu.sbatch`；
+- `slurm/single-python/{cpu,gpu}.sbatch` 与 `slurm/mpi/{cpu,gpu}.sbatch`；
 - `<program>/run.sh`；
 - partition/account/QoS/GPU directive；
 - module/environment 初始化、launcher 和科学程序路径/版本。
@@ -66,6 +66,10 @@ GPU 已验证、多节点已验证、排队/容错行为已验证，或该站点
 project/workflow 只保存 `backend_profile` 和抽象资源 `cpus/gpus/memory/walltime`。
 实际 run workspace 由 work root、project、node 与持久 attempt number 确定。不得把完整
 sbatch、module、executable 或远端路径塞回 node parameters。
+
+schema v3 的 execution model 使 `resources.cpus` 不再含糊：single Python job 固定为
+`--ntasks=1 --cpus-per-task={{CPUS}}`；MPI job 固定为 `--ntasks={{CPUS}}`，且不能把
+同一个 `CPUS` 再用于 `cpus-per-task`。站点验证必须分别覆盖两套模板。
 
 ## 后续真实集群验证仍需检查
 

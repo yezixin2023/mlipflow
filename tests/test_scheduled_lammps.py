@@ -169,12 +169,16 @@ def test_execute_plan_matrix(tmp_path: Path, framework: str, target: str) -> Non
     module = _load(f"lammps_execute_{framework}_{target}", PLUGIN / "adapter_execute.py")
     plan = module.Adapter().plan(_context(tmp_path, framework, target))
     assert plan["status"] == "READY", plan.get("diagnostics")
-    assert plan["scheduled_execution"]["template_family"] == f"lammps-{framework}-{target}"
+    scheduled = plan["scheduled_execution"]
+    assert scheduled["schema_version"] == 3
+    assert scheduled["execution_model"] == "mpi"
+    assert scheduled["template_family"] == f"lammps-{framework}-{target}"
+    assert plan["approval_summary"]["cpus_meaning"] == "mpi-task-count"
     identity = plan["lammps_execution_identity"]
     assert identity["framework"] == framework
     assert identity["target"] == target
     assert identity["steps"] == 1000
-    staged = {item["remote_name"] for item in plan["scheduled_execution"]["staged_files"]}
+    staged = {item["remote_name"] for item in scheduled["staged_files"]}
     assert {
         "project.yaml",
         "lammps-input-manifest.json",

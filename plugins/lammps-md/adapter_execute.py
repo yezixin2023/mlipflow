@@ -424,6 +424,8 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
             "required_packages": launcher.get("required_packages", []),
             "resources": dict(_mapping(context.get("resources"))),
             "template_family": family,
+            "execution_model": "mpi",
+            "cpus_meaning": "mpi-task-count",
             "model_path_site_owned": True,
         },
         "failure_salvage": {
@@ -439,7 +441,8 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
             ],
         },
         "scheduled_execution": {
-            "schema_version": 2,
+            "schema_version": 3,
+            "execution_model": "mpi",
             "template_family": family,
             "staged_files": staged_files,
             "fetch_outputs": fetch_outputs,

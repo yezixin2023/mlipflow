@@ -16,7 +16,7 @@ clusters:
     work_root: /work/mlipflow
 ```
 
-The remote template root must contain the generic `slurm/cpu.sbatch` and/or `slurm/gpu.sbatch` template used by MLIPFlow plus a LASP family template at `lasp-ssw/run.sh`.
+LASP declares `execution_model: mpi`. The remote template root must contain `slurm/mpi/cpu.sbatch` and/or `slurm/mpi/gpu.sbatch` plus a LASP family template at `lasp-ssw/run.sh`.
 
 Copy `examples/lasp_random_walk/cluster/run.sh.example` to `/templates/cluster-a/lasp-ssw/run.sh` and edit only the site-owned `PYTHON_BIN`, `LASP_BIN`, and `MPI_BIN` lines.  For a serial LASP build, remove the `--mpi-launcher` and `--mpi-processes` arguments from that template.
 
@@ -54,7 +54,7 @@ A scheduled LASP node has no `lasp_executable` input.  The licensed binary is re
     walltime: "12:00:00"
 ```
 
-`resources.cpus` is available to the site template as `{{CPUS}}`; the example template uses it as the MPI process count.  Do not set `mpi_processes` on an ssh-slurm LASP node because launcher/process topology is site-owned in scheduled mode.
+`resources.cpus` is available as `{{CPUS}}` and means the MPI task/rank count. The submit template must use `--ntasks={{CPUS}}`; it must not also map `CPUS` to `cpus-per-task`. Do not set `mpi_processes` on an ssh-slurm LASP node because launcher/process topology is site-owned in scheduled mode.
 
 ## 3. What MLIPFlow stages
 

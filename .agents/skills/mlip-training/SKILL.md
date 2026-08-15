@@ -42,6 +42,13 @@ The generic template families are:
 
 Each site template may activate a different framework environment. It supplies the cluster data/model roots and calls the staged `training_cluster.py`; MLIPFlow core alone owns SSH, staging, `sbatch`, polling, bounded fetch, retry, and cancellation.
 
+The bundled training contract has `execution_model: single-python`. It launches
+one Python process, so `resources.cpus` means the CPU/thread budget for that one
+process. The selected Slurm submit template must use `--ntasks=1` and
+`--cpus-per-task={{CPUS}}`. Never map training `CPUS` to `--ntasks`; Lightning
+interprets that as a distributed launch. This does not change MPI contracts such
+as VASP, LAMMPS, or LASP, where `CPUS` is the task/rank count.
+
 ## Bind large data and models logically
 
 Do not copy production datasets or foundation models through the control plane. Scheduled nodes use small project-scoped reference manifests.

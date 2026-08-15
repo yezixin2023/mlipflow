@@ -15,6 +15,7 @@ from typing import Any
 from ..artifacts import content_identity, fingerprint
 from ..config import Project
 from ..errors import ConfigError, PluginError
+from ..hpc import EXECUTION_MODELS
 from ..io import load_mapping
 from ..plugins import PluginSpec
 from ..portable import PortableRoots, to_runtime
@@ -150,17 +151,29 @@ def _scheduled_contract(
         _portable_roots(project, plugin, node_id, attempt),
     )
     scheduled = adapter_plan.get("scheduled_execution") if isinstance(adapter_plan, dict) else None
-    if not isinstance(scheduled, dict) or scheduled.get("schema_version") != 2:
-        raise PluginError("scheduled adapter plan requires scheduled_execution schema_version=2")
-    if set(scheduled) != {
+    if not isinstance(scheduled, dict) or scheduled.get("schema_version") not in {2, 3}:
+        raise PluginError(
+            "scheduled adapter plan requires scheduled_execution schema_version 2 or 3"
+        )
+    schema_version = int(scheduled["schema_version"])
+    expected_fields = {
         "schema_version",
         "template_family",
         "staged_files",
         "fetch_outputs",
-    }:
+    }
+    if schema_version == 3:
+        expected_fields.add("execution_model")
+    if set(scheduled) != expected_fields:
+        expected_text = ", ".join(sorted(expected_fields))
         raise PluginError(
-            "scheduled_execution may contain only schema_version, template_family, "
-            "staged_files, and fetch_outputs"
+            f"scheduled_execution schema_version={schema_version} may contain only "
+            + expected_text
+        )
+    execution_model = scheduled.get("execution_model")
+    if schema_version == 3 and execution_model not in EXECUTION_MODELS:
+        raise PluginError(
+            "scheduled_execution.execution_model must be single-python or mpi"
         )
     template_family = scheduled.get("template_family")
     if not isinstance(template_family, str) or not re.fullmatch(
@@ -267,7 +280,8 @@ def _scheduled_contract(
         ]
     )
     return {
-        "schema_version": 2,
+        "schema_version": schema_version,
+        **({"execution_model": execution_model} if schema_version == 3 else {}),
         "template_family": template_family,
         "staged_files": normalized_stage,
         "fetch_outputs": normalized_outputs,

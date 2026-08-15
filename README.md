@@ -846,7 +846,7 @@ VASP 版本而不进入 preset。SI 把 EDIFF 标成 eV/atom，但 VASP 的 EDIF
 `dft-labeling.label` 只声明科学合同：一个已由 `vasp-prepare` 审核通过的 static 结构、
 VASP 输入文件、`template_family: vasp` 和允许回收的原始输出。它不声明 partition、module、
 Python、VASP executable 或 launcher。backend 从 node 的 `backend_profile` 选择 cluster，
-读取该 cluster 的 `slurm/cpu.sbatch` 或 `slurm/gpu.sbatch` 与 `vasp/run.sh`，确定性渲染后
+读取该 cluster 的 `slurm/mpi/cpu.sbatch` 或 `slurm/mpi/gpu.sbatch` 与 `vasp/run.sh`，确定性渲染后
 创建 fresh attempt workspace。
 
 首次 `run --dry-run` 会显示 profile、模板指纹、渲染脚本、资源和精确远端 attempt 路径；
@@ -1130,11 +1130,11 @@ Linux NVIDIA GPU 使用 `cuda`。
 | `<SSH_ALIAS>` | 用户自己定义 | `~/.ssh/config` 和 `site.yaml` 的 `ssh_profile` |
 | `<REMOTE_TEMPLATE_ROOT>` | 站点 bootstrap 约定 | `site.yaml`；远端持久模板库 |
 | `<WORK_ROOT>` | 集群 storage 文档 | `site.yaml`；远端 per-run workspace 根 |
-| `<CPU_PARTITION>` | `sinfo` / 管理员文档 | 远端 `slurm/cpu.sbatch` |
-| `<GPU_PARTITION>` | `sinfo` / 管理员文档 | 远端 `slurm/gpu.sbatch` |
+| `<CPU_PARTITION>` | `sinfo` / 管理员文档 | 远端 `slurm/<execution-model>/cpu.sbatch` |
+| `<GPU_PARTITION>` | `sinfo` / 管理员文档 | 远端 `slurm/<execution-model>/gpu.sbatch` |
 | `<ACCOUNT>` | 管理员文档 / `sacctmgr`（若开放） | 远端 Slurm 模板 |
 | `<QOS>` | 管理员文档 / `sacctmgr`（若开放） | 远端 Slurm 模板 |
-| `<GPU_RESOURCE_DIRECTIVE>` | Slurm/site 文档 | 远端 `slurm/gpu.sbatch` |
+| `<GPU_RESOURCE_DIRECTIVE>` | Slurm/site 文档 | 远端 `slurm/<execution-model>/gpu.sbatch` |
 | `<CUDA_MODULE>` / `<MPI_MODULE>` | module catalog | 对应远端 `run.sh` |
 | `<VASP_MODULE>` / `<LAMMPS_MODULE>` | 机构软件文档 | 对应远端程序 `run.sh` |
 
@@ -1283,8 +1283,12 @@ mlipflow --project <PROJECT> doctor
 ```text
 <REMOTE_TEMPLATE_ROOT>/
   slurm/
-    cpu.sbatch
-    gpu.sbatch
+    single-python/
+      cpu.sbatch
+      gpu.sbatch
+    mpi/
+      cpu.sbatch
+      gpu.sbatch
   vasp/
     run.sh
   lammps/
@@ -1297,10 +1301,21 @@ mlipflow --project <PROJECT> doctor
     run.sh
 ```
 
-CPU task 选择 `slurm/cpu.sbatch`，`gpus > 0` 选择 `slurm/gpu.sbatch`；插件的
-`template_family` 决定程序模板，例如 `vasp/run.sh`。这些模板可包含该站点真实的
+`scheduled_execution schema_version=3` 必须声明 `execution_model`。核心先按
+`single-python` 或 `mpi` 选择对应的 Slurm 子目录，再按 `gpus` 选择 `cpu.sbatch` 或
+`gpu.sbatch`；插件的 `template_family` 决定程序模板，例如 `vasp/run.sh`。这些模板可包含该站点真实的
 partition/account/QoS、module 初始化、`srun`/`mpirun` 约定和 executable invocation。
 MLIPFlow 不把这些值复制进 project，也不猜它们。
+
+`resources.cpus` 的语义随 execution model 固定，不再由站点自由解释：
+
+- `single-python`（MLIP training、ASE MD）：一个 Python 进程，必须
+  `--ntasks=1`、`--cpus-per-task={{CPUS}}`；`CPUS` 是线程预算。
+- `mpi`（VASP、scheduled LAMMPS、LASP）：必须 `--ntasks={{CPUS}}`；`CPUS` 是
+  task/rank 数，不能再用于 `cpus-per-task`。
+
+核心在 staging 前检查这些 directive。旧 schema v2 的 `slurm/{cpu,gpu}.sbatch` 只为既有
+批准计划兼容，新内置插件均使用 v3 分型模板。
 
 模板只支持下列精确占位符，不支持表达式、include、循环或任意代码模板语言：
 
@@ -1313,11 +1328,13 @@ MLIPFlow 不把这些值复制进 project，也不猜它们。
 模板缺失、缺少必需占位符、使用未知占位符或 identity 在审批前变化都会明确失败。
 模板库不是 run directory；backend 不会把任务输入/输出写入它。
 
-一个通用的 Slurm skeleton 形状如下；站点管理员仍须按本站策略补上 partition/account/
-GPU directive，并确保 `run.sh` 的 module、launcher 和程序命令真实可用：
+一个 `single-python` CPU skeleton 如下；MPI skeleton 应把两条 CPU directive 改为
+`--ntasks={{CPUS}}` 与固定的 `--cpus-per-task=1`。站点管理员仍须按本站策略补上
+partition/account/GPU directive，并确保 `run.sh` 的 module、launcher 和程序命令真实可用：
 
 ```bash
 #!/bin/bash
+#SBATCH --ntasks=1
 #SBATCH --cpus-per-task={{CPUS}}
 #SBATCH --mem={{MEMORY}}
 #SBATCH --time={{WALLTIME}}
@@ -1327,6 +1344,10 @@ set -euo pipefail
 cd {{RUN_DIR}}
 exec bash {{RUN_DIR}}/run.sh
 ```
+
+仓库内 `examples/site_templates/slurm/` 给出 single-python/MPI × CPU/GPU 四个可检查的
+skeleton；安装到站点 template root 时去掉 `.example` 后缀，并按本站规则复核 partition、
+account 与 GPU resource directive。
 
 `vasp/run.sh` 等程序模板必须从 `{{INPUT_DIR}}` 读取输入，把允许回收的科学产物写入
 `{{OUTPUT_DIR}}`，并在程序结束后在 `{{RUN_DIR}}/completion.json` 写入正确的

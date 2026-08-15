@@ -369,7 +369,8 @@ def test_generic_scheduler_matrix_is_ready(tmp_path: Path, framework: str, opera
     assert plan["framework"] == framework
     assert plan["operation"] == operation
     scheduled = plan["scheduled_execution"]
-    assert scheduled["schema_version"] == 2
+    assert scheduled["schema_version"] == 3
+    assert scheduled["execution_model"] == "single-python"
     assert scheduled["template_family"] == f"mlip-{framework}"
     staged = {item["remote_name"] for item in scheduled["staged_files"]}
     assert {

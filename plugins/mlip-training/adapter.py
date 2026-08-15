@@ -708,6 +708,8 @@ def _plan_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
             "expensive": True,
             "submits_jobs": True,
             "fresh_training": True,
+            "execution_model": "single-python",
+            "cpus_meaning": "threads-per-process",
             "framework": str(parameters["framework"]),
             "numb_steps": training["numb_steps"],
             "disp_freq": training["disp_freq"],
@@ -731,7 +733,8 @@ def _plan_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
             "dataset_reference": _sha256(dataset_path),
         },
         "scheduled_execution": {
-            "schema_version": 2,
+            "schema_version": 3,
+            "execution_model": "single-python",
             "template_family": TEMPLATE_FAMILIES[str(parameters["framework"])],
             "staged_files": staged,
             "fetch_outputs": fetch_outputs,

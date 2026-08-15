@@ -398,7 +398,14 @@ class SshSlurmBackend:
         remote_run_dir: str,
         files: Sequence[tuple[Path, str, str]],
     ) -> str:
-        """Create one deterministic attempt workspace and stage an allowlist."""
+        """Create one deterministic attempt workspace and stage an allowlist.
+
+        The attempt directory itself is the no-overwrite boundary: mkdir must
+        fail when that attempt already exists. Inside a fresh attempt the
+        backend owns the common workspace skeleton and pre-creates empty
+        input/, output/ and logs/ directories. Scheduled runners therefore
+        receive an existing but empty output root and own only its contents.
+        """
 
         _validate_absolute_remote_directory(remote_run_dir)
         run_path = PurePosixPath(remote_run_dir)

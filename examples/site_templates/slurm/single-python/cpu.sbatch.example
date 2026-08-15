@@ -1,0 +1,14 @@
+#!/bin/bash
+# MLIPFlow scheduled_execution v3: execution_model=single-python
+# {{PROJECT_ID}} / {{NODE_ID}} / attempt {{ATTEMPT}}
+#SBATCH --job-name=mlipflow-{{NODE_ID}}
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task={{CPUS}}
+#SBATCH --mem={{MEMORY}}
+#SBATCH --time={{WALLTIME}}
+#SBATCH --output={{LOG_DIR}}/stdout.log
+#SBATCH --error={{LOG_DIR}}/stderr.log
+# Requested GPUs: {{GPUS}} (this is the CPU template)
+set -euo pipefail
+cd {{RUN_DIR}}
+exec bash {{RUN_DIR}}/run.sh

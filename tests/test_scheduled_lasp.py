@@ -129,8 +129,12 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         plan = make_run_plan(self.project, "lasp-walk", PLUGINS, self.site, library())
         adapter = plan["adapter_plan"]
         self.assertEqual("READY", adapter["status"], adapter.get("diagnostics"))
-        self.assertEqual("lasp-ssw", adapter["scheduled_execution"]["template_family"])
-        staged = {item["remote_name"] for item in adapter["scheduled_execution"]["staged_files"]}
+        scheduled = adapter["scheduled_execution"]
+        self.assertEqual(3, scheduled["schema_version"])
+        self.assertEqual("mpi", scheduled["execution_model"])
+        self.assertEqual("lasp-ssw", scheduled["template_family"])
+        self.assertEqual("mpi-task-count", adapter["approval_summary"]["cpus_meaning"])
+        staged = {item["remote_name"] for item in scheduled["staged_files"]}
         self.assertTrue({"project.yaml", "input.arc", "lasp.in", "lasp_ssw.py", "lasp_cluster.py"}.issubset(staged))
         self.assertNotIn("lasp_executable", staged)
         self.assertNotIn("lasp_executable", adapter["input_fingerprints"])
@@ -143,6 +147,8 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         plan = make_run_plan(self.project, "lasp-walk", PLUGINS, self.site, library())
         plugin = discover_plugins(PLUGINS)["pes-sampling"]
         contract = _scheduled_contract(self.project, plugin, plan, node_id="lasp-walk", attempt=1)
+        self.assertEqual(3, contract["schema_version"])
+        self.assertEqual("mpi", contract["execution_model"])
         self.assertEqual("lasp-ssw", contract["template_family"])
         names = {item["remote_name"] for item in contract["fetch_outputs"]}
         self.assertIn("completion.json", names)

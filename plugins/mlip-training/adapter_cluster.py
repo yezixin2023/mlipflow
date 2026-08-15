@@ -524,6 +524,8 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
         "approval_summary": {
             "expensive": True,
             "submits_jobs": True,
+            "execution_model": "single-python",
+            "cpus_meaning": "threads-per-process",
             "framework": framework,
             "operation": operation,
             "fine_tune": operation == "finetune",
@@ -540,7 +542,8 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             **({"foundation_model_reference": _sha256(source)} if operation == "finetune" else {}),
         },
         "scheduled_execution": {
-            "schema_version": 2,
+            "schema_version": 3,
+            "execution_model": "single-python",
             "template_family": TEMPLATE_FAMILIES[framework],
             "staged_files": staged,
             "fetch_outputs": fetch_outputs,

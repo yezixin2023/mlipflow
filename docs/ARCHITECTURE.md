@@ -124,8 +124,10 @@ adapter 执行科学 `check/collect`。`dft-labeling.label` 的 static VASP 合�
 
 ## 模板解析与远端 workspace
 
-CPU 任务选择 `slurm/cpu.sbatch`，GPU 任务选择 `slurm/gpu.sbatch`；插件只提供安全
-`template_family`，例如 `vasp` 选择 `vasp/run.sh`。模板只能使用固定占位符：
+新 `scheduled_execution schema_version=3` 同时提供安全 `template_family` 和
+`execution_model`。核心先选择 `slurm/<execution-model>/cpu.sbatch` 或
+`slurm/<execution-model>/gpu.sbatch`，再由 `template_family` 选择例如 `vasp/run.sh`。
+模板只能使用固定占位符：
 
 ```text
 PROJECT_ID NODE_ID ATTEMPT RUN_DIR INPUT_DIR OUTPUT_DIR LOG_DIR
@@ -135,6 +137,16 @@ CPUS GPUS MEMORY WALLTIME
 渲染器只做精确 `{{NAME}}` 替换、换行规范化与 SHA-256 绑定，不支持表达式、include、
 循环或 arbitrary code templating。模板缺失、变量未知/不完整、资源缺失或 profile 不存在
 都会在 staging 前明确失败。
+
+execution model 固定 `CPUS` 语义：
+
+- `single-python`：`CPUS` 是一个 Python 进程的线程预算；模板必须含
+  `--ntasks=1` 与 `--cpus-per-task={{CPUS}}`。
+- `mpi`：`CPUS` 是 MPI task/rank 数；模板必须含 `--ntasks={{CPUS}}`，且不得同时
+  把 `CPUS` 用作 `cpus-per-task`。
+
+MLIP training 与 ASE MD 使用前者；VASP、scheduled LAMMPS 与 LASP 使用后者。核心会在
+staging 前拒绝映射错误的 site template，因此修复单进程 Python 不会改变真正的 MPI 布局。
 
 attempt number 只来自 SQLite 中现有 attempt state。workspace 固定为
 `<work_root>/<project-id>/<node-id>/attempt-XXXX/`，包含 `submit.sbatch`、`run.sh`、

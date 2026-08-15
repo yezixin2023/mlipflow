@@ -45,9 +45,23 @@ PLACEHOLDER = re.compile(r"{{([A-Z][A-Z0-9_]*)}}")
 # those through.
 RESIDUAL_TEMPLATE = re.compile(r"\{\{[^{}]*\}\}")
 TEMPLATE_FAMILY = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+EXECUTION_MODELS = frozenset({"single-python", "mpi"})
 MEMORY = re.compile(r"^[1-9][0-9]*(?:[KMGTP](?:i?B)?)?$")
 WALLTIME = re.compile(r"^[0-9]{2,3}:[0-5][0-9]:[0-5][0-9]$")
 MAX_TEMPLATE_BYTES = 1024 * 1024
+
+_SLURM_CPU_SEMANTICS = {
+    "single-python": {
+        "cpus_meaning": "threads-per-process",
+        "slurm_ntasks": 1,
+        "slurm_cpus_per_task": "CPUS",
+    },
+    "mpi": {
+        "cpus_meaning": "mpi-task-count",
+        "slurm_ntasks": "CPUS",
+        "slurm_cpus_per_task": "site-owned-literal",
+    },
+}
 
 
 class TemplateLibrary(Protocol):
@@ -177,6 +191,44 @@ def render_template(
     return normalized
 
 
+def _slurm_directive_values(text: str, option: str) -> list[str]:
+    pattern = re.compile(
+        rf"^[ \t]*#SBATCH[ \t]+--{re.escape(option)}(?:=|[ \t]+)([^ \t#\r\n]+)",
+        re.MULTILINE,
+    )
+    return pattern.findall(text)
+
+
+def validate_slurm_cpu_semantics(
+    text: str, execution_model: str, *, template_name: str
+) -> None:
+    """Fail closed when a v3 submit template maps ``CPUS`` incorrectly.
+
+    A single Python process must receive the abstract CPU budget as threads on
+    its one Slurm task. MPI contracts instead expose that budget as the task/rank
+    count. Keeping these layouts distinct prevents Lightning from interpreting
+    an accidental ``--ntasks={{CPUS}}`` as a distributed launch while preserving
+    the rank semantics required by VASP, LAMMPS, and LASP.
+    """
+
+    if execution_model not in EXECUTION_MODELS:
+        raise ConfigError(f"unsupported scheduled execution model: {execution_model!r}")
+    ntasks = _slurm_directive_values(text, "ntasks")
+    cpus_per_task = _slurm_directive_values(text, "cpus-per-task")
+    if execution_model == "single-python":
+        if ntasks != ["1"] or cpus_per_task != ["{{CPUS}}"]:
+            raise ConfigError(
+                f"remote template {template_name} must map single-python resources "
+                "as --ntasks=1 and --cpus-per-task={{CPUS}}"
+            )
+        return
+    if ntasks != ["{{CPUS}}"] or "{{CPUS}}" in cpus_per_task:
+        raise ConfigError(
+            f"remote template {template_name} must map mpi resources as "
+            "--ntasks={{CPUS}} and must not also use CPUS for --cpus-per-task"
+        )
+
+
 def resolve_hpc_execution_plan(
     *,
     profile: ClusterProfile,
@@ -191,7 +243,25 @@ def resolve_hpc_execution_plan(
     family = scheduled_execution.get("template_family")
     if not isinstance(family, str) or not TEMPLATE_FAMILY.fullmatch(family):
         raise ConfigError("scheduled_execution.template_family is required and must be safe")
-    submit_template = "slurm/gpu.sbatch" if resources.gpus > 0 else "slurm/cpu.sbatch"
+    execution_model = scheduled_execution.get("execution_model")
+    if execution_model is None:
+        # scheduled_execution v2 compatibility. New built-in contracts use v3
+        # and must state an execution model, but previously approved plans keep
+        # resolving through the historical site-defined scheduler templates.
+        submit_template = "slurm/gpu.sbatch" if resources.gpus > 0 else "slurm/cpu.sbatch"
+        cpu_semantics = {
+            "cpus_meaning": "legacy-site-defined",
+            "slurm_ntasks": "site-defined",
+            "slurm_cpus_per_task": "site-defined",
+        }
+    else:
+        if not isinstance(execution_model, str) or execution_model not in EXECUTION_MODELS:
+            raise ConfigError(
+                "scheduled_execution.execution_model must be single-python or mpi"
+            )
+        device = "gpu" if resources.gpus > 0 else "cpu"
+        submit_template = f"slurm/{execution_model}/{device}.sbatch"
+        cpu_semantics = dict(_SLURM_CPU_SEMANTICS[execution_model])
     run_template = f"{family}/run.sh"
     selected = {
         "submit.sbatch": (submit_template, SUBMIT_REQUIRED),
@@ -217,6 +287,10 @@ def resolve_hpc_execution_plan(
         declared_size = raw.get("size_bytes")
         if declared_digest != digest or declared_size != len(raw_bytes):
             raise ConfigError(f"remote template identity is inconsistent: {relative}")
+        if destination == "submit.sbatch" and isinstance(execution_model, str):
+            validate_slurm_cpu_semantics(
+                content, execution_model, template_name=relative
+            )
         rendered = render_template(
             content, variables, template_name=relative, required=required
         )
@@ -241,6 +315,8 @@ def resolve_hpc_execution_plan(
     return {
         "schema_version": 1,
         "cluster_profile": profile.to_plan_dict(),
+        "execution_model": execution_model or "legacy-v2",
+        "cpu_resource_semantics": cpu_semantics,
         "resources": resources.to_plan_dict(),
         "template_variables": variables,
         "templates": template_records,
