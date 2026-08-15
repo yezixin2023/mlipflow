@@ -63,6 +63,15 @@ def _prepare_output_directory(path: Path) -> Path:
     return resolved
 
 
+def _final_structure_copy(atoms: Any, input_constraints: list[Any]) -> Any:
+    """Return final geometry/state without runtime-only attachments."""
+
+    final_atoms = atoms.copy()
+    final_atoms.calc = None
+    final_atoms.set_constraint(input_constraints)
+    return final_atoms
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -105,7 +114,7 @@ def _build_calculator(calculator: str, model: Path, device: str, default_dtype: 
         from mace.calculators import MACECalculator
 
         return MACECalculator(
-            model_path=str(model), device=device, default_dtype=default_dtype
+            model_paths=str(model), device=device, default_dtype=default_dtype
         )
     if calculator == "m3gnet":
         import matgl
@@ -512,6 +521,7 @@ def run_md(
         raise AseMDError("structure selection did not produce exactly one ASE Atoms object")
     if len(atoms) == 0:
         raise AseMDError("structure contains no atoms")
+    input_constraints = list(atoms.constraints)
     if ensemble == "npt-isotropic-mtk":
         if atoms.cell.rank != 3 or not all(bool(value) for value in atoms.get_pbc()):
             raise AseMDError("npt-isotropic-mtk requires a full-rank 3D periodic cell")
@@ -704,7 +714,11 @@ def run_md(
         trajectory.close()
         thermo_stream.close()
 
-    write(str(final_path), atoms, format="extxyz")
+    write(
+        str(final_path),
+        _final_structure_copy(atoms, input_constraints),
+        format="extxyz",
+    )
     expected_frame_steps = _segment_steps(start_step, steps, trajectory_interval)
     expected_thermo_steps = _segment_steps(start_step, steps, thermo_interval)
     if frame_steps != expected_frame_steps:

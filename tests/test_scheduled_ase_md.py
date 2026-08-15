@@ -4,6 +4,8 @@ import csv
 import hashlib
 import importlib.util
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -166,6 +168,74 @@ def test_runner_output_root_still_has_no_overwrite_semantics(tmp_path: Path) -> 
     symlink.symlink_to(empty_target, target_is_directory=True)
     with pytest.raises(runner.AseMDError, match="must not be a symlink"):
         runner._prepare_output_directory(symlink)
+
+
+def test_final_structure_copy_drops_runtime_attachments() -> None:
+    runner = _load("ase_md_runner_final_structure", PLUGIN / "ase_md.py")
+    calculator = object()
+    input_constraints = [object()]
+    runtime_constraints = [*input_constraints, object()]
+
+    class FakeAtoms:
+        def __init__(self, calc, constraints):
+            self.calc = calc
+            self.constraints = constraints
+
+        def copy(self):
+            return FakeAtoms(self.calc, self.constraints)
+
+        def set_constraint(self, constraints):
+            self.constraints = constraints
+
+    atoms = FakeAtoms(calculator, runtime_constraints)
+    final_atoms = runner._final_structure_copy(atoms, input_constraints)
+
+    assert final_atoms is not atoms
+    assert atoms.calc is calculator
+    assert atoms.constraints == runtime_constraints
+    assert final_atoms.calc is None
+    assert final_atoms.constraints == input_constraints
+
+
+def test_final_structure_copy_avoids_fixcom_extxyz_failure(tmp_path: Path) -> None:
+    ase = pytest.importorskip("ase")
+    constraints = pytest.importorskip("ase.constraints")
+    io = pytest.importorskip("ase.io")
+    runner = _load("ase_md_runner_final_structure_extxyz", PLUGIN / "ase_md.py")
+    atoms = ase.Atoms("Li2", positions=[[0, 0, 0], [1, 0, 0]])
+    atoms.set_constraint(constraints.FixCom())
+
+    final_atoms = runner._final_structure_copy(atoms, [])
+    io.write(tmp_path / "final.extxyz", final_atoms, format="extxyz")
+
+    assert final_atoms.constraints == []
+
+
+def test_mace_calculator_uses_supported_model_paths_keyword(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner = _load("ase_md_runner_mace_keyword", PLUGIN / "ase_md.py")
+    observed = {}
+
+    class FakeMACECalculator:
+        def __init__(self, **kwargs):
+            observed.update(kwargs)
+
+    package = types.ModuleType("mace")
+    calculators = types.ModuleType("mace.calculators")
+    calculators.MACECalculator = FakeMACECalculator
+    package.calculators = calculators
+    monkeypatch.setitem(sys.modules, "mace", package)
+    monkeypatch.setitem(sys.modules, "mace.calculators", calculators)
+
+    model = tmp_path / "MACE.model"
+    runner._build_calculator("mace", model, "cpu", "float64")
+
+    assert observed == {
+        "model_paths": str(model),
+        "device": "cpu",
+        "default_dtype": "float64",
+    }
 
 
 def test_m3gnet_reference_must_be_directory(tmp_path: Path) -> None:
