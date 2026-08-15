@@ -144,9 +144,7 @@ def test_chgnet_columnar_schema_rejects_different_column_lengths(tmp_path):
 
 
 def test_chgnet_split_is_seeded_and_fingerprinted():
-    cfg = {
-        "split": {"train_ratio": 0.8, "val_ratio": 0.05, "include_test": True}
-    }
+    cfg = {"split": {"train_ratio": 0.8, "val_ratio": 0.05, "include_test": True}}
 
     first = mlip_chgnet._split_indices(100, cfg, 23)
     second = mlip_chgnet._split_indices(100, cfg, 23)
@@ -209,9 +207,103 @@ def test_m3gnet_plan(tmp_path):
     data = tmp_path / "data.jsonl"
     data.write_text("{}\n")
     assert (
-        mlip_m3gnet.plan(ns("m3gnet"), {"framework": "m3gnet", "m3gnet": {}}, data)["framework"]
+        mlip_m3gnet.plan(
+            ns("m3gnet"),
+            {
+                "framework": "m3gnet",
+                "m3gnet": {"trainer": {"max_epochs": 1}},
+            },
+            data,
+        )["framework"]
         == "m3gnet"
     )
+
+
+def test_m3gnet_columnar_historical_schema_selects_prefix(tmp_path):
+    data = tmp_path / "historical.json"
+    data.write_text(
+        json.dumps(
+            {
+                "structure": [{"id": 1}, {"id": 2}, {"id": 3}],
+                "uncorrected_total_energy": [-10.0, -20.0, -30.0],
+                "force": [[[0, 0, 0]], [[1, 1, 1]], [[2, 2, 2]]],
+                "stress": [[[0, 0, 0]], [[1, 1, 1]], [[2, 2, 2]]],
+            }
+        ),
+        encoding="utf-8",
+    )
+    contract = mlip_m3gnet._dataset_contract(
+        {
+            "dataset": {
+                "layout": "columnar",
+                "energy_key": "uncorrected_total_energy",
+                "forces_key": "force",
+                "stress_key": "stress",
+                "energy_is_per_atom": False,
+                "max_records": 3,
+            }
+        }
+    )
+
+    normalized = list(mlip_m3gnet._normalized_records(data, contract, True))
+
+    assert normalized[0] == {
+        "structure": {"id": 1},
+        "energy": -10.0,
+        "forces": [[0, 0, 0]],
+        "stress": [[0, 0, 0]],
+    }
+    assert [item["structure"]["id"] for item in normalized] == [1, 2, 3]
+
+
+def test_m3gnet_per_atom_energy_is_rejected():
+    with pytest.raises(TrainingError, match="requires total energies"):
+        mlip_m3gnet._dataset_contract({"dataset": {"energy_is_per_atom": True}})
+
+
+def test_m3gnet_api_selection_preserves_high_level_and_legacy_paths():
+    modern = SimpleNamespace(
+        MGLDatasetLoader=type("MGLDatasetLoader", (), {}),
+        MGLPotentialTrainer=type("MGLPotentialTrainer", (), {}),
+    )
+    historical = SimpleNamespace()
+
+    assert mlip_m3gnet._select_api({"api": "auto"}, modern) == "high_level"
+    assert mlip_m3gnet._select_api({"api": "auto"}, historical) == "legacy"
+    assert mlip_m3gnet._select_api({"api": "legacy"}, modern) == "legacy"
+    with pytest.raises(TrainingError, match="requires MGLDatasetLoader"):
+        mlip_m3gnet._select_api({"api": "high_level"}, historical)
+
+
+def test_m3gnet_split_is_seeded_and_fingerprinted():
+    cfg = {"split": {"train_ratio": 0.8, "val_ratio": 0.1, "include_test": True}}
+
+    first = mlip_m3gnet._split_indices(128, cfg, 23)
+    second = mlip_m3gnet._split_indices(128, cfg, 23)
+
+    assert first == second
+    train, val, test, evidence = first
+    assert (len(train), len(val), len(test)) == (102, 12, 14)
+    assert len(set(train + val + test)) == 128
+    assert evidence["seed"] == 23
+    assert evidence["train_indices_sha256"].startswith("sha256:")
+    assert evidence["val_indices_sha256"].startswith("sha256:")
+    assert evidence["test_indices_sha256"].startswith("sha256:")
+
+
+def test_m3gnet_history_requires_every_requested_finite_epoch(tmp_path):
+    metrics = tmp_path / "metrics.csv"
+    metrics.write_text(
+        "epoch,step,train_Energy_MAE,val_Energy_MAE\n0,1,,0.2\n0,1,0.1,\n",
+        encoding="utf-8",
+    )
+
+    train, val = mlip_m3gnet._history(metrics, 1)
+
+    assert train == [{"train_Energy_MAE": 0.1}]
+    assert val == [{"val_Energy_MAE": 0.2}]
+    with pytest.raises(TrainingError, match="requested epochs"):
+        mlip_m3gnet._history(metrics, 2)
 
 
 def test_mace_plan(tmp_path):
@@ -358,9 +450,7 @@ def test_mace_fresh_plan_uses_dataset_energy_key_without_finetune_arguments(tmp_
         },
     }
 
-    argv = mlip_mace.plan(ns("mace", "train"), cfg, tmp_path / "config.json", data)[
-        "argv"
-    ]
+    argv = mlip_mace.plan(ns("mace", "train"), cfg, tmp_path / "config.json", data)["argv"]
 
     assert argv[argv.index("--E0s") + 1] == "average"
     assert argv[argv.index("--energy_key") + 1] == "energy"

@@ -753,14 +753,134 @@ def _chgnet_completion_diagnostics(
                 "CHGNet result lacks required compute/runtime environment evidence",
             )
         )
-    elif str(result.get("device")).lower() in {"gpu", "cuda"} and environment.get(
-        "gpu_model"
-    ) == "unavailable":
+    elif (
+        str(result.get("device")).lower() in {"gpu", "cuda"}
+        and environment.get("gpu_model") == "unavailable"
+    ):
         diagnostics.append(
             _diag(
                 "error",
                 "training.chgnet_gpu",
                 "CHGNet CUDA execution lacks an observed GPU model",
+            )
+        )
+    return diagnostics
+
+
+def _m3gnet_completion_diagnostics(
+    context: Mapping[str, Any], result: Mapping[str, Any]
+) -> list[dict[str, str]]:
+    diagnostics: list[dict[str, str]] = []
+    root = Path(str(context.get("project_root", ""))).expanduser().absolute()
+    inputs = context.get("inputs", {})
+    config_path = (
+        _resolve_project_file(root, inputs.get("training_config"))
+        if isinstance(inputs, Mapping)
+        else None
+    )
+    requested_epochs: int | None = None
+    if config_path is not None:
+        try:
+            raw = _json(config_path)
+            m3gnet = raw.get("m3gnet")
+            trainer = m3gnet.get("trainer") if isinstance(m3gnet, Mapping) else None
+            value = trainer.get("max_epochs") if isinstance(trainer, Mapping) else None
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                requested_epochs = value
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+            requested_epochs = None
+    if requested_epochs is None:
+        return [
+            _diag(
+                "error",
+                "training.m3gnet_requested_epochs",
+                "approved M3GNet config must declare a positive trainer.max_epochs",
+            )
+        ]
+    provenance = result.get("provenance")
+    completion = provenance.get("completion") if isinstance(provenance, Mapping) else None
+    if not isinstance(completion, Mapping):
+        return [
+            _diag(
+                "error",
+                "training.m3gnet_completion",
+                "M3GNet result lacks completion evidence",
+            )
+        ]
+    expected = {
+        "requested_epochs": requested_epochs,
+        "completed_epochs": requested_epochs,
+        "normal_completion": True,
+        "all_recorded_metrics_finite": True,
+        "native_model_reload": "OK",
+    }
+    for key, value in expected.items():
+        if completion.get(key) != value:
+            diagnostics.append(
+                _diag(
+                    "error",
+                    f"training.m3gnet_{key}",
+                    f"M3GNet completion {key} differs from the approved requirement",
+                )
+            )
+    split = provenance.get("split") if isinstance(provenance, Mapping) else None
+    if (
+        not isinstance(split, Mapping)
+        or split.get("seed") != result.get("seed")
+        or not _is_fingerprint(split.get("train_indices_sha256"))
+        or not _is_fingerprint(split.get("val_indices_sha256"))
+        or (
+            split.get("include_test") is True
+            and not _is_fingerprint(split.get("test_indices_sha256"))
+        )
+    ):
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.m3gnet_split",
+                "M3GNet result lacks the approved seed and split identity evidence",
+            )
+        )
+    expected_refs = result.get("operation") == "finetune"
+    if provenance.get("foundation_element_refs") is not expected_refs:
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.m3gnet_foundation_refs",
+                "M3GNet foundation element-reference evidence differs from the operation",
+            )
+        )
+    environment = provenance.get("environment") if isinstance(provenance, Mapping) else None
+    required_environment = {
+        "compute_node",
+        "python_version",
+        "matgl_version",
+        "lightning_version",
+        "graph_backend",
+        "graph_library_version",
+        "torch_version",
+        "torch_cuda_version",
+        "gpu_model",
+    }
+    if not isinstance(environment, Mapping) or any(
+        not _plain(environment.get(key)) for key in required_environment
+    ):
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.m3gnet_environment",
+                "M3GNet result lacks required compute/runtime environment evidence",
+            )
+        )
+    elif (
+        str(result.get("device")).lower() in {"gpu", "cuda"}
+        and environment.get("gpu_model") == "unavailable"
+    ):
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.m3gnet_gpu",
+                "M3GNet CUDA execution lacks an observed GPU model",
             )
         )
     return diagnostics
@@ -939,6 +1059,8 @@ def _check_generic(
         diagnostics.extend(_mace_completion_diagnostics(context, result))
     if identity.get("framework") == "chgnet":
         diagnostics.extend(_chgnet_completion_diagnostics(context, result))
+    if identity.get("framework") == "m3gnet":
+        diagnostics.extend(_m3gnet_completion_diagnostics(context, result))
     if diagnostics:
         return diagnostics, None
     return [], {"result": result, "report": report, "model": model_path, "metrics": dict(metrics)}

@@ -267,6 +267,98 @@ def _completed_mace_finetune_context(tmp_path: Path, module) -> tuple[dict, Path
     return context, result_path
 
 
+def _completed_m3gnet_context(tmp_path: Path, module, operation: str) -> tuple[dict, Path]:
+    context = _context(tmp_path, "m3gnet", operation)
+    config = tmp_path / context["inputs"]["training_config"]
+    _write_json(
+        config,
+        {
+            "framework": "m3gnet",
+            "m3gnet": {"trainer": {"max_epochs": 1}},
+        },
+    )
+    context["parameters"]["config_fingerprint"] = _sha(config)
+    plan = module.Adapter().plan(context)
+    assert plan["status"] == "READY"
+    identity = plan["training_identity"]
+    attempt = Path(context["attempt_dir"])
+    attempt.mkdir(parents=True)
+    model = attempt / "model-artifact"
+    model.write_bytes(b"m3gnet-model")
+    result_path = attempt / context["parameters"]["result_manifest"]
+    result = {
+        "schema_version": 1,
+        "plugin_id": "mlip-training",
+        "status": "OK",
+        "framework": "m3gnet",
+        "framework_version": "1.1.3",
+        "operation": operation,
+        "seed": identity["seed"],
+        "device": identity["device"],
+        "precision": identity["precision"],
+        "dataset_fingerprint": identity["dataset"]["fingerprint"],
+        "config_fingerprint": identity["config_fingerprint"],
+        "metrics": {"completed_epochs": 1.0},
+        "provenance": {
+            "completion": {
+                "requested_epochs": 1,
+                "completed_epochs": 1,
+                "normal_completion": True,
+                "all_recorded_metrics_finite": True,
+                "native_model_reload": "OK",
+            },
+            "environment": {
+                "compute_node": "cpu1",
+                "python_version": "3.11.8",
+                "matgl_version": "1.1.3",
+                "lightning_version": "2.3.0",
+                "graph_backend": "dgl",
+                "graph_library_version": "1.1.3",
+                "torch_version": "2.5.0",
+                "torch_cuda_version": "12.4",
+                "gpu_model": "unavailable",
+            },
+            "foundation_element_refs": operation == "finetune",
+            "split": {
+                "seed": identity["seed"],
+                "include_test": True,
+                "train_indices_sha256": "sha256:" + "3" * 64,
+                "val_indices_sha256": "sha256:" + "4" * 64,
+                "test_indices_sha256": "sha256:" + "5" * 64,
+            },
+        },
+        "model_artifact": {
+            "path": "model-artifact",
+            "media_type": "application/gzip",
+            "sha256": _sha(model),
+            "size_bytes": model.stat().st_size,
+        },
+    }
+    if operation == "finetune":
+        result["foundation_model_fingerprint"] = identity["foundation_model"]["fingerprint"]
+    _write_json(result_path, result)
+    report = {
+        "schema_version": 1,
+        "status": "OK",
+        "return_code": 0,
+        "framework": "m3gnet",
+        "operation": operation,
+        "config_fingerprint": identity["config_fingerprint"],
+        "dataset": {
+            **identity["dataset"],
+            "observed_fingerprint": identity["dataset"]["fingerprint"],
+        },
+    }
+    if operation == "finetune":
+        report["foundation_model"] = {
+            **identity["foundation_model"],
+            "observed_fingerprint": identity["foundation_model"]["fingerprint"],
+        }
+    _write_json(attempt / "cluster-run-report.json", report)
+    context["execution"] = {"plan": plan}
+    return context, result_path
+
+
 @pytest.mark.parametrize("framework", ["deepmd", "m3gnet", "chgnet", "mace"])
 @pytest.mark.parametrize("operation", ["train", "finetune"])
 def test_generic_scheduler_matrix_is_ready(tmp_path: Path, framework: str, operation: str) -> None:
@@ -350,6 +442,18 @@ def test_mace_scheduled_completion_evidence_is_accepted(tmp_path: Path) -> None:
     assert result["status"] == "OK", result.get("diagnostics")
 
 
+@pytest.mark.parametrize("operation", ["train", "finetune"])
+def test_m3gnet_scheduled_completion_evidence_is_accepted(tmp_path: Path, operation: str) -> None:
+    module = _load(
+        f"mlip_training_cluster_adapter_m3gnet_{operation}", PLUGIN / "adapter_cluster.py"
+    )
+    context, _ = _completed_m3gnet_context(tmp_path, module, operation)
+
+    result = module.Adapter().check(context)
+
+    assert result["status"] == "OK", result.get("diagnostics")
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -359,9 +463,29 @@ def test_mace_scheduled_completion_evidence_is_accepted(tmp_path: Path) -> None:
         ("native_model_reload", "FAIL"),
     ],
 )
-def test_chgnet_scheduled_completion_mismatch_fails(
-    tmp_path: Path, field: str, value
-) -> None:
+def test_m3gnet_scheduled_completion_mismatch_fails(tmp_path: Path, field: str, value) -> None:
+    module = _load("mlip_training_cluster_adapter_m3gnet_bad", PLUGIN / "adapter_cluster.py")
+    context, result_path = _completed_m3gnet_context(tmp_path, module, "finetune")
+    manifest = json.loads(result_path.read_text(encoding="utf-8"))
+    manifest["provenance"]["completion"][field] = value
+    _write_json(result_path, manifest)
+
+    result = module.Adapter().check(context)
+
+    assert result["status"] == "FAIL"
+    assert any(item["code"] == f"training.m3gnet_{field}" for item in result["diagnostics"])
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("completed_epochs", 0),
+        ("normal_completion", False),
+        ("all_recorded_metrics_finite", False),
+        ("native_model_reload", "FAIL"),
+    ],
+)
+def test_chgnet_scheduled_completion_mismatch_fails(tmp_path: Path, field: str, value) -> None:
     module = _load("mlip_training_cluster_adapter_chgnet_bad", PLUGIN / "adapter_cluster.py")
     context, _ = _completed_finetune_context(tmp_path, module)
     result_path = Path(context["attempt_dir"]) / context["parameters"]["result_manifest"]
