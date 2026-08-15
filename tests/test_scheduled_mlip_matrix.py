@@ -94,6 +94,15 @@ def _context(tmp_path: Path, framework: str, operation: str) -> dict:
 
 def _completed_finetune_context(tmp_path: Path, module) -> tuple[dict, Path]:
     context = _context(tmp_path, "chgnet", "finetune")
+    config = tmp_path / context["inputs"]["training_config"]
+    _write_json(
+        config,
+        {
+            "framework": "chgnet",
+            "chgnet": {"trainer": {"epochs": 1}},
+        },
+    )
+    context["parameters"]["config_fingerprint"] = _sha(config)
     plan = module.Adapter().plan(context)
     assert plan["status"] == "READY"
     identity = plan["training_identity"]
@@ -118,6 +127,30 @@ def _completed_finetune_context(tmp_path: Path, module) -> tuple[dict, Path]:
             "config_fingerprint": identity["config_fingerprint"],
             "foundation_model_fingerprint": identity["foundation_model"]["fingerprint"],
             "metrics": {"loss": 0.125},
+            "provenance": {
+                "completion": {
+                    "requested_epochs": 1,
+                    "completed_epochs": 1,
+                    "normal_completion": True,
+                    "all_recorded_metrics_finite": True,
+                    "native_model_reload": "OK",
+                },
+                "environment": {
+                    "compute_node": "cpu1",
+                    "python_version": "3.11.15",
+                    "chgnet_version": "0.4.2",
+                    "torch_version": "2.13.0",
+                    "torch_cuda_version": "13.0",
+                    "gpu_model": "unavailable",
+                },
+                "freeze_modules": [],
+                "split": {
+                    "seed": identity["seed"],
+                    "train_indices_sha256": "sha256:" + "3" * 64,
+                    "val_indices_sha256": "sha256:" + "4" * 64,
+                    "test_indices_sha256": None,
+                },
+            },
             "model_artifact": {
                 "path": "model-artifact",
                 "media_type": "application/x-pytorch",
@@ -315,6 +348,31 @@ def test_mace_scheduled_completion_evidence_is_accepted(tmp_path: Path) -> None:
     result = module.Adapter().check(context)
 
     assert result["status"] == "OK", result.get("diagnostics")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("completed_epochs", 0),
+        ("normal_completion", False),
+        ("all_recorded_metrics_finite", False),
+        ("native_model_reload", "FAIL"),
+    ],
+)
+def test_chgnet_scheduled_completion_mismatch_fails(
+    tmp_path: Path, field: str, value
+) -> None:
+    module = _load("mlip_training_cluster_adapter_chgnet_bad", PLUGIN / "adapter_cluster.py")
+    context, _ = _completed_finetune_context(tmp_path, module)
+    result_path = Path(context["attempt_dir"]) / context["parameters"]["result_manifest"]
+    manifest = json.loads(result_path.read_text(encoding="utf-8"))
+    manifest["provenance"]["completion"][field] = value
+    _write_json(result_path, manifest)
+
+    result = module.Adapter().check(context)
+
+    assert result["status"] == "FAIL"
+    assert any(item["code"] == f"training.chgnet_{field}" for item in result["diagnostics"])
 
 
 @pytest.mark.parametrize(

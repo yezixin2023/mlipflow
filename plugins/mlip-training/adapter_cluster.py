@@ -640,6 +640,132 @@ def _mace_completion_diagnostics(
     return diagnostics
 
 
+def _chgnet_completion_diagnostics(
+    context: Mapping[str, Any], result: Mapping[str, Any]
+) -> list[dict[str, str]]:
+    diagnostics: list[dict[str, str]] = []
+    root = Path(str(context.get("project_root", ""))).expanduser().absolute()
+    inputs = context.get("inputs", {})
+    config_path = (
+        _resolve_project_file(root, inputs.get("training_config"))
+        if isinstance(inputs, Mapping)
+        else None
+    )
+    requested_epochs: int | None = None
+    expected_freeze: list[str] | None = None
+    if config_path is not None:
+        try:
+            raw = _json(config_path)
+            chgnet = raw.get("chgnet")
+            trainer = chgnet.get("trainer") if isinstance(chgnet, Mapping) else None
+            epochs = trainer.get("epochs") if isinstance(trainer, Mapping) else None
+            starting_epoch = (
+                trainer.get("starting_epoch", 0) if isinstance(trainer, Mapping) else None
+            )
+            if (
+                isinstance(epochs, int)
+                and not isinstance(epochs, bool)
+                and isinstance(starting_epoch, int)
+                and not isinstance(starting_epoch, bool)
+                and starting_epoch >= 0
+                and epochs > starting_epoch
+            ):
+                requested_epochs = epochs - starting_epoch
+            freeze = chgnet.get("freeze_modules") if isinstance(chgnet, Mapping) else None
+            if freeze is None:
+                expected_freeze = []
+            elif isinstance(freeze, list) and all(isinstance(item, str) for item in freeze):
+                expected_freeze = list(freeze)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+            requested_epochs = None
+    if requested_epochs is None:
+        return [
+            _diag(
+                "error",
+                "training.chgnet_requested_epochs",
+                "approved CHGNet config must declare trainer.epochs greater than starting_epoch",
+            )
+        ]
+    provenance = result.get("provenance")
+    completion = provenance.get("completion") if isinstance(provenance, Mapping) else None
+    if not isinstance(completion, Mapping):
+        return [
+            _diag(
+                "error",
+                "training.chgnet_completion",
+                "CHGNet result lacks completion evidence",
+            )
+        ]
+    expected = {
+        "requested_epochs": requested_epochs,
+        "completed_epochs": requested_epochs,
+        "normal_completion": True,
+        "all_recorded_metrics_finite": True,
+        "native_model_reload": "OK",
+    }
+    for key, value in expected.items():
+        if completion.get(key) != value:
+            diagnostics.append(
+                _diag(
+                    "error",
+                    f"training.chgnet_{key}",
+                    f"CHGNet completion {key} differs from the approved requirement",
+                )
+            )
+    if expected_freeze is None or provenance.get("freeze_modules") != expected_freeze:
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.chgnet_freeze_modules",
+                "CHGNet frozen modules differ from the approved config",
+            )
+        )
+    split = provenance.get("split") if isinstance(provenance, Mapping) else None
+    if (
+        not isinstance(split, Mapping)
+        or split.get("seed") != result.get("seed")
+        or not _is_fingerprint(split.get("train_indices_sha256"))
+        or not _is_fingerprint(split.get("val_indices_sha256"))
+    ):
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.chgnet_split",
+                "CHGNet result lacks the approved seed and split identity evidence",
+            )
+        )
+    environment = provenance.get("environment") if isinstance(provenance, Mapping) else None
+    required_environment = {
+        "compute_node",
+        "python_version",
+        "chgnet_version",
+        "torch_version",
+        "torch_cuda_version",
+        "gpu_model",
+    }
+    if not isinstance(environment, Mapping) or any(
+        not _plain(environment.get(key)) for key in required_environment
+    ):
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.chgnet_environment",
+                "CHGNet result lacks required compute/runtime environment evidence",
+            )
+        )
+    elif str(result.get("device")).lower() in {"gpu", "cuda"} and environment.get(
+        "gpu_model"
+    ) == "unavailable":
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.chgnet_gpu",
+                "CHGNet CUDA execution lacks an observed GPU model",
+            )
+        )
+    return diagnostics
+
+
 def _check_generic(
     context: Mapping[str, Any],
 ) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
@@ -811,6 +937,8 @@ def _check_generic(
                 )
     if identity.get("framework") == "mace":
         diagnostics.extend(_mace_completion_diagnostics(context, result))
+    if identity.get("framework") == "chgnet":
+        diagnostics.extend(_chgnet_completion_diagnostics(context, result))
     if diagnostics:
         return diagnostics, None
     return [], {"result": result, "report": report, "model": model_path, "metrics": dict(metrics)}

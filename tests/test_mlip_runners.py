@@ -45,6 +45,166 @@ def test_chgnet_guard(tmp_path):
         )
 
 
+def test_chgnet_columnar_historical_schema_is_normalized(tmp_path):
+    data = tmp_path / "historical.json"
+    data.write_text(
+        json.dumps(
+            {
+                "structure": [{"id": 1}, {"id": 2}],
+                "energy_per_atom": [-1.0, -2.0],
+                "force": [[[0, 0, 0]], [[1, 1, 1]]],
+                "stress": [[[0, 0, 0]], [[1, 1, 1]]],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = {
+        "dataset": {
+            "layout": "columnar",
+            "energy_key": "energy_per_atom",
+            "forces_key": "force",
+            "energy_is_per_atom": True,
+        }
+    }
+
+    normalized = list(
+        mlip_chgnet._normalized_records(data, mlip_chgnet._dataset_contract(cfg), "efs")
+    )
+
+    assert normalized == [
+        {
+            "structure": {"id": 1},
+            "energy": -1.0,
+            "forces": [[0, 0, 0]],
+            "stress": [[0, 0, 0]],
+        },
+        {
+            "structure": {"id": 2},
+            "energy": -2.0,
+            "forces": [[1, 1, 1]],
+            "stress": [[1, 1, 1]],
+        },
+    ]
+
+
+def test_chgnet_columnar_max_records_selects_deterministic_prefix(tmp_path):
+    data = tmp_path / "historical.json"
+    data.write_text(
+        json.dumps(
+            {
+                "structure": [{"id": 1}, {"id": 2}, {"id": 3}],
+                "energy_per_atom": [-1.0, -2.0, -3.0],
+                "force": [[[0, 0, 0]], [[1, 1, 1]], [[2, 2, 2]]],
+            }
+        ),
+        encoding="utf-8",
+    )
+    contract = mlip_chgnet._dataset_contract(
+        {
+            "dataset": {
+                "layout": "columnar",
+                "energy_key": "energy_per_atom",
+                "forces_key": "force",
+                "energy_is_per_atom": True,
+                "max_records": 2,
+            }
+        }
+    )
+
+    normalized = list(mlip_chgnet._normalized_records(data, contract, "ef"))
+
+    assert [item["structure"]["id"] for item in normalized] == [1, 2]
+
+
+def test_chgnet_columnar_schema_rejects_different_column_lengths(tmp_path):
+    data = tmp_path / "historical.json"
+    data.write_text(
+        json.dumps(
+            {
+                "structure": [{"id": 1}, {"id": 2}],
+                "energy_per_atom": [-1.0],
+                "force": [[[0, 0, 0]], [[1, 1, 1]]],
+            }
+        ),
+        encoding="utf-8",
+    )
+    contract = mlip_chgnet._dataset_contract(
+        {
+            "dataset": {
+                "layout": "columnar",
+                "energy_key": "energy_per_atom",
+                "forces_key": "force",
+                "energy_is_per_atom": True,
+            }
+        }
+    )
+
+    with pytest.raises(TrainingError, match="different lengths"):
+        list(mlip_chgnet._normalized_records(data, contract, "ef"))
+
+
+def test_chgnet_split_is_seeded_and_fingerprinted():
+    cfg = {
+        "split": {"train_ratio": 0.8, "val_ratio": 0.05, "include_test": True}
+    }
+
+    first = mlip_chgnet._split_indices(100, cfg, 23)
+    second = mlip_chgnet._split_indices(100, cfg, 23)
+
+    assert first == second
+    train, val, test, evidence = first
+    assert (len(train), len(val), len(test)) == (80, 5, 15)
+    assert len(set(train + val + test)) == 100
+    assert evidence["seed"] == 23
+    assert evidence["train_indices_sha256"].startswith("sha256:")
+    assert evidence["val_indices_sha256"].startswith("sha256:")
+    assert evidence["test_indices_sha256"].startswith("sha256:")
+
+
+def test_chgnet_historical_freeze_groups_are_explicit():
+    class Parameter:
+        requires_grad = True
+
+        @staticmethod
+        def numel():
+            return 2
+
+    class Module:
+        def __init__(self):
+            self.parameter = Parameter()
+
+        def parameters(self):
+            return [self.parameter]
+
+    model = SimpleNamespace(
+        atom_embedding=Module(),
+        bond_embedding=Module(),
+        angle_embedding=Module(),
+        bond_basis_expansion=Module(),
+        angle_basis_expansion=Module(),
+        atom_conv_layers=[Module(), Module()],
+        bond_conv_layers=[Module(), Module()],
+        angle_layers=[Module(), Module()],
+    )
+    requested = [
+        "atom_embedding",
+        "bond_embedding",
+        "angle_embedding",
+        "bond_basis_expansion",
+        "angle_basis_expansion",
+        "atom_conv_layers_except_last",
+        "bond_conv_layers",
+        "angle_layers",
+    ]
+
+    frozen, count = mlip_chgnet._freeze_modules(model, requested, "finetune")
+
+    assert frozen == requested
+    assert count == 20
+    assert model.atom_conv_layers[-1].parameter.requires_grad is True
+    assert model.atom_conv_layers[0].parameter.requires_grad is False
+
+
 def test_m3gnet_plan(tmp_path):
     data = tmp_path / "data.jsonl"
     data.write_text("{}\n")
