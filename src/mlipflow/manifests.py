@@ -39,6 +39,7 @@ def run_manifest(
     resources: dict[str, Any] | None = None,
     source_run_id: str | None = None,
     source_root: str | None = None,
+    execution_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     captured = capture(source_root=source_root)
     config_value = {
@@ -52,6 +53,32 @@ def run_manifest(
     }
     config_digest = hashlib.sha256(canonical_json(config_value).encode("utf-8")).hexdigest()
     time_values = timestamps or {}
+    provenance = {
+        "plan_digest": plan_digest,
+        "config_digest": f"sha256:{config_digest}",
+        "created_by": "mlipflow",
+        "software": [{"name": "mlipflow", "version": __version__}],
+        "environment": {
+            "python": captured["python"],
+            "platform": captured["platform"],
+            "variables": captured["environment"],
+        },
+        "source_git_commit": captured["source_git_commit"],
+        "captured_at": captured["captured_at"],
+        "source_run_id": source_run_id,
+    }
+    if execution_provenance is not None:
+        allowed = {
+            "candidate_partitions",
+            "observed_partition_availability",
+            "selected_partition",
+            "selection_mode",
+            "snapshot_at",
+            "snapshot_scope",
+        }
+        if set(execution_provenance) != allowed:
+            raise ValueError("scheduler submission provenance has an invalid shape")
+        provenance.update(execution_provenance)
     return redact(
         {
             "$schema": "urn:mlipflow:schema:run-manifest:1",
@@ -86,19 +113,6 @@ def run_manifest(
             "parameters": parameters,
             "artifacts": list(artifacts),
             "metrics": metrics or {},
-            "provenance": {
-                "plan_digest": plan_digest,
-                "config_digest": f"sha256:{config_digest}",
-                "created_by": "mlipflow",
-                "software": [{"name": "mlipflow", "version": __version__}],
-                "environment": {
-                    "python": captured["python"],
-                    "platform": captured["platform"],
-                    "variables": captured["environment"],
-                },
-                "source_git_commit": captured["source_git_commit"],
-                "captured_at": captured["captured_at"],
-                "source_run_id": source_run_id,
-            },
+            "provenance": provenance,
         }
     )

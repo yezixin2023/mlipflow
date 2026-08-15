@@ -93,6 +93,80 @@ class HpcArchitectureTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "no cluster profile"):
             site.cluster("missing")
 
+    def test_cluster_profiles_keep_distinct_site_owned_partition_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "site.yaml"
+            write_json(
+                path,
+                {
+                    "schema_version": 1,
+                    "clusters": {
+                        "cluster-a": {
+                            "backend": "ssh-slurm",
+                            "ssh_profile": "alpha-login",
+                            "remote_template_root": "/srv/templates/a",
+                            "work_root": "/scratch/runs/a",
+                            "scheduler": {
+                                "partition_candidates": ["cpu-fast", "cpu-slow"]
+                            },
+                        },
+                        "cluster-b": {
+                            "backend": "ssh-slurm",
+                            "ssh_profile": "beta-login",
+                            "remote_template_root": "/srv/templates/b",
+                            "work_root": "/scratch/runs/b",
+                            "scheduler": {
+                                "partition_candidates": ["gpu3", "gpu2", "gpu1"]
+                            },
+                        },
+                    },
+                },
+            )
+            site = load_site_config(path)
+
+        self.assertEqual(
+            ["cpu-fast", "cpu-slow"],
+            site.cluster("cluster-a").to_plan_dict()["scheduler"][
+                "partition_candidates"
+            ],
+        )
+        self.assertEqual(
+            ["gpu3", "gpu2", "gpu1"],
+            site.cluster("cluster-b").to_plan_dict()["scheduler"][
+                "partition_candidates"
+            ],
+        )
+
+    def test_partition_candidates_reject_duplicates_and_unsafe_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "site.yaml"
+            base = {
+                "backend": "ssh-slurm",
+                "ssh_profile": "alpha-login",
+                "remote_template_root": "/srv/templates/a",
+                "work_root": "/scratch/runs/a",
+            }
+            for candidates in (["same", "same"], ["safe", "bad;partition"]):
+                with self.subTest(candidates=candidates):
+                    write_json(
+                        path,
+                        {
+                            "schema_version": 1,
+                            "clusters": {
+                                "cluster-a": {
+                                    **base,
+                                    "scheduler": {
+                                        "partition_candidates": candidates
+                                    },
+                                }
+                            },
+                        },
+                    )
+                    with self.assertRaisesRegex(ConfigError, "partition_candidates"):
+                        load_site_config(path)
+
     def test_missing_site_and_invalid_roots_fail_explicitly(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

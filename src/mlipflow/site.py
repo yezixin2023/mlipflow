@@ -21,9 +21,24 @@ DEFAULT_SITE_PATH = Path("~/.mlipflow/site.yaml")
 PROFILE_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 SSH_PROFILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 REMOTE_PATH = re.compile(r"^/[A-Za-z0-9_./+\-]+$")
+PARTITION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+\-]*$")
 CLUSTER_FIELDS = frozenset(
+    {"backend", "ssh_profile", "remote_template_root", "work_root", "scheduler"}
+)
+REQUIRED_CLUSTER_FIELDS = frozenset(
     {"backend", "ssh_profile", "remote_template_root", "work_root"}
 )
+SCHEDULER_FIELDS = frozenset({"partition_candidates"})
+
+
+@dataclass(frozen=True)
+class SchedulerConfig:
+    """Site-owned scheduler routing policy for one cluster."""
+
+    partition_candidates: tuple[str, ...]
+
+    def to_plan_dict(self) -> dict[str, list[str]]:
+        return {"partition_candidates": list(self.partition_candidates)}
 
 
 @dataclass(frozen=True)
@@ -35,15 +50,19 @@ class ClusterProfile:
     ssh_profile: str
     remote_template_root: str
     work_root: str
+    scheduler: SchedulerConfig | None = None
 
-    def to_plan_dict(self) -> dict[str, str]:
-        return {
+    def to_plan_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
             "name": self.name,
             "backend": self.backend,
             "ssh_profile": self.ssh_profile,
             "remote_template_root": self.remote_template_root,
             "work_root": self.work_root,
         }
+        if self.scheduler is not None:
+            result["scheduler"] = self.scheduler.to_plan_dict()
+        return result
 
 
 @dataclass(frozen=True)
@@ -106,7 +125,7 @@ def validate_site_config(
             raise ConfigError(f"{source}: invalid cluster profile name {name!r}")
         if not isinstance(value, dict):
             raise ConfigError(f"{source}: cluster {name!r} must be a mapping")
-        missing = sorted(CLUSTER_FIELDS - set(value))
+        missing = sorted(REQUIRED_CLUSTER_FIELDS - set(value))
         unknown = sorted(set(value) - CLUSTER_FIELDS)
         if missing:
             raise ConfigError(f"{source}: cluster {name!r} lacks {', '.join(missing)}")
@@ -118,6 +137,7 @@ def validate_site_config(
         ssh_profile = value.get("ssh_profile")
         template_root = value.get("remote_template_root")
         work_root = value.get("work_root")
+        scheduler_value = value.get("scheduler")
         if backend != "ssh-slurm":
             raise ConfigError(f"{source}: cluster {name!r} backend must be ssh-slurm")
         if not isinstance(ssh_profile, str) or not SSH_PROFILE.fullmatch(ssh_profile):
@@ -144,11 +164,46 @@ def validate_site_config(
                 f"{source}: cluster {name!r} remote_template_root and work_root "
                 "must be disjoint"
             )
+        scheduler: SchedulerConfig | None = None
+        if scheduler_value is not None:
+            if not isinstance(scheduler_value, dict):
+                raise ConfigError(
+                    f"{source}: cluster {name!r} scheduler must be a mapping"
+                )
+            missing_scheduler = sorted(SCHEDULER_FIELDS - set(scheduler_value))
+            unknown_scheduler = sorted(set(scheduler_value) - SCHEDULER_FIELDS)
+            if missing_scheduler:
+                raise ConfigError(
+                    f"{source}: cluster {name!r} scheduler lacks "
+                    + ", ".join(missing_scheduler)
+                )
+            if unknown_scheduler:
+                raise ConfigError(
+                    f"{source}: cluster {name!r} scheduler has unsupported fields: "
+                    + ", ".join(unknown_scheduler)
+                )
+            candidates = scheduler_value.get("partition_candidates")
+            if (
+                not isinstance(candidates, list)
+                or not candidates
+                or any(
+                    not isinstance(candidate, str)
+                    or not PARTITION_NAME.fullmatch(candidate)
+                    for candidate in candidates
+                )
+                or len(set(candidates)) != len(candidates)
+            ):
+                raise ConfigError(
+                    f"{source}: cluster {name!r} scheduler.partition_candidates "
+                    "must be a non-empty unique list of safe partition names"
+                )
+            scheduler = SchedulerConfig(tuple(candidates))
         clusters[name] = ClusterProfile(
             name=name,
             backend=backend,
             ssh_profile=ssh_profile,
             remote_template_root=str(PurePosixPath(template_root)),
             work_root=str(PurePosixPath(work_root)),
+            scheduler=scheduler,
         )
     return clusters

@@ -476,6 +476,95 @@ class ScheduledDftTests(unittest.TestCase):
 
         return inspect, fetch
 
+    def test_selected_partition_is_persisted_only_in_execution_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, site = prepared_fixture(root)
+            site_value = json.loads(site.read_text(encoding="utf-8"))
+            site_value["clusters"]["cluster-a"]["scheduler"] = {
+                "partition_candidates": ["gpu3", "gpu2"]
+            }
+            write_json(site, site_value)
+            initialize(root)
+            project = load_project(root)
+            library = FakeTemplateLibrary()
+            plan = make_run_plan(project, "label-li", PLUGINS, site, library)
+            remote_dir = plan["hpc_execution"]["workspace"]["run_dir"]
+            routing = {
+                "candidate_partitions": ["gpu3", "gpu2"],
+                "observed_partition_availability": [
+                    {
+                        "partition": "gpu3",
+                        "exists": True,
+                        "state": "UP",
+                        "schedulable": True,
+                        "currently_available": True,
+                        "observed_node_availability": {
+                            "total": 1,
+                            "healthy": 1,
+                            "capable_for_request": 1,
+                            "available_now": 1,
+                            "busy_capable": 0,
+                            "states": {"IDLE": 1},
+                            "max_healthy_node_capacity": {
+                                "cpus": 64,
+                                "gpus": 4,
+                                "memory_mib": 262144,
+                            },
+                        },
+                        "reason": (
+                            "a healthy capable node has the requested resources "
+                            "available now"
+                        ),
+                    }
+                ],
+                "selected_partition": "gpu3",
+                "selection_mode": "available-now",
+                "snapshot_at": "2026-08-15T00:00:00Z",
+                "snapshot_scope": (
+                    "submission-time observation only; no node or resource was reserved"
+                ),
+            }
+            with patch(
+                "mlipflow.services.SshSlurmBackend.stage_workspace",
+                return_value=remote_dir,
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.submit",
+                return_value=ExecutionResult(
+                    0,
+                    "Submitted batch job 77\n",
+                    "",
+                    "77",
+                    routing,
+                ),
+            ) as submitted:
+                run_node(
+                    project,
+                    "label-li",
+                    PLUGINS,
+                    plan["plan_digest"],
+                    site,
+                    library,
+                )
+
+            manifest = json.loads(
+                (
+                    root
+                    / ".mlipflow/runs/label-li/attempt-1/run-manifest.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual("gpu3", manifest["provenance"]["selected_partition"])
+            self.assertEqual(
+                ["gpu3", "gpu2"],
+                manifest["provenance"]["candidate_partitions"],
+            )
+            self.assertNotIn("partition", project.raw["workflow"]["nodes"][0])
+            self.assertNotIn("scheduler", project.raw["workflow"]["nodes"][0])
+            self.assertEqual(
+                ["gpu3", "gpu2"],
+                submitted.call_args.kwargs["partition_candidates"],
+            )
+
     def test_plan_stage_fetch_check_collect_reaches_ok(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

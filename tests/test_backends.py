@@ -11,6 +11,40 @@ from mlipflow.backends import LocalBackend, SlurmBackend, SshSlurmBackend
 from mlipflow.errors import BackendError
 
 
+def slurm_snapshot(partitions: list[str], nodes: list[str]) -> str:
+    return "\n".join(
+        partitions + ["__MLIPFLOW_SCONTROL_NODES__"] + nodes
+    ) + "\n"
+
+
+def slurm_partition(name: str, state: str = "UP") -> str:
+    return f"PartitionName={name} State={state} TotalNodes=1"
+
+
+def slurm_node(
+    name: str,
+    partition: str,
+    *,
+    state: str = "IDLE",
+    cpus: int = 32,
+    allocated_cpus: int = 0,
+    gpus: int = 0,
+    allocated_gpus: int = 0,
+    memory_mib: int = 65536,
+    allocated_memory_mib: int = 0,
+) -> str:
+    return (
+        f"NodeName={name} CPUTot={cpus} CPUAlloc={allocated_cpus} "
+        f"RealMemory={memory_mib} AllocMem={allocated_memory_mib} State={state} "
+        f"Partitions={partition} "
+        f"CfgTRES=cpu={cpus},mem={memory_mib}M,gres/gpu={gpus} "
+        f"AllocTRES=cpu={allocated_cpus},gres/gpu={allocated_gpus}"
+    )
+
+
+REQUEST = {"cpus": 8, "gpus": 0, "memory": "8G", "walltime": "01:00:00"}
+
+
 class BackendTests(unittest.TestCase):
     def test_local_uses_argv_and_shell_false(self) -> None:
         completed = subprocess.CompletedProcess(["tool", "a;touch bad"], 0, "ok", "")
@@ -156,6 +190,132 @@ class BackendTests(unittest.TestCase):
         self.assertIn("scontrol show job -o 893999", remote_command)
         self.assertIn("JobState=*", remote_command)
         self.assertIn("Reason=*", remote_command)
+
+    def test_partition_routing_selects_first_available_and_injects_sbatch_argument(self) -> None:
+        backend = SshSlurmBackend("safe-profile")
+        snapshot = slurm_snapshot(
+            [slurm_partition("preferred"), slurm_partition("fallback")],
+            [
+                slurm_node("node-a", "preferred"),
+                slurm_node("node-b", "fallback"),
+            ],
+        )
+        responses = [
+            subprocess.CompletedProcess(["ssh"], 0, snapshot, ""),
+            subprocess.CompletedProcess(
+                ["ssh"], 0, "Submitted batch job 12345\n", ""
+            ),
+        ]
+        with patch("mlipflow.backends.subprocess.run", side_effect=responses) as invoked:
+            result = backend.submit(
+                "submit.sbatch",
+                "/work/project/node/attempt-0001",
+                partition_candidates=["preferred", "fallback"],
+                resources=REQUEST,
+            )
+
+        self.assertEqual("12345", result.job_id)
+        self.assertEqual("preferred", result.submission_provenance["selected_partition"])
+        self.assertEqual("available-now", result.submission_provenance["selection_mode"])
+        self.assertIn(
+            "sbatch --partition='preferred' -- 'submit.sbatch'",
+            invoked.call_args_list[1].args[0][-1],
+        )
+        self.assertEqual("safe-profile", invoked.call_args_list[0].args[0][2])
+
+    def test_partition_routing_prefers_later_available_over_busy_candidate(self) -> None:
+        backend = SshSlurmBackend("safe-profile")
+        snapshot = slurm_snapshot(
+            [slurm_partition("preferred"), slurm_partition("fallback")],
+            [
+                slurm_node("node-a", "preferred", allocated_cpus=32),
+                slurm_node("node-b", "fallback"),
+            ],
+        )
+        completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
+        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+            routing = backend.select_partition(["preferred", "fallback"], REQUEST)
+        self.assertEqual("fallback", routing["selected_partition"])
+
+    def test_partition_routing_skips_down_and_draining_candidates(self) -> None:
+        backend = SshSlurmBackend("safe-profile")
+        for unavailable_state in ("DOWN", "DRAIN"):
+            with self.subTest(state=unavailable_state):
+                snapshot = slurm_snapshot(
+                    [
+                        slurm_partition("preferred", unavailable_state),
+                        slurm_partition("fallback"),
+                    ],
+                    [
+                        slurm_node("node-a", "preferred"),
+                        slurm_node("node-b", "fallback"),
+                    ],
+                )
+                completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
+                with patch("mlipflow.backends.subprocess.run", return_value=completed):
+                    routing = backend.select_partition(
+                        ["preferred", "fallback"], REQUEST
+                    )
+                self.assertEqual("fallback", routing["selected_partition"])
+
+    def test_partition_routing_queues_on_preferred_when_all_healthy_candidates_busy(self) -> None:
+        backend = SshSlurmBackend("safe-profile")
+        snapshot = slurm_snapshot(
+            [slurm_partition("preferred"), slurm_partition("fallback")],
+            [
+                slurm_node("node-a", "preferred", allocated_cpus=32),
+                slurm_node("node-b", "fallback", allocated_cpus=32),
+            ],
+        )
+        completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
+        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+            routing = backend.select_partition(["preferred", "fallback"], REQUEST)
+        self.assertEqual("preferred", routing["selected_partition"])
+        self.assertEqual("healthy-queue", routing["selection_mode"])
+        self.assertIn("no node or resource was reserved", routing["snapshot_scope"])
+
+    def test_partition_routing_fails_when_all_candidates_are_unusable(self) -> None:
+        backend = SshSlurmBackend("safe-profile")
+        snapshot = slurm_snapshot(
+            [slurm_partition("down", "DOWN")],
+            [slurm_node("node-a", "down", state="DOWN")],
+        )
+        completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
+        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+            with self.assertRaisesRegex(BackendError, "missing: partition does not exist"):
+                backend.select_partition(["missing", "down"], REQUEST)
+
+    def test_gpu_request_skips_partition_without_gpu_capability(self) -> None:
+        backend = SshSlurmBackend("safe-profile")
+        snapshot = slurm_snapshot(
+            [slurm_partition("cpu"), slurm_partition("gpu")],
+            [
+                slurm_node("node-a", "cpu", gpus=0),
+                slurm_node("node-b", "gpu", gpus=2),
+            ],
+        )
+        requested = {**REQUEST, "gpus": 1}
+        completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
+        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+            routing = backend.select_partition(["cpu", "gpu"], requested)
+        self.assertEqual("gpu", routing["selected_partition"])
+
+    def test_cpu_request_skips_partition_without_single_node_capability(self) -> None:
+        backend = SshSlurmBackend("safe-profile")
+        snapshot = slurm_snapshot(
+            [slurm_partition("small"), slurm_partition("large")],
+            [
+                slurm_node("node-a", "small", cpus=16),
+                slurm_node("node-b", "large", cpus=64),
+            ],
+        )
+        requested = {**REQUEST, "cpus": 32}
+        completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
+        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+            routing = backend.select_partition(["small", "large"], requested)
+        self.assertEqual("large", routing["selected_partition"])
+        first = routing["observed_partition_availability"][0]
+        self.assertEqual(0, first["observed_node_availability"]["capable_for_request"])
 
 
 if __name__ == "__main__":

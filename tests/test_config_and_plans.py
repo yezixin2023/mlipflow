@@ -108,6 +108,35 @@ class ConfigTests(unittest.TestCase):
                     with self.assertRaisesRegex(ConfigError, key):
                         load_project(root)
 
+    def test_hpc_project_cannot_embed_site_owned_partition_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base = {
+                "id": "hpc",
+                "uses": "demo@1",
+                "backend": "ssh-slurm",
+                "backend_profile": "cluster-a",
+                "resources": {
+                    "cpus": 4,
+                    "gpus": 0,
+                    "memory": "8G",
+                    "walltime": "01:00:00",
+                },
+            }
+            for field, value in (
+                ("partition", "gpu1"),
+                ("partition_candidates", ["gpu1"]),
+                ("scheduler", {"partition_candidates": ["gpu1"]}),
+                ("ssh_profile", "login"),
+            ):
+                with self.subTest(field=field):
+                    write_json(
+                        root / "project.yaml",
+                        project_config([{**base, field: value}]),
+                    )
+                    with self.assertRaisesRegex(ConfigError, "site-owned"):
+                        load_project(root)
+
 
 class PlanTests(unittest.TestCase):
     def test_initialized_node_config_drift_requires_explicit_migration(self) -> None:

@@ -268,6 +268,7 @@ def _execute_ready(
             remote_dir=remote_dir,
             command=command,
             resources=node.get("resources", {}),
+            execution_provenance=result.submission_provenance,
             **_manifest_context(project, node, plugin, store, run_id, finished=False),
         )
         write_json_atomic(manifest_path, manifest)

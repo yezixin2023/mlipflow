@@ -108,7 +108,24 @@ def _stage_and_submit_scheduled_adapter(
     observed_run_dir = backend.stage_workspace(remote_run_dir, files)
     if observed_run_dir != remote_run_dir:
         raise BackendError("backend returned an unexpected remote attempt workspace")
-    result = backend.submit(_HPC_SUBMIT_SCRIPT, remote_run_dir)
+    scheduler_config = cluster.get("scheduler")
+    partition_candidates = (
+        scheduler_config.get("partition_candidates")
+        if isinstance(scheduler_config, dict)
+        else None
+    )
+    if partition_candidates is None:
+        result = backend.submit(_HPC_SUBMIT_SCRIPT, remote_run_dir)
+    else:
+        resources = hpc_execution.get("resources")
+        if not isinstance(partition_candidates, list) or not isinstance(resources, dict):
+            raise BackendError("approved plan has invalid scheduler routing configuration")
+        result = backend.submit(
+            _HPC_SUBMIT_SCRIPT,
+            remote_run_dir,
+            partition_candidates=partition_candidates,
+            resources=resources,
+        )
     return result, remote_run_dir, ["template", str(scheduled["template_family"])]
 
 

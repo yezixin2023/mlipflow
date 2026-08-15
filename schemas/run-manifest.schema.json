@@ -162,7 +162,31 @@
         },
         "source_git_commit": {"type": ["string", "null"]},
         "captured_at": {"$ref": "#/$defs/timestamp"},
-        "source_run_id": {"type": ["string", "null"]}
+        "source_run_id": {"type": ["string", "null"]},
+        "candidate_partitions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/partition_name"}
+        },
+        "observed_partition_availability": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/partition_observation"}
+        },
+        "selected_partition": {"$ref": "#/$defs/partition_name"},
+        "selection_mode": {"enum": ["available-now", "healthy-queue"]},
+        "snapshot_at": {"$ref": "#/$defs/timestamp"},
+        "snapshot_scope": {"$ref": "#/$defs/non_empty_string"}
+      },
+      "dependentRequired": {
+        "selected_partition": [
+          "candidate_partitions",
+          "observed_partition_availability",
+          "selection_mode",
+          "snapshot_at",
+          "snapshot_scope"
+        ]
       },
       "additionalProperties": false
     }
@@ -171,6 +195,64 @@
   "$defs": {
     "non_empty_string": {"type": "string", "minLength": 1},
     "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "partition_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+\\-]*$"
+    },
+    "partition_observation": {
+      "type": "object",
+      "required": [
+        "partition",
+        "exists",
+        "state",
+        "schedulable",
+        "currently_available",
+        "observed_node_availability",
+        "reason"
+      ],
+      "properties": {
+        "partition": {"$ref": "#/$defs/partition_name"},
+        "exists": {"type": "boolean"},
+        "state": {"type": ["string", "null"]},
+        "schedulable": {"type": "boolean"},
+        "currently_available": {"type": "boolean"},
+        "observed_node_availability": {
+          "type": "object",
+          "required": [
+            "total",
+            "healthy",
+            "capable_for_request",
+            "available_now",
+            "busy_capable",
+            "states"
+          ],
+          "properties": {
+            "total": {"type": "integer", "minimum": 0},
+            "healthy": {"type": "integer", "minimum": 0},
+            "capable_for_request": {"type": "integer", "minimum": 0},
+            "available_now": {"type": "integer", "minimum": 0},
+            "busy_capable": {"type": "integer", "minimum": 0},
+            "states": {
+              "type": "object",
+              "additionalProperties": {"type": "integer", "minimum": 0}
+            },
+            "max_healthy_node_capacity": {
+              "type": "object",
+              "required": ["cpus", "gpus", "memory_mib"],
+              "properties": {
+                "cpus": {"type": "integer", "minimum": 0},
+                "gpus": {"type": "integer", "minimum": 0},
+                "memory_mib": {"type": "integer", "minimum": 0}
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "reason": {"$ref": "#/$defs/non_empty_string"}
+      },
+      "additionalProperties": false
+    },
     "state": {
       "enum": ["PREP", "READY", "SUBMITTED", "PENDING", "RUNNING", "OK", "FAIL", "WAIT", "BLOCKED", "STOPPED"]
     },

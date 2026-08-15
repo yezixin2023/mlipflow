@@ -98,6 +98,15 @@ def validate_project(raw: dict[str, Any], source: Path | str = "project") -> Non
         ids.add(node_id)
         backend = node.get("backend", "local")
         if backend == "ssh-slurm":
+            embedded_scheduler = sorted(
+                {"partition", "partition_candidates", "scheduler", "ssh_profile"}
+                & set(node)
+            )
+            if embedded_scheduler:
+                raise ConfigError(
+                    f"{source}: ssh-slurm node {node_id} must not provide "
+                    f"{', '.join(embedded_scheduler)}; scheduler routing is site-owned"
+                )
             profile = node.get("backend_profile")
             if not isinstance(profile, str) or not IDENTIFIER.fullmatch(profile):
                 raise ConfigError(

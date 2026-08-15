@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Protocol, Sequence
 
@@ -21,6 +22,8 @@ JOB_ID = re.compile(r"Submitted batch job\s+(\d+)")
 SAFE_REMOTE_PATH = re.compile(r"[A-Za-z0-9_./+\-]+")
 SAFE_REMOTE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+\-]*")
 SAFE_REMOTE_RELATIVE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./+\-]*")
+SAFE_PARTITION_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+\-]*")
+_SCONTROL_NODE_MARKER = "__MLIPFLOW_SCONTROL_NODES__"
 SAFE_ENVIRONMENT_KEYS = frozenset(
     {
         "HOME",
@@ -47,6 +50,7 @@ class ExecutionResult:
     stdout: str
     stderr: str
     job_id: str | None = None
+    submission_provenance: dict[str, Any] | None = None
 
 
 class SchedulerBackend(Protocol):
@@ -200,14 +204,33 @@ class SshSlurmBackend:
             raise BackendError("SSH profile must be a simple ~/.ssh/config alias")
         self.profile = profile
 
-    def submit(self, remote_script: str, remote_run_dir: str) -> ExecutionResult:
+    def submit(
+        self,
+        remote_script: str,
+        remote_run_dir: str,
+        *,
+        partition_candidates: Sequence[str] | None = None,
+        resources: Mapping[str, Any] | None = None,
+    ) -> ExecutionResult:
         _validate_remote_directory(remote_run_dir, allow_dot=True)
         _validate_remote_name(remote_script)
+        routing: dict[str, Any] | None = None
+        selected_partition: str | None = None
+        if partition_candidates is not None:
+            if resources is None:
+                raise BackendError("partition selection requires requested resources")
+            routing = self.select_partition(partition_candidates, resources)
+            selected_partition = str(routing["selected_partition"])
         # Arguments are passed as separate argv fields. The remote helper should
         # eventually replace OpenSSH command composition with a fixed RPC.
+        partition_argument = (
+            f" --partition={_quote_remote(selected_partition)}"
+            if selected_partition is not None
+            else ""
+        )
         command = (
             f"cd -- {_quote_remote(remote_run_dir)} && "
-            f"sbatch -- {_quote_remote(remote_script)}"
+            f"sbatch{partition_argument} -- {_quote_remote(remote_script)}"
         )
         completed = subprocess.run(
             ["ssh", "--", self.profile, command],
@@ -223,7 +246,82 @@ class SshSlurmBackend:
             completed.stdout,
             completed.stderr,
             match.group(1) if match else None,
+            routing,
         )
+
+    def select_partition(
+        self,
+        candidates: Sequence[str],
+        resources: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Select a site-owned candidate from one submission-time Slurm snapshot.
+
+        No node is selected or reserved here.  A currently idle capable node wins
+        by candidate order; when every healthy capable partition is busy, the
+        preferred healthy candidate is returned so Slurm can queue normally.
+        """
+
+        validated = _validate_partition_candidates(candidates)
+        requested = _requested_node_resources(resources)
+        command = (
+            "scontrol show partition -o && "
+            f"printf '\\n{_SCONTROL_NODE_MARKER}\\n' && "
+            "scontrol show node -o"
+        )
+        completed = subprocess.run(
+            ["ssh", "--", self.profile, command],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise BackendError(
+                completed.stderr
+                or completed.stdout
+                or "remote Slurm partition snapshot failed"
+            )
+        before, separator, after = completed.stdout.partition(
+            f"{_SCONTROL_NODE_MARKER}\n"
+        )
+        if not separator:
+            raise BackendError("remote Slurm partition snapshot is malformed")
+        partitions = {
+            record["PartitionName"]: record
+            for record in _parse_scontrol_records(before, "PartitionName")
+        }
+        nodes = _parse_scontrol_records(after, "NodeName")
+        observations = [
+            _partition_observation(candidate, partitions.get(candidate), nodes, requested)
+            for candidate in validated
+        ]
+        available = [item for item in observations if item["currently_available"]]
+        schedulable = [item for item in observations if item["schedulable"]]
+        if available:
+            selected = str(available[0]["partition"])
+            selection_mode = "available-now"
+        elif schedulable:
+            selected = str(schedulable[0]["partition"])
+            selection_mode = "healthy-queue"
+        else:
+            reasons = "; ".join(
+                f"{item['partition']}: {item['reason']}" for item in observations
+            )
+            raise BackendError(
+                "no candidate Slurm partition is currently schedulable for the "
+                f"requested per-node resources ({reasons})"
+            )
+        return {
+            "candidate_partitions": list(validated),
+            "observed_partition_availability": observations,
+            "selected_partition": selected,
+            "selection_mode": selection_mode,
+            "snapshot_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "snapshot_scope": (
+                "submission-time observation only; no node or resource was reserved"
+            ),
+        }
 
     def read_template(
         self, template_root: str, relative_path: str, max_bytes: int = 1024 * 1024
@@ -524,6 +622,215 @@ class SshSlurmBackend:
         if completed.returncode != 0:
             raise BackendError(completed.stderr or completed.stdout or "remote log read failed")
         return completed.stdout.splitlines(keepends=True)
+
+
+def _validate_partition_candidates(candidates: Sequence[str]) -> tuple[str, ...]:
+    if isinstance(candidates, (str, bytes)):
+        raise BackendError("partition candidates must be a non-empty sequence")
+    values = tuple(candidates)
+    if (
+        not values
+        or any(
+            not isinstance(candidate, str)
+            or not SAFE_PARTITION_NAME.fullmatch(candidate)
+            for candidate in values
+        )
+        or len(set(values)) != len(values)
+    ):
+        raise BackendError(
+            "partition candidates must be a non-empty unique sequence of safe names"
+        )
+    return values
+
+
+def _requested_node_resources(resources: Mapping[str, Any]) -> dict[str, int]:
+    cpus = resources.get("cpus")
+    gpus = resources.get("gpus")
+    memory = resources.get("memory")
+    if (
+        isinstance(cpus, bool)
+        or not isinstance(cpus, int)
+        or cpus < 1
+        or isinstance(gpus, bool)
+        or not isinstance(gpus, int)
+        or gpus < 0
+        or not isinstance(memory, str)
+    ):
+        raise BackendError("partition selection received invalid requested resources")
+    return {"cpus": cpus, "gpus": gpus, "memory_mib": _memory_to_mib(memory)}
+
+
+def _memory_to_mib(value: str) -> int:
+    match = re.fullmatch(r"([1-9][0-9]*)([KMGTP]?)(?:i?B)?", value)
+    if match is None:
+        raise BackendError(f"unsupported Slurm memory request: {value!r}")
+    amount = int(match.group(1))
+    unit = match.group(2)
+    if unit == "K":
+        return max(1, (amount + 1023) // 1024)
+    factors = {"": 1, "M": 1, "G": 1024, "T": 1024**2, "P": 1024**3}
+    return amount * factors[unit]
+
+
+def _parse_scontrol_records(text: str, identity_field: str) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    field_pattern = re.compile(r"(?:^|\s)([A-Za-z][A-Za-z0-9_/]*)=(\S*)")
+    for line in text.splitlines():
+        fields = {match.group(1): match.group(2) for match in field_pattern.finditer(line)}
+        if fields.get(identity_field):
+            records.append(fields)
+    return records
+
+
+def _integer_field(record: Mapping[str, str], name: str) -> int:
+    value = record.get(name, "")
+    return int(value) if value.isdigit() else 0
+
+
+def _tres_quantity(value: str, resource: str) -> int:
+    parsed: dict[str, int] = {}
+    for item in value.split(","):
+        key, separator, raw = item.partition("=")
+        if separator and raw.isdigit():
+            parsed[key] = int(raw)
+    if resource in parsed:
+        return parsed[resource]
+    typed = [amount for key, amount in parsed.items() if key.startswith(resource + ":")]
+    return sum(typed)
+
+
+def _configured_gpus(record: Mapping[str, str]) -> int:
+    configured = _tres_quantity(record.get("CfgTRES", ""), "gres/gpu")
+    if configured:
+        return configured
+    gres = record.get("Gres", "")
+    total = 0
+    for item in gres.split(","):
+        match = re.match(r"gpu(?::[^:,()]+)?:(\d+)(?:\(|$)", item)
+        if match is not None:
+            total += int(match.group(1))
+    return total
+
+
+def _node_is_healthy(state: str) -> bool:
+    normalized = state.upper().replace("-", "_")
+    unhealthy = (
+        "DOWN",
+        "DRAIN",
+        "FAIL",
+        "MAINT",
+        "POWER_DOWN",
+        "REBOOT",
+        "FUTURE",
+        "UNKNOWN",
+        "INVALID_REG",
+        "NO_RESPOND",
+        "RESERVED",
+    )
+    return bool(normalized) and not any(marker in normalized for marker in unhealthy)
+
+
+def _partition_observation(
+    candidate: str,
+    partition: Mapping[str, str] | None,
+    nodes: Sequence[Mapping[str, str]],
+    requested: Mapping[str, int],
+) -> dict[str, Any]:
+    if partition is None:
+        return {
+            "partition": candidate,
+            "exists": False,
+            "state": None,
+            "schedulable": False,
+            "currently_available": False,
+            "observed_node_availability": {
+                "total": 0,
+                "healthy": 0,
+                "capable_for_request": 0,
+                "available_now": 0,
+                "busy_capable": 0,
+                "states": {},
+            },
+            "reason": "partition does not exist",
+        }
+
+    state = partition.get("State", "UNKNOWN").upper()
+    members = [
+        node
+        for node in nodes
+        if candidate in node.get("Partitions", "").split(",")
+    ]
+    states: dict[str, int] = {}
+    healthy = 0
+    capable = 0
+    available = 0
+    max_healthy = {"cpus": 0, "gpus": 0, "memory_mib": 0}
+    for node in members:
+        node_state = node.get("State", "UNKNOWN").upper()
+        states[node_state] = states.get(node_state, 0) + 1
+        if not _node_is_healthy(node_state):
+            continue
+        healthy += 1
+        total_cpus = _integer_field(node, "CPUTot") or _tres_quantity(
+            node.get("CfgTRES", ""), "cpu"
+        )
+        allocated_cpus = _integer_field(node, "CPUAlloc") or _tres_quantity(
+            node.get("AllocTRES", ""), "cpu"
+        )
+        total_gpus = _configured_gpus(node)
+        allocated_gpus = _tres_quantity(node.get("AllocTRES", ""), "gres/gpu")
+        total_memory = _integer_field(node, "RealMemory")
+        allocated_memory = _integer_field(node, "AllocMem")
+        max_healthy = {
+            "cpus": max(max_healthy["cpus"], total_cpus),
+            "gpus": max(max_healthy["gpus"], total_gpus),
+            "memory_mib": max(max_healthy["memory_mib"], total_memory),
+        }
+        node_capable = (
+            total_cpus >= requested["cpus"]
+            and total_gpus >= requested["gpus"]
+            and total_memory >= requested["memory_mib"]
+        )
+        if not node_capable:
+            continue
+        capable += 1
+        if (
+            total_cpus - allocated_cpus >= requested["cpus"]
+            and total_gpus - allocated_gpus >= requested["gpus"]
+            and total_memory - allocated_memory >= requested["memory_mib"]
+        ):
+            available += 1
+
+    partition_healthy = state not in {"DOWN", "DRAIN", "INACTIVE"} and state == "UP"
+    schedulable = partition_healthy and capable > 0
+    currently_available = schedulable and available > 0
+    if not partition_healthy:
+        reason = f"partition state is {state}"
+    elif healthy == 0:
+        reason = "partition has no healthy observed nodes"
+    elif capable == 0:
+        reason = "no healthy node satisfies the requested per-node resources"
+    elif available == 0:
+        reason = "healthy capable nodes are currently busy; Slurm queueing is allowed"
+    else:
+        reason = "a healthy capable node has the requested resources available now"
+    return {
+        "partition": candidate,
+        "exists": True,
+        "state": state,
+        "schedulable": schedulable,
+        "currently_available": currently_available,
+        "observed_node_availability": {
+            "total": len(members),
+            "healthy": healthy,
+            "capable_for_request": capable,
+            "available_now": available,
+            "busy_capable": capable - available,
+            "states": {key: states[key] for key in sorted(states)},
+            "max_healthy_node_capacity": max_healthy,
+        },
+        "reason": reason,
+    }
 
 
 def validate_argv(argv: Sequence[str]) -> None:
