@@ -244,6 +244,12 @@ def _segment_steps(start: int, total: int, interval: int) -> list[int]:
     return values
 
 
+def _is_new_callback_step(recorded_steps: list[int], step: int) -> bool:
+    """Return false when ASE observers revisit the current MD step."""
+
+    return not recorded_steps or recorded_steps[-1] != step
+
+
 def _base_checkpoint_identity(
     *,
     calculator: str,
@@ -644,12 +650,16 @@ def run_md(
 
     def write_frame() -> None:
         step = int(dyn.get_number_of_steps())
+        if not _is_new_callback_step(frame_steps, step):
+            return
         trajectory.write(atoms)
         frame_steps.append(step)
         write_index()
 
     def write_thermo() -> None:
         step = int(dyn.get_number_of_steps())
+        if not _is_new_callback_step(thermo_steps, step):
+            return
         epot = float(atoms.get_potential_energy())
         ekin = float(atoms.get_kinetic_energy())
         temp = float(atoms.get_temperature())
@@ -718,6 +728,7 @@ def run_md(
         str(final_path),
         _final_structure_copy(atoms, input_constraints),
         format="extxyz",
+        write_results=False,
     )
     expected_frame_steps = _segment_steps(start_step, steps, trajectory_interval)
     expected_thermo_steps = _segment_steps(start_step, steps, thermo_interval)
