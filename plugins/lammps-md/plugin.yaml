@@ -36,7 +36,7 @@
       "If interruption occurs before the first checkpoint interval, no automatic restart is possible. Retry is blocked rather than falling back to final.data or reinitializing velocities.",
       "On successful completion the temporary periodic checkpoint pair and restart-runtime sidecar are removed before normal output inventory, so only final.restart is collected as the successful restart artifact; failure salvage retains the periodic files when present.",
       "Cluster-specific executable paths, MPI/srun launchers, modules, partitions, CUDA architecture, template root, work root, and absolute model root remain site-owned.",
-      "The model is never copied through the control plane. The compute-node runner resolves the approved site-root-relative model below MODEL_ROOT and recomputes its SHA-256 before and after LAMMPS execution.",
+      "The model is never copied through the control plane. The compute-node runner resolves the approved site-root-relative model below MODEL_ROOT and recomputes file SHA-256 or deterministic directory tree-sha256-v1 before and after LAMMPS execution.",
       "DeepMD CPU/GPU decks both use pair_style deepmd; site runtime owns GPU mapping. MACE and MatGL/M3GNet GPU remain pinned to one GPU in this contract.",
       "Legacy CHGNet model files remain blocked because version 0.3 does not pin a native CHGNet LAMMPS export/pair-style contract; CHGNet remains available through ase-md.",
       "Version 0.3 supports prepared NVT or isotropic NPT only. It does not stitch trajectory segments, run replicas, or perform transport analysis."
@@ -67,6 +67,7 @@
   "parameters": [
     {"name": "operation", "type": "string", "required": true, "description": "lammps-prepare generates reviewed inputs locally; execute submits one already prepared target to ssh-slurm."},
     {"name": "output-dir", "type": "string", "required": false, "description": "lammps-prepare only: fresh attempt-relative output directory; defaults to lammps-inputs."},
+    {"name": "structure-format", "type": "string", "required": false, "description": "lammps-prepare only: explicit safe ASE reader format such as lammps-data or extxyz; use when the filename does not identify its format."},
     {"name": "target", "type": "string", "required": false, "description": "execute only: cpu or gpu; the target must already exist in the prepared manifest."},
     {"name": "input-manifest-fingerprint", "type": "string", "required": false, "description": "execute only: full SHA-256 of the prepared lammps-input-manifest.json, rebound before staging and on the compute node."},
     {"name": "checkpoint-interval", "type": "integer", "required": false, "description": "execute only: positive global-step cadence for two alternating periodic LAMMPS binary restart files; cannot exceed total steps."},
@@ -131,7 +132,7 @@
   "computational_backends": [
     {"id": "deepmd", "family": "DeePMD-kit LAMMPS pair_style deepmd", "status": "implemented", "operations": ["lammps-prepare", "execute"], "external_programs": ["LAMMPS"], "limitations": ["CPU and GPU use the same pair style; site runtime owns MPI/GPU mapping and must respect at most one GPU per MPI rank."]},
     {"id": "mace", "family": "MACE ML-MACE LAMMPS pair style", "status": "implemented", "operations": ["lammps-prepare", "execute"], "external_programs": ["LAMMPS"], "limitations": ["Requires a pre-exported MACE LAMMPS TorchScript file; GPU execute is pinned to one GPU and the Kokkos no_domain_decomposition launcher contract."]},
-    {"id": "m3gnet", "family": "MatGL M3GNet LAMMPS pair style", "status": "implemented", "operations": ["lammps-prepare", "execute"], "external_programs": ["LAMMPS"], "limitations": ["Requires a pre-exported MatGL LAMMPS TorchScript file; GPU execute is pinned to one GPU and matgl/kk."]},
+    {"id": "m3gnet", "family": "MatGL M3GNet LAMMPS pair styles", "status": "implemented", "operations": ["lammps-prepare", "execute"], "external_programs": ["LAMMPS"], "limitations": ["The current native matgl/matgl/kk interface requires a pre-exported MatGL LAMMPS TorchScript file. Explicit CPU-only gnnp and legacy m3gnet Python-bridge interfaces instead require a tree-fingerprinted native MatGL model directory and a site-owned interface path; no interface is selected by version guessing."]},
     {"id": "chgnet", "family": "CHGNet", "status": "declared-only", "operations": [], "external_programs": [], "limitations": ["No pinned native LAMMPS export/pair-style bridge is accepted in version 0.3; use ase-md in the meantime."]}
   ]
 }

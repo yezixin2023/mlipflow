@@ -182,6 +182,8 @@ def _runtime_identity_matches(
         "target": identity.get("target"),
         "input_manifest_fingerprint": identity.get("input_manifest_fingerprint"),
         "model_fingerprint": identity.get("model_fingerprint"),
+        "model_kind": identity.get("model_kind"),
+        "lammps_interface": identity.get("lammps_interface"),
         "checkpoint_interval": identity.get("checkpoint_interval"),
         "resources": resources,
     }

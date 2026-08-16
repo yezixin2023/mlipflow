@@ -23,12 +23,21 @@ FINGERPRINT_PREFIX = "sha256:"
 PREPARATION_CONTRACT = "lammps-md-input-v2"
 FRAMEWORKS = {"deepmd", "mace", "m3gnet"}
 TARGETS = {"cpu", "gpu"}
+MODEL_CONTRACTS = {
+    ("deepmd", None): ("file", "deepmd-lammps-model", {"cpu", "gpu"}),
+    ("mace", None): ("file", "mace-lammps-torchscript", {"cpu", "gpu"}),
+    ("m3gnet", "matgl"): ("file", "matgl-lammps-torchscript", {"cpu", "gpu"}),
+    ("m3gnet", "gnnp"): ("directory", "matgl-model-directory", {"cpu"}),
+    ("m3gnet", "m3gnet"): ("directory", "matgl-model-directory", {"cpu"}),
+}
 MAX_JSON_BYTES = 16 * 1024 * 1024
 MAX_INPUT_BYTES = 256 * 1024 * 1024
 MAX_LOG_BYTES = 512 * 1024 * 1024
 MAX_TRAJECTORY_BYTES = 8 * 1024 * 1024 * 1024
 MAX_FINAL_DATA_BYTES = 2 * 1024 * 1024 * 1024
 MAX_RESTART_BYTES = 8 * 1024 * 1024 * 1024
+MAX_MODEL_TREE_FILES = 8192
+MAX_MODEL_TREE_BYTES = 16 * 1024 * 1024 * 1024
 LAMMPS_VERSION = re.compile(r"LAMMPS\s*\(([^\r\n)]+)\)")
 
 
@@ -37,6 +46,33 @@ def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1 << 20), b""):
             digest.update(chunk)
+    return FINGERPRINT_PREFIX + digest.hexdigest()
+
+
+def fingerprint(path: Path) -> str:
+    """Return file SHA-256 or deterministic tree-sha256-v1 for a directory."""
+
+    path = path.expanduser().resolve()
+    if path.is_file():
+        return _sha256(path)
+    if not path.is_dir():
+        raise ValueError(f"model artifact does not exist: {path}")
+    entries = list(path.rglob("*"))
+    if any(item.is_symlink() for item in entries):
+        raise ValueError("model artifact tree contains a symlink")
+    files = [item for item in entries if item.is_file()]
+    if not files:
+        raise ValueError("model artifact directory is empty")
+    if len(files) > MAX_MODEL_TREE_FILES:
+        raise ValueError("model artifact directory contains too many files")
+    total = sum(item.stat().st_size for item in files)
+    if total <= 0 or total > MAX_MODEL_TREE_BYTES:
+        raise ValueError("model artifact directory size is outside the approved bound")
+    digest = hashlib.sha256()
+    for item in sorted(files, key=lambda value: value.relative_to(path).as_posix()):
+        relative = item.relative_to(path).as_posix()
+        record = f"{relative}\0{item.stat().st_size}\0{_sha256(item)}\n"
+        digest.update(record.encode("utf-8"))
     return FINGERPRINT_PREFIX + digest.hexdigest()
 
 
@@ -141,6 +177,21 @@ def _launcher(manifest: dict[str, Any], target: str) -> dict[str, Any]:
         or any(not isinstance(item, str) or not item or "\x00" in item for item in argv)
     ):
         raise ValueError("launcher argv_after_executable must be a non-empty string list")
+    if argv.count("<site-resolved-model-file>") != 1:
+        raise ValueError("launcher argv must contain exactly one model placeholder")
+    model = manifest.get("model")
+    if not isinstance(model, dict):
+        raise ValueError("input manifest model identity is missing")
+    interface = model.get("lammps_interface") if model.get("framework") == "m3gnet" else None
+    requires_interface_path = interface in {"gnnp", "m3gnet"}
+    if bool(launcher.get("requires_interface_path", False)) != requires_interface_path:
+        raise ValueError("launcher interface-path contract differs from model interface")
+    if argv.count("<site-resolved-interface-path>") != (1 if requires_interface_path else 0):
+        raise ValueError("launcher interface-path placeholder count is invalid")
+    if launcher.get("lammps_interface", interface or model.get("framework")) != (
+        interface or model.get("framework")
+    ):
+        raise ValueError("launcher interface identity differs from model interface")
     return launcher
 
 
@@ -148,20 +199,45 @@ def _resolve_model(model_root_value: str, model: dict[str, Any]) -> Path:
     root = Path(model_root_value).expanduser().resolve()
     if not root.is_dir():
         raise ValueError("site model root does not exist")
-    if model.get("kind") != "file":
-        raise ValueError("scheduled LAMMPS v0.2 requires a file model artifact")
+    kind = model.get("kind")
+    if kind not in {"file", "directory"}:
+        raise ValueError("scheduled LAMMPS model kind must be file or directory")
     relative = _safe_relative(model.get("relative_path"))
-    candidate = (root / relative).resolve()
+    unresolved = root / relative
+    current = root
+    for part in PurePosixPath(relative).parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("model reference traverses a symlink below the site model root")
+    candidate = unresolved.resolve()
     try:
         candidate.relative_to(root)
     except ValueError as exc:
         raise ValueError("model reference escapes site model root") from exc
-    if not _ordinary_file(candidate, MAX_RESTART_BYTES):
-        raise ValueError("resolved LAMMPS model is missing, unsafe or oversized")
+    if kind == "file" and not _ordinary_file(candidate, MAX_RESTART_BYTES):
+        raise ValueError("resolved LAMMPS model file is missing, unsafe or oversized")
+    if kind == "directory" and (candidate.is_symlink() or not candidate.is_dir()):
+        raise ValueError("resolved LAMMPS model directory is missing or unsafe")
     expected = _fingerprint(model.get("fingerprint"))
-    if _sha256(candidate) != expected:
+    if fingerprint(candidate) != expected:
         raise ValueError("resolved LAMMPS model fingerprint differs from approved manifest")
     return candidate
+
+
+def _resolve_interface_path(value: str, required: bool) -> Path | None:
+    if not required:
+        if value:
+            raise ValueError("site interface path was provided for an interface that does not use it")
+        return None
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise ValueError("site LAMMPS interface path is required")
+    unresolved = Path(value).expanduser().absolute()
+    if unresolved.is_symlink():
+        raise ValueError("site LAMMPS interface path must not be a symlink")
+    resolved = unresolved.resolve()
+    if not resolved.is_dir():
+        raise ValueError("site LAMMPS interface path is not a directory")
+    return resolved
 
 
 def _launcher_prefix(raw: str) -> list[str]:
@@ -177,12 +253,24 @@ def _launcher_prefix(raw: str) -> list[str]:
     return value
 
 
-def _replace_model(argv: list[str], model: Path) -> list[str]:
+def _replace_model(
+    argv: list[str], model: Path, interface_path: Path | None = None
+) -> list[str]:
     replaced = [str(model) if item == "<site-resolved-model-file>" else item for item in argv]
     if replaced == argv:
         raise ValueError("launcher argv lacks the site model placeholder")
     if replaced.count(str(model)) != 1:
         raise ValueError("launcher argv must contain exactly one model placeholder")
+    interface_placeholders = replaced.count("<site-resolved-interface-path>")
+    if interface_path is None and interface_placeholders:
+        raise ValueError("launcher argv requires a site interface path")
+    if interface_path is not None and interface_placeholders != 1:
+        raise ValueError("launcher argv must contain exactly one interface-path placeholder")
+    if interface_path is not None:
+        replaced = [
+            str(interface_path) if item == "<site-resolved-interface-path>" else item
+            for item in replaced
+        ]
     return replaced
 
 
@@ -266,6 +354,19 @@ def run(args: argparse.Namespace) -> int:
         framework = model.get("framework")
         if framework not in FRAMEWORKS:
             raise ValueError("unsupported LAMMPS framework")
+        interface = model.get("lammps_interface") if framework == "m3gnet" else None
+        if framework == "m3gnet" and interface is None:
+            interface = "matgl"
+        model_contract = MODEL_CONTRACTS.get((str(framework), interface))
+        if model_contract is None:
+            raise ValueError("unsupported LAMMPS model interface")
+        expected_kind, expected_format, supported_targets = model_contract
+        if (
+            model.get("kind") != expected_kind
+            or model.get("artifact_format") != expected_format
+            or target not in supported_targets
+        ):
+            raise ValueError("LAMMPS model artifact/interface contract is inconsistent")
         if target not in md.get("targets", []):
             raise ValueError("selected execution target was not prepared")
         steps = md.get("steps")
@@ -284,7 +385,12 @@ def run(args: argparse.Namespace) -> int:
             if staged.stat().st_size != record["size_bytes"] or _sha256(staged) != record["sha256"]:
                 raise ValueError(f"staged prepared input fingerprint differs: {name}")
         deck_text = (input_dir / "lammps" / selected_name).read_text(encoding="utf-8")
-        if marker not in deck_text or "${MODEL_FILE}" not in deck_text:
+        requires_interface_path = interface in {"gnnp", "m3gnet"}
+        if (
+            marker not in deck_text
+            or "${MODEL_FILE}" not in deck_text
+            or ("${INTERFACE_PATH}" in deck_text) != requires_interface_path
+        ):
             raise ValueError("selected input deck lacks its approved portable runtime contract")
         relative_model = str(model.get("relative_path", ""))
         if relative_model and relative_model in deck_text:
@@ -292,12 +398,20 @@ def run(args: argparse.Namespace) -> int:
 
         model_root = args.model_root or os.environ.get("MLIPFLOW_MODEL_ROOT", "")
         model_path = _resolve_model(model_root, model)
-        model_before = _sha256(model_path)
+        model_before = fingerprint(model_path)
 
         shutil.copy2(input_dir / "lammps" / "structure.data", output_dir / "structure.data")
         shutil.copy2(input_dir / "lammps" / selected_name, output_dir / selected_name)
         launcher = _launcher(manifest, str(target))
-        launch_argv = _replace_model(list(launcher["argv_after_executable"]), model_path)
+        interface_value = args.interface_path or os.environ.get(
+            "MLIPFLOW_LAMMPS_INTERFACE_PATH", ""
+        )
+        interface_path = _resolve_interface_path(
+            interface_value, requires_interface_path
+        )
+        launch_argv = _replace_model(
+            list(launcher["argv_after_executable"]), model_path, interface_path
+        )
         lammps_bin = args.lammps_bin
         if not isinstance(lammps_bin, str) or not lammps_bin or "\x00" in lammps_bin:
             raise ValueError("site LAMMPS executable is required")
@@ -322,7 +436,7 @@ def run(args: argparse.Namespace) -> int:
         if not _contains_marker(log_path, marker):
             raise ValueError("LAMMPS log lacks the approved end-of-script completion marker")
         lammps_version = _version_from_logs(log_path, screen_path, stdout_path)
-        if _sha256(model_path) != model_before:
+        if fingerprint(model_path) != model_before:
             raise ValueError("LAMMPS model artifact changed during execution")
 
         artifacts = [
@@ -349,7 +463,9 @@ def run(args: argparse.Namespace) -> int:
             "model": {
                 "id": model.get("model_id"),
                 "fingerprint": model_before,
+                "kind": model.get("kind"),
                 "artifact_format": model.get("artifact_format"),
+                "lammps_interface": interface,
             },
             "ensemble": md.get("ensemble"),
             "steps_requested": steps,
@@ -371,6 +487,8 @@ def run(args: argparse.Namespace) -> int:
                 "target": target,
                 "model_id": model.get("model_id"),
                 "model_fingerprint": model_before,
+                "model_kind": model.get("kind"),
+                "lammps_interface": interface,
                 "input_manifest_fingerprint": expected_manifest_sha,
                 "steps_completed": steps,
                 "lammps_version": lammps_version,
@@ -393,6 +511,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input-dir", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-root")
+    parser.add_argument("--interface-path")
     parser.add_argument("--lammps-bin", required=True)
     parser.add_argument("--launcher-json", default="[]")
     return parser

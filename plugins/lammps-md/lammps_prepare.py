@@ -24,6 +24,7 @@ MAX_OUTPUT_BYTES = 256 * 1024 * 1024
 SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SAFE_ELEMENT = re.compile(r"[A-Z][a-z]?")
+SAFE_STRUCTURE_FORMAT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 TARGETS = {"cpu", "gpu"}
 ENSEMBLES = {"nvt", "npt-isotropic"}
 
@@ -48,12 +49,41 @@ INTERFACES: dict[str, dict[str, Any]] = {
     },
     "m3gnet": {
         "artifact_format": "matgl-lammps-torchscript",
+        "kind": "file",
+        "lammps_interface": "matgl",
+        "targets": ["cpu", "gpu"],
         "cpu_pair_style": "matgl",
         "gpu_pair_style": "matgl/kk",
         "cpu_packages": ["ML-MATGL", "LibTorch"],
         "gpu_packages": ["ML-MATGL", "KOKKOS", "CUDA-enabled LibTorch"],
         "gpu_launcher": ["-k", "on", "g", "1", "-sf", "kk"],
         "gpu_limitations": ["MatGL Kokkos inference is treated as single-GPU/single-rank in version 0.1."],
+    },
+}
+
+M3GNET_INTERFACES: dict[str, dict[str, Any]] = {
+    "matgl": INTERFACES["m3gnet"],
+    "gnnp": {
+        "artifact_format": "matgl-model-directory",
+        "kind": "directory",
+        "lammps_interface": "gnnp",
+        "targets": ["cpu"],
+        "cpu_pair_style": "gnnp ${INTERFACE_PATH}",
+        "cpu_packages": ["ML-GNNP", "Python", "MatGL"],
+        "gpu_launcher": [],
+        "gpu_limitations": [],
+        "requires_interface_path": True,
+    },
+    "m3gnet": {
+        "artifact_format": "matgl-model-directory",
+        "kind": "directory",
+        "lammps_interface": "m3gnet",
+        "targets": ["cpu"],
+        "cpu_pair_style": "m3gnet ${INTERFACE_PATH}",
+        "cpu_packages": ["ML-M3GNET", "Python", "MatGL"],
+        "gpu_launcher": [],
+        "gpu_limitations": [],
+        "requires_interface_path": True,
     },
 }
 
@@ -133,11 +163,21 @@ def _elements(value: Any, label: str) -> list[str]:
     return result
 
 
+def _structure_format(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not SAFE_STRUCTURE_FORMAT.fullmatch(value):
+        raise ContractError(
+            "structure_format must be a safe ASE format name such as lammps-data or extxyz"
+        )
+    return value
+
+
 def _model_reference(path: Path) -> dict[str, Any]:
     value = _read_json(path, "model_reference")
     allowed = {
         "schema_version", "model_id", "framework", "relative_path", "kind",
-        "fingerprint", "artifact_format", "elements",
+        "fingerprint", "artifact_format", "elements", "lammps_interface",
     }
     unknown = sorted(set(value) - allowed)
     if unknown:
@@ -160,23 +200,39 @@ def _model_reference(path: Path) -> dict[str, Any]:
     relative_path = Path(relative)
     if relative_path.is_absolute() or ".." in relative_path.parts:
         raise ContractError("model_reference.relative_path must remain below the site model root")
-    if value.get("kind") != "file":
-        raise ContractError("LAMMPS model_reference.kind must be file")
+    if framework == "m3gnet":
+        lammps_interface = value.get("lammps_interface", "matgl")
+        if lammps_interface not in M3GNET_INTERFACES:
+            raise ContractError("m3gnet lammps_interface must be matgl, gnnp, or m3gnet")
+        interface = M3GNET_INTERFACES[str(lammps_interface)]
+    else:
+        if value.get("lammps_interface") is not None:
+            raise ContractError("lammps_interface is only supported for framework=m3gnet")
+        interface = INTERFACES[str(framework)]
+        lammps_interface = None
+    expected_kind = str(interface.get("kind", "file"))
+    if value.get("kind") != expected_kind:
+        raise ContractError(
+            f"{framework} lammps_interface={lammps_interface or framework} model_reference.kind must be {expected_kind}"
+        )
     fingerprint = value.get("fingerprint")
     if not isinstance(fingerprint, str) or not SHA256.fullmatch(fingerprint):
         raise ContractError("model_reference.fingerprint must be sha256:<64 lowercase hex>")
-    expected_format = INTERFACES[str(framework)]["artifact_format"]
+    expected_format = interface["artifact_format"]
     if value.get("artifact_format") != expected_format:
         raise ContractError(f"{framework} LAMMPS artifact_format must be {expected_format}")
-    return {
+    result = {
         "model_id": model_id,
         "framework": framework,
         "relative_path": relative,
-        "kind": "file",
+        "kind": expected_kind,
         "fingerprint": fingerprint,
         "artifact_format": expected_format,
         "elements": _elements(value.get("elements"), "model_reference.elements"),
     }
+    if lammps_interface is not None:
+        result["lammps_interface"] = lammps_interface
+    return result
 
 
 def _config(path: Path, model: dict[str, Any]) -> dict[str, Any]:
@@ -199,6 +255,14 @@ def _config(path: Path, model: dict[str, Any]) -> dict[str, Any]:
         raise ContractError("targets must be a non-empty list containing only cpu/gpu")
     if len(set(targets)) != len(targets):
         raise ContractError("targets must not contain duplicates")
+    if model["framework"] == "m3gnet":
+        interface = M3GNET_INTERFACES[str(model["lammps_interface"])]
+        unsupported_targets = sorted(set(targets) - set(interface["targets"]))
+        if unsupported_targets:
+            raise ContractError(
+                f"m3gnet lammps_interface={model['lammps_interface']} does not support target(s): "
+                + ", ".join(unsupported_targets)
+            )
     type_map = _elements(value.get("type_map"), "lammps_config.type_map")
     unsupported = [item for item in type_map if item not in model["elements"]]
     if unsupported:
@@ -236,16 +300,34 @@ def _config(path: Path, model: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _pair_block(framework: str, target: str, type_map: list[str]) -> list[str]:
-    interface = INTERFACES[framework]
+def _interface(framework: str, lammps_interface: str | None = None) -> dict[str, Any]:
+    if framework == "m3gnet":
+        return M3GNET_INTERFACES[lammps_interface or "matgl"]
+    return INTERFACES[framework]
+
+
+def _pair_block(
+    framework: str,
+    target: str,
+    type_map: list[str],
+    lammps_interface: str | None = None,
+) -> list[str]:
+    interface = _interface(framework, lammps_interface)
     pair_style = interface[f"{target}_pair_style"]
     elements = " ".join(type_map)
     if framework == "deepmd":
         return [f"pair_style      {pair_style} ${{MODEL_FILE}}", f"pair_coeff      * * {elements}"]
+    if framework == "m3gnet" and interface["lammps_interface"] == "gnnp":
+        return [f"pair_style      {pair_style}", f"pair_coeff      * * matgl ${{MODEL_FILE}} {elements}"]
     return [f"pair_style      {pair_style}", f"pair_coeff      * * ${{MODEL_FILE}} {elements}"]
 
 
-def _deck(framework: str, target: str, config: dict[str, Any]) -> str:
+def _deck(
+    framework: str,
+    target: str,
+    config: dict[str, Any],
+    lammps_interface: str | None = None,
+) -> str:
     type_map = list(config["type_map"])
     timestep_ps = float(config["timestep_fs"]) / 1000.0
     tdamp_ps = float(config["thermostat_damping_fs"]) / 1000.0
@@ -258,7 +340,7 @@ def _deck(framework: str, target: str, config: dict[str, Any]) -> str:
         "boundary        p p p",
         "read_data       structure.data",
         "",
-        *_pair_block(framework, target, type_map),
+        *_pair_block(framework, target, type_map, lammps_interface),
         "",
         f"timestep        {timestep_ps:.16g}",
         f"thermo          {config['thermo_interval']}",
@@ -288,19 +370,45 @@ def _deck(framework: str, target: str, config: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _launcher(framework: str, target: str, input_name: str) -> dict[str, Any]:
-    interface = INTERFACES[framework]
+def _launcher(
+    framework: str,
+    target: str,
+    input_name: str,
+    lammps_interface: str | None = None,
+) -> dict[str, Any]:
+    interface = _interface(framework, lammps_interface)
     prefix = list(interface["gpu_launcher"]) if target == "gpu" else []
+    interface_argv = (
+        ["-var", "INTERFACE_PATH", "<site-resolved-interface-path>"]
+        if interface.get("requires_interface_path")
+        else []
+    )
     return {
         "target": target,
         "executable": "site-owned-lammps",
-        "argv_after_executable": [*prefix, "-in", input_name, "-var", "MODEL_FILE", "<site-resolved-model-file>"],
+        "argv_after_executable": [
+            *prefix,
+            "-in",
+            input_name,
+            "-var",
+            "MODEL_FILE",
+            "<site-resolved-model-file>",
+            *interface_argv,
+        ],
         "required_packages": list(interface[f"{target}_packages"]),
         "limitations": list(interface["gpu_limitations"]) if target == "gpu" else [],
+        "lammps_interface": interface.get("lammps_interface", framework),
+        "requires_interface_path": bool(interface.get("requires_interface_path")),
     }
 
 
-def prepare(structure: Path, model_reference: Path, config_path: Path, output_dir: Path) -> dict[str, Any]:
+def prepare(
+    structure: Path,
+    model_reference: Path,
+    config_path: Path,
+    output_dir: Path,
+    structure_format: str | None = None,
+) -> dict[str, Any]:
     structure = _ordinary_file(structure, "structure", MAX_STRUCTURE_BYTES)
     model_reference = _ordinary_file(model_reference, "model_reference", MAX_JSON_BYTES)
     config_path = _ordinary_file(config_path, "lammps_config", MAX_JSON_BYTES)
@@ -314,7 +422,8 @@ def prepare(structure: Path, model_reference: Path, config_path: Path, output_di
 
     from ase.io import read, write
 
-    atoms = read(str(structure), index=-1)
+    source_structure_format = _structure_format(structure_format)
+    atoms = read(str(structure), index=-1, format=source_structure_format)
     if not hasattr(atoms, "get_chemical_symbols") or len(atoms) == 0:
         raise ContractError("structure must select exactly one non-empty ASE Atoms object")
     present = set(atoms.get_chemical_symbols())
@@ -341,12 +450,18 @@ def prepare(structure: Path, model_reference: Path, config_path: Path, output_di
 
     generated: list[dict[str, Any]] = []
     launchers: list[dict[str, Any]] = []
+    lammps_interface = model.get("lammps_interface")
     for target in config["targets"]:
         name = f"in.{target}.lammps"
         path = output_dir / name
-        path.write_text(_deck(str(model["framework"]), target, config), encoding="utf-8")
+        path.write_text(
+            _deck(str(model["framework"]), target, config, lammps_interface),
+            encoding="utf-8",
+        )
         generated.append({"name": name, "sha256": _sha256(path), "size_bytes": path.stat().st_size})
-        launchers.append(_launcher(str(model["framework"]), target, name))
+        launchers.append(
+            _launcher(str(model["framework"]), target, name, lammps_interface)
+        )
 
     generated.insert(
         0,
@@ -358,6 +473,7 @@ def prepare(structure: Path, model_reference: Path, config_path: Path, output_di
         "operation": OPERATION,
         "status": "OK",
         "ase_version": importlib.metadata.version("ase"),
+        "source_structure_format": source_structure_format or "auto",
         "input_fingerprints": {
             "structure": _sha256(structure),
             "model_reference": _sha256(model_reference),
@@ -371,7 +487,8 @@ def prepare(structure: Path, model_reference: Path, config_path: Path, output_di
         "notes": [
             "Input decks contain no absolute model or cluster path.",
             "The execution layer must resolve the approved model fingerprint and pass -var MODEL_FILE <path>.",
-            "MACE and MatGL inputs require LAMMPS-exported model artifacts, not raw training checkpoints.",
+            "MACE and native MatGL inputs require LAMMPS-exported model artifacts, not raw training checkpoints.",
+            "Legacy MatGL Python-bridge interfaces accept only an explicitly declared, tree-fingerprinted native MatGL model directory.",
         ],
     }
     manifest_path = output_dir / "lammps-input-manifest.json"
@@ -385,12 +502,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-reference", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--structure-format")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    prepare(Path(args.structure), Path(args.model_reference), Path(args.config), Path(args.output_dir))
+    prepare(
+        Path(args.structure),
+        Path(args.model_reference),
+        Path(args.config),
+        Path(args.output_dir),
+        args.structure_format,
+    )
     return 0
 
 

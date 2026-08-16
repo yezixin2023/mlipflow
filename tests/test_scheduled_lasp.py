@@ -59,8 +59,9 @@ def build_project(root: Path) -> Path:
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
     (inputs / "input.arc").write_text(arc_payload([-10.0]), encoding="utf-8")
+    (inputs / "fixture.pot").write_text("scheduled auxiliary fixture\n", encoding="utf-8")
     (inputs / "lasp.in").write_text(
-        "potential vasp\nexplore_type ssw\nRun_type 5\nSSW.SSWsteps 4\nSSW.MaxOptstep 300\nSSW.Temp 200.0000\n",
+        "potential vasp\nexplore_type ssw\nRun_type 5\nSSW.SSWsteps 4 # inline LASP comment\nSSW.MaxOptstep 300\nSSW.Temp 200.0000\n",
         encoding="utf-8",
     )
     write_json(
@@ -76,7 +77,7 @@ def build_project(root: Path) -> Path:
                     "inputs": {
                         "input_structure": "inputs/input.arc",
                         "lasp_input": "inputs/lasp.in",
-                        "lasp_auxiliary_files": {},
+                        "lasp_auxiliary_files": {"fixture.pot": "inputs/fixture.pot"},
                     },
                     "parameters": {
                         "operation": "lasp-ssw-execute",
@@ -135,7 +136,7 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         self.assertEqual("lasp-ssw", scheduled["template_family"])
         self.assertEqual("mpi-task-count", adapter["approval_summary"]["cpus_meaning"])
         staged = {item["remote_name"] for item in scheduled["staged_files"]}
-        self.assertTrue({"project.yaml", "input.arc", "lasp.in", "lasp_ssw.py", "lasp_cluster.py"}.issubset(staged))
+        self.assertTrue({"project.yaml", "input.arc", "lasp.in", "fixture.pot", "lasp_ssw.py", "lasp_cluster.py"}.issubset(staged))
         self.assertNotIn("lasp_executable", staged)
         self.assertNotIn("lasp_executable", adapter["input_fingerprints"])
         self.assertNotIn("lasp_executable", adapter["lasp_scheduled_identity"])
@@ -180,17 +181,19 @@ class LaspRemoteRunnerTests(unittest.TestCase):
         shutil.copy2(self.root / "project.yaml", self.input_dir / "project.yaml")
         shutil.copy2(self.root / "inputs" / "input.arc", self.input_dir / "input.arc")
         shutil.copy2(self.root / "inputs" / "lasp.in", self.input_dir / "lasp.in")
+        shutil.copy2(self.root / "inputs" / "fixture.pot", self.input_dir / "fixture.pot")
         shutil.copy2(PES / "lasp_ssw.py", self.input_dir / "lasp_ssw.py")
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_fake_lasp_is_normalized_and_packed_for_bounded_fetch(self) -> None:
+    def test_fake_lasp_native_all_arc_is_canonicalized_and_packed(self) -> None:
         fake = self.root / "lasp"
         fake.write_text(
             "#!/usr/bin/env python3\n"
             "from pathlib import Path\n"
-            f"Path('allstr.arc').write_text({arc_payload([-10.0, -9.0, 1.0, -8.0, -7.0])!r}, encoding='utf-8')\n",
+            f"Path('all.arc').write_text({arc_payload([-10.0, -9.0, 1.0, -8.0, -7.0])!r}, encoding='utf-8')\n"
+            f"Path('allstr.arc').write_text({arc_payload([-20.0, -19.0, -18.0, -17.0, -16.0, -15.0])!r}, encoding='utf-8')\n",
             encoding="utf-8",
         )
         fake.chmod(0o755)
@@ -210,6 +213,30 @@ class LaspRemoteRunnerTests(unittest.TestCase):
         report = json.loads((self.output_dir / "cluster-run-report.json").read_text(encoding="utf-8"))
         self.assertEqual("OK", report["status"])
         self.assertEqual(2, report["counts"]["selected_structure_count"])
+        canonical = self.output_dir / "lasp-ssw" / "raw-run" / "allstr.arc"
+        self.assertEqual(
+            (self.output_dir / "lasp-ssw" / "raw-run" / "all.arc").read_bytes(),
+            canonical.read_bytes(),
+        )
+        preserved = self.output_dir / "lasp-ssw" / "raw-run" / "allstr.native.arc"
+        self.assertEqual(
+            arc_payload([-20.0, -19.0, -18.0, -17.0, -16.0, -15.0]),
+            preserved.read_text(encoding="utf-8"),
+        )
+        metadata = json.loads(
+            (self.output_dir / "lasp-ssw" / "lasp-run-metadata.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual("all.arc", metadata["execution"]["ssw_archive_source_name"])
+        self.assertEqual(
+            "allstr.arc", metadata["execution"]["ssw_archive_canonical_name"]
+        )
+        self.assertTrue(metadata["execution"]["ssw_archive_canonicalized"])
+        self.assertEqual(
+            "allstr.native.arc",
+            metadata["execution"]["native_allstr_preserved"]["name"],
+        )
         archive = self.output_dir / "selected-structures.tar.gz"
         self.assertTrue(archive.is_file())
         import tarfile

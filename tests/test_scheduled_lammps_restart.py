@@ -182,6 +182,8 @@ def _previous_runtime(context: dict, scheduler_state: str = "TIMEOUT", checkpoin
             "target": "gpu",
             "input_manifest_fingerprint": context["parameters"]["input_manifest_fingerprint"],
             "model_fingerprint": identity["model"]["fingerprint"],
+            "model_kind": identity["model"]["kind"],
+            "lammps_interface": None,
             "checkpoint_interval": 100,
             "resources": context["resources"],
             "lammps_executable_sha256": "sha256:" + "3" * 64,

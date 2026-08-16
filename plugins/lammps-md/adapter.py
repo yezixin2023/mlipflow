@@ -131,7 +131,7 @@ def _validate(context: Any, *, require_fresh_output: bool) -> list[dict[str, str
         return diagnostics
     if parameters.get("operation", OPERATION) != OPERATION:
         diagnostics.append(_diagnostic("error", "parameters.operation", "operation must be lammps-prepare"))
-    unknown_parameters = set(parameters) - {"operation", "output_dir"}
+    unknown_parameters = set(parameters) - {"operation", "output_dir", "structure_format"}
     if unknown_parameters:
         diagnostics.append(
             _diagnostic(
@@ -157,6 +157,10 @@ def _validate(context: Any, *, require_fresh_output: bool) -> list[dict[str, str
     output_dir = parameters.get("output_dir", "lammps-inputs")
     if not _safe_relative(output_dir):
         diagnostics.append(_diagnostic("error", "parameters.output_dir", "output_dir must be attempt-relative"))
+    try:
+        generator._structure_format(parameters.get("structure_format"))
+    except generator.ContractError as exc:
+        diagnostics.append(_diagnostic("error", "parameters.structure_format", str(exc)))
     root = Path(str(context.get("project_root", ""))).expanduser().absolute()
     attempt = Path(str(context.get("attempt_dir", ""))).expanduser().absolute()
     if not root.is_dir():
@@ -213,22 +217,28 @@ class Adapter:
             str(output_dir / "lammps-input-manifest.json"),
             *[str(output_dir / f"in.{target}.lammps") for target in targets],
         ]
+        argv = [
+            sys.executable,
+            str(BUNDLED_PREPARE),
+            "--structure",
+            str(structure),
+            "--model-reference",
+            str(model_ref),
+            "--config",
+            str(config),
+            "--output-dir",
+            str(output_dir),
+        ]
+        structure_format = generator._structure_format(
+            _mapping(context["parameters"]).get("structure_format")
+        )
+        if structure_format is not None:
+            argv.extend(["--structure-format", structure_format])
         return {
             "plugin_id": PLUGIN_ID,
             "status": "READY",
             "executable": True,
-            "argv": [
-                sys.executable,
-                str(BUNDLED_PREPARE),
-                "--structure",
-                str(structure),
-                "--model-reference",
-                str(model_ref),
-                "--config",
-                str(config),
-                "--output-dir",
-                str(output_dir),
-            ],
+            "argv": argv,
             "cwd": str(Path(context["attempt_dir"]).expanduser().absolute()),
             "expected_outputs": expected,
             "diagnostics": diagnostics,
@@ -237,9 +247,12 @@ class Adapter:
                 "framework": model["framework"],
                 "model_id": model["model_id"],
                 "model_fingerprint": model["fingerprint"],
+                "model_kind": model["kind"],
                 "artifact_format": model["artifact_format"],
+                "lammps_interface": model.get("lammps_interface"),
                 "ensemble": cfg["ensemble"],
                 "targets": targets,
+                "structure_format": structure_format or "auto",
                 "type_map": cfg["type_map"],
                 "temperature_K": cfg["temperature_k"],
                 "timestep_fs": cfg["timestep_fs"],
@@ -301,6 +314,17 @@ class Adapter:
             diagnostics.append(_diagnostic("error", "result.model", "manifest model identity differs"))
         if manifest.get("md") != cfg:
             diagnostics.append(_diagnostic("error", "result.md", "manifest MD configuration differs"))
+        expected_structure_format = generator._structure_format(
+            _mapping(context["parameters"]).get("structure_format")
+        ) or "auto"
+        if manifest.get("source_structure_format") != expected_structure_format:
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    "result.structure_format",
+                    "manifest source structure format differs from the approved parameter",
+                )
+            )
         if manifest.get("runtime_model_variable") != "MODEL_FILE":
             diagnostics.append(
                 _diagnostic("error", "result.model_variable", "runtime model variable must be MODEL_FILE")

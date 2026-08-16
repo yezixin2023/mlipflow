@@ -26,6 +26,7 @@
 8. 调度器显示 `COMPLETED` 不等于科学结果 `OK`；只有插件完成判据和输出 schema 均通过才可标为 `OK`。
 9. 不确定的科学参数、单位、拟合窗、随机种子、数据 split 或参考能必须报告并等待，禁止猜测。
 10. Python adapter 是受信代码，`run --dry-run` 也会加载它；不要对来源不明的第三方插件生成计划。`dft-labeling.label` static 已接入通用 SSH-SLURM profile/template/workspace 合同；其他内置 adapter 只支持 local。Agent 只提出科学任务与抽象资源，不猜 SSH host、partition、module、executable、template root 或 work root，也不得用 `submit_script`/`remote_cwd` 绕过核心 staging/fetch/check 限制。
+11. 同一个实际站点必须复用其 canonical `remote_template_root` 和 `work_root`。不得按插件、框架、target、partition 或验证轮次创建 sibling template/work roots；缺少 template family 时，只能先核对已有内容，再在 canonical template root 下新增相应 family 或 scheduler 子目录，禁止静默覆盖已有模板。
 
 ## 建议监督流程
 

@@ -6,5 +6,6 @@
   "kind": "file",
   "fingerprint": "sha256:REPLACE_WITH_64_LOWERCASE_HEX",
   "artifact_format": "matgl-lammps-torchscript",
+  "lammps_interface": "matgl",
   "elements": ["Li", "P", "S"]
 }

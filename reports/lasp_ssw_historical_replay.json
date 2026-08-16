@@ -4,7 +4,7 @@
   "plugin_id": "pes-sampling",
   "operation": "lasp-ssw-normalize-replay",
   "status": "HISTORICAL_POSTPROCESS_REPLAY_PASS",
-  "executed_on": "2026-08-11",
+  "executed_on": "2026-08-16",
   "scientific_claim": {
     "historical_source_audited_read_only": true,
     "historical_archive_postprocessing_replayed": true,
@@ -18,11 +18,11 @@
   "implementation": {
     "adapter": {
       "locator": "plugins/pes-sampling/adapter.py",
-      "sha256": "21418a4c8c1d32421a330aaee33588c0804a569a47f687bb34f2220276bce7f8"
+      "sha256": "52f065d6fb58e79361425d6d575762888d0d70067786f30de886a8958079a84f"
     },
     "wrapper": {
       "locator": "plugins/pes-sampling/lasp_ssw.py",
-      "sha256": "5248b5ab960e6fd424648bb9ff63cf0ac9ba70bcb63cf44c73faf3225744af11"
+      "sha256": "a999ef8edb5190766a5a3e20f776451d326e002337a7cb8b80aff027a5d29f6a"
     },
     "plugin_manifest": {
       "locator": "plugins/pes-sampling/plugin.yaml",

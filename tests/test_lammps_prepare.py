@@ -148,6 +148,61 @@ def test_matgl_cpu_gpu_pair_styles() -> None:
     assert "pair_coeff      * * ${MODEL_FILE} Li P S" in gpu
 
 
+def test_gnnp_directory_interface_is_explicit_and_cpu_only(tmp_path: Path) -> None:
+    adapter = _load("lammps_adapter_gnnp", PLUGIN / "adapter.py")
+    context = _context(tmp_path, "m3gnet")
+    model_path = tmp_path / "inputs" / "model.json"
+    model = json.loads(model_path.read_text(encoding="utf-8"))
+    model.update(
+        {
+            "relative_path": "m3gnet/finetuned_model",
+            "kind": "directory",
+            "artifact_format": "matgl-model-directory",
+            "lammps_interface": "gnnp",
+        }
+    )
+    _write_json(model_path, model)
+    config_path = tmp_path / "inputs" / "lammps.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["targets"] = ["cpu"]
+    _write_json(config_path, config)
+
+    plan = adapter.Adapter().plan(context)
+
+    assert plan["status"] == "READY", plan.get("diagnostics")
+    assert plan["approval_summary"]["model_kind"] == "directory"
+    assert plan["approval_summary"]["lammps_interface"] == "gnnp"
+    module = _load("lammps_prepare_gnnp", PLUGIN / "lammps_prepare.py")
+    deck = module._deck("m3gnet", "cpu", _config("nvt"), "gnnp")
+    assert "pair_style      gnnp ${INTERFACE_PATH}" in deck
+    assert "pair_coeff      * * matgl ${MODEL_FILE} Li P S" in deck
+    launcher = module._launcher("m3gnet", "cpu", "in.cpu.lammps", "gnnp")
+    assert launcher["argv_after_executable"].count("<site-resolved-interface-path>") == 1
+
+
+def test_gnnp_interface_rejects_torchscript_file_and_gpu(tmp_path: Path) -> None:
+    adapter = _load("lammps_adapter_gnnp_invalid", PLUGIN / "adapter.py")
+    context = _context(tmp_path, "m3gnet")
+    model_path = tmp_path / "inputs" / "model.json"
+    model = json.loads(model_path.read_text(encoding="utf-8"))
+    model["lammps_interface"] = "gnnp"
+    _write_json(model_path, model)
+    blocked_kind = adapter.Adapter().plan(context)
+    assert blocked_kind["status"] == "BLOCKED"
+    assert any("kind must be directory" in item["message"] for item in blocked_kind["diagnostics"])
+
+    model.update(
+        {
+            "kind": "directory",
+            "artifact_format": "matgl-model-directory",
+        }
+    )
+    _write_json(model_path, model)
+    blocked_gpu = adapter.Adapter().plan(context)
+    assert blocked_gpu["status"] == "BLOCKED"
+    assert any("does not support target(s): gpu" in item["message"] for item in blocked_gpu["diagnostics"])
+
+
 def test_nvt_converts_femtoseconds_to_metal_picoseconds() -> None:
     module = _load("lammps_prepare_nvt_units", PLUGIN / "lammps_prepare.py")
     deck = module._deck("mace", "cpu", _config("nvt"))
@@ -167,3 +222,48 @@ def test_model_path_is_runtime_variable_not_registry_path() -> None:
         deck = module._deck(framework, "cpu", _config("nvt"))
         assert "${MODEL_FILE}" in deck
         assert "/cluster/" not in deck
+
+
+def test_prepare_plan_binds_explicit_structure_format(tmp_path: Path) -> None:
+    adapter = _load("lammps_adapter_explicit_format", PLUGIN / "adapter.py")
+    context = _context(tmp_path, "deepmd")
+    context["parameters"]["structure_format"] = "lammps-data"
+    plan = adapter.Adapter().plan(context)
+    assert plan["status"] == "READY", plan.get("diagnostics")
+    assert plan["approval_summary"]["structure_format"] == "lammps-data"
+    assert plan["argv"][-2:] == ["--structure-format", "lammps-data"]
+
+
+def test_prepare_explicit_lammps_data_format_without_filename_inference(tmp_path: Path) -> None:
+    pytest.importorskip("ase")
+    module = _load("lammps_prepare_explicit_lammps_data", PLUGIN / "lammps_prepare.py")
+    structure = tmp_path / "structure.data"
+    structure.write_text(
+        "(written by test)\n\n"
+        "1 atoms\n1 atom types\n\n"
+        "0.0 5.0 xlo xhi\n0.0 5.0 ylo yhi\n0.0 5.0 zlo zhi\n\n"
+        "Masses\n\n1 6.94 # Li\n\n"
+        "Atoms # atomic\n\n1 1 1.0 1.0 1.0\n",
+        encoding="utf-8",
+    )
+    model = tmp_path / "model.json"
+    model_value = _model("deepmd")
+    model_value["elements"] = ["Li"]
+    _write_json(model, model_value)
+    config = tmp_path / "config.json"
+    config_value = _config("nvt")
+    config_value.update({"targets": ["cpu"], "type_map": ["Li"], "steps": 1})
+    config_value.update({"thermo_interval": 1, "dump_interval": 1})
+    _write_json(config, config_value)
+    output = tmp_path / "prepared"
+
+    manifest = module.prepare(
+        structure,
+        model,
+        config,
+        output,
+        structure_format="lammps-data",
+    )
+
+    assert manifest["source_structure_format"] == "lammps-data"
+    assert (output / "structure.data").is_file()

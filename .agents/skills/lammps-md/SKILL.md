@@ -21,9 +21,12 @@ Supported contracts:
 
 - `deepmd` + `artifact_format: deepmd-lammps-model`;
 - `mace` + `artifact_format: mace-lammps-torchscript`;
-- `m3gnet` + `artifact_format: matgl-lammps-torchscript`.
+- `m3gnet` + explicit `lammps_interface`/artifact pair:
+  - `matgl` + `kind: file` + `artifact_format: matgl-lammps-torchscript`;
+  - `gnnp` + `kind: directory` + `artifact_format: matgl-model-directory`;
+  - `m3gnet` + `kind: directory` + `artifact_format: matgl-model-directory`.
 
-Do not pass raw MACE/MatGL training checkpoints directly to LAMMPS. Do not invent a CHGNet pair style; version 0.3 still blocks native CHGNet LAMMPS and should route CHGNet MD to `$ase-md` unless a separately reviewed bridge exists.
+Do not pass raw MACE checkpoints or a MatGL directory to the native TorchScript interface. A MatGL directory is accepted only when the declared Python-bridge interface loads that exact native directory directly; fingerprint it with deterministic `tree-sha256-v1`. Do not invent a CHGNet pair style; version 0.3 still blocks native CHGNet LAMMPS and should route CHGNet MD to `$ase-md` unless a separately reviewed bridge exists.
 
 ## Preparation contract
 
@@ -53,10 +56,10 @@ MACE:
 
 MatGL/M3GNet:
 
-- require a LAMMPS-exported MatGL model;
-- CPU uses `pair_style matgl`;
-- GPU uses `pair_style matgl/kk`;
-- version 0.3 requires one GPU for this path.
+- keep the current native interface available: `lammps_interface: matgl` uses the exported TorchScript file, CPU `pair_style matgl`, and GPU `pair_style matgl/kk` with one GPU;
+- support reviewed Python-bridge compatibility explicitly rather than by LAMMPS-version guessing: `lammps_interface: gnnp` uses `pair_style gnnp ${INTERFACE_PATH}` plus `pair_coeff * * matgl ${MODEL_FILE} ...`; `lammps_interface: m3gnet` uses `pair_style m3gnet ${INTERFACE_PATH}`;
+- both Python-bridge interfaces require a native MatGL model directory, are CPU-only in this contract, and require one MPI rank if the concrete pair style has that limitation;
+- `${INTERFACE_PATH}` is injected by the site template and must never contain a project or repository path.
 
 ## Execute contract
 
@@ -80,6 +83,8 @@ The adapter must revalidate the prepared manifest, `structure.data`, selected de
 
 Never put SSH host, account, partition, QoS, module/conda setup, LAMMPS executable, MPI/srun command, CUDA architecture, MODEL_ROOT, template root, or remote work root in the project node.
 
+Treat one actual site as owning one canonical template root and one canonical work root, shared by all LAMMPS families, targets, partitions, and validation runs. Site bootstrap may add a missing family or scheduler subdirectory only below that existing canonical template root. Never create sibling roots named for a framework, target, partition, or validation run. Inventory and compare every target path before adding it, and never silently overwrite an existing site template.
+
 Template families remain:
 
 - `lammps-deepmd-cpu`
@@ -88,10 +93,12 @@ Template families remain:
 - `lammps-mace-gpu`
 - `lammps-m3gnet-cpu`
 - `lammps-m3gnet-gpu`
+- `lammps-m3gnet-gnnp-cpu`
+- `lammps-m3gnet-legacy-cpu`
 
-The v0.3 site `run.sh` invokes the staged `lammps_cluster_restart.py`. The site owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, and JSON launcher argv. Keep executable and launcher stable across restart attempts; version 0.3 fingerprints them.
+The v0.3 site `run.sh` invokes the staged `lammps_cluster_restart.py`. The site owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, optional legacy `INTERFACE_PATH`, and JSON launcher argv. Keep executable and launcher stable across restart attempts; version 0.3 fingerprints them.
 
-The compute-node runner resolves the prepared model only below MODEL_ROOT, verifies its SHA before execution, passes it via `-var MODEL_FILE`, and verifies it again after execution.
+The compute-node runner resolves the prepared model only below MODEL_ROOT, verifies file SHA-256 or deterministic directory `tree-sha256-v1` before execution, passes it via `-var MODEL_FILE`, and verifies it again after execution.
 
 ## Periodic restart policy
 

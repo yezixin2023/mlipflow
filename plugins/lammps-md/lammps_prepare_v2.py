@@ -47,9 +47,19 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def prepare(
-    structure: Path, model_reference: Path, config_path: Path, output_dir: Path
+    structure: Path,
+    model_reference: Path,
+    config_path: Path,
+    output_dir: Path,
+    structure_format: str | None = None,
 ) -> dict[str, Any]:
-    manifest = legacy.prepare(structure, model_reference, config_path, output_dir)
+    manifest = legacy.prepare(
+        structure,
+        model_reference,
+        config_path,
+        output_dir,
+        structure_format,
+    )
     steps = manifest.get("md", {}).get("steps")
     if isinstance(steps, bool) or not isinstance(steps, int) or steps <= 0:
         raise legacy.ContractError("prepared manifest has invalid MD step count")
@@ -101,6 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-reference", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--structure-format")
     return parser
 
 
@@ -111,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.model_reference),
         Path(args.config),
         Path(args.output_dir),
+        args.structure_format,
     )
     return 0
 

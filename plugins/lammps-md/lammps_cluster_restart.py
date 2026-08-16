@@ -89,6 +89,8 @@ def _runtime_identity(
     target: str,
     manifest_sha: str,
     model_sha: str,
+    model_kind: str,
+    lammps_interface: str | None,
     interval: int,
     executable: Path,
     launcher_prefix: list[str],
@@ -105,6 +107,8 @@ def _runtime_identity(
         "target": target,
         "input_manifest_fingerprint": manifest_sha,
         "model_fingerprint": model_sha,
+        "model_kind": model_kind,
+        "lammps_interface": lammps_interface,
         "checkpoint_interval": interval,
         "resources": resources,
         "lammps_executable_sha256": base._sha256(executable),
@@ -137,6 +141,8 @@ def _validate_previous_runtime(
         "target",
         "input_manifest_fingerprint",
         "model_fingerprint",
+        "model_kind",
+        "lammps_interface",
         "checkpoint_interval",
         "resources",
         "lammps_executable_sha256",
@@ -219,13 +225,14 @@ def _select_restart(
 def _active_launcher(
     prepared_launcher: dict[str, Any],
     model_path: Path,
+    interface_path: Path | None,
     input_name: str,
     restart_path: Path | None,
 ) -> list[str]:
     raw = prepared_launcher.get("argv_after_executable")
     if not isinstance(raw, list):
         raise ValueError("prepared launcher argv is invalid")
-    argv = base._replace_model(list(raw), model_path)
+    argv = base._replace_model(list(raw), model_path, interface_path)
     try:
         index = argv.index("-in")
     except ValueError as exc:
@@ -331,6 +338,19 @@ def run(args: argparse.Namespace) -> int:
         framework = model.get("framework")
         if framework not in base.FRAMEWORKS:
             raise ValueError("unsupported LAMMPS framework")
+        interface = model.get("lammps_interface") if framework == "m3gnet" else None
+        if framework == "m3gnet" and interface is None:
+            interface = "matgl"
+        model_contract = base.MODEL_CONTRACTS.get((str(framework), interface))
+        if model_contract is None:
+            raise ValueError("unsupported LAMMPS model interface")
+        expected_kind, expected_format, supported_targets = model_contract
+        if (
+            model.get("kind") != expected_kind
+            or model.get("artifact_format") != expected_format
+            or target not in supported_targets
+        ):
+            raise ValueError("LAMMPS model artifact/interface contract is inconsistent")
         if target not in md.get("targets", []):
             raise ValueError("selected execution target was not prepared")
         steps = md.get("steps")
@@ -364,7 +384,12 @@ def run(args: argparse.Namespace) -> int:
         source_deck = (input_dir / "lammps" / selected_name).read_text(
             encoding="utf-8"
         )
-        if marker not in source_deck or "${MODEL_FILE}" not in source_deck:
+        requires_interface_path = interface in {"gnnp", "m3gnet"}
+        if (
+            marker not in source_deck
+            or "${MODEL_FILE}" not in source_deck
+            or ("${INTERFACE_PATH}" in source_deck) != requires_interface_path
+        ):
             raise ValueError(
                 "selected input deck lacks its approved portable runtime contract"
             )
@@ -378,8 +403,14 @@ def run(args: argparse.Namespace) -> int:
             "MLIPFLOW_MODEL_ROOT", ""
         )
         model_path = base._resolve_model(model_root, model)
-        model_before = base._sha256(model_path)
+        model_before = base.fingerprint(model_path)
         prepared_launcher = base._launcher(manifest, str(target))
+        interface_value = args.interface_path or os.environ.get(
+            "MLIPFLOW_LAMMPS_INTERFACE_PATH", ""
+        )
+        interface_path = base._resolve_interface_path(
+            interface_value, requires_interface_path
+        )
         launcher_prefix = base._launcher_prefix(args.launcher_json)
         executable = _resolve_executable(args.lammps_bin)
 
@@ -398,6 +429,8 @@ def run(args: argparse.Namespace) -> int:
             target=str(target),
             manifest_sha=expected_manifest_sha,
             model_sha=model_before,
+            model_kind=str(model.get("kind")),
+            lammps_interface=str(interface) if interface is not None else None,
             interval=int(interval or steps),
             executable=executable,
             launcher_prefix=launcher_prefix,
@@ -447,7 +480,11 @@ def run(args: argparse.Namespace) -> int:
             _write_runtime(runtime_path, current_runtime)
 
         launch_argv = _active_launcher(
-            prepared_launcher, model_path, active_name, restart_path
+            prepared_launcher,
+            model_path,
+            interface_path,
+            active_name,
+            restart_path,
         )
         log_path = output_dir / "lammps.log"
         screen_path = output_dir / "lammps.screen.log"
@@ -481,7 +518,7 @@ def run(args: argparse.Namespace) -> int:
         lammps_version = base._version_from_logs(
             log_path, screen_path, stdout_path
         )
-        if base._sha256(model_path) != model_before:
+        if base.fingerprint(model_path) != model_before:
             raise ValueError("LAMMPS model artifact changed during execution")
 
         artifacts = [
@@ -532,7 +569,9 @@ def run(args: argparse.Namespace) -> int:
             "model": {
                 "id": model.get("model_id"),
                 "fingerprint": model_before,
+                "kind": model.get("kind"),
                 "artifact_format": model.get("artifact_format"),
+                "lammps_interface": interface,
             },
             "ensemble": md.get("ensemble"),
             "steps_requested": steps,
@@ -572,6 +611,8 @@ def run(args: argparse.Namespace) -> int:
                 "target": target,
                 "model_id": model.get("model_id"),
                 "model_fingerprint": model_before,
+                "model_kind": model.get("kind"),
+                "lammps_interface": interface,
                 "input_manifest_fingerprint": expected_manifest_sha,
                 "steps_completed": steps,
                 "segment_start_step": segment_start_step,
@@ -601,6 +642,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input-dir", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-root")
+    parser.add_argument("--interface-path")
     parser.add_argument("--lammps-bin", required=True)
     parser.add_argument("--launcher-json", default="[]")
     parser.add_argument("--attempt")

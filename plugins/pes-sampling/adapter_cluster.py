@@ -10,6 +10,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import re
 import tarfile
 from pathlib import Path
 from typing import Any, Mapping
@@ -25,6 +26,7 @@ MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_LOG_BYTES = 64 * 1024 * 1024
 MAX_FRAMES = 10000
 HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
+SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _load_legacy():
@@ -157,9 +159,18 @@ def _validate_scheduled(context: Any) -> list[dict[str, str]]:
     if not isinstance(auxiliary, Mapping):
         diagnostics.append(_diag("ERROR", "input.lasp_auxiliary_files", "lasp_auxiliary_files must be a mapping"))
     else:
-        reserved = {"input.arc", "lasp.in", "project.yaml", "lasp_ssw.py", "lasp_cluster.py"}
+        reserved = {
+            "input.arc",
+            "lasp.in",
+            "all.arc",
+            "allstr.arc",
+            "allstr.native.arc",
+            "project.yaml",
+            "lasp_ssw.py",
+            "lasp_cluster.py",
+        }
         for name, source in auxiliary.items():
-            if not isinstance(name, str) or not LEGACY.SAFE_NAME.fullmatch(name) or name in reserved:
+            if not isinstance(name, str) or not SAFE_NAME.fullmatch(name) or name in reserved:
                 diagnostics.append(_diag("ERROR", "input.auxiliary_name", f"unsafe auxiliary destination: {name!r}"))
                 break
             path = _resolve_input(source, root)

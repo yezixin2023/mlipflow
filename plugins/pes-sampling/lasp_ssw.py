@@ -35,7 +35,9 @@ SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 RESERVED_STAGE_NAMES = {
     "input.arc",
     "lasp.in",
+    "all.arc",
     "allstr.arc",
+    "allstr.native.arc",
     "best.arc",
     "md.arc",
     "sampling-result.json",
@@ -130,7 +132,7 @@ def _parse_lasp_input(path: Path) -> dict[str, Any]:
         raise ContractError(f"lasp.in exceeds {MAX_LASP_INPUT_BYTES} bytes")
     parameters: dict[str, Any] = {}
     for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        stripped = raw_line.strip()
+        stripped = raw_line.split("#", 1)[0].strip()
         if not stripped or stripped.startswith(("#", "!")):
             continue
         tokens = stripped.split()
@@ -564,6 +566,59 @@ def _parse_auxiliary(values: Iterable[list[str]]) -> list[tuple[str, Path]]:
     return result
 
 
+def _canonicalize_execute_ssw_archive(raw_run: Path) -> dict[str, Any]:
+    """Bind LASP's native SSW archive name to the canonical execute contract.
+
+    LASP 3.6 emits the bounded SSW walk archive as ``all.arc`` and may also emit
+    a much larger ``allstr.arc`` containing local-optimization frames.  Other
+    reviewed runs emit only ``allstr.arc`` or make the two files identical.
+    Scheduled fetch and checker paths stay bounded by binding ``all.arc`` to the
+    canonical ``allstr.arc`` name inside the fresh execute workspace.  A
+    distinct LASP-native ``allstr.arc`` is preserved with a non-canonical name
+    and fingerprinted in execution metadata.
+    """
+    canonical = raw_run / "allstr.arc"
+    walk = raw_run / "all.arc"
+    canonical_exists = canonical.exists() or canonical.is_symlink()
+    walk_exists = walk.exists() or walk.is_symlink()
+    if not walk_exists:
+        _ordinary_file(canonical, "allstr.arc")
+        return {
+            "ssw_archive_source_name": canonical.name,
+            "ssw_archive_canonical_name": canonical.name,
+            "ssw_archive_canonicalized": False,
+            "native_allstr_preserved": None,
+        }
+    walk = _ordinary_file(walk, "all.arc")
+    if not 0 < walk.stat().st_size <= MAX_ARC_BYTES:
+        raise ContractError(
+            f"all.arc size must be between 1 and {MAX_ARC_BYTES} bytes"
+        )
+    preserved_record: dict[str, Any] | None = None
+    canonicalized = not canonical_exists
+    if canonical_exists:
+        canonical = _ordinary_file(canonical, "allstr.arc")
+        if _sha256(canonical) != _sha256(walk):
+            preserved = raw_run / "allstr.native.arc"
+            if preserved.exists() or preserved.is_symlink():
+                raise ContractError("allstr.native.arc already exists")
+            preserved_record = {
+                "name": preserved.name,
+                "sha256": _sha256(canonical),
+                "size_bytes": canonical.stat().st_size,
+            }
+            canonical.rename(preserved)
+            canonicalized = True
+    if canonicalized:
+        shutil.copyfile(walk, canonical)
+    return {
+        "ssw_archive_source_name": walk.name,
+        "ssw_archive_canonical_name": canonical.name,
+        "ssw_archive_canonicalized": canonicalized,
+        "native_allstr_preserved": preserved_record,
+    }
+
+
 def execute(args: argparse.Namespace) -> dict[str, Any]:
     if args.seed_status != UNKNOWN:
         raise ContractError(f"seed_status must be {UNKNOWN}")
@@ -645,6 +700,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         )
     if completed.returncode != 0:
         raise ContractError(f"LASP process returned {completed.returncode}")
+    ssw_archive_identity = _canonicalize_execute_ssw_archive(raw_run)
 
     diagnostic_artifacts = [
         (stdout_path, "lasp-stdout", "text/plain"),
@@ -677,6 +733,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
             "mpi_processes": args.mpi_processes,
             "returncode": completed.returncode,
             "command_uses_shell": False,
+            **ssw_archive_identity,
             "staged_inputs": staged_inputs,
         },
         extra_artifacts=diagnostic_artifacts,

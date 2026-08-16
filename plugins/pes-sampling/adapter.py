@@ -289,7 +289,7 @@ def _parse_lasp_input(path: Path) -> Dict[str, Any]:
         raise ValueError("lasp.in is empty or exceeds the size limit")
     parameters: Dict[str, Any] = {}
     for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        stripped = raw_line.strip()
+        stripped = raw_line.split("#", 1)[0].strip()
         if not stripped or stripped.startswith(("#", "!")):
             continue
         tokens = stripped.split()
@@ -909,7 +909,9 @@ class Adapter:
                 reserved = {
                     "input.arc",
                     "lasp.in",
+                    "all.arc",
                     "allstr.arc",
+                    "allstr.native.arc",
                     "best.arc",
                     "md.arc",
                     "sampling-result.json",

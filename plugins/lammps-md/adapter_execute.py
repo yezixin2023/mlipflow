@@ -26,6 +26,19 @@ TEMPLATE_FAMILIES = {
     for framework in FRAMEWORKS
     for target in TARGETS
 }
+M3GNET_TEMPLATE_FAMILIES = {
+    ("matgl", "cpu"): "lammps-m3gnet-cpu",
+    ("matgl", "gpu"): "lammps-m3gnet-gpu",
+    ("gnnp", "cpu"): "lammps-m3gnet-gnnp-cpu",
+    ("m3gnet", "cpu"): "lammps-m3gnet-legacy-cpu",
+}
+MODEL_CONTRACTS = {
+    ("deepmd", None): ("file", "deepmd-lammps-model"),
+    ("mace", None): ("file", "mace-lammps-torchscript"),
+    ("m3gnet", "matgl"): ("file", "matgl-lammps-torchscript"),
+    ("m3gnet", "gnnp"): ("directory", "matgl-model-directory"),
+    ("m3gnet", "m3gnet"): ("directory", "matgl-model-directory"),
+}
 MAX_JSON_BYTES = 16 * 1024 * 1024
 MAX_INPUT_BYTES = 256 * 1024 * 1024
 MAX_LOG_BYTES = 512 * 1024 * 1024
@@ -180,6 +193,18 @@ def _launcher(manifest: dict[str, Any], target: str) -> dict[str, Any]:
         raise ValueError("prepared launcher argv contains an invalid token")
     if argv.count("<site-resolved-model-file>") != 1:
         raise ValueError("prepared launcher must contain exactly one site model placeholder")
+    model = _mapping(manifest.get("model"))
+    interface = model.get("lammps_interface") if model.get("framework") == "m3gnet" else None
+    requires_interface_path = interface in {"gnnp", "m3gnet"}
+    if bool(launcher.get("requires_interface_path", False)) != requires_interface_path:
+        raise ValueError("prepared launcher interface-path contract differs from model interface")
+    expected_interface_placeholders = 1 if requires_interface_path else 0
+    if argv.count("<site-resolved-interface-path>") != expected_interface_placeholders:
+        raise ValueError("prepared launcher has an invalid site interface-path placeholder count")
+    if launcher.get("lammps_interface", interface or model.get("framework")) != (
+        interface or model.get("framework")
+    ):
+        raise ValueError("prepared launcher interface identity differs from model interface")
     return launcher
 
 
@@ -312,8 +337,21 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("prepared model framework is unsupported")
         if target not in md.get("targets", []):
             raise ValueError("selected target was not prepared")
-        if model.get("kind") != "file" or not _plain(model.get("model_id")) or not _safe_relative(model.get("relative_path")) or not _fingerprint(model.get("fingerprint")) or not _plain(model.get("artifact_format")):
+        interface = model.get("lammps_interface") if framework == "m3gnet" else None
+        if framework == "m3gnet" and interface is None:
+            interface = "matgl"
+        expected_model_contract = MODEL_CONTRACTS.get((str(framework), interface))
+        if expected_model_contract is None:
+            raise ValueError("prepared model LAMMPS interface is unsupported")
+        if (
+            (model.get("kind"), model.get("artifact_format")) != expected_model_contract
+            or not _plain(model.get("model_id"))
+            or not _safe_relative(model.get("relative_path"))
+            or not _fingerprint(model.get("fingerprint"))
+        ):
             raise ValueError("prepared model identity is incomplete")
+        if framework == "m3gnet" and (interface, target) not in M3GNET_TEMPLATE_FAMILIES:
+            raise ValueError("prepared M3GNet LAMMPS interface does not support the selected target")
         steps = md.get("steps")
         timestep = md.get("timestep_fs")
         if not _positive_int(steps) or not isinstance(timestep, (int, float)) or isinstance(timestep, bool) or not math.isfinite(float(timestep)) or float(timestep) <= 0:
@@ -342,7 +380,13 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
     if diagnostics:
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": diagnostics}
     deck = (prepared_dir / selected_name).read_text(encoding="utf-8")
-    if manifest["completion_marker"] not in deck or "${MODEL_FILE}" not in deck or str(model["relative_path"]) in deck:
+    requires_interface_path = interface in {"gnnp", "m3gnet"}
+    if (
+        manifest["completion_marker"] not in deck
+        or "${MODEL_FILE}" not in deck
+        or str(model["relative_path"]) in deck
+        or ("${INTERFACE_PATH}" in deck) != requires_interface_path
+    ):
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": [_diagnostic("error", "lammps.deck_portability", "prepared deck does not satisfy the portable execution contract")]}
 
     diagnostics = _resources(context, target, str(framework))
@@ -376,7 +420,9 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
         "input_manifest_fingerprint": manifest_sha,
         "model_id": model["model_id"],
         "model_fingerprint": model["fingerprint"],
+        "model_kind": model["kind"],
         "artifact_format": model["artifact_format"],
+        "lammps_interface": interface,
         "ensemble": md.get("ensemble"),
         "temperature_k": md.get("temperature_k"),
         "timestep_fs": float(timestep),
@@ -388,7 +434,11 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
         "completion_marker": manifest["completion_marker"],
         "prepared_launcher": launcher,
     }
-    family = TEMPLATE_FAMILIES[(str(framework), target)]
+    family = (
+        M3GNET_TEMPLATE_FAMILIES[(str(interface), target)]
+        if framework == "m3gnet"
+        else TEMPLATE_FAMILIES[(str(framework), target)]
+    )
     return {
         "plugin_id": PLUGIN_ID,
         "status": "READY",
@@ -414,7 +464,9 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
             "target": target,
             "model_id": model["model_id"],
             "model_fingerprint": model["fingerprint"],
+            "model_kind": model["kind"],
             "artifact_format": model["artifact_format"],
+            "lammps_interface": interface,
             "ensemble": md.get("ensemble"),
             "temperature_K": md.get("temperature_k"),
             "timestep_fs": float(timestep),
@@ -526,7 +578,9 @@ def _check_execute(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[
     if model != {
         "id": identity.get("model_id"),
         "fingerprint": identity.get("model_fingerprint"),
+        "kind": identity.get("model_kind"),
         "artifact_format": identity.get("artifact_format"),
+        "lammps_interface": identity.get("lammps_interface"),
     }:
         diagnostics.append(_diagnostic("error", "lammps.result_model", "execution result model identity differs"))
     if not _plain(result.get("lammps_version")):
@@ -565,6 +619,8 @@ def _check_execute(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[
         or report.get("target") != identity.get("target")
         or report.get("model_id") != identity.get("model_id")
         or report.get("model_fingerprint") != identity.get("model_fingerprint")
+        or report.get("model_kind") != identity.get("model_kind")
+        or report.get("lammps_interface") != identity.get("lammps_interface")
         or report.get("input_manifest_fingerprint") != identity.get("input_manifest_fingerprint")
         or report.get("steps_completed") != identity.get("steps")
         or report.get("lammps_version") != result.get("lammps_version")

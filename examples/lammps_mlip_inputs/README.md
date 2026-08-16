@@ -16,13 +16,14 @@ The preparation wrapper records `preparation_contract: lammps-md-input-v2` and a
 
 ## Portable model binding
 
-Generated input files never contain a cluster model path. They reference `${MODEL_FILE}`. Scheduled execution resolves `model.relative_path` only below the site-owned `MODEL_ROOT`, recomputes the approved model SHA-256, and passes the resolved file using LAMMPS `-var MODEL_FILE`.
+Generated input files never contain a cluster model path. They reference `${MODEL_FILE}`. Scheduled execution resolves `model.relative_path` only below the site-owned `MODEL_ROOT`, recomputes the approved file SHA-256 or directory `tree-sha256-v1`, and passes the resolved artifact using LAMMPS `-var MODEL_FILE`.
 
 LAMMPS-ready artifact formats remain:
 
 - DeepMD: `deepmd-lammps-model`.
 - MACE: `mace-lammps-torchscript` for the reviewed ML-MACE interface.
-- M3GNet/MatGL: `matgl-lammps-torchscript` exported with `mgl create-lammps-model`.
+- M3GNet/MatGL native: `lammps_interface: matgl`, `kind: file`, and `matgl-lammps-torchscript` exported with `mgl create-lammps-model`.
+- M3GNet/MatGL Python bridges: explicit `lammps_interface: gnnp|m3gnet`, `kind: directory`, and `matgl-model-directory`. The directory must be a native `matgl.load_model` artifact, not a mislabeled single checkpoint.
 - CHGNet: intentionally unsupported by `lammps-md@0.3`; use `ase-md` until a native LAMMPS bridge is pinned and reviewed.
 
 ## Prepare workflow node
@@ -39,6 +40,7 @@ LAMMPS-ready artifact formats remain:
   parameters:
     operation: lammps-prepare
     output_dir: prepared/lammps-mace
+    structure_format: extxyz
   resources: {}
 ```
 
@@ -152,7 +154,9 @@ Changing one of these makes the retry plan or compute-node runner fail closed. E
 |---|---|---|
 | DeepMD | `pair_style deepmd` | `pair_style deepmd`; site launcher owns MPI/GPU mapping |
 | MACE | `pair_style mace` | `pair_style mace no_domain_decomposition` + Kokkos; one GPU |
-| M3GNet/MatGL | `pair_style matgl` | `pair_style matgl/kk` + Kokkos; one GPU |
+| M3GNet/MatGL native | `pair_style matgl` | `pair_style matgl/kk` + Kokkos; one GPU |
+| M3GNet via GNNP bridge | `pair_style gnnp ${INTERFACE_PATH}` | unsupported |
+| M3GNet legacy Python bridge | `pair_style m3gnet ${INTERFACE_PATH}` | unsupported |
 
 DeepMD may request more than one GPU, but the site template remains responsible for at most one GPU per MPI rank. Keep the launcher stable across restart attempts because version 0.3 fingerprints it.
 
@@ -166,8 +170,10 @@ Install `run.sh.example` under every framework/target family you expose:
 - `<remote_template_root>/lammps-mace-gpu/run.sh`
 - `<remote_template_root>/lammps-m3gnet-cpu/run.sh`
 - `<remote_template_root>/lammps-m3gnet-gpu/run.sh`
+- `<remote_template_root>/lammps-m3gnet-gnnp-cpu/run.sh`
+- `<remote_template_root>/lammps-m3gnet-legacy-cpu/run.sh`
 
-The v0.3 example invokes the staged `lammps_cluster_restart.py` and passes the MLIPFlow attempt number. Each site template still owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, modules/conda setup, and `LAMMPS_LAUNCHER_JSON`; none belong in the portable project.
+The v0.3 example invokes the staged `lammps_cluster_restart.py` and passes the MLIPFlow attempt number. Each site template still owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, optional Python-bridge `INTERFACE_PATH`, modules/conda setup, and `LAMMPS_LAUNCHER_JSON`; none belong in the portable project.
 
 ## Completion and scope
 

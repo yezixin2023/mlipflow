@@ -215,6 +215,96 @@ def test_changed_prepared_deck_blocks_execution(tmp_path: Path) -> None:
     assert any(item["code"].startswith("lammps.prepared_") for item in plan["diagnostics"])
 
 
+def test_gnnp_execute_plan_binds_directory_interface_and_family(tmp_path: Path) -> None:
+    module = _load("lammps_execute_gnnp_cpu", PLUGIN / "adapter_execute.py")
+    context = _context(tmp_path, "m3gnet", "cpu")
+    manifest_path = tmp_path / "prepared" / "lammps-input-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["model"].update(
+        {
+            "relative_path": "m3gnet/finetuned_model",
+            "kind": "directory",
+            "artifact_format": "matgl-model-directory",
+            "lammps_interface": "gnnp",
+        }
+    )
+    manifest["md"]["targets"] = ["cpu"]
+    deck = tmp_path / "prepared" / "in.cpu.lammps"
+    deck.write_text(
+        deck.read_text(encoding="utf-8").replace(
+            "pair_style matgl\npair_coeff * * ${MODEL_FILE} Li",
+            "pair_style gnnp ${INTERFACE_PATH}\npair_coeff * * matgl ${MODEL_FILE} Li",
+        ),
+        encoding="utf-8",
+    )
+    for record in manifest["generated_files"]:
+        if record["name"] == "in.cpu.lammps":
+            record.update({"sha256": _sha(deck), "size_bytes": deck.stat().st_size})
+    cpu_launcher = next(item for item in manifest["launchers"] if item["target"] == "cpu")
+    cpu_launcher["argv_after_executable"].extend(
+        ["-var", "INTERFACE_PATH", "<site-resolved-interface-path>"]
+    )
+    cpu_launcher.update(
+        {
+            "lammps_interface": "gnnp",
+            "requires_interface_path": True,
+        }
+    )
+    manifest["launchers"] = [cpu_launcher]
+    _write_json(manifest_path, manifest)
+    fingerprint = _sha(manifest_path)
+    context["parameters"]["input_manifest_fingerprint"] = fingerprint
+    project_path = tmp_path / "project.yaml"
+    project = json.loads(project_path.read_text(encoding="utf-8"))
+    project["workflow"]["nodes"][0]["parameters"]["input_manifest_fingerprint"] = fingerprint
+    _write_json(project_path, project)
+
+    plan = module.Adapter().plan(context)
+
+    assert plan["status"] == "READY", plan.get("diagnostics")
+    assert plan["scheduled_execution"]["template_family"] == "lammps-m3gnet-gnnp-cpu"
+    assert plan["lammps_execution_identity"]["model_kind"] == "directory"
+    assert plan["lammps_execution_identity"]["lammps_interface"] == "gnnp"
+
+
+def test_cluster_directory_model_fingerprint_and_interface_replacement(tmp_path: Path) -> None:
+    cluster = _load("lammps_cluster_gnnp", PLUGIN / "lammps_cluster.py")
+    root = tmp_path / "models"
+    model = root / "m3gnet" / "finetuned_model"
+    model.mkdir(parents=True)
+    (model / "model.json").write_text("{}\n", encoding="utf-8")
+    (model / "model.pt").write_bytes(b"model")
+    (model / "state.pt").write_bytes(b"weights")
+    fingerprint = cluster.fingerprint(model)
+    reference = {
+        "relative_path": "m3gnet/finetuned_model",
+        "kind": "directory",
+        "fingerprint": fingerprint,
+    }
+    assert cluster._resolve_model(str(root), reference) == model.resolve()
+    interface = tmp_path / "ML-GNNP"
+    interface.mkdir()
+    argv = cluster._replace_model(
+        [
+            "-in",
+            "in.cpu.lammps",
+            "-var",
+            "MODEL_FILE",
+            "<site-resolved-model-file>",
+            "-var",
+            "INTERFACE_PATH",
+            "<site-resolved-interface-path>",
+        ],
+        model,
+        interface,
+    )
+    assert str(model) in argv
+    assert str(interface) in argv
+    (model / "state.pt").write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="fingerprint differs"):
+        cluster._resolve_model(str(root), reference)
+
+
 def test_prepare_plan_uses_execution_ready_wrapper(tmp_path: Path) -> None:
     module = _load("lammps_prepare_v2_adapter", PLUGIN / "adapter_execute.py")
     structure = tmp_path / "start.extxyz"
@@ -279,7 +369,9 @@ def test_execution_checker_rebinds_outputs(tmp_path: Path) -> None:
         "input_manifest_fingerprint": "sha256:" + "1" * 64,
         "model_id": "mace-lmp-v1",
         "model_fingerprint": "sha256:" + "2" * 64,
+        "model_kind": "file",
         "artifact_format": "mace-lammps-torchscript",
+        "lammps_interface": None,
         "ensemble": "nvt",
         "temperature_k": 900.0,
         "timestep_fs": 1.0,
@@ -312,7 +404,13 @@ def test_execution_checker_rebinds_outputs(tmp_path: Path) -> None:
         "target": "gpu",
         "lammps_version": "4 Jul 2026",
         "input_manifest_fingerprint": identity["input_manifest_fingerprint"],
-        "model": {"id": identity["model_id"], "fingerprint": identity["model_fingerprint"], "artifact_format": identity["artifact_format"]},
+        "model": {
+            "id": identity["model_id"],
+            "fingerprint": identity["model_fingerprint"],
+            "kind": identity["model_kind"],
+            "artifact_format": identity["artifact_format"],
+            "lammps_interface": identity["lammps_interface"],
+        },
         "ensemble": "nvt",
         "steps_requested": 1000,
         "steps_completed": 1000,
@@ -330,6 +428,8 @@ def test_execution_checker_rebinds_outputs(tmp_path: Path) -> None:
             "target": "gpu",
             "model_id": identity["model_id"],
             "model_fingerprint": identity["model_fingerprint"],
+            "model_kind": identity["model_kind"],
+            "lammps_interface": identity["lammps_interface"],
             "input_manifest_fingerprint": identity["input_manifest_fingerprint"],
             "steps_completed": 1000,
             "lammps_version": "4 Jul 2026",
