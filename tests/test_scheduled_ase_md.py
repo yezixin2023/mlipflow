@@ -206,9 +206,22 @@ def test_final_structure_copy_avoids_fixcom_extxyz_failure(tmp_path: Path) -> No
     atoms.set_constraint(constraints.FixCom())
 
     final_atoms = runner._final_structure_copy(atoms, [])
-    io.write(tmp_path / "final.extxyz", final_atoms, format="extxyz")
+    io.write(
+        tmp_path / "final.extxyz",
+        final_atoms,
+        format="extxyz",
+        write_results=False,
+    )
 
     assert final_atoms.constraints == []
+
+
+def test_callback_step_zero_is_recorded_once() -> None:
+    runner = _load("ase_md_runner_callback_step", PLUGIN / "ase_md.py")
+
+    assert runner._is_new_callback_step([], 0) is True
+    assert runner._is_new_callback_step([0], 0) is False
+    assert runner._is_new_callback_step([0], 1) is True
 
 
 def test_mace_calculator_uses_supported_model_paths_keyword(
