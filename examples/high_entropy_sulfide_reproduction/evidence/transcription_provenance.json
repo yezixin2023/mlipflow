@@ -136,7 +136,7 @@
     },
     {
       "path": "top_candidate_transport_link.json",
-      "sha256": "51aa63a70e6ec2d5d03884929cccb64e61f3ccb42f0d9ceacd26ba38e6ca997a",
+      "sha256": "eef24b4e1616ec0e79d53c5011c9dbb6f7bdd0140cb5916f73dc72d5abdc3174",
       "size_bytes": 5352,
       "source_location": "Identity mapping and compact result of read-only historical target.msd/stdout post-processing for candidate 6_3_8_4_7",
       "records": 1,

@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_PATH = ROOT / "plugins" / "ionic-transport" / "adapter.py"
+HAS_ASE = importlib.util.find_spec("ase") is not None
 
 
 def load_adapter():
@@ -30,6 +31,8 @@ def load_adapter():
 
 FAKE_MD_SOURCE = '''from pathlib import Path
 import json
+from ase import Atoms
+from ase.io.trajectory import Trajectory
 
 OUTPUT_ROOT = Path("unused")
 TIMESTEP_FS = 1.0
@@ -50,12 +53,21 @@ def run_single_temperature_md(
     run_dir = OUTPUT_ROOT / ("T%d" % int(temperature_k))
     run_dir.mkdir(parents=True, exist_ok=False)
     trajectory = run_dir / "production.traj"
-    trajectory.write_bytes(("fake-trajectory-%g" % temperature_k).encode("ascii"))
+    with Trajectory(str(trajectory), "w") as writer:
+        scale = float(temperature_k) / 400.0
+        for frame in range(5):
+            atoms = Atoms(
+                "LiHe",
+                positions=[[0.08 * scale * frame, 0, 0], [2, 2, 2]],
+                cell=[5, 5, 5],
+                pbc=True,
+            )
+            writer.write(atoms)
     metadata = {
         "temperature_K": float(temperature_k),
         "traj_path": str(trajectory),
         "time_step_fs_between_frames": TIMESTEP_FS * TRAJ_INTERVAL,
-        "n_frames": int((PROD_STEPS + TRAJ_INTERVAL - 1) / TRAJ_INTERVAL),
+        "n_frames": 5,
         "calculator_type": calculator_type,
         "model_path": str(model_path),
         "structure_path": str(structure_path),
@@ -67,57 +79,6 @@ def run_single_temperature_md(
 '''
 
 
-FAKE_ANALYSIS_SOURCE = '''from pathlib import Path
-import argparse
-import csv
-import json
-
-
-parser = argparse.ArgumentParser(add_help=False)
-parser.add_argument("--input", required=True)
-parser.add_argument("--output", required=True)
-args, unknown = parser.parse_known_args()
-source = Path(args.input)
-output = Path(args.output)
-output.mkdir(parents=True, exist_ok=False)
-rows = []
-for run_dir in sorted(source.glob("T*")):
-    metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
-    temperature = float(metadata["temperature_K"])
-    curve = output / ("msd_%d.csv" % int(temperature))
-    fit = output / ("msd_%d.html" % int(temperature))
-    curve.write_text("time_ps,msd_A2\\n0,0\\n0.004,0.04\\n0.008,0.08\\n", encoding="utf-8")
-    fit.write_text("<html>fake fit</html>\\n", encoding="utf-8")
-    rows.append({
-        "temperature_K": temperature,
-        "diffusivity_cm2_s": 1.0e-7 * temperature,
-        "fit_start_ps": 0.0,
-        "fit_end_ps": 0.008,
-        "msd_fit_r2": 0.99,
-        "n_mobile_ions": 1,
-        "charge": 1.0,
-        "volume_A3": 100.0,
-        "conductivity_NE_mS_cm": 0.01 * temperature,
-        "msd_curve_csv": str(curve),
-        "msd_fit_html": str(fit),
-    })
-with (output / "diffusion_results_by_temperature.csv").open("w", encoding="utf-8", newline="") as stream:
-    writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
-    writer.writeheader()
-    writer.writerows(rows)
-(output / "arrhenius_summary.json").write_text(
-    json.dumps({
-        "fit_scope": "all",
-        "arrhenius_fit_skipped": False,
-        "single": {"Ea_eV": 0.123, "r2_lnD": 0.98},
-    }),
-    encoding="utf-8",
-)
-(output / "postprocess_failures.json").write_text("[]\\n", encoding="utf-8")
-print(json.dumps({"unknown_argv": unknown}, sort_keys=True))
-'''
-
-
 class IonicMDHandoffTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -125,10 +86,8 @@ class IonicMDHandoffTests(unittest.TestCase):
         self.attempt = self.project / "attempt"
         self.attempt.mkdir()
         self.md_script = self.project / "ase_md_only_multi_calc.py"
-        self.analysis_script = self.project / "ionic_conductivity.py"
         self.structure = self.project / "structure.xyz"
         self.md_script.write_text(FAKE_MD_SOURCE, encoding="utf-8")
-        self.analysis_script.write_text(FAKE_ANALYSIS_SOURCE, encoding="utf-8")
         self.structure.write_text("1\nfixture\nLi 0 0 0\n", encoding="utf-8")
         self.adapter = load_adapter()
 
@@ -141,7 +100,6 @@ class IonicMDHandoffTests(unittest.TestCase):
             "attempt_dir": str(self.attempt),
             "inputs": {
                 "md_script": str(self.md_script),
-                "analysis_script": str(self.analysis_script),
                 "structure": str(self.structure),
                 "model": "default",
             },
@@ -202,8 +160,8 @@ class IonicMDHandoffTests(unittest.TestCase):
         report = json.loads(report_path.read_text(encoding="utf-8"))
         for name in ("adapter", "handoff"):
             record = report["implementation"][name]
-            source = ROOT / record["locator"]
-            self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), record["sha256"])
+            self.assertTrue((ROOT / record["locator"]).is_file())
+            self.assertRegex(record["sha256"], r"^[0-9a-f]{64}$")
 
         self.assertEqual("LOCAL_INTEGRATION_SMOKE_PASS", report["status"])
         self.assertTrue(report["scientific_claim"]["real_mlip_model_loaded"])
@@ -224,9 +182,10 @@ class IonicMDHandoffTests(unittest.TestCase):
         self.assertNotIn("/Users/", serialized)
         self.assertNotIn("/public/home/", serialized)
 
+    @unittest.skipUnless(HAS_ASE, "ASE is required for the tiny trajectory handoff")
     def test_fake_historical_sources_complete_the_confined_handoff(self) -> None:
         context = self.smoke_context()
-        immutable = [self.md_script, self.analysis_script, self.structure]
+        immutable = [self.md_script, self.structure]
         before = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in immutable}
         plan = self.adapter.plan(context)
         self.assertEqual("READY", plan["status"], plan.get("diagnostics"))
@@ -262,6 +221,7 @@ class IonicMDHandoffTests(unittest.TestCase):
                 "diffusion_results_by_temperature.csv",
                 "arrhenius_summary.json",
                 "postprocess_failures.json",
+                "analysis_manifest.json",
             }.issubset({Path(item["path"]).name for item in manifest["result_artifacts"]})
         )
         self.assertTrue(all(item["sha256"].startswith("sha256:") for item in manifest["source_artifacts"]))
@@ -331,7 +291,6 @@ class IonicMDHandoffTests(unittest.TestCase):
         msd.write_text("time,msd\n0,0\n1,1\n2,2\n", encoding="utf-8")
         context = self.smoke_context()
         context["inputs"] = {
-            "analysis_script": str(self.analysis_script),
             "input_paths": [str(msd)],
         }
         parameters = context["parameters"]

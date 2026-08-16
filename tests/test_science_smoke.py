@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import math
 import unittest
 
-from mlipflow.science import average_intercalation_voltage, linear_diffusion_from_msd
+from mlipflow.science import (
+    arrhenius_from_diffusivities,
+    average_intercalation_voltage,
+    linear_diffusion_from_msd,
+    nernst_einstein_conductivity,
+)
 
 
 class ScientificPrimitiveTests(unittest.TestCase):
@@ -33,7 +39,38 @@ class ScientificPrimitiveTests(unittest.TestCase):
         self.assertAlmostEqual(result["diffusion_cm2_per_s"], 1e-4)
         self.assertAlmostEqual(result["r_squared"], 1.0)
 
+    def test_known_nernst_einstein_conductivity(self) -> None:
+        result = nernst_einstein_conductivity(
+            diffusivity_m2_s=2.0e-11,
+            temperature_k=500.0,
+            carrier_count=4,
+            charge_number=1.0,
+            volume_angstrom3=800.0,
+        )
+        expected = (
+            (4.0 / (800.0e-30))
+            * (1.602176634e-19) ** 2
+            * 2.0e-11
+            / (1.380649e-23 * 500.0)
+        )
+        self.assertAlmostEqual(result["conductivity_s_m"], expected)
+        self.assertAlmostEqual(result["conductivity_ms_cm"], expected * 10.0)
+
+    def test_known_arrhenius_series(self) -> None:
+        temperatures = [400.0, 600.0, 800.0]
+        activation_energy_ev = 0.25
+        prefactor = 2.0e-4
+        diffusivities = [
+            prefactor * math.exp(-activation_energy_ev / (8.617333262145e-5 * t))
+            for t in temperatures
+        ]
+        result = arrhenius_from_diffusivities(
+            temperatures, diffusivities, target_temperature_k=300.0
+        )
+        self.assertAlmostEqual(result["activation_energy_ev"], activation_energy_ev)
+        self.assertAlmostEqual(result["prefactor_cm2_s"], prefactor)
+        self.assertAlmostEqual(result["r_squared"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
-

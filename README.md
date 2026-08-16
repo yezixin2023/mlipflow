@@ -1,5 +1,9 @@
 # MLIPFlow
 
+<p align="center">
+  <img src="docs/assets/mlipflow-logo.png" alt="MLIPFlow logo" width="760">
+</p>
+
 MLIPFlow 是一个面向机器学习原子势（MLIP）研究的确定性工作流层。它负责把结构生成、PES 采样、DFT 标注、模型训练、基准评估、离子输运、成分筛选和电化学电压组织成显式 DAG，并把计划、审批、状态、版本、输入、输出、模型、指标和来源写入可审计记录。
 
 当前版本：**0.1.0 alpha**。
@@ -1086,6 +1090,14 @@ Pearson
 analyze-existing
 md-smoke-and-analyze
 ```
+
+两者都只支持 `local`。`analyze-existing` 直接调用随 MLIPFlow 打包的分析 runner；项目不再提供 `analysis_script`。它实际读取 ASE `production.traj`、LAMMPS unwrapped dump、VASP AIMD `vasprun.xml` 或 MSD 表，并按
+
+```text
+trajectory/MSD -> MSD -> D=slope/(2d) -> Nernst-Einstein -> single-line Arrhenius
+```
+
+生成带 SHA-256/size/参数 provenance 的 `analysis_manifest.json`。Checker 会重新解析 MSD curve 并复核 D、电导和 Arrhenius 关系。当前固定 `d=3`、`haven_ratio=1`、`piecewise=never`；不能可靠从输入 metadata/structure 得到 timestep、temperature、carrier count 或 volume 时必须显式提供。
 
 推荐生产路线是：
 

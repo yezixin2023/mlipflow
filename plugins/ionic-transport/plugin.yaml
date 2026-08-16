@@ -4,9 +4,9 @@
   "id": "ionic-transport",
   "name": "Ionic transport analysis",
   "display_name": "Ionic transport analysis",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "api_version": 1,
-  "description": "Safe local argv adapter for existing transport evidence plus a tightly bounded ASE-MD-to-Arrhenius integration smoke; the smoke delegates all numerics to reviewed historical sources and is not scientific production evidence.",
+  "description": "Local-only trajectory/MSD to MSD, diffusion, uncorrected Nernst-Einstein conductivity, and single-line Arrhenius analysis with a packaged runner plus a tightly bounded MD integration smoke.",
   "category": "transport-analysis",
   "contract": {
     "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
@@ -18,15 +18,16 @@
     "source_classification": ["C", "D"],
     "source_references": [
       "inventory://workspace/claw/MD/ase_MD/ase_md_only_multi_calc.py",
-      "inventory://workspace/claw/diffusion_analysis/ionic_conductivity.py",
+      "repository://plugins/ionic-transport/ionic_conductivity.py",
       "inventory://local-manuscript-evidence/MACE/MD/train/Li10/get_MSD_from_*_11221.py",
       "inventory://local-manuscript-evidence/MACE/MD/train/Li10/Li10_MACE.out",
       "inventory://local-manuscript-evidence/supply/Li10/Li10_test.out"
     ],
     "limitations": [
       "operation=analyze-existing only post-processes explicit existing ASE/LAMMPS/VASP trajectories or MSD tables and does not launch MD or submit jobs.",
-      "operation=md-smoke-and-analyze is an integration-smoke-only handoff to the existing ASE-MD and ionic-conductivity sources. It rejects production-scale settings, never submits jobs, and must not be cited as converged transport or manuscript parity.",
-      "The MD handoff overrides only the historical source's exposed module configuration and calls its run_single_temperature_md entrypoint; it does not copy or reimplement MD, MSD, diffusivity, conductivity, or Arrhenius algorithms.",
+      "The packaged analysis runner reads actual ASE production.traj, LAMMPS unwrapped dumps, VASP vasprun.xml AIMD, and text/CSV MSD inputs. Timestep, temperature, carrier count, volume, and units must be explicit when not encoded in reliable source metadata.",
+      "operation=md-smoke-and-analyze is an integration-smoke-only handoff to an existing ASE-MD source and the same packaged formal analysis runner. It rejects production-scale settings, never submits jobs, and must not be cited as converged transport or manuscript parity.",
+      "The MD handoff overrides only the historical source's exposed module configuration and calls its run_single_temperature_md entrypoint; all MSD, diffusivity, conductivity, and Arrhenius analysis is performed by the formal runner using mlipflow.science.transport primitives.",
       "The explicit seed controls the historical NumPy velocity RNG per temperature. Calculator/framework RNGs and GPU/MPS kernels are not guaranteed bitwise deterministic.",
       "MACE, CHGNet, MatGL, and M3GNet require an explicit local model; only EMT/LJ accept the explicit default marker, so implicit network or package-cache model loading is blocked.",
       "The plugin-local manuscript wrapper reads existing target.msd/Li10 stdout only, fingerprints every source, and never starts a calculator, MD process, scheduler, or network operation.",
@@ -35,7 +36,8 @@
       "The reviewed source hard-codes the three-dimensional Einstein relation D=slope/6; dimensions other than 3 are blocked.",
       "The source reports uncorrected Nernst-Einstein conductivity and exposes no Haven-ratio correction; only haven_ratio=1 is accepted.",
       "analyze-existing exposes no stochastic stage, so a non-null seed is rejected there; md-smoke-and-analyze requires a non-negative seed and records its limited scope.",
-      "Completion rejects non-finite transport metrics and partial results unless allow_partial_results=true is explicitly reviewed."
+      "The formal workflow permits only a single-line ln(D) versus 1/T Arrhenius fit; piecewise fitting is outside this contract.",
+      "Completion rehashes source/result artifacts, reparses every fetched MSD curve, and independently rechecks D=slope/(2d), Nernst-Einstein conductivity, and Arrhenius relations. It rejects partial results unless allow_partial_results=true is explicitly reviewed."
     ]
   },
   "execution": {
@@ -55,7 +57,6 @@
     "reason": "Replay returns an in-memory result-manifest reference without parsing trajectories/MSD, running analysis, or starting MD."
   },
   "inputs": [
-    {"name": "analysis_script", "kind": "file", "required": true, "description": "Explicit path to the reviewed claw/diffusion_analysis/ionic_conductivity.py; required by both operations."},
     {"name": "input_paths", "kind": "artifact-reference", "required": false, "description": "One or more explicit existing trajectory/MSD files or directories; required by analyze-existing only."},
     {"name": "md_script", "kind": "file", "required": false, "description": "Explicit path to the reviewed claw/MD/ase_MD/ase_md_only_multi_calc.py; required by md-smoke-and-analyze only."},
     {"name": "structure", "kind": "file", "required": false, "description": "Explicit local structure consumed by the historical ASE-MD source; required by md-smoke-and-analyze only."},
@@ -120,16 +121,17 @@
     {"name": "exclude_temperatures", "type": "string", "required": false, "description": "Optional comma/space separated excluded temperatures passed verbatim."},
     {"name": "fit_scope", "type": "string", "required": true, "description": "Exact source choice: dataset or all."},
     {"name": "target_temperature_k", "type": "number", "required": true, "description": "Finite positive Arrhenius target temperature in K, passed to --target-temperature-K."},
-    {"name": "piecewise", "type": "string", "required": true, "description": "Exact source choice: auto, always, or never."},
-    {"name": "min_segment_points", "type": "integer", "required": true, "description": "At least 2 points per piecewise Arrhenius segment."},
-    {"name": "piecewise_slope_change", "type": "number", "required": true, "description": "Finite non-negative relative-slope threshold."},
-    {"name": "piecewise_bic_delta", "type": "number", "required": true, "description": "Finite non-negative BIC-improvement threshold."},
+    {"name": "piecewise", "type": "string", "required": true, "description": "Must be never; piecewise Arrhenius analysis is outside the formal contract."},
+    {"name": "min_segment_points", "type": "integer", "required": false, "description": "Optional packaged-CLI compatibility value; unused when piecewise=never."},
+    {"name": "piecewise_slope_change", "type": "number", "required": false, "description": "Optional packaged-CLI compatibility value; unused when piecewise=never."},
+    {"name": "piecewise_bic_delta", "type": "number", "required": false, "description": "Optional packaged-CLI compatibility value; unused when piecewise=never."},
     {"name": "allow_partial_results", "type": "boolean", "required": true, "description": "Adapter-only policy; false rejects any source-reported skipped run."}
   ],
   "outputs": [
     {"name": "transport-results", "kind": "file", "required": true, "media_type": "text/csv", "description": "diffusion_results_by_temperature.csv with finite per-run transport metrics."},
     {"name": "arrhenius-summary", "kind": "file", "required": true, "media_type": "application/json", "description": "arrhenius_summary.json; may explicitly record that a fit was skipped for insufficient temperatures."},
     {"name": "postprocess-failures", "kind": "file", "required": true, "media_type": "application/json", "description": "Explicit list of skipped inputs; non-empty is rejected unless partial results are approved."},
+    {"name": "analysis-manifest", "kind": "file", "required": true, "media_type": "application/json", "description": "Pinned analysis parameters plus SHA-256/size provenance for source and result artifacts."},
     {"name": "msd-diagnostics", "kind": "artifact-reference", "required": true, "description": "Per-run CSV/HTML paths explicitly listed in the transport results CSV."},
     {"name": "production-trajectories", "kind": "artifact-reference", "required": false, "description": "Confined production.traj artifacts created only by md-smoke-and-analyze."},
     {"name": "md-integration-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "integration-smoke-only manifest with source, input, trajectory, result, and wrapper SHA-256 records."}

@@ -5,11 +5,68 @@ import re
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def declared_agent_skill_files() -> dict[str, set[Path]]:
+    """Return every source file named by an agent-skill data-files declaration."""
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    section = pyproject.split("[tool.setuptools.data-files]", 1)[1]
+    section = section.split("\n[", 1)[0]
+    declarations: dict[str, set[Path]] = {}
+    prefix = "share/mlipflow/agent-skills/"
+    for line in section.splitlines():
+        match = re.fullmatch(r'"([^"]+)"\s*=\s*(\[.*\])', line.strip())
+        if match is None or not match.group(1).startswith(prefix):
+            continue
+        destination = match.group(1)[len(prefix) :]
+        skill_name = destination.split("/", 1)[0]
+        declarations.setdefault(skill_name, set()).update(
+            ROOT / pattern for pattern in ast.literal_eval(match.group(2))
+        )
+    return declarations
+
+
 class RepositoryHygieneTests(unittest.TestCase):
+    def test_agent_skill_packaging_declarations_resolve_to_files(self) -> None:
+        declarations = declared_agent_skill_files()
+        self.assertTrue(declarations)
+        missing = sorted(
+            path.relative_to(ROOT).as_posix()
+            for paths in declarations.values()
+            for path in paths
+            if not path.is_file()
+        )
+        if missing:
+            self.fail(
+                "agent skill packaging declarations reference missing files:\n"
+                + "\n".join(missing)
+            )
+
+    def test_agent_skill_default_prompts_start_with_declared_skill_name(self) -> None:
+        invalid: list[str] = []
+        for skill_name, paths in declared_agent_skill_files().items():
+            metadata_paths = [
+                path
+                for path in paths
+                if path.as_posix().endswith("/agents/openai.yaml")
+            ]
+            if len(metadata_paths) != 1 or not metadata_paths[0].is_file():
+                continue
+            metadata = yaml.safe_load(metadata_paths[0].read_text(encoding="utf-8"))
+            interface = metadata.get("interface") if isinstance(metadata, dict) else None
+            prompt = interface.get("default_prompt") if isinstance(interface, dict) else None
+            prefix = f"${skill_name}"
+            if not isinstance(prompt, str) or not (
+                prompt == prefix or prompt.startswith(prefix + " ")
+            ):
+                invalid.append(metadata_paths[0].relative_to(ROOT).as_posix())
+        self.assertEqual([], sorted(invalid))
+
     def test_release_data_declarations_cover_publishable_assets(self) -> None:
         """Keep wheel declarations in sync with the source assets shipped by the sdist."""
 

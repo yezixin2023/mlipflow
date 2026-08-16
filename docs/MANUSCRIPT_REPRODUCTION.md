@@ -84,11 +84,13 @@ structure parity。
 `reports/ionic_md_local_integration_smoke.json` 另记录
 `operation=md-smoke-and-analyze` 的真实 MLIP bounded handoff：ASE 3.28.0、MACE
 0.3.15 + 外部 model、Li3YCl6 在 400/600/800 K 各 10 steps。三个
-trajectory/metadata 经原 `ionic_conductivity.py` 生成 MSD/D/σ/Arrhenius，标准
+trajectory/metadata 经当时外部审阅的 `ionic_conductivity.py` 生成 MSD/D/σ/Arrhenius，标准
 Adapter 的 plan→execute→check→collect 全部成功；外部 79,462,305-byte model 只固定
 SHA-256，没有复制入仓库。reproduction example 不调用该 smoke；0.01 ps/温度的轨迹
 也没有独立科学 baseline 或收敛性，所以只证明 integration handoff，科学 parity 状态
 仍为 `EXTERNAL_VALIDATION_PENDING`。
+
+该报告固定的是历史 smoke 当时的 adapter/source digest，不能冒充当前代码重跑。当前 `ionic-transport` 已把 runner 正式打包、把核心关系收敛到 `mlipflow.science.transport`，并增加 analysis manifest 与 checker 独立重算；本轮 deterministic local regression 不改变旧 smoke 的科学等级。
 
 ## LASP/SSW 对历史数据生成的贡献与边界
 

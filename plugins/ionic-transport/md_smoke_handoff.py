@@ -25,6 +25,7 @@ REQUIRED_RESULTS = (
     "diffusion_results_by_temperature.csv",
     "arrhenius_summary.json",
     "postprocess_failures.json",
+    "analysis_manifest.json",
 )
 CALCULATORS = {"mace", "chgnet", "m3gnet", "matgl", "emt", "lj"}
 DEVICES = {"cpu", "cuda", "mps"}
@@ -392,7 +393,7 @@ def run_handoff(
             raise IntegrationSmokeError("generated artifact escapes attempt_dir: %s" % path)
     source_artifacts = [
         _artifact(md_script, "historical-ase-md-source"),
-        _artifact(analysis_script, "historical-transport-analysis-source"),
+        _artifact(analysis_script, "mlipflow-transport-analysis-source"),
         _artifact(Path(__file__), "mlipflow-handoff-wrapper"),
     ]
     input_artifacts = [_artifact(structure, "structure")]

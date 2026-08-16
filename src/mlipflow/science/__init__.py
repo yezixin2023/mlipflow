@@ -4,8 +4,18 @@ These functions are not complete workflow plugins and do not replace the
 manuscript's validated production scripts.
 """
 
-from .transport import linear_diffusion_from_msd
+from .transport import (
+    arrhenius_from_diffusivities,
+    linear_diffusion_from_msd,
+    linear_fit,
+    nernst_einstein_conductivity,
+)
 from .voltage import average_intercalation_voltage
 
-__all__ = ["average_intercalation_voltage", "linear_diffusion_from_msd"]
-
+__all__ = [
+    "arrhenius_from_diffusivities",
+    "average_intercalation_voltage",
+    "linear_diffusion_from_msd",
+    "linear_fit",
+    "nernst_einstein_conductivity",
+]

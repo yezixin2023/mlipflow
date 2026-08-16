@@ -933,7 +933,7 @@
         ],
         "wrapper": "ionic-transport.adapter.reproduce_manuscript_transport",
         "wrapper_locator": "plugins/ionic-transport/adapter.py",
-        "wrapper_sha256": "sha256:cfea1fd974ef1e568ae9e3aac414ad999588edfa00035d91f8a1c6bd561bf36b",
+        "wrapper_sha256": "sha256:2c6ad2ef72d3ad644084141105adf1f4056cf31187f9680ab6efd7075d0aa28e",
         "wrapper_version": "1.0"
       },
       "not_high_fidelity_validation": true,

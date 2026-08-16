@@ -12,11 +12,19 @@
 | `$ase-md` | 用显式 DeepMD/M3GNet/CHGNet/MACE 模型运行集群 ASE NVT/NPT，并监督 checkpoint salvage 与断点续跑 | `ase-md` |
 | `$lammps-md` | 为 LAMMPS-ready DeepMD/MACE/MatGL-M3GNet 准备和执行 CPU/GPU NVT/NPT，并监督 binary restart salvage 与断点续跑 | `lammps-md` |
 | `$mlip-benchmark` | 产生机器可读 benchmark/ranking | `mlip-benchmark` |
-| `$ionic-transport` | MD→MSD→D/电导/Arrhenius | `ionic-transport` |
+| `$ionic-transport` | 仅本地监督已有 ASE/LAMMPS/VASP trajectory 或 MSD → MSD/D/电导/Arrhenius，以及 bounded MD smoke | `ionic-transport` |
 | `$composition-screening` | 大超胞组分筛选与 top-k 验证 | `composition-screening` |
 | `$electrochemical-voltage` | Li 含量能量与电压曲线 | `electrochemical-voltage` |
 
 Skills 是监督说明，不是计算实现。更新 Skill 时，应以当前 CLI 帮助、plugin manifest 和 schema 为接口事实；旧 claw skills 已发现命令名和参数漂移，不可直接复制。
+
+## Ionic transport
+
+`$ionic-transport` 是 local-only 分析 Skill，不提供 `ssh-slurm`。正式 `analyze-existing` 使用 MLIPFlow 打包的 `ionic_conductivity.py`；项目只绑定已有 trajectory/MSD，不再提供或覆盖 `analysis_script`。当前输入为 ASE `production.traj`、LAMMPS unwrapped dump、VASP AIMD `vasprun.xml` 或显式 MSD 表；无法从可靠 metadata/structure 得到 timestep、temperature、carrier count、charge 或 volume 时必须显式声明。
+
+正式链固定为 MSD → `D=slope/(2d)`（当前 `d=3`）→ 未做 Haven 修正的 Nernst–Einstein conductivity → 单直线 `ln(D)` 对 `1/T` Arrhenius。piecewise、Green-Kubo、Haven ratio estimation、anisotropic transport 和 bootstrap 不在合同内。`md-smoke-and-analyze` 只做 tiny local handoff，并复用同一分析 runner。
+
+Runner 的 `analysis_manifest.json` 固定 source/result SHA-256、size 与参数。Checker 会重新读取 MSD curve 并独立复算 D、conductivity 和 Arrhenius，不能只相信结果 JSON。历史 Li10 `N=7` 只存在于隔离的 `legacy_script` parity convention；普通分析从结构或显式参数获得 composition-corrected count，绝不默认 N=7。
 
 ## PES sampling / LASP
 

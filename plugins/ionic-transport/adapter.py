@@ -18,6 +18,13 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from mlipflow.science.transport import (
+    arrhenius_from_diffusivities,
+    linear_diffusion_from_msd,
+    linear_fit,
+    nernst_einstein_conductivity,
+)
+
 
 PLUGIN_ID = "ionic-transport"
 _MODULE_PATH = Path(str(globals().get("__file__", "adapter.py"))).resolve()
@@ -57,6 +64,7 @@ _REQUIRED_RESULT_NAMES = (
     "diffusion_results_by_temperature.csv",
     "arrhenius_summary.json",
     "postprocess_failures.json",
+    "analysis_manifest.json",
 )
 _OPTIONAL_RESULT_NAMES = ("msd_by_temperature.html", "arrhenius_fit.html")
 _INTEGRATION_MANIFEST_NAME = "md-integration-manifest.json"
@@ -79,9 +87,16 @@ _RESULT_COLUMNS = {
     "charge",
     "volume_A3",
     "conductivity_NE_mS_cm",
+    "msd_slope_A2_per_ps",
+    "dimensions",
+    "haven_ratio",
     "msd_curve_csv",
     "msd_fit_html",
 }
+
+
+def _bundled_analysis_script() -> Path:
+    return _MODULE_PATH.with_name("ionic_conductivity.py")
 _ANALYZE_PARAMETERS = {
     "operation",
     "output_subdir",
@@ -299,6 +314,43 @@ def _has_errors(diagnostics: List[Dict[str, str]]) -> bool:
     return any(item["level"] == "ERROR" for item in diagnostics)
 
 
+def _numbers_close(actual: float, expected: float) -> bool:
+    return math.isclose(actual, expected, rel_tol=1.0e-10, abs_tol=1.0e-14)
+
+
+def _verify_file_record(
+    record: Any,
+    *,
+    role: str,
+    confined_to: Optional[Path] = None,
+) -> Tuple[Optional[Path], List[Dict[str, str]]]:
+    diagnostics: List[Dict[str, str]] = []
+    if not isinstance(record, Mapping):
+        return None, [_diagnostic("ERROR", "result.manifest_record", f"{role} is not an object")]
+    raw_path = record.get("path")
+    if not isinstance(raw_path, str) or not raw_path:
+        return None, [_diagnostic("ERROR", "result.manifest_path", f"{role} has no path")]
+    path = Path(raw_path).expanduser().resolve()
+    if confined_to is not None and not _is_within(path, confined_to):
+        diagnostics.append(
+            _diagnostic("ERROR", "result.manifest_escape", f"{role} escapes the output directory")
+        )
+    if not path.is_file():
+        diagnostics.append(
+            _diagnostic("ERROR", "result.manifest_missing", f"{role} is missing: {path}")
+        )
+        return path, diagnostics
+    if record.get("sha256") != _sha256_file(path):
+        diagnostics.append(
+            _diagnostic("ERROR", "result.manifest_sha256", f"{role} SHA-256 does not match")
+        )
+    if record.get("size_bytes") != path.stat().st_size:
+        diagnostics.append(
+            _diagnostic("ERROR", "result.manifest_size", f"{role} size does not match")
+        )
+    return path, diagnostics
+
+
 def _blocked(diagnostics: List[Dict[str, str]]) -> Dict[str, Any]:
     return {
         "plugin_id": PLUGIN_ID,
@@ -410,6 +462,14 @@ def _validate_md_smoke(
     resources: Mapping[str, Any],
 ) -> List[Dict[str, str]]:
     diagnostics: List[Dict[str, str]] = []
+    if "analysis_script" in inputs:
+        diagnostics.append(
+            _diagnostic(
+                "ERROR",
+                "input.analysis_script_unsupported",
+                "analysis_script is packaged by MLIPFlow and cannot be overridden",
+            )
+        )
     unknown = sorted(set(parameters) - _SMOKE_PARAMETERS)
     if unknown:
         diagnostics.append(
@@ -423,7 +483,6 @@ def _validate_md_smoke(
     resolved_inputs: Dict[str, Path] = {}
     for name, label in (
         ("md_script", "historical ASE-MD source"),
-        ("analysis_script", "ionic_conductivity.py"),
         ("structure", "input structure"),
     ):
         path = _resolve(inputs.get(name), project_root)
@@ -439,6 +498,16 @@ def _validate_md_smoke(
                         "ERROR", "path.%s_suffix" % name, "inputs.%s must be a Python file" % name
                     )
                 )
+
+    analysis_script = _bundled_analysis_script()
+    if not analysis_script.is_file():
+        diagnostics.append(
+            _diagnostic(
+                "ERROR",
+                "path.bundled_analysis_missing",
+                "the packaged ionic_conductivity.py runner is missing",
+            )
+        )
 
     calculator = parameters.get("calculator")
     if calculator not in _SMOKE_CALCULATORS:
@@ -724,6 +793,14 @@ def _validate_md_smoke(
             diagnostics.append(
                 _diagnostic("ERROR", "parameter.%s" % name, "%s must be one of %s" % (name, sorted(allowed)))
             )
+    if parameters.get("piecewise") != "never":
+        diagnostics.append(
+            _diagnostic(
+                "ERROR",
+                "parameter.piecewise_unsupported",
+                "the smoke reuses only the formal single-line Arrhenius analysis",
+            )
+        )
     if parameters.get("fit_scope") != "all":
         diagnostics.append(
             _diagnostic(
@@ -735,7 +812,6 @@ def _validate_md_smoke(
         "diffusion_analyzer_avg_nsteps",
         "diffusion_analyzer_step_skip",
         "min_msd_fit_points",
-        "min_segment_points",
     ):
         if not _positive_int(parameters.get(name)):
             diagnostics.append(
@@ -747,15 +823,9 @@ def _validate_md_smoke(
         diagnostics.append(
             _diagnostic("ERROR", "parameter.min_msd_fit_points", "min_msd_fit_points must be >= 3")
         )
-    if _positive_int(parameters.get("min_segment_points")) and int(
-        parameters["min_segment_points"]
-    ) < 2:
-        diagnostics.append(
-            _diagnostic("ERROR", "parameter.min_segment_points", "min_segment_points must be >= 2")
-        )
     for name in ("piecewise_slope_change", "piecewise_bic_delta"):
         value = parameters.get(name)
-        if not _finite_number(value) or float(value) < 0:
+        if value is not None and (not _finite_number(value) or float(value) < 0):
             diagnostics.append(
                 _diagnostic("ERROR", "parameter.%s" % name, "%s must be finite and non-negative" % name)
             )
@@ -1113,20 +1183,14 @@ def analyze_historical_target_msd(path_value: Any, sampling_profile: str) -> Dic
         raise ManuscriptTransportError("sampled target.msd timesteps must increase strictly")
 
     try:
-        import numpy as np
-    except ImportError as exc:  # pragma: no cover - science extra is present in validation env
-        raise ManuscriptTransportError(
-            "numpy is required to reproduce the historical np.polyfit/np.mean calculations"
-        ) from exc
-    x = np.asarray(timesteps, dtype=float)
-    y = np.asarray(msd_values, dtype=float)
-    slope_raw, intercept = np.polyfit(x, y, 1)
-    fitted = slope_raw * x + intercept
-    residual_sum = float(np.sum((y - fitted) ** 2))
-    total_sum = float(np.sum((y - np.mean(y)) ** 2))
-    r2 = 1.0 if total_sum == 0.0 and residual_sum == 0.0 else 1.0 - residual_sum / total_sum
-    slope_a2_fs = float(slope_raw) / timestep_fs
-    mean_ratio_a2_fs = float(np.mean(y / (x * timestep_fs)))
+        fit = linear_fit(timesteps, msd_values)
+    except ValueError as exc:
+        raise ManuscriptTransportError(str(exc)) from exc
+    slope_a2_fs = float(fit["slope"]) / timestep_fs
+    mean_ratio_a2_fs = sum(
+        msd / (timestep * timestep_fs)
+        for timestep, msd in zip(timesteps, msd_values)
+    ) / len(timesteps)
     diffusion_linear = slope_a2_fs / 6.0 * 1.0e-5
     diffusion_ratio = mean_ratio_a2_fs / 6.0 * 1.0e-5
     if diffusion_linear <= 0 or diffusion_ratio <= 0:
@@ -1145,8 +1209,8 @@ def analyze_historical_target_msd(path_value: Any, sampling_profile: str) -> Dic
     linear_result: Dict[str, Any] = {
         "method": "linear_msd_fit",
         "slope_A2_fs": slope_a2_fs,
-        "intercept_A2": float(intercept),
-        "r2": r2,
+        "intercept_A2": float(fit["intercept"]),
+        "r2": float(fit["r_squared"]),
     }
     linear_result.update(_transport_value(diffusion_linear, "diffusivity"))
     ratio_result: Dict[str, Any] = {
@@ -1423,30 +1487,30 @@ def _conductivity_s_m(
 ) -> float:
     if diffusivity_m2_s <= 0 or temperature_k <= 0:
         raise ManuscriptTransportError("diffusivity and temperature must be positive")
-    number_density = float(carrier["n_mobile_ions"]) / float(carrier["volume_m3"])
-    return (
-        number_density
-        * _HISTORICAL_ELEMENTARY_CHARGE_C**2
-        * diffusivity_m2_s
-        / (_HISTORICAL_BOLTZMANN_J_K * temperature_k)
-    )
+    try:
+        return nernst_einstein_conductivity(
+            diffusivity_m2_s,
+            temperature_k,
+            int(carrier["n_mobile_ions"]),
+            float(carrier["charge_number"]),
+            float(carrier["volume_A3"]),
+            elementary_charge_c=_HISTORICAL_ELEMENTARY_CHARGE_C,
+            boltzmann_j_per_k=_HISTORICAL_BOLTZMANN_J_K,
+        )["conductivity_s_m"]
+    except ValueError as exc:
+        raise ManuscriptTransportError(str(exc)) from exc
 
 
 def _ols(x_values: Sequence[float], y_values: Sequence[float]) -> Dict[str, float]:
-    if len(x_values) != len(y_values) or len(x_values) < 2:
-        raise ManuscriptTransportError("OLS requires at least two paired points")
     try:
-        import numpy as np
-    except ImportError as exc:  # pragma: no cover
-        raise ManuscriptTransportError("numpy is required for manuscript parity OLS") from exc
-    x = np.asarray(x_values, dtype=float)
-    y = np.asarray(y_values, dtype=float)
-    slope, intercept = np.polyfit(x, y, 1)
-    predicted = slope * x + intercept
-    residual_sum = float(np.sum((y - predicted) ** 2))
-    total_sum = float(np.sum((y - np.mean(y)) ** 2))
-    r2 = 1.0 if total_sum == 0.0 and residual_sum == 0.0 else 1.0 - residual_sum / total_sum
-    return {"slope": float(slope), "intercept": float(intercept), "r2": r2}
+        fit = linear_fit(x_values, y_values)
+    except ValueError as exc:
+        raise ManuscriptTransportError(str(exc)) from exc
+    return {
+        "slope": float(fit["slope"]),
+        "intercept": float(fit["intercept"]),
+        "r2": float(fit["r_squared"]),
+    }
 
 
 def _arrhenius_fit(
@@ -1950,9 +2014,7 @@ def _verify_smoke_manifest(
     inputs = _mapping(context.get("inputs"))
     expected_source_paths = {
         "historical-ase-md-source": _resolve(inputs.get("md_script"), project_root),
-        "historical-transport-analysis-source": _resolve(
-            inputs.get("analysis_script"), project_root
-        ),
+        "mlipflow-transport-analysis-source": _bundled_analysis_script(),
         "mlipflow-handoff-wrapper": _MODULE_PATH.with_name("md_smoke_handoff.py").resolve(),
     }
     expected_input_paths = {
@@ -2122,6 +2184,271 @@ def _verify_smoke_manifest(
     return manifest, artifacts, diagnostics
 
 
+def _verify_analysis_manifest(
+    context: Mapping[str, Any], output_dir: Path, manifest_path: Path
+) -> List[Dict[str, str]]:
+    diagnostics: List[Dict[str, str]] = []
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return [_diagnostic("ERROR", "result.analysis_manifest", f"cannot parse manifest: {exc}")]
+    if not isinstance(manifest, Mapping):
+        return [_diagnostic("ERROR", "result.analysis_manifest", "manifest must be an object")]
+    if manifest.get("schema_version") != 1 or manifest.get("plugin_id") != PLUGIN_ID:
+        diagnostics.append(
+            _diagnostic("ERROR", "result.analysis_manifest_identity", "manifest identity is invalid")
+        )
+    contract = _mapping(manifest.get("scientific_contract"))
+    if (
+        contract.get("dimensions") != 3
+        or contract.get("einstein_relation") != "D=slope/(2*d)"
+        or contract.get("conductivity_model") != "uncorrected-nernst-einstein"
+        or contract.get("haven_ratio") != 1.0
+        or contract.get("carrier_count_policy")
+        != "derived-from-structure-or-explicit; never historical-N7"
+    ):
+        diagnostics.append(
+            _diagnostic(
+                "ERROR", "result.analysis_contract", "manifest scientific contract is invalid"
+            )
+        )
+
+    recorded_parameters = _mapping(manifest.get("parameters"))
+    parameters = _mapping(context.get("parameters"))
+    operation = _operation_name(parameters)
+    adapter_only = {"operation", "output_subdir", "dimensions", "haven_ratio", "seed", "allow_partial_results"}
+    runner_destinations = {
+        "temperature_k": "temperature_K",
+        "aimd_temperature_k": "aimd_temperature_K",
+        "msd_temperature_k": "msd_temperature_K",
+        "target_temperature_k": "target_temperature_K",
+        "volume_a3": "volume_A3",
+    }
+    for name, expected in parameters.items():
+        if name in adapter_only or name not in _ANALYZE_PARAMETERS:
+            continue
+        if operation == _SMOKE_OPERATION and name == "ase_frame_step_fs":
+            continue
+        actual = recorded_parameters.get(runner_destinations.get(name, name))
+        if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+            if not _finite_number(actual) or not _numbers_close(float(actual), float(expected)):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR", "result.parameter_mismatch", f"manifest parameter {name} differs"
+                    )
+                )
+        elif actual != expected:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR", "result.parameter_mismatch", f"manifest parameter {name} differs"
+                )
+            )
+
+    project_root = _resolve(context.get("project_root"), Path.cwd()) or Path.cwd().resolve()
+    inputs = _mapping(context.get("inputs"))
+    if operation == _SMOKE_OPERATION:
+        execution = _mapping(context.get("execution"))
+        plan = _mapping(execution.get("plan"))
+        smoke_input = _resolve(plan.get("md_output_dir"), project_root)
+        expected_inputs = [] if smoke_input is None else [str(smoke_input)]
+    else:
+        expected_inputs = [
+            str(path)
+            for path in (_resolve(value, project_root) for value in inputs.get("input_paths", []))
+            if path is not None
+        ]
+    if recorded_parameters.get("input") != expected_inputs:
+        diagnostics.append(
+            _diagnostic(
+                "ERROR", "result.input_paths_mismatch", "manifest inputs differ from approved inputs"
+            )
+        )
+    if recorded_parameters.get("output") != str(output_dir):
+        diagnostics.append(
+            _diagnostic(
+                "ERROR", "result.output_path_mismatch", "manifest output differs from execution plan"
+            )
+        )
+
+    implementation = manifest.get("implementation_artifacts")
+    if not isinstance(implementation, list) or len(implementation) != 2:
+        diagnostics.append(
+            _diagnostic(
+                "ERROR", "result.implementation_artifacts", "manifest implementation is incomplete"
+            )
+        )
+    else:
+        expected_implementation = {
+            "packaged-analysis-runner": _bundled_analysis_script(),
+            "mlipflow-science-transport": Path(linear_fit.__code__.co_filename).resolve(),
+        }
+        for index, record in enumerate(implementation):
+            if isinstance(record, Mapping):
+                expected_path = expected_implementation.get(str(record.get("role")))
+                actual_path = _resolve(record.get("path"), project_root)
+                if expected_path is None or actual_path != expected_path:
+                    diagnostics.append(
+                        _diagnostic(
+                            "ERROR",
+                            "result.implementation_identity",
+                            f"implementation_artifacts[{index}] is not the pinned implementation",
+                        )
+                    )
+            _, record_diagnostics = _verify_file_record(
+                record, role=f"implementation_artifacts[{index}]"
+            )
+            diagnostics.extend(record_diagnostics)
+
+    sources = manifest.get("source_artifacts")
+    if not isinstance(sources, list) or not sources:
+        diagnostics.append(
+            _diagnostic("ERROR", "result.source_artifacts", "manifest has no source artifacts")
+        )
+    else:
+        approved_roots = [Path(value).resolve() for value in expected_inputs]
+        for index, record in enumerate(sources):
+            path, record_diagnostics = _verify_file_record(
+                record, role=f"source_artifacts[{index}]"
+            )
+            diagnostics.extend(record_diagnostics)
+            if path is not None and not any(_is_within(path, root) for root in approved_roots):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "result.source_outside_inputs",
+                        f"source_artifacts[{index}] is outside the approved inputs",
+                    )
+                )
+    results = manifest.get("result_artifacts")
+    if not isinstance(results, list) or not results:
+        diagnostics.append(
+            _diagnostic("ERROR", "result.result_artifacts", "manifest has no result artifacts")
+        )
+    else:
+        for index, record in enumerate(results):
+            _, record_diagnostics = _verify_file_record(
+                record, role=f"result_artifacts[{index}]", confined_to=output_dir
+            )
+            diagnostics.extend(record_diagnostics)
+    return diagnostics
+
+
+def _verify_transport_rows(
+    rows: Sequence[Mapping[str, str]], output_dir: Path
+) -> List[Dict[str, str]]:
+    diagnostics: List[Dict[str, str]] = []
+    for index, row in enumerate(rows, start=1):
+        curve_path = _resolve(row.get("msd_curve_csv"), output_dir)
+        if curve_path is None or not curve_path.is_file() or not _is_within(curve_path, output_dir):
+            continue
+        try:
+            curve_reader = csv.DictReader(curve_path.read_text(encoding="utf-8").splitlines())
+            curve_rows = list(curve_reader)
+            if curve_reader.fieldnames is None or not {
+                "time_ps",
+                "fit_msd_A2",
+                "used_for_fit",
+            }.issubset(curve_reader.fieldnames):
+                raise ValueError("curve columns are incomplete")
+            fit_rows = [
+                item
+                for item in curve_rows
+                if str(item["used_for_fit"]).strip().lower() in {"true", "1"}
+            ]
+            times = [float(item["time_ps"]) for item in fit_rows]
+            msd = [float(item["fit_msd_A2"]) for item in fit_rows]
+            dimensions = int(row["dimensions"])
+            diffusion = linear_diffusion_from_msd(times, msd, dimensions=dimensions)
+        except (OSError, UnicodeError, csv.Error, KeyError, TypeError, ValueError) as exc:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR", "result.curve_reparse", f"row {index} curve cannot be verified: {exc}"
+                )
+            )
+            continue
+        comparisons = {
+            "msd_slope_A2_per_ps": float(diffusion["slope_angstrom2_per_ps"]),
+            "diffusivity_cm2_s": float(diffusion["diffusion_cm2_per_s"]),
+            "msd_fit_r2": float(diffusion["r_squared"]),
+            "fit_start_ps": min(times),
+            "fit_end_ps": max(times),
+        }
+        for name, expected in comparisons.items():
+            try:
+                actual = float(row[name])
+            except (KeyError, TypeError, ValueError):
+                actual = float("nan")
+            if not math.isfinite(actual) or not _numbers_close(actual, expected):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "result.einstein_relation",
+                        f"row {index} {name} disagrees with the fetched MSD curve",
+                    )
+                )
+        try:
+            if dimensions != 3 or not _numbers_close(float(row["haven_ratio"]), 1.0):
+                raise ValueError("dimensions/haven ratio differ from the formal contract")
+            conductivity = nernst_einstein_conductivity(
+                float(row["diffusivity_cm2_s"]) * 1.0e-4,
+                float(row["temperature_K"]),
+                int(float(row["n_mobile_ions"])),
+                float(row["charge"]),
+                float(row["volume_A3"]),
+            )["conductivity_ms_cm"]
+            actual_conductivity = float(row["conductivity_NE_mS_cm"])
+            if not _numbers_close(actual_conductivity, conductivity):
+                raise ValueError("conductivity does not satisfy Nernst-Einstein")
+        except (KeyError, TypeError, ValueError) as exc:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR", "result.conductivity_relation", f"row {index} failed: {exc}"
+                )
+            )
+    return diagnostics
+
+
+def _verify_arrhenius_summary(summary: Mapping[str, Any]) -> List[Dict[str, str]]:
+    diagnostics: List[Dict[str, str]] = []
+    candidates: List[Tuple[str, Mapping[str, Any]]] = []
+    if isinstance(summary.get("single"), Mapping):
+        candidates.append(("all", summary))
+    datasets = summary.get("datasets")
+    if isinstance(datasets, Mapping):
+        candidates.extend(
+            (str(name), value) for name, value in datasets.items() if isinstance(value, Mapping)
+        )
+    for label, candidate in candidates:
+        try:
+            temperatures = [float(value) for value in candidate["fit_temperatures_K"]]
+            diffusivities = [float(value) for value in candidate["fit_diffusivities_cm2_s"]]
+            target = float(candidate["target_temperature_K"])
+            recalculated = arrhenius_from_diffusivities(
+                temperatures, diffusivities, target_temperature_k=target
+            )
+            single = _mapping(candidate["single"])
+            expected = {
+                "slope_K": recalculated["slope_k"],
+                "intercept_lnD0": recalculated["intercept_ln_diffusivity"],
+                "Ea_eV": recalculated["activation_energy_ev"],
+                "D0_cm2_s": recalculated["prefactor_cm2_s"],
+                "r2_lnD": recalculated["r_squared"],
+                f"D_{target:g}K_cm2_s": recalculated["target_diffusivity_cm2_s"],
+            }
+            for name, value in expected.items():
+                if not _finite_number(single.get(name)) or not _numbers_close(
+                    float(single[name]), float(value)
+                ):
+                    raise ValueError(f"{name} differs from the temperature rows")
+        except (KeyError, TypeError, ValueError) as exc:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR", "result.arrhenius_relation", f"Arrhenius summary {label} failed: {exc}"
+                )
+            )
+    return diagnostics
+
+
 class Adapter:
     """Plan and collect reviewed analysis or its bounded local MD smoke handoff."""
 
@@ -2210,19 +2537,22 @@ class Adapter:
                 )
             )
 
-        script = _resolve(inputs.get("analysis_script"), project_root)
-        if script is None or not script.is_file():
+        if "analysis_script" in inputs:
             diagnostics.append(
                 _diagnostic(
                     "ERROR",
-                    "path.analysis_script",
-                    "inputs.analysis_script must name ionic_conductivity.py",
+                    "input.analysis_script_unsupported",
+                    "analysis_script is packaged by MLIPFlow and cannot be overridden",
                 )
             )
-        elif script.suffix != ".py":
+
+        script = _bundled_analysis_script()
+        if not script.is_file():
             diagnostics.append(
                 _diagnostic(
-                    "ERROR", "path.analysis_script_suffix", "analysis_script must be a Python file"
+                    "ERROR",
+                    "path.bundled_analysis_missing",
+                    "the packaged ionic_conductivity.py runner is missing",
                 )
             )
 
@@ -2322,7 +2652,7 @@ class Adapter:
                 _diagnostic(
                     "ERROR",
                     "assumption.dimensions_unsupported",
-                    "reviewed source hard-codes D=slope/6 and therefore supports dimensions=3 only",
+                    "the formal contract is three-dimensional and uses D=slope/(2d)",
                 )
             )
         haven_ratio = parameters.get("haven_ratio")
@@ -2380,6 +2710,14 @@ class Adapter:
                         "%s must be one of %s" % (name, sorted(allowed)),
                     )
                 )
+        if parameters.get("piecewise") != "never":
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "parameter.piecewise_unsupported",
+                    "the formal workflow supports only the declared single-line Arrhenius fit",
+                )
+            )
 
         if source == "msd":
             if parameters.get("msd_time_unit") == "auto":
@@ -2451,7 +2789,7 @@ class Adapter:
             )
         for name in ("piecewise_slope_change", "piecewise_bic_delta"):
             value = parameters.get(name)
-            if not _finite_number(value) or float(value) < 0:
+            if value is not None and (not _finite_number(value) or float(value) < 0):
                 diagnostics.append(
                     _diagnostic(
                         "ERROR", "parameter.%s" % name, "%s must be finite and non-negative" % name
@@ -2461,7 +2799,6 @@ class Adapter:
             "diffusion_analyzer_min_obs",
             "diffusion_analyzer_avg_nsteps",
             "diffusion_analyzer_step_skip",
-            "min_segment_points",
         ):
             value = parameters.get(name)
             if not _positive_int(value):
@@ -2470,15 +2807,6 @@ class Adapter:
                         "ERROR", "parameter.%s" % name, "%s must be a positive integer" % name
                     )
                 )
-        if (
-            _positive_int(parameters.get("min_segment_points"))
-            and parameters["min_segment_points"] < 2
-        ):
-            diagnostics.append(
-                _diagnostic(
-                    "ERROR", "parameter.min_segment_points", "min_segment_points must be at least 2"
-                )
-            )
         for name in ("n_mobile_ions", "msd_smooth_window_points", "mobile_type"):
             value = parameters.get(name)
             if value is not None and not _positive_int(value):
@@ -2524,7 +2852,7 @@ class Adapter:
         if _operation_name(parameters) == _SMOKE_OPERATION:
             python_executable = str(resources.get("python_executable", sys.executable))
             md_script = _resolve(inputs["md_script"], project_root)
-            analysis_script = _resolve(inputs["analysis_script"], project_root)
+            analysis_script = _bundled_analysis_script()
             structure = _resolve(inputs["structure"], project_root)
             assert md_script is not None and analysis_script is not None and structure is not None
             raw_model = inputs.get("model", "default")
@@ -2642,7 +2970,7 @@ class Adapter:
                 },
                 "diagnostics": diagnostics,
             }
-        script = _resolve(inputs["analysis_script"], project_root)
+        script = _bundled_analysis_script()
         input_paths = [_resolve(value, project_root) for value in inputs["input_paths"]]
         output_dir = (
             attempt_dir / str(parameters.get("output_subdir", "ionic-transport-postprocess"))
@@ -2670,6 +2998,10 @@ class Adapter:
                 "haven_ratio": 1.0,
                 "conductivity_model": "uncorrected-nernst-einstein",
                 "seed": None,
+            },
+            "provenance": {
+                "analysis_source_sha256": _sha256_file(script),
+                "transport_core_sha256": _sha256_file(Path(linear_fit.__code__.co_filename)),
             },
             "diagnostics": diagnostics,
         }
@@ -2883,6 +3215,14 @@ class Adapter:
             return {"plugin_id": PLUGIN_ID, "status": "WAIT", "diagnostics": diagnostics}
         parameters = _mapping(context.get("parameters")) if isinstance(context, Mapping) else {}
         operation = _operation_name(parameters)
+        if output_dir is not None and isinstance(context, Mapping):
+            diagnostics.extend(
+                _verify_analysis_manifest(
+                    context, output_dir, output_dir / "analysis_manifest.json"
+                )
+            )
+            diagnostics.extend(_verify_transport_rows(rows, output_dir))
+            diagnostics.extend(_verify_arrhenius_summary(summary))
         integration_manifest: Optional[Dict[str, Any]] = None
         if operation == _SMOKE_OPERATION and isinstance(context, Mapping):
             integration_manifest, _, integration_diagnostics = _verify_smoke_manifest(context)
@@ -2979,6 +3319,11 @@ class Adapter:
             {
                 "role": "postprocess-failures",
                 "path": str(paths["postprocess_failures.json"]),
+                "media_type": "application/json",
+            },
+            {
+                "role": "analysis-manifest",
+                "path": str(paths["analysis_manifest.json"]),
                 "media_type": "application/json",
             },
         ]
