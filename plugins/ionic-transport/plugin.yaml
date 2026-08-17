@@ -143,7 +143,7 @@
       {"name": "pandas", "required": true, "bundled": false, "purpose": "Input tables and CSV output in the reviewed script."},
       {"name": "plotly", "required": true, "bundled": false, "purpose": "The script imports Plotly at startup and writes HTML diagnostics."},
       {"name": "pymatgen", "required": false, "bundled": false, "purpose": "Required for DiffusionAnalyzer and some trajectory/VASP readers."},
-      {"name": "ase", "required": false, "bundled": false, "purpose": "Required for ASE/LAMMPS trajectory analysis and for the optional MD smoke handoff."},
+      {"name": "ase", "required": false, "bundled": false, "purpose": "Source/operation-specific hard dependency for production.traj parsing and md-smoke-and-analyze; pure MSD and non-ASE sources remain independent."},
       {"name": "torch", "required": false, "bundled": false, "purpose": "Calculator runtime for supported learned-potential smoke paths when selected."},
       {"name": "mace-torch", "required": false, "bundled": false, "purpose": "Required only when the smoke explicitly selects a local MACE model."},
       {"name": "chgnet", "required": false, "bundled": false, "purpose": "Required only when the smoke selects CHGNet."},

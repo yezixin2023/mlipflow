@@ -16,7 +16,7 @@ Use the `dft-labeling` plugin as the deterministic implementation. Do not genera
 
 ## Review `vasp-prepare`
 
-Require an immutable structures manifest, a labeling config, an explicit pymatgen interpreter, and a portable pseudopotential reference. The config must select exactly one calculation type:
+Require an immutable structures manifest, a labeling config, an explicit Python interpreter that can import the mandatory `pymatgen` runtime dependency, and a portable pseudopotential reference. A missing or broken pymatgen import blocks/fails preparation; there is no fallback generator. The config must select exactly one calculation type:
 
 - `static`: require `NSW=0` and `IBRION=-1`.
 - `relax`: require positive `NSW`, `IBRION` in 1/2/3, and explicit `EDIFFG` and `ISIF`.
@@ -46,4 +46,4 @@ For `backend: ssh-slurm`, require one static structure, a named `backend_profile
 
 After the scheduler reports `COMPLETED`, run ordinary `advance`. Core bounded-fetches only the run's output allowlist, verifies transport integrity, and runs the pinned `check/collect`. Treat changed or missing output, malformed/truncated XML, OUTCAR without a normal footer, electronic steps reaching `NELM`, or label/raw-output mismatch as `FAIL`.
 
-Never describe contract tests, generated inputs, scheduler completion, or one smoke calculation as historical numerical parity.
+Never describe contract tests, generated inputs, scheduler completion, or one smoke calculation as historical numerical parity. Successful local pymatgen preparation validates neither VASP execution nor any scheduler/HPC path.

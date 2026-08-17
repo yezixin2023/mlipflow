@@ -88,7 +88,7 @@
   "dependencies": {
     "upstream_plugins": [],
     "python_packages": [
-      {"name": "ase", "required": false, "bundled": false, "purpose": "Required only by local lammps-prepare to read structures and write structure.data."}
+      {"name": "ase", "required": false, "bundled": false, "purpose": "Operation-specific hard dependency for local lammps-prepare structure reading and structure.data writing; execute and replay do not require ASE."}
     ],
     "external_programs": [
       {"name": "LAMMPS", "required": false, "bundled": false, "purpose": "Required by execute and by compute-node validation of binary restart candidates; exact executable/launcher remain site-owned."}

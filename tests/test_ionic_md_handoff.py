@@ -1,7 +1,8 @@
 """Focused orchestration tests for the bounded ionic-transport MD handoff.
 
-The fixtures imitate the two historical source contracts.  They do not import
-ASE, run a calculator, or stand in for scientific numerical parity.
+The fixtures imitate the two historical source contracts.  The bounded handoff
+uses real ASE Atoms/Trajectory I/O, but it does not run a calculator or stand in
+for scientific numerical parity.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_PATH = ROOT / "plugins" / "ionic-transport" / "adapter.py"
-HAS_ASE = importlib.util.find_spec("ase") is not None
 
 
 def load_adapter():
@@ -182,7 +182,6 @@ class IonicMDHandoffTests(unittest.TestCase):
         self.assertNotIn("/Users/", serialized)
         self.assertNotIn("/public/home/", serialized)
 
-    @unittest.skipUnless(HAS_ASE, "ASE is required for the tiny trajectory handoff")
     def test_fake_historical_sources_complete_the_confined_handoff(self) -> None:
         context = self.smoke_context()
         immutable = [self.md_script, self.structure]

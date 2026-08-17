@@ -37,6 +37,8 @@ The packaged runner currently handles:
 - VASP AIMD `vasprun.xml`; temperature must come from explicit override or VASP temperature metadata, and timestep must come from `POTIM` or explicit `vasp_step_fs`.
 - Precomputed text/CSV/TSV/XVG MSD. Require explicit `msd_time_unit` and `msd_unit` whenever the selected column names do not encode them. For step-valued time require explicit `msd_step_ps` unless a companion LAMMPS input/log declares it.
 
+ASE is mandatory when parsing `production.traj` or running `md-smoke-and-analyze`; a missing import must fail that selected path. Do not make pure MSD or non-ASE analysis import ASE when its actual source contract does not need it.
+
 Always require an explicit mobile `specie`, positive charge number, non-negative fit start, later fit end, and at least three fit points. Temperature, carrier count, and volume may be derived only from actual source metadata/structure. If that evidence is absent or ambiguous, require explicit `temperature_k`/source-specific temperature, `n_mobile_ions`, and `volume_a3`; never infer them from chemistry or typical values.
 
 For MSD-only inputs, require explicit positive `n_mobile_ions` and `volume_a3`. Strict temperature directory names such as `T800`, `800K`, or `temp_800K` are declarations; mixed-token and bare-number directory guesses are not accepted.

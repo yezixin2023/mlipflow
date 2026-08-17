@@ -159,7 +159,7 @@ Routing 先按元素、任务、场景、限制和关键指标完整性过滤，
 
 ## Phase 6：Agent Skills 与示例
 
-用仓库级 `.agents/skills/` 提供九个独立 Agent Skills：
+用仓库级 `.agents/skills/` 提供八个独立 Agent Skills：
 
 - `$mlip-workflow`
 - `$high-entropy-structure`
@@ -169,9 +169,10 @@ Routing 先按元素、任务、场景、限制和关键指标完整性过滤，
 - `$mlip-benchmark`
 - `$ionic-transport`
 - `$candidate-ranking`
-- `$electrochemical-voltage`
 
 Skills 只指导观察、判断、调用、风险确认和解释结果，不实现数值算法。计算插件始终在 `plugins/`。
+
+未来 `$mlip-workflow` 可直接编排 `electrochemical-voltage` plugin 的确定性电压后处理与回放能力，不要求存在独立的 voltage Agent Skill。
 
 `examples/high_entropy_sulfide` 使用小型、可分享 fixture 和 replay manifest 演示完整链路；不复制远端数据或模型。
 

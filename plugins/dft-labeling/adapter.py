@@ -940,11 +940,32 @@ def _verify_prepare_result(
     if not isinstance(generator, Mapping) or generator.get("name") != "pymatgen" or not _plain_string(generator.get("version")):
         diagnostics.append(_diagnostic("error", "result.generator", "必须记录 pymatgen 名称与版本。"))
     runtime = manifest.get("runtime")
+    interpreter = parameters.get("interpreter_argv")
+    expected_executable = (
+        _explicit_executable(interpreter[0])
+        if isinstance(interpreter, list) and len(interpreter) == 1
+        else None
+    )
     if (
         not isinstance(runtime, Mapping)
         or runtime.get("prepare_wrapper_sha256") != _sha256(BUNDLED_PREPARE_WRAPPER)
     ):
         diagnostics.append(_diagnostic("error", "result.runtime", "prepare wrapper 指纹与当前批准实现不一致。"))
+    elif (
+        expected_executable is None
+        or runtime.get("python_executable") != str(expected_executable)
+        or not _plain_string(runtime.get("python_version"))
+        or not _plain_string(runtime.get("pymatgen_version"))
+        or not isinstance(generator, Mapping)
+        or runtime.get("pymatgen_version") != generator.get("version")
+    ):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "result.runtime.provenance",
+                "Python executable/version 或 pymatgen version 与已批准运行时不一致。",
+            )
+        )
     input_paths = {
         "structures_manifest": _path(project_root, inputs["structures_manifest"]),
         "labeling_config": _path(project_root, inputs["labeling_config"]),

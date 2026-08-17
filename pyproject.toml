@@ -20,7 +20,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "jsonschema>=4", "ruff>=0.5"]
+dev = ["pytest>=7", "jsonschema>=4", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22"]
 science = ["numpy>=1.23", "ase>=3.22", "icet>=2.0", "pandas>=1.5", "plotly>=5"]
 dft = ["pymatgen>=2024.5"]
 
@@ -78,6 +78,9 @@ where = ["src"]
 "share/mlipflow/agent-skills/high-entropy-structure" = [".agents/skills/high-entropy-structure/SKILL.md"]
 "share/mlipflow/agent-skills/high-entropy-structure/agents" = [".agents/skills/high-entropy-structure/agents/openai.yaml"]
 "share/mlipflow/agent-skills/high-entropy-structure/references" = [".agents/skills/high-entropy-structure/references/sqs-contract.md"]
+"share/mlipflow/agent-skills/mlip-workflow" = [".agents/skills/mlip-workflow/SKILL.md"]
+"share/mlipflow/agent-skills/mlip-workflow/agents" = [".agents/skills/mlip-workflow/agents/openai.yaml"]
+"share/mlipflow/agent-skills/mlip-workflow/references" = [".agents/skills/mlip-workflow/references/workflow-contract.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

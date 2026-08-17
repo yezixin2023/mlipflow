@@ -754,10 +754,9 @@ MLIPFlow plan/approval
 
 ### 10.1 Python 环境
 
-按 wrapper 需要安装：
+`vasp-prepare` 所选的 Python interpreter 必须能 import `pymatgen`；这是输入生成的必要 runtime dependency，不存在无 pymatgen fallback。`ASE`、`dpdata` 等只按独立 `label` wrapper 的实际需要安装：
 
 ```text
-pymatgen
 ASE
 dpdata
 其他解析依赖

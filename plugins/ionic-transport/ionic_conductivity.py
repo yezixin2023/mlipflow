@@ -405,9 +405,9 @@ def multi_origin_msd_fft(flat_positions: np.ndarray, n_mobile: int) -> np.ndarra
 def load_ase_trajectory(run_dir: Path, dataset: str, args) -> RunData:
     try:
         from ase.io import read
-    except Exception as exc:
+    except ImportError as exc:
         raise ImportError(
-            "ASE is required to read production.traj. Try: conda run -n pymatgen python ..."
+            "ASE is required to read production.traj; install ASE in the selected Python runtime"
         ) from exc
 
     traj_path = run_dir / "production.traj"

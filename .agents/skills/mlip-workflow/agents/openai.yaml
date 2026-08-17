@@ -1,0 +1,4 @@
+interface:
+  display_name: "MLIP Workflow"
+  short_description: "根据已有 artifacts 规划并监督端到端 MLIP 工作流。"
+  default_prompt: "$mlip-workflow 根据我的研究目标和已有 artifacts，识别最早缺失阶段并规划下一步可审计的 MLIP workflow。"

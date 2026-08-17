@@ -415,12 +415,18 @@ def prepare(
     output_dir = output_dir.expanduser().absolute()
     if output_dir.exists():
         raise ContractError("output_dir must not already exist")
-    output_dir.mkdir(parents=True)
 
     model = _model_reference(model_reference)
     config = _config(config_path, model)
 
-    from ase.io import read, write
+    try:
+        from ase.io import read, write
+    except ImportError as exc:
+        raise ContractError(
+            "ASE is required by lammps-prepare to read the structure and write structure.data"
+        ) from exc
+
+    output_dir.mkdir(parents=True)
 
     source_structure_format = _structure_format(structure_format)
     atoms = read(str(structure), index=-1, format=source_structure_format)

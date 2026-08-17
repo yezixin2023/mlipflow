@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import json
 from pathlib import Path
 
 import pytest
+from ase.io import read
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins" / "lammps-md"
@@ -235,7 +237,6 @@ def test_prepare_plan_binds_explicit_structure_format(tmp_path: Path) -> None:
 
 
 def test_prepare_explicit_lammps_data_format_without_filename_inference(tmp_path: Path) -> None:
-    pytest.importorskip("ase")
     module = _load("lammps_prepare_explicit_lammps_data", PLUGIN / "lammps_prepare.py")
     structure = tmp_path / "structure.data"
     structure.write_text(
@@ -266,4 +267,32 @@ def test_prepare_explicit_lammps_data_format_without_filename_inference(tmp_path
     )
 
     assert manifest["source_structure_format"] == "lammps-data"
-    assert (output / "structure.data").is_file()
+    structure_data = output / "structure.data"
+    assert structure_data.is_file()
+    generated = read(structure_data, format="lammps-data", style="atomic")
+    assert len(generated) == 1
+    assert generated.get_chemical_symbols() == ["Li"]
+
+
+def test_lammps_prepare_missing_ase_fails_without_creating_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load("lammps_prepare_missing_ase", PLUGIN / "lammps_prepare.py")
+    context = _context(tmp_path, "deepmd")
+    original_import = builtins.__import__
+
+    def import_without_ase(name, *args, **kwargs):
+        if name == "ase" or name.startswith("ase."):
+            raise ModuleNotFoundError("simulated missing ASE")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_ase)
+    output = tmp_path / "prepared"
+    with pytest.raises(module.ContractError, match="ASE is required by lammps-prepare"):
+        module.prepare(
+            tmp_path / context["inputs"]["structure"],
+            tmp_path / context["inputs"]["model_reference"],
+            tmp_path / context["inputs"]["lammps_config"],
+            output,
+        )
+    assert not output.exists()

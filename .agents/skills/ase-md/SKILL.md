@@ -15,6 +15,8 @@ Version 0.3 supports one single-temperature trajectory per workflow node on `ssh
 - `npt-isotropic-mtk`: isotropic Martyna-Tobias-Klein NPT using ASE `IsotropicMTKNPT`.
 - optional periodic checkpointing and exact restart across fresh scheduler attempts.
 
+ASE is a hard compute-runtime dependency for every `ase-md` run. A missing ASE import must fail the run; never substitute another MD implementation.
+
 Do not silently substitute these contracts when the user requests NVE, anisotropic/full-cell NPT, replicas, a temperature sweep, automatic segment concatenation, diffusion fitting, conductivity, or Arrhenius analysis. Those remain separate workflow capabilities.
 
 ## Choose the calculator

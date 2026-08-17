@@ -58,7 +58,7 @@
   ],
   "parameters": [
     {"name": "operation", "type": "string", "required": true, "description": "vasp-prepare generates inputs; label runs either a separately approved local user command or a site-template-backed scheduled calculation."},
-    {"name": "interpreter-argv", "type": "array", "required": false, "description": "Local-only interpreter argv; vasp-prepare requires an absolute executable non-symlink file and local label requires one non-shell executable."},
+    {"name": "interpreter-argv", "type": "array", "required": false, "description": "Local-only interpreter argv; vasp-prepare requires an absolute executable non-symlink Python file that can import pymatgen, and local label requires one non-shell executable."},
     {"name": "engine", "type": "string", "required": true, "description": "Must be vasp for vasp-prepare; explicit engine identifier for label."},
     {"name": "output-subdir", "type": "string", "required": false, "description": "Fresh attempt-relative input directory for vasp-prepare.", "default": "vasp-inputs"},
     {"name": "max-structures", "type": "integer", "required": false, "description": "Positive preparation bound, capped at 10000.", "default": 10000},
@@ -76,7 +76,7 @@
   "dependencies": {
     "upstream_plugins": ["pes-sampling"],
     "python_packages": [
-      {"name": "pymatgen", "required": false, "bundled": false, "purpose": "Required at runtime by vasp-prepare for VASP input generation and licensed POTCAR assembly."},
+      {"name": "pymatgen", "required": true, "bundled": false, "purpose": "Required at runtime by vasp-prepare for VASP input generation and licensed POTCAR assembly."},
       {"name": "dpdata", "required": false, "bundled": false, "purpose": "Optional DeepMD-format conversion for label."},
       {"name": "ase", "required": false, "bundled": false, "purpose": "Optional extxyz conversion for label."}
     ],

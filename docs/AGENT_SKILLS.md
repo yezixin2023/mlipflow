@@ -14,7 +14,6 @@
 | `$mlip-benchmark` | 产生机器可读 benchmark/ranking | `mlip-benchmark` |
 | `$ionic-transport` | 仅本地监督已有 ASE/LAMMPS/VASP trajectory 或 MSD → MSD/D/电导/Arrhenius，以及 bounded MD smoke | `ionic-transport` |
 | `$candidate-ranking` | 按已有数值指标做确定性 ranking/top-k | `candidate-ranking` |
-| `$electrochemical-voltage` | Li 含量能量与电压曲线 | `electrochemical-voltage` |
 
 Skills 是监督说明，不是计算实现。更新 Skill 时，应以当前 CLI 帮助、plugin manifest 和 schema 为接口事实；旧 claw skills 已发现命令名和参数漂移，不可直接复制。
 
@@ -36,7 +35,7 @@ Runner 的 `analysis_manifest.json` 固定科学参数与 source/result identity
 
 ## DFT labeling
 
-`$dft-labeling` 将 `vasp-prepare` 与 `label` 视为两个独立 operation。前者只在 fresh attempt 中生成输入，不运行 VASP；POTCAR 只能来自用户合法配置的 `PMG_VASP_PSP_DIR`，只记录可验证的 reference 且永不 collect/入库。后者是独立的昂贵执行，需要单独审查。单结构 static `ssh-slurm` 在 scheduler 完成后由普通 `advance` bounded fetch 并运行 pinned checker；POTCAR 只允许 stage，永不 fetch。Agent 只产生科学输入与 `cpus/gpus/memory/walltime`，不猜 SSH host、partition、module、executable、template root 或 work root；这些由用户本地 site profile 与站点远端模板提供。
+`$dft-labeling` 将 `vasp-prepare` 与 `label` 视为两个独立 operation。前者只在 local fresh attempt 中生成输入，不运行 VASP，且所选 Python interpreter 必须能 import 必要依赖 pymatgen；缺失依赖时禁止 fallback 或假成功。POTCAR 只能来自用户合法配置的 `PMG_VASP_PSP_DIR`，只记录可验证的 reference 且永不 collect/入库。后者是独立的昂贵执行，需要单独审查，也是唯一可选 local/`ssh-slurm` 的 operation。单结构 static `ssh-slurm` 在 scheduler 完成后由普通 `advance` bounded fetch 并运行 pinned checker；POTCAR 只允许 stage，永不 fetch。Agent 只产生科学输入与 `cpus/gpus/memory/walltime`，不猜 SSH host、partition、module、executable、template root 或 work root；这些由用户本地 site profile 与站点远端模板提供。成功生成 VASP 输入不代表 VASP 或 scheduler 已验证。
 
 ## MLIP training / fine-tuning
 

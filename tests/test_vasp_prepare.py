@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import builtins
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -270,12 +272,22 @@ class VaspPrepareTests(unittest.TestCase):
             self.assertEqual(38, manifest["incar"]["effective"]["IALGO"])
             self.assertEqual([1, 1, 1], manifest["kpoints"]["grid"])
             self.assertRegex(manifest["runtime"]["prepare_wrapper_sha256"], r"^sha256:[0-9a-f]{64}$")
+            self.assertEqual(PYTHON_EXECUTABLE, manifest["runtime"]["python_executable"])
+            self.assertEqual(
+                manifest["generator"]["version"], manifest["runtime"]["pymatgen_version"]
+            )
+            self.assertRegex(manifest["runtime"]["python_version"], r"^\d+\.\d+\.\d+")
             self.assertFalse(manifest["calculations"][0]["files"]["POTCAR"]["collectable"])
             self.assertEqual("OK", adapter.check(context)["status"])
             collected = adapter.collect(context)
             self.assertEqual("OK", collected["status"])
             self.assertFalse(collected["metrics"]["potcar_collected"])
             self.assertNotIn("POTCAR", [Path(item["path"]).name for item in collected["artifacts"]])
+            result_path = Path(context["attempt_dir"]) / "dft-input-manifest.json"
+            changed = json.loads(result_path.read_text(encoding="utf-8"))
+            changed["runtime"]["python_executable"] = "mismatched-python"
+            write_json(result_path, changed)
+            self.assertEqual("FAIL", adapter.check(context)["status"])
 
     def test_incar_and_potcar_tampering_fail_even_when_manifest_hashes_are_rewritten(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -353,6 +365,45 @@ class VaspPrepareTests(unittest.TestCase):
                     self.wrapper.prepare_inputs(retry_args, self.fake_api())
             self.assertTrue((retry_attempt / "vasp-inputs/INCOMPLETE.json").is_file())
 
+    def test_missing_pymatgen_is_an_explicit_prepare_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, fixture = self.fixture(Path(directory))
+            argv = [
+                "--project-root",
+                fixture.args.project_root,
+                "--attempt-dir",
+                fixture.args.attempt_dir,
+                "--structures-manifest",
+                fixture.args.structures_manifest,
+                "--labeling-config",
+                fixture.args.labeling_config,
+                "--pseudopotential-reference",
+                fixture.args.pseudopotential_reference,
+                "--result-manifest",
+                fixture.args.result_manifest,
+                "--output-subdir",
+                fixture.args.output_subdir,
+                "--max-structures",
+                str(fixture.args.max_structures),
+            ]
+            original_import = builtins.__import__
+
+            def import_without_pymatgen(name, *args, **kwargs):
+                if name == "pymatgen" or name.startswith("pymatgen."):
+                    raise ModuleNotFoundError("simulated missing pymatgen")
+                return original_import(name, *args, **kwargs)
+
+            stderr = io.StringIO()
+            with patch("builtins.__import__", side_effect=import_without_pymatgen), patch(
+                "sys.stderr", stderr
+            ):
+                return_code = self.wrapper.main(argv)
+            failure = json.loads(stderr.getvalue())
+            self.assertEqual(2, return_code)
+            self.assertEqual("FAIL", failure["status"])
+            self.assertIn("pymatgen", failure["error"])
+            self.assertFalse(Path(fixture.args.result_manifest).exists())
+
     def test_label_can_bind_prepared_manifest_but_remains_a_separate_plan(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory).resolve()
@@ -386,11 +437,8 @@ class VaspPrepareTests(unittest.TestCase):
             combined["parameters"]["prepare_script"] = "scripts/prepare_and_run.py"
             self.assertEqual("BLOCKED", self.adapter_module.Adapter().plan(combined)["status"])
 
-    def test_real_pymatgen_writes_poscar_incar_and_kpoints_when_available(self) -> None:
-        try:
-            real = self.wrapper._load_pymatgen()
-        except self.wrapper.ContractError:
-            self.skipTest("pymatgen is not installed in this test interpreter")
+    def test_real_pymatgen_vasp_prepare_integration_is_mandatory(self) -> None:
+        real = self.wrapper._load_pymatgen()
         with tempfile.TemporaryDirectory() as directory:
             context, fixture = self.fixture(Path(directory))
             source_dir = Path(context["project_root"]) / "input"
@@ -425,6 +473,20 @@ class VaspPrepareTests(unittest.TestCase):
             with patch.dict(os.environ, runtime_environment, clear=True):
                 manifest = self.wrapper.prepare_inputs(fixture.args, api)
             self.assertEqual("pymatgen", manifest["generator"]["name"])
+            self.assertEqual(real.version, manifest["runtime"]["pymatgen_version"])
+            self.assertEqual(PYTHON_EXECUTABLE, manifest["runtime"]["python_executable"])
+            calculation_dir = (
+                Path(context["attempt_dir"]) / manifest["calculations"][0]["directory"]
+            )
+            generated_poscar = real.Poscar.from_file(str(calculation_dir / "POSCAR"))
+            generated_incar = real.Incar.from_file(str(calculation_dir / "INCAR"))
+            generated_kpoints = real.Kpoints.from_file(str(calculation_dir / "KPOINTS"))
+            generated_structure = real.Structure.from_file(str(calculation_dir / "POSCAR"))
+            self.assertIsInstance(generated_poscar, real.Poscar)
+            self.assertIsInstance(generated_incar, real.Incar)
+            self.assertIsInstance(generated_kpoints, real.Kpoints)
+            self.assertIsInstance(generated_structure, real.Structure)
+            self.assertEqual(3, len(generated_structure))
             expected_source = "pymatgen-settings" if real.configured_psp_root else "environment"
             self.assertEqual(
                 expected_source, manifest["potcar_policy"]["configuration_source"]

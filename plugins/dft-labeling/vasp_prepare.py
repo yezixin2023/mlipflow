@@ -13,6 +13,7 @@ import importlib.metadata
 import json
 import math
 import os
+import platform
 import re
 import sys
 from pathlib import Path
@@ -436,8 +437,8 @@ def _load_pymatgen() -> PymatgenApi:
         raise ContractError("pymatgen with VASP input support is required") from exc
     try:
         version = importlib.metadata.version("pymatgen")
-    except importlib.metadata.PackageNotFoundError:
-        version = "UNKNOWN"
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise ContractError("installed pymatgen distribution version is required") from exc
     configured_root = SETTINGS.get("PMG_VASP_PSP_DIR")
     return PymatgenApi(Structure, Incar, Kpoints, Poscar, Potcar, version, configured_root)
 
@@ -671,6 +672,9 @@ def prepare_inputs(args: argparse.Namespace, api: PymatgenApi | None = None) -> 
         "engine": "vasp",
         "generator": {"name": "pymatgen", "version": api.version},
         "runtime": {
+            "python_executable": str(Path(sys.executable).expanduser().absolute().resolve()),
+            "python_version": platform.python_version(),
+            "pymatgen_version": api.version,
             "prepare_wrapper_sha256": _sha256(Path(__file__).resolve()),
         },
         "calculation_type": config["calculation_type"],

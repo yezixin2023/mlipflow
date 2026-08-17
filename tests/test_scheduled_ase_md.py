@@ -9,6 +9,9 @@ import types
 from pathlib import Path
 
 import pytest
+from ase import Atoms
+from ase.constraints import FixCom
+from ase.io import read, write
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins" / "ase-md"
@@ -198,22 +201,23 @@ def test_final_structure_copy_drops_runtime_attachments() -> None:
 
 
 def test_final_structure_copy_avoids_fixcom_extxyz_failure(tmp_path: Path) -> None:
-    ase = pytest.importorskip("ase")
-    constraints = pytest.importorskip("ase.constraints")
-    io = pytest.importorskip("ase.io")
     runner = _load("ase_md_runner_final_structure_extxyz", PLUGIN / "ase_md.py")
-    atoms = ase.Atoms("Li2", positions=[[0, 0, 0], [1, 0, 0]])
-    atoms.set_constraint(constraints.FixCom())
+    atoms = Atoms("Li2", positions=[[0, 0, 0], [1, 0, 0]])
+    atoms.set_constraint(FixCom())
 
     final_atoms = runner._final_structure_copy(atoms, [])
-    io.write(
-        tmp_path / "final.extxyz",
+    output = tmp_path / "final.extxyz"
+    write(
+        output,
         final_atoms,
         format="extxyz",
         write_results=False,
     )
 
     assert final_atoms.constraints == []
+    restored = read(output, format="extxyz")
+    assert isinstance(restored, Atoms)
+    assert restored.get_chemical_symbols() == ["Li", "Li"]
 
 
 def test_callback_step_zero_is_recorded_once() -> None:
