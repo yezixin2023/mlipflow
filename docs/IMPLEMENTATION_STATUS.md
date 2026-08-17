@@ -1,6 +1,6 @@
 # 实现状态
 
-最后更新：2026-08-14。
+最后更新：2026-08-17。
 
 ## 六个独立状态轴
 
@@ -32,7 +32,7 @@
 | `mlip-training` | DeepMD、M3GNet/MatGL、CHGNet、MACE 的 bundled train/finetune runner；local compatibility path 与通用 `ssh-slurm` contract | 标准 training result、cluster run report、模型 artifact identity；一次真实 DeepMD scheduled learning curve | 5 份历史源审计；一次真实 DeepMD 500 步 early-training 数值复现逐 reporting step 一致 | 真实 scheduled 验证仅覆盖单节点 CPU DeepMD fresh train；其他框架、fine-tune、GPU、多节点和生产规模未验证 |
 | `ase-md` | 显式四框架模型的单温 NVT Langevin / isotropic MTK NPT；周期 JSON checkpoint、失败 salvage 和新 attempt 精确 restart | trajectory/index/thermo、checkpoint、final structure、result/cluster reports | fake scheduler 覆盖 NVT、NPT、checkpoint、TIMEOUT salvage 与 restart 身份 | 尚未在真实站点运行；不做轨迹拼接、温度序列或输运分析，NPT 必须由具体模型通过 finite-stress probe |
 | `lammps-md` | 本地生成 DeepMD/MACE/MatGL CPU/GPU NVT/NPT deck；受控 scheduled execute；交替 binary restart、salvage 与 runtime-bound resume | prepared manifest、trajectory/final data/restart/log/result；restart runtime identity | 本地 fixture 覆盖 prepare、scheduled lifecycle、completion 与 restart deck/identity | 尚未运行真实 LAMMPS；需要匹配模型接口的站点 build，restart 只保证 pinned runtime 下 state continuity，不保证跨平台 bitwise identity |
-| `mlip-benchmark` | 从 supplied reference/prediction pairs 重算 MAE/RMSE/Pearson r；不会加载模型 | DeepMD/CHGNet workbook、prepared JSON/CSV/XLSX、论文表 | 真实 workbook/表格均为 `REPLAY_VERIFIED`，不是 fresh prediction parity | M3GNet 真实 workbook 和 DPA-2 原始 pairs 缺失；CHGNet force/stress 源单位未声明 |
+| `mlip-benchmark` | `evaluate-fresh` 通过共享 model runtime 加载六个 exact family，生成 canonical prediction evidence，再复用唯一 MAE/RMSE/Pearson/ranking；`normalize-execute` 只重算 supplied pairs | 指纹固定的 DeepMD/CHGNet workbook、prepared JSON/CSV/XLSX、论文表 | fresh contract/injected-predictor 全链测试完成；三份 DeepMD 与一份 CHGNet 历史 source/output 为 `REPLAY_VERIFIED` | 真实六模型 production-scale fresh parity 未执行；M3GNet benchmark output 和 DPA-2 raw pairs 为 `MISSING_SOURCE`；历史 CHGNet/DeepMD 未声明的物理单位不猜测 |
 | `ionic-transport` | local-only bundled runner：ASE/LAMMPS/VASP trajectory 或 MSD → MSD/D/σ/single-line Arrhenius；`md-smoke-and-analyze` 复用同一正式分析 | analysis manifest、source/result SHA/size、重新解析的 MSD curve；历史 stdout/integration manifest | 已知线性 MSD、Nernst–Einstein、Arrhenius deterministic regression 与 tiny LAMMPS trajectory 全链通过；保留 MACE/DeepMD 历史 parity 和旧 MACE tiny smoke 证据 | `d=3`、Haven=1；不做 Green-Kubo/anisotropic/bootstrap；极短轨迹不提供收敛输运数值；历史 N=7 仅限隔离 parity convention |
 | `candidate-ranking` | legacy order normalization、显式单位、稳定排序/确定 tie-break、missing policy、top-k | candidate/metric-results/ranking manifests | 247/247 历史候选与 top-k 已本地兼容复核 | 不生成候选、不计算性质、不执行 MLIP/MD/DFT、不选择模型或替代高保真验证 |
 | `electrochemical-voltage` | 默认 `compute-from-energies` 从严格 eV total-energy sequence 计算相邻平均电压；`replay-si-table-s11` 经标准 Adapter 生成并收集 metrics/ranking/provenance 三件套 | SI Table S11 的 18 行六模型结果 | S11 为 `REPLAY_VERIFIED`；总能公式尚无论文原始序列 parity | 不执行 DFT/MLIP；S11 replay 从已报告 voltage 开始，且明确 `model_execution=false` |

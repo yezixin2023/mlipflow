@@ -313,7 +313,7 @@ def test_mace_plan(tmp_path):
     assert mlip_mace.plan(ns("mace"), cfg, tmp_path / "config.json", data)["framework"] == "mace"
 
 
-def test_mace_plan_matches_hfeshell_store_true_parser(tmp_path):
+def test_mace_plan_matches_cpu_site_store_true_parser(tmp_path):
     data = tmp_path / "train.xyz"
     data.write_text("0\ncomment\n")
     cfg = {

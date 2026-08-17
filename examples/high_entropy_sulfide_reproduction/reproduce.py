@@ -35,6 +35,8 @@ REPORT_OUTPUTS = (
     "manuscript_reproduction_summary.md",
 )
 BENCHMARK_WRAPPER_LOCATOR = "plugins/mlip-benchmark/benchmark_wrapper.py"
+BENCHMARK_NORMALIZATION_LOCATOR = "plugins/mlip-benchmark/benchmark_normalization.py"
+MODEL_RUNTIME_LOCATOR = "src/mlipflow/science/model_runtime.py"
 BENCHMARK_MANIFEST_LOCATOR = "plugins/mlip-benchmark/plugin.yaml"
 LEGACY_RANKING_IMPLEMENTATION = {
     "plugins/composition-screening/screen.py": (
@@ -954,7 +956,12 @@ def _build_summary(
                 prefix=True,
             ),
         }
-        for locator in (BENCHMARK_WRAPPER_LOCATOR, BENCHMARK_MANIFEST_LOCATOR)
+        for locator in (
+            BENCHMARK_WRAPPER_LOCATOR,
+            BENCHMARK_NORMALIZATION_LOCATOR,
+            MODEL_RUNTIME_LOCATOR,
+            BENCHMARK_MANIFEST_LOCATOR,
+        )
     ]
     static = compact_routes["static-pes"]
     transport = compact_routes["ionic-transport"]

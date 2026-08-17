@@ -1,0 +1,88 @@
+{
+  "audit_schema_version": 1,
+  "claim": "read-only historical source/output regression; not fresh inference parity",
+  "model_execution": false,
+  "families": {
+    "deepmd-se_e2_a": {
+      "status": "REPLAY_VERIFIED",
+      "parser_identity": "deepmd-metrics-xlsx",
+      "source_sha256": "sha256:9502e8f88c945babcf64f494bbfb330894a1c45fd1ac0eb6733137cb298574e2",
+      "output_sha256": "sha256:372466826862174d4e993bf594a3fa35cfceb6f5efc7f0464099e0ffc614597f",
+      "split": "test_all-li8-li10-li16",
+      "energy_normalization": "per-atom",
+      "energy_unit": "source-unit-unspecified",
+      "force_unit": "source-unit-unspecified",
+      "structure_count": 13024,
+      "force_component_count": 2673726,
+      "energy_rmse": 0.007190632639714127,
+      "energy_pearson_r": 0.998383122897441,
+      "force_rmse": 0.1766770059878328,
+      "force_pearson_r": 0.9564072093736768
+    },
+    "deepmd-se_e2_r": {
+      "status": "REPLAY_VERIFIED",
+      "parser_identity": "deepmd-metrics-xlsx",
+      "source_sha256": "sha256:9502e8f88c945babcf64f494bbfb330894a1c45fd1ac0eb6733137cb298574e2",
+      "output_sha256": "sha256:7f354fbf8837719252a160e8e9b6f5ac1ac9c465eafa46a5bad8186678bdb67e",
+      "split": "test_all-li8-li10-li16",
+      "energy_normalization": "per-atom",
+      "energy_unit": "source-unit-unspecified",
+      "force_unit": "source-unit-unspecified",
+      "structure_count": 13024,
+      "force_component_count": 2673726,
+      "energy_rmse": 0.01303367441338188,
+      "energy_pearson_r": 0.9946815122841708,
+      "force_rmse": 0.2756778043936335,
+      "force_pearson_r": 0.8901533484123095
+    },
+    "deepmd-se_atten_v2": {
+      "status": "REPLAY_VERIFIED",
+      "parser_identity": "deepmd-metrics-xlsx",
+      "source_sha256": "sha256:9502e8f88c945babcf64f494bbfb330894a1c45fd1ac0eb6733137cb298574e2",
+      "output_sha256": "sha256:9f39aefdb7fe2ffe53fd30c71a920f20582f82befb4b04489a941318d792a296",
+      "split": "test_all-li8-li10-li16",
+      "energy_normalization": "per-atom",
+      "energy_unit": "source-unit-unspecified",
+      "force_unit": "source-unit-unspecified",
+      "structure_count": 13024,
+      "force_component_count": 2673726,
+      "energy_rmse": 0.00790596295510387,
+      "energy_pearson_r": 0.9980456192199905,
+      "force_rmse": 0.1856936082906573,
+      "force_pearson_r": 0.9517273261398933
+    },
+    "deepmd-dpa2": {
+      "status": "MISSING_SOURCE",
+      "reason": "No raw prediction pairs or family-specific historical benchmark output were found."
+    },
+    "m3gnet": {
+      "status": "MISSING_SOURCE",
+      "source_sha256": "sha256:2289d14e42cef1ccdd1e7f8509354ee414aadaae9bef043fcb96f9275f4adfce",
+      "reason": "Evaluation source was found, but no benchmark output, workbook, prediction pairs, or evaluation log was found."
+    },
+    "chgnet": {
+      "status": "REPLAY_VERIFIED",
+      "parser_identity": "chgnet-efs-metrics-xlsx",
+      "source_sha256": "sha256:7f6e1daaa2651dbc17b4f5b4f5af32fd156cf507d7388d87f6d2dc0ff1a76df0",
+      "output_sha256": "sha256:ddcf67b68105b0728501707fe9d17ef0432eea9c28d9d5c34c0117f35255f0c8",
+      "split": "test",
+      "energy_normalization": "per-atom",
+      "energy_unit": "source-unit-unspecified",
+      "force_unit": "source-unit-unspecified",
+      "stress_unit": "source-unit-unspecified",
+      "stress_convention": "source-order-and-sign-unspecified",
+      "structure_count": 9753,
+      "force_component_count": 1992795,
+      "stress_component_count": 87777,
+      "energy_mae": 0.006312870424439197,
+      "energy_rmse": 0.0080861044340676,
+      "energy_pearson_r": 0.9980042555322437,
+      "force_mae": 0.1274915185569937,
+      "force_rmse": 0.1889819035175336,
+      "force_pearson_r": 0.9523452120073587,
+      "stress_mae": 8.072840032451793,
+      "stress_rmse": 12.46909130171059,
+      "stress_pearson_r": -0.9664330004276259
+    }
+  }
+}

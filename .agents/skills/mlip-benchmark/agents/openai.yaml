@@ -1,0 +1,4 @@
+interface:
+  display_name: "MLIP Benchmark"
+  short_description: "Run MLIP metrics/ranking; distinguish fresh from replay"
+  default_prompt: "$mlip-benchmark Benchmark MLIP models or existing prediction evidence and clearly report whether model inference actually ran."

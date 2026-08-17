@@ -116,7 +116,9 @@ class ManuscriptReproductionTests(unittest.TestCase):
         self.assertEqual(
             {
                 "plugins/mlip-benchmark/benchmark_wrapper.py",
+                "plugins/mlip-benchmark/benchmark_normalization.py",
                 "plugins/mlip-benchmark/plugin.yaml",
+                "src/mlipflow/science/model_runtime.py",
             },
             {item["locator"] for item in implementation_files},
         )
@@ -459,7 +461,9 @@ class ManuscriptReproductionTests(unittest.TestCase):
             shutil.copytree(EXAMPLE, relocated)
             locators = (
                 "plugins/mlip-benchmark/benchmark_wrapper.py",
+                "plugins/mlip-benchmark/benchmark_normalization.py",
                 "plugins/mlip-benchmark/plugin.yaml",
+                "src/mlipflow/science/model_runtime.py",
                 "plugins/candidate-ranking/rank.py",
                 "plugins/candidate-ranking/normalize_legacy.py",
                 "plugins/candidate-ranking/adapter.py",

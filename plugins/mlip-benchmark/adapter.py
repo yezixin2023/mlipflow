@@ -1,4 +1,4 @@
-"""Safe command planner and result collector for MLIP benchmark artifacts.
+"""MLIPFlow lifecycle and strict result validation for benchmark artifacts.
 
 The adapter deliberately does not import any of the six reviewed model
 configurations and never executes a program itself.  A user-owned prediction
@@ -6,7 +6,9 @@ CLI is required to accept the argv contract emitted by :meth:`Adapter.plan`
 and to write the versioned result manifest consumed by :meth:`Adapter.check`
 and :meth:`Adapter.collect`.  The bundled ``benchmark_wrapper.py`` is exposed
 through separate normalize operations that recompute metrics only from
-explicit pairs or replay existing evidence; neither operation loads an MLIP.
+explicit pairs or replay existing evidence.  ``evaluate-fresh`` invokes the
+bundled first-party runner and is the only operation that may claim model
+execution.
 """
 
 from __future__ import annotations
@@ -20,21 +22,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from mlipflow.science import model_runtime
+from mlipflow.science.artifact_identity import fingerprint_path as _fingerprint_path
+from mlipflow.science.artifact_identity import sha256_file as _sha256
+
 
 PLUGIN_ID = "mlip-benchmark"
-MODEL_FAMILIES = frozenset(
-    {
-        "deepmd-se_atten_v2",
-        "deepmd-se_e2_a",
-        "deepmd-se_e2_r",
-        "deepmd-dpa2",
-        "m3gnet",
-        "chgnet",
-    }
-)
+MODEL_FAMILIES = frozenset(model_runtime.MODEL_FAMILIES)
 LEGACY_OPERATIONS = frozenset({"evaluate-static", "collect-existing"})
 NORMALIZE_OPERATIONS = frozenset({"normalize-replay", "normalize-execute"})
-OPERATIONS = LEGACY_OPERATIONS | NORMALIZE_OPERATIONS
+FRESH_OPERATION = "evaluate-fresh"
+OPERATIONS = LEGACY_OPERATIONS | NORMALIZE_OPERATIONS | {FRESH_OPERATION}
 EXECUTION_BACKENDS = frozenset({"local"})
 SHELL_EXECUTABLES = frozenset(
     {"bash", "csh", "cmd", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "tcsh", "zsh"}
@@ -47,6 +45,7 @@ NORMALIZED_OUTPUT_NAMES = (
     "model_ranking.json",
     "provenance.json",
 )
+FRESH_OUTPUT_NAMES = ("prediction_evidence.json",) + NORMALIZED_OUTPUT_NAMES
 SUMMARY_COLUMNS = (
     "model",
     "task",
@@ -68,6 +67,9 @@ SUMMARY_COLUMNS = (
 BUNDLED_WRAPPER = (
     Path(globals().get("__file__", "adapter.py")).absolute().with_name("benchmark_wrapper.py")
 )
+BUNDLED_FRESH_RUNNER = BUNDLED_WRAPPER.with_name("fresh_benchmark.py")
+BUNDLED_NORMALIZATION = BUNDLED_WRAPPER.with_name("benchmark_normalization.py")
+SHARED_MODEL_RUNTIME = Path(model_runtime.__file__).resolve()
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 
@@ -180,7 +182,27 @@ def _normalized_output_dir(context: dict[str, Any]) -> Path:
 
 def _normalized_output_paths(context: dict[str, Any]) -> dict[str, Path]:
     output_dir = _normalized_output_dir(context)
-    return {name: output_dir / name for name in NORMALIZED_OUTPUT_NAMES}
+    names = FRESH_OUTPUT_NAMES if _operation(context) == FRESH_OPERATION else NORMALIZED_OUTPUT_NAMES
+    return {name: output_dir / name for name in names}
+
+
+def _fresh_inputs(context: dict[str, Any]) -> tuple[Path, Path]:
+    inputs = _mapping(context.get("inputs"))
+    return (
+        Path(_project_path(context, inputs.get("model"))),
+        Path(_project_path(context, inputs.get("benchmark_dataset"))),
+    )
+
+
+def _fresh_targets(parameters: dict[str, Any]) -> tuple[str, ...]:
+    raw = parameters.get("targets")
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("parameters.targets must be a non-empty list")
+    if any(item not in {"energy", "force", "stress"} for item in raw):
+        raise ValueError("parameters.targets entries must be energy, force, or stress")
+    if len(set(raw)) != len(raw):
+        raise ValueError("parameters.targets entries must be unique")
+    return tuple(raw)
 
 
 def _source_script_spec(context: dict[str, Any]) -> dict[str, str] | None:
@@ -257,14 +279,6 @@ def _units(parameters: dict[str, Any]) -> dict[str, str]:
             raise ValueError(f"parameters.units.{key} must be a non-empty unit string")
         result[key] = str(unit)
     return result
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def _result_path(context: dict[str, Any]) -> Path:
@@ -747,6 +761,271 @@ def _load_normalized_outputs(
     return metrics, record_values, artifacts
 
 
+def _load_fresh_outputs(
+    context: dict[str, Any], paths: dict[str, Path]
+) -> tuple[dict[str, Any], dict[str, float], list[dict[str, Any]]]:
+    """Validate the complete fresh identity chain and five-artifact suite."""
+
+    parameters = _mapping(context.get("parameters"))
+    model_path, dataset_path = _fresh_inputs(context)
+    observed_model = _fingerprint_path(model_path)
+    observed_dataset = _fingerprint_path(dataset_path)
+    if observed_model != parameters.get("model_fingerprint"):
+        raise ValueError("current model content differs from the approved model fingerprint")
+    if observed_dataset != parameters.get("dataset_fingerprint"):
+        raise ValueError("current dataset content differs from the approved dataset fingerprint")
+
+    evidence = _read_json(paths["prediction_evidence.json"])
+    metrics = _read_json(paths["metrics.json"])
+    ranking = _read_json(paths["model_ranking.json"])
+    provenance = _read_json(paths["provenance.json"])
+    for name, payload in (
+        ("prediction_evidence.json", evidence),
+        ("metrics.json", metrics),
+        ("model_ranking.json", ranking),
+        ("provenance.json", provenance),
+    ):
+        if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+            raise ValueError(f"{name} must be a schema_version=1 JSON object")
+        if payload.get("plugin_id") != PLUGIN_ID:
+            raise ValueError(f"{name} plugin identity drift")
+    if evidence.get("contract") != "mlip-benchmark/prediction-evidence":
+        raise ValueError("prediction evidence contract identity drift")
+    if any(payload.get("mode") != "fresh" for payload in (evidence, metrics, provenance)):
+        raise ValueError("fresh output mode drift")
+    if evidence.get("model_execution") is not True or provenance.get("model_execution") is not True:
+        raise ValueError("fresh output must state model_execution=true")
+    if provenance.get("network_access") is not False:
+        raise ValueError("fresh provenance must state network_access=false")
+
+    family = parameters.get("model_family")
+    framework = "deepmd" if str(family).startswith("deepmd-") else family
+    model_identity = evidence.get("model")
+    dataset_identity = evidence.get("dataset")
+    runtime = evidence.get("runtime")
+    expected_source_fingerprints = {
+        "fresh_runner": _sha256(BUNDLED_FRESH_RUNNER),
+        "metric_normalization": _sha256(BUNDLED_NORMALIZATION),
+        "shared_model_runtime": _sha256(SHARED_MODEL_RUNTIME),
+    }
+    if not isinstance(model_identity, dict) or (
+        model_identity.get("family") != family
+        or model_identity.get("framework") != framework
+        or model_identity.get("fingerprint") != observed_model
+    ):
+        raise ValueError("prediction evidence model identity drift")
+    if not isinstance(dataset_identity, dict) or dataset_identity.get(
+        "fingerprint"
+    ) != observed_dataset:
+        raise ValueError("prediction evidence dataset identity drift")
+    if not isinstance(runtime, dict) or (
+        runtime.get("framework") != framework
+        or not _plain_string(runtime.get("framework_version"))
+        or not _plain_string(runtime.get("backend"))
+    ):
+        raise ValueError("prediction evidence runtime identity is incomplete")
+    if runtime.get("exact_model_family") not in {None, family}:
+        raise ValueError("prediction evidence runtime model-family drift")
+    if evidence.get("source_fingerprints") != expected_source_fingerprints:
+        raise ValueError("fresh implementation source fingerprint drift")
+    for key in ("task", "scenario", "split"):
+        if evidence.get(key) != parameters.get(key) or provenance.get(key) != parameters.get(key):
+            raise ValueError(f"fresh {key} identity drift")
+    targets = _fresh_targets(parameters)
+    units = _units(parameters)
+    if evidence.get("targets") != list(targets) or evidence.get("units") != {
+        target: units[target] for target in targets
+    }:
+        raise ValueError("fresh targets or units drift")
+    conventions = evidence.get("conventions")
+    if not isinstance(conventions, dict) or conventions.get(
+        "energy_normalization"
+    ) != parameters.get("energy_normalization"):
+        raise ValueError("fresh energy convention drift")
+    if conventions.get("stress_convention") != parameters.get("stress_convention"):
+        raise ValueError("fresh stress convention drift")
+
+    evidence_records = evidence.get("records")
+    structure_count = evidence.get("structure_count")
+    scalar_counts = evidence.get("scalar_sample_counts")
+    if not isinstance(evidence_records, list) or not evidence_records:
+        raise ValueError("prediction evidence records must be non-empty")
+    if not isinstance(structure_count, int) or structure_count < 1:
+        raise ValueError("prediction evidence structure_count must be positive")
+    if dataset_identity.get("structure_count") != structure_count:
+        raise ValueError("prediction evidence structure count drift")
+    if not isinstance(scalar_counts, dict) or set(scalar_counts) != set(targets):
+        raise ValueError("prediction evidence scalar sample counts are incomplete")
+    observed_ids: dict[str, set[str]] = {target: set() for target in targets}
+    observed_counts = {target: 0 for target in targets}
+    for index, record in enumerate(evidence_records):
+        if not isinstance(record, dict) or record.get("target") not in targets:
+            raise ValueError(f"prediction evidence record {index} has an invalid target")
+        target = record["target"]
+        if record.get("unit") != units[target] or not _plain_string(record.get("sample_id")):
+            raise ValueError(f"prediction evidence record {index} identity/unit drift")
+        count = record.get("scalar_count")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise ValueError(f"prediction evidence record {index} scalar_count is invalid")
+        observed_counts[target] += count
+        observed_ids[target].add(record["sample_id"])
+        if "reference" not in record or "prediction" not in record:
+            raise ValueError(f"prediction evidence record {index} is partial")
+    if observed_counts != scalar_counts:
+        raise ValueError("prediction evidence scalar sample count drift")
+    if any(len(ids) != structure_count for ids in observed_ids.values()):
+        raise ValueError("prediction evidence target/structure coverage is partial")
+
+    evidence_sha = _sha256(paths["prediction_evidence.json"])
+    if provenance.get("prediction_evidence_sha256") != evidence_sha:
+        raise ValueError("prediction evidence fingerprint drift")
+    if (
+        provenance.get("exact_model_family") != family
+        or provenance.get("model_fingerprint") != observed_model
+        or provenance.get("dataset_fingerprint") != observed_dataset
+        or provenance.get("runtime") != runtime
+        or provenance.get("source_fingerprints") != expected_source_fingerprints
+        or provenance.get("units") != evidence.get("units")
+        or provenance.get("conventions") != conventions
+        or provenance.get("structure_count") != structure_count
+        or provenance.get("scalar_sample_counts") != scalar_counts
+    ):
+        raise ValueError("fresh provenance identity drift")
+
+    output_artifacts = provenance.get("output_artifacts")
+    if not isinstance(output_artifacts, list):
+        raise ValueError("fresh provenance output_artifacts must be a list")
+    artifact_map = {item.get("path"): item for item in output_artifacts if isinstance(item, dict)}
+    expected_fingerprinted = set(FRESH_OUTPUT_NAMES) - {"provenance.json"}
+    if set(artifact_map) != expected_fingerprinted:
+        raise ValueError("fresh provenance output artifact set drift")
+    for name in expected_fingerprinted:
+        if artifact_map[name].get("sha256") != _sha256(paths[name]) or artifact_map[name].get(
+            "size_bytes"
+        ) != paths[name].stat().st_size:
+            raise ValueError(f"fresh output fingerprint drift for {name}")
+    normalized_hashes = provenance.get("normalized_artifact_sha256")
+    expected_hashes = {
+        name: _sha256(paths[name])
+        for name in NORMALIZED_OUTPUT_NAMES
+        if name != "provenance.json"
+    }
+    if normalized_hashes != expected_hashes:
+        raise ValueError("fresh normalized artifact fingerprint drift")
+    suite_digest = hashlib.sha256()
+    for name, digest in sorted(expected_hashes.items()):
+        suite_digest.update(name.encode())
+        suite_digest.update(digest.encode())
+    if provenance.get("normalized_suite_sha256") != "sha256:" + suite_digest.hexdigest():
+        raise ValueError("fresh normalized artifact suite fingerprint drift")
+
+    records = metrics.get("records")
+    if not isinstance(records, list) or not records or metrics.get("record_count") != len(records):
+        raise ValueError("fresh metrics records are missing or partial")
+    supported = metrics.get("supported_models")
+    if not isinstance(supported, list) or set(supported) != set(MODEL_FAMILIES):
+        raise ValueError("fresh metrics exact model-family set drift")
+    metric_values: dict[str, float] = {}
+    metric_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for index, record in enumerate(records):
+        if not isinstance(record, dict) or record.get("mode") != "fresh":
+            raise ValueError(f"fresh metric record {index} mode drift")
+        if (
+            record.get("model") != family
+            or record.get("task") != parameters.get("task")
+            or record.get("scenario") != parameters.get("scenario")
+            or record.get("split") != parameters.get("split")
+            or record.get("evidence_sha256") != evidence_sha
+            or record.get("source_path") != "prediction_evidence.json"
+        ):
+            raise ValueError(f"fresh metric record {index} identity drift")
+        target = _mapping(record.get("dimensions")).get("target")
+        if target not in targets:
+            raise ValueError(f"fresh metric record {index} target drift")
+        statistic = str(record.get("metric", "")).removeprefix(f"{target}_")
+        expected_unit = "dimensionless" if statistic == "pearson_r" else units[target]
+        expected_direction = "maximize" if statistic == "pearson_r" else "minimize"
+        value = record.get("value")
+        if (
+            statistic not in {"mae", "rmse", "pearson_r"}
+            or record.get("unit") != expected_unit
+            or record.get("direction") != expected_direction
+            or record.get("sample_count") != scalar_counts[target]
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            raise ValueError(f"fresh metric record {index} metric/count/unit drift")
+        key = (target, statistic, expected_unit)
+        if key in metric_by_key:
+            raise ValueError("fresh metrics contain a duplicate identity")
+        metric_by_key[key] = record
+        metric_values[_normalized_metric_key(record)] = float(value)
+    expected_metric_keys = {
+        (target, statistic, "dimensionless" if statistic == "pearson_r" else units[target])
+        for target in targets
+        for statistic in ("mae", "rmse", "pearson_r")
+    }
+    if set(metric_by_key) != expected_metric_keys:
+        raise ValueError("fresh normalized metric set is incomplete")
+
+    summary_fields, summary_rows = _read_summary(paths["benchmark_summary.csv"])
+    if tuple(summary_fields) != SUMMARY_COLUMNS or len(summary_rows) != len(records):
+        raise ValueError("fresh benchmark summary schema/count drift")
+    for row, record in zip(summary_rows, records):
+        if row.get("metric") != record.get("metric") or row.get("mode") != "fresh":
+            raise ValueError("fresh benchmark summary content drift")
+        if float(row["value"]) != float(record["value"]) or int(row["sample_count"]) != record[
+            "sample_count"
+        ]:
+            raise ValueError("fresh benchmark summary value/count drift")
+
+    rankings = ranking.get("rankings")
+    if not isinstance(rankings, list) or len(rankings) != len(records):
+        raise ValueError("fresh ranking set is incomplete")
+    for item in rankings:
+        candidates = item.get("candidates") if isinstance(item, dict) else None
+        if not isinstance(candidates, list) or len(candidates) != 1:
+            raise ValueError("fresh per-model ranking candidates are malformed")
+        candidate = candidates[0]
+        if candidate.get("rank") != 1 or candidate.get("model") != family:
+            raise ValueError("fresh ranking is not derived from metric direction")
+        matching = [
+            record
+            for record in records
+            if record.get("task") == item.get("task")
+            and record.get("scenario") == item.get("scenario")
+            and record.get("split") == item.get("split")
+            and record.get("metric") == item.get("metric")
+            and record.get("unit") == item.get("unit")
+            and record.get("direction") == item.get("direction")
+            and _mapping(record.get("dimensions")) == item.get("dimensions")
+        ]
+        if len(matching) != 1:
+            raise ValueError("fresh ranking identity does not match one metric")
+        record = matching[0]
+        if (
+            float(candidate.get("value")) != float(record["value"])
+            or candidate.get("sample_count") != record.get("sample_count")
+            or candidate.get("evidence_sha256") != evidence_sha
+            or item.get("comparable_model_count") != 1
+        ):
+            raise ValueError("fresh ranking value/count/evidence drift")
+
+    roles = {
+        "prediction_evidence.json": ("prediction-evidence", "application/json"),
+        "metrics.json": ("normalized-metrics", "application/json"),
+        "benchmark_summary.csv": ("benchmark-summary", "text/csv"),
+        "model_ranking.json": ("model-ranking", "application/json"),
+        "provenance.json": ("provenance", "application/json"),
+    }
+    artifacts = [
+        {"path": str(paths[name]), "role": roles[name][0], "media_type": roles[name][1]}
+        for name in FRESH_OUTPUT_NAMES
+    ]
+    return metrics, metric_values, artifacts
+
+
 class Adapter:
     """Plan reviewed external CLIs and parse only their explicit artifacts."""
 
@@ -777,9 +1056,49 @@ class Adapter:
                 _diagnostic(
                     "error",
                     "benchmark.operation",
-                    "operation must be evaluate-static, collect-existing, normalize-replay, or normalize-execute",
+                    "operation must be evaluate-fresh, evaluate-static, collect-existing, normalize-replay, or normalize-execute",
                 )
             )
+            return diagnostics
+
+        if operation == FRESH_OPERATION:
+            try:
+                if parameters.get("model_family") not in MODEL_FAMILIES:
+                    raise ValueError("parameters.model_family must name one exact supported family")
+                for key in ("task", "scenario", "split"):
+                    if not _plain_string(parameters.get(key)) or not _IDENTIFIER.fullmatch(
+                        str(parameters[key])
+                    ):
+                        raise ValueError(f"parameters.{key} must be a normalized identifier")
+                targets = _fresh_targets(parameters)
+                units = _units(parameters)
+                missing_units = sorted(set(targets) - set(units))
+                if missing_units:
+                    raise ValueError("parameters.units missing targets: " + ", ".join(missing_units))
+                if parameters.get("energy_normalization") not in {"total", "per-atom"}:
+                    raise ValueError("parameters.energy_normalization must be total or per-atom")
+                if "stress" in targets and not _plain_string(parameters.get("stress_convention")):
+                    raise ValueError("stress evaluation requires parameters.stress_convention")
+                model_path, dataset_path = _fresh_inputs(context)
+                observed_model = _fingerprint_path(model_path)
+                observed_dataset = _fingerprint_path(dataset_path)
+                if parameters.get("model_fingerprint") != observed_model:
+                    raise ValueError("parameters.model_fingerprint does not match model content")
+                if parameters.get("dataset_fingerprint") != observed_dataset:
+                    raise ValueError("parameters.dataset_fingerprint does not match dataset content")
+                output_dir = _normalized_output_dir(context)
+                if output_dir.exists() and not output_dir.is_dir():
+                    raise ValueError(f"fresh output path is not a directory: {output_dir}")
+                if output_dir.is_dir() and any(output_dir.iterdir()):
+                    raise ValueError(
+                        "fresh output directory must be empty; benchmark artifacts are never overwritten"
+                    )
+                if not BUNDLED_FRESH_RUNNER.is_file():
+                    raise ValueError(f"bundled fresh benchmark runner is missing: {BUNDLED_FRESH_RUNNER}")
+                if not SHARED_MODEL_RUNTIME.is_file():
+                    raise ValueError(f"shared model runtime is missing: {SHARED_MODEL_RUNTIME}")
+            except (KeyError, OSError, TypeError, ValueError) as exc:
+                diagnostics.append(_diagnostic("error", "benchmark.fresh_contract", str(exc)))
             return diagnostics
 
         if operation in NORMALIZE_OPERATIONS:
@@ -875,6 +1194,56 @@ class Adapter:
                 "diagnostics": diagnostics,
             }
         operation = str(parameters.get("operation", "evaluate-static"))
+        if operation == FRESH_OPERATION:
+            model_path, dataset_path = _fresh_inputs(context)
+            output_paths = _normalized_output_paths(context)
+            argv = [
+                sys.executable,
+                str(BUNDLED_FRESH_RUNNER),
+                "--model",
+                str(model_path),
+                "--dataset",
+                str(dataset_path),
+                "--output-dir",
+                str(_normalized_output_dir(context)),
+                "--model-family",
+                str(parameters["model_family"]),
+                "--model-fingerprint",
+                str(parameters["model_fingerprint"]),
+                "--dataset-fingerprint",
+                str(parameters["dataset_fingerprint"]),
+                "--task",
+                str(parameters["task"]),
+                "--scenario",
+                str(parameters["scenario"]),
+                "--split",
+                str(parameters["split"]),
+                "--energy-normalization",
+                str(parameters["energy_normalization"]),
+                "--device",
+                str(parameters.get("device", "cpu")),
+            ]
+            for target in _fresh_targets(parameters):
+                argv.extend(["--target", target])
+                argv.extend([f"--{target}-unit", _units(parameters)[target]])
+            if parameters.get("stress_convention") not in (None, ""):
+                argv.extend(["--stress-convention", str(parameters["stress_convention"])])
+            return {
+                "plugin_id": PLUGIN_ID,
+                "status": "READY",
+                "executable": True,
+                "argv": argv,
+                "shell": False,
+                "cwd": str(context["attempt_dir"]),
+                "expected_outputs": [str(output_paths[name]) for name in FRESH_OUTPUT_NAMES],
+                "input_fingerprints": {
+                    "model": str(parameters["model_fingerprint"]),
+                    "dataset": str(parameters["dataset_fingerprint"]),
+                },
+                "calculation_claim": "fresh-model-inference",
+                "resources": dict(_mapping(context.get("resources"))),
+                "diagnostics": [],
+            }
         if operation in NORMALIZE_OPERATIONS:
             evidence = _evidence_specs(context)
             output_paths = _normalized_output_paths(context)
@@ -977,11 +1346,15 @@ class Adapter:
             "status": "READY",
             "executable": False,
             "prepared": False,
-            "message": "No files were written; the external wrapper consumes existing inputs.",
+            "message": (
+                "No files were written; the bundled fresh runner consumes pinned model/dataset inputs."
+                if _operation(context) == FRESH_OPERATION
+                else "No files were written; the wrapper consumes existing inputs."
+            ),
         }
 
     def check(self, context: dict[str, Any]) -> dict[str, Any]:
-        if _operation(context) in NORMALIZE_OPERATIONS:
+        if _operation(context) in NORMALIZE_OPERATIONS or _operation(context) == FRESH_OPERATION:
             try:
                 paths = _normalized_output_paths(context)
             except (KeyError, TypeError, ValueError) as exc:
@@ -1005,8 +1378,13 @@ class Adapter:
                         )
                     ],
                 }
-            if existing != set(NORMALIZED_OUTPUT_NAMES):
-                missing = sorted(set(NORMALIZED_OUTPUT_NAMES) - existing)
+            expected_names = (
+                set(FRESH_OUTPUT_NAMES)
+                if _operation(context) == FRESH_OPERATION
+                else set(NORMALIZED_OUTPUT_NAMES)
+            )
+            if existing != expected_names:
+                missing = sorted(expected_names - existing)
                 return {
                     "plugin_id": PLUGIN_ID,
                     "status": "FAIL",
@@ -1029,8 +1407,8 @@ class Adapter:
                         _diagnostic("error", "benchmark.normalized_outputs_unreadable", str(exc))
                     ],
                 }
-            if children != set(NORMALIZED_OUTPUT_NAMES):
-                unexpected = sorted(children - set(NORMALIZED_OUTPUT_NAMES))
+            if children != expected_names:
+                unexpected = sorted(children - expected_names)
                 return {
                     "plugin_id": PLUGIN_ID,
                     "status": "FAIL",
@@ -1044,7 +1422,10 @@ class Adapter:
                     ],
                 }
             try:
-                payload, metric_values, artifacts = _load_normalized_outputs(context, paths)
+                if _operation(context) == FRESH_OPERATION:
+                    payload, metric_values, artifacts = _load_fresh_outputs(context, paths)
+                else:
+                    payload, metric_values, artifacts = _load_normalized_outputs(context, paths)
             except (
                 OSError,
                 UnicodeError,

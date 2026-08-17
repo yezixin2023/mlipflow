@@ -5,8 +5,8 @@
   "mode": "evidence-replay",
   "canonical_report": {
     "path": "examples/high_entropy_sulfide_reproduction/reports/manuscript_reproduction_summary.json",
-    "sha256": "sha256:2b0d5d432b0db853457cadf631797d12ed4711ca60a7fb0ee17ee68d63fa0284",
-    "size_bytes": 36026
+    "sha256": "sha256:552f2fc5f8a1887a2297011b12a71db0ca6219c707214c67009b5028045c8ae1",
+    "size_bytes": 36376
   },
   "acceptance_test": "tests/test_manuscript_reproduction.py",
   "selected_models": {

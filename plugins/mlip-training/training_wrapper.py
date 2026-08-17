@@ -9,13 +9,19 @@ import mlip_chgnet
 import mlip_deepmd
 import mlip_m3gnet
 import mlip_mace
+try:
+    from mlipflow.science import model_runtime
+except ModuleNotFoundError:
+    source_root = Path(__file__).resolve().parents[2] / "src"
+    if source_root.is_dir() and str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
+    from mlipflow.science import model_runtime
 from mlip_common import (
     FRAMEWORKS,
     OPERATIONS,
     TrainingError,
     load_config,
     seed_all,
-    version,
     write_result,
 )
 
@@ -74,12 +80,7 @@ def _paths(a):
 
 
 def _framework_version(name):
-    return {
-        "deepmd": lambda: version("deepmd-kit"),
-        "m3gnet": lambda: version("matgl"),
-        "chgnet": lambda: version("chgnet"),
-        "mace": lambda: version("mace-torch", "mace"),
-    }[name]()
+    return model_runtime.framework_version(name)
 
 
 def main(argv=None):

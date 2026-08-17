@@ -338,7 +338,7 @@
   },
   "hardware_match": {
     "status": "SAME_NODE",
-    "detail": "the historical run and the reproduction both executed on node1465 of partition hfacexclu08"
+    "detail": "the historical run and the reproduction both executed on the same inventoried CPU node and partition"
   },
   "comparison": {
     "aligned_steps": [

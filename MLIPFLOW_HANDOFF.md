@@ -11,18 +11,18 @@ Generated 2026-08-15 from the local repository state at `e45d750214551469f1004c2
 - Projects and workflows must remain portable: no SSH host, partition, environment path, dataset absolute path, model absolute path, template root or work root in project nodes.
 - Do not add MCP for this work.
 - Do not refactor the already validated HPC core or introduce a second bundled runner/template architecture.
-- `$HOME/MLP` is historical production evidence and is always read-only. Never execute or edit historical scripts.
+- The site-managed historical archive is production evidence and is always read-only. Never execute or edit historical scripts.
 
 ## B. Cluster/site layout
 
-### hfeshell
+### CPU validation site
 
 - Template root: `~/mlipflow/templates`.
 - MLIPFlow remote root: `~/mlipflow`.
-- `$HOME/MLP` is read-only historical production evidence.
+- The site-managed historical archive is read-only production evidence.
 - The MACE template at `~/mlipflow/templates/mlip-mace/run.sh` was derived from a genuinely completed production run, not from an online API assumption. It activates the already installed, production-backed MACE Python environment and calls the staged `training_cluster.py`.
-- The trusted CPU baseline is `$HOME/MLP/MACE/finetune/para-0`, Slurm job `8662607`, with matching script, training log and final model evidence. Treat the remote template and that evidence as the authority for the exact interpreter/activation; do not replace or upgrade the environment.
-- No current CPU smoke was run in this development sequence. Do not project the independent GPU site's package versions onto hfeshell.
+- The trusted CPU baseline is a read-only MACE fine-tuning archive, Slurm job `8662607`, with matching script, training log and final model evidence. Treat the remote template and that evidence as the authority for the exact interpreter/activation; do not replace or upgrade the environment.
+- No current CPU smoke was run in this development sequence. Do not project the independent GPU site's package versions onto the CPU validation site.
 
 ### cluster GPU site
 
@@ -42,11 +42,11 @@ Generated 2026-08-15 from the local repository state at `e45d750214551469f1004c2
 
 ## C. MACE historical evidence
 
-### hfeshell CPU baseline
+### CPU-site baseline
 
-- `$HOME/MLP/MACE/finetune/para-0`, job `8662607`.
+- Read-only archived MACE fine-tuning run, job `8662607`.
 - This is a successful production fine-tune with mutually consistent scheduler script, training log and final native model.
-- It remains the production-backed source for hfeshell MACE environment and invocation behavior.
+- It remains the production-backed source for CPU-site MACE environment and invocation behavior.
 
 ### GPU historical baseline
 
@@ -61,7 +61,7 @@ The implementation below is present in current HEAD commit `e45d750214551469f100
 
 ### `plugins/mlip-training/mlip_mace.py`
 
-- Removed unsupported `--work_dir` from the MACE argv used by the older hfeshell-compatible parser.
+- Removed unsupported `--work_dir` from the MACE argv used by the older CPU-site-compatible parser.
 - Corrected `ema` and `amsgrad` handling for `store_true` parser flags; added strict boolean handling for `multiheads_finetuning`.
 - Added compatibility with installed MACE packages exposing either `run(args)` or only `main()`, restoring `sys.argv` after the fallback.
 - Added pinned auxiliary `test_file` support relative to the approved train dataset directory, with SHA-256 verification.
@@ -263,7 +263,7 @@ Do not repeat the MACE investigation unless a regression is observed.
 
 ## K. Safety / operating rules
 
-- Never modify `$HOME/MLP`; never execute historical scripts.
+- Never modify the site-managed historical archive; never execute historical scripts.
 - Do not modify installed cluster environments and do not install packages.
 - Put every new cluster-generated file below `/fs1/home/yezixin/mlipflow`.
 - Use fresh attempt workspaces for real scheduler attempts and preserve failed attempts.
@@ -274,11 +274,11 @@ Do not repeat the MACE investigation unless a regression is observed.
 
 ## L. Post-handoff CHGNet validation addendum (2026-08-15)
 
-This addendum records the development and real `hfeshell` scheduler evidence produced after the original handoff. It supersedes section J as the current development baseline. The user redirected validation from the unavailable GPU site to the CPU-only `hfeshell` site and later explicitly stopped the full-dataset comparison in favor of the bounded 128-record workflow.
+This addendum records development and real CPU-site scheduler evidence produced after the original handoff. It supersedes section J as the current development baseline. Validation moved from the unavailable GPU site to the CPU-only validation site, and the full-dataset comparison was later explicitly stopped in favor of the bounded 128-record workflow.
 
 ### CHGNet historical inputs and site runtime
 
-- Historical labeled data (read-only): `$HOME/MLP/CHGnet/Li16/data/chgnet_Li16_4ele_data_mod.json`.
+- Historical labeled data: a read-only site-managed CHGNet JSON artifact.
 - Dataset size: `283,387,555` bytes; SHA-256 `94946ec4f19a2e6a0e0e3d74e498b8a9d12255580746590b724f27c8c776ac0d`.
 - Dataset schema: columnar JSON with 13,586 structures; energy labels are `energy_per_atom`, with `force` and `stress` targets.
 - Foundation checkpoint (read-only installed artifact): `$HOME/deepmd-kit/lib/python3.11/site-packages/chgnet/pretrained/0.3.0/chgnet_0.3.0_e29f68s314m37.pth.tar`.
@@ -288,7 +288,7 @@ This addendum records the development and real `hfeshell` scheduler evidence pro
 
 ### Full-dataset attempt intentionally stopped
 
-- Project/node: `chgnet-hfeshell-finetune-1epoch-historical/finetune-chgnet-historical`.
+- Project/node: `chgnet-cpu-site-finetune-1epoch-historical/finetune-chgnet-historical`.
 - Slurm job: `27432782` on `node901`.
 - The job was actively computing (roughly 46 CPU cores used on average and about 10 GiB resident memory), not stalled. The 13,586-structure dataset and 680 CPU training batches made the validation slow.
 - The user explicitly chose to abandon this full-dataset comparison. MLIPFlow `stop --dry-run` and the matching approval were used; final state is `STOPPED`.
@@ -296,9 +296,9 @@ This addendum records the development and real `hfeshell` scheduler evidence pro
 
 ### Bounded CHGNet finetune smoke
 
-`HFESHELL_CHGNET_FINETUNE_128_1EPOCH = PASS`
+`CPU_SITE_CHGNET_FINETUNE_128_1EPOCH = PASS`
 
-- Project/node: `chgnet-hfeshell-finetune-1epoch-prefix-128/finetune-chgnet-prefix-128`.
+- Project/node: `chgnet-cpu-site-finetune-1epoch-prefix-128/finetune-chgnet-prefix-128`.
 - Slurm job `27432906`, elapsed `00:03:27`, exit `0:0`, node `node901`.
 - Uses the deterministic first 128 records without copying or rewriting the full dataset; seed `23`; split train/val/test = `102/6/20`.
 - Requested/completed epochs: `1/1`; epoch 0 completed all `7/7` train batches.
@@ -312,9 +312,9 @@ This addendum records the development and real `hfeshell` scheduler evidence pro
 
 ### Bounded CHGNet fresh-train smoke on the same split
 
-`HFESHELL_CHGNET_TRAIN_128_1EPOCH = PASS`
+`CPU_SITE_CHGNET_TRAIN_128_1EPOCH = PASS`
 
-- Project/node: `chgnet-hfeshell-train-1epoch-prefix-128/train-chgnet-prefix-128`.
+- Project/node: `chgnet-cpu-site-train-1epoch-prefix-128/train-chgnet-prefix-128`.
 - Slurm job `27432926`, elapsed `00:04:32`, exit `0:0`, node `node901`.
 - Operation is true fresh `train`: no foundation reference, no frozen modules, frozen parameters `0`.
 - Uses the same dataset fingerprint, first 128 records, seed `23`, and train/val/test counts `102/6/20` as the finetune smoke.
@@ -359,41 +359,41 @@ Current boundary: CHGNet CPU one-epoch finetune and fresh train are validated on
 
 ## M. Post-handoff M3GNet/MatGL validation addendum (2026-08-15)
 
-This addendum supersedes the CHGNet next step. M3GNet fine-tuning and fresh training have now both passed a bounded real-data, one-epoch `hfeshell` validation. The user also clarified that the current high-level MatGL API and the historical lower-level API must coexist; the implementation therefore retains both instead of choosing one permanently.
+This addendum supersedes the CHGNet next step. M3GNet fine-tuning and fresh training have both passed a bounded real-data, one-epoch CPU-site validation. The current high-level MatGL API and the historical lower-level API must coexist; the implementation therefore retains both instead of choosing one permanently.
 
 ### Dual MatGL API contract
 
 - `m3gnet.api` accepts `auto`, `high_level`, or `legacy`.
 - `auto` selects the high-level route when both `MGLDatasetLoader` and `MGLPotentialTrainer` are exposed, otherwise it falls back to the historical route.
 - `high_level` retains the repository's `MGLDatasetLoader`/`MGLPotentialTrainer` direction, including a mapping of deterministic pre-built train/valid/test splits accepted by the newer trainer.
-- `legacy` uses `MGLDataset`, `MGLDataLoader`, `PotentialLightningModule`, and an explicit Lightning trainer. This is the route actually exercised on `hfeshell` because the installed MatGL `1.1.3` exposes the DGL-era lower-level API and does not expose the newer high-level pair.
-- The current upstream MatGL direction is PyG-only and documents `MGLDatasetLoader` plus `MGLPotentialTrainer`; this is why the high-level route remains first-class. It is capability/unit covered locally but was not numerically exercised in this `hfeshell` validation.
+- `legacy` uses `MGLDataset`, `MGLDataLoader`, `PotentialLightningModule`, and an explicit Lightning trainer. This is the route actually exercised on the CPU validation site because its MatGL `1.1.3` exposes the DGL-era lower-level API and not the newer high-level pair.
+- The current upstream MatGL direction is PyG-only and documents `MGLDatasetLoader` plus `MGLPotentialTrainer`; this is why the high-level route remains first-class. It is capability/unit covered locally but was not numerically exercised in this CPU-site validation.
 - The high-level local-JSON route requires a loader exposing a compatible `from_json` factory. Otherwise it fails explicitly and directs the caller to a pre-built MatPES dataset integration or the historical JSON `legacy` route; it does not silently reinterpret the data.
 
 ### Real data, model and runtime identities
 
-- Read-only dataset: `$HOME/MLP/CHGnet/Li16/data/chgnet_Li16_4ele_data_mod.json`.
+- Read-only dataset: the same site-managed CHGNet JSON artifact described above.
 - Dataset size: `283,387,555` bytes; SHA-256 `94946ec4f19a2e6a0e0e3d74e498b8a9d12255580746590b724f27c8c776ac0d`.
 - M3GNet uses the total-energy field `uncorrected_total_energy`, with `force` and `stress`; `energy_is_per_atom=false` is pinned and checked.
 - Both successful runs use the deterministic first 128 records, seed `23`, cutoff `5.0`, three-body cutoff `4.0`, batch size `24`, and train/validation/test counts `102/12/14`.
-- Fine-tune foundation directory: `$HOME/MLP/M3Gnet/finetune/M3GNet-MP-2021.2.8-PES`.
+- Fine-tune foundation: a read-only site-managed M3GNet potential directory.
 - Runtime-verified foundation tree fingerprint: `sha256:8327c6b0748e517bc5dd8cab853ba5282ad241c0f63729e025eaebc59357955a`.
-- Runtime: `$HOME/deepmd-kit/bin/python`, Python `3.11.8`, MatGL `1.1.3`, DGL `1.1.3`, Lightning `2.3.0`, Torch `2.5.0+cu124`; CPU execution on `node891` in `hfacexclu09`.
-- The dedicated 09 templates live below `$HOME/mlipflow/templates-hfacexclu09`; historical inputs stay read-only and all generated workspaces remain below `$HOME/mlipflow/work`.
+- Runtime: site-managed Python `3.11.8`, MatGL `1.1.3`, DGL `1.1.3`, Lightning `2.3.0`, and Torch `2.5.0+cu124`; CPU execution on an inventoried compute node.
+- Dedicated CPU templates use the site's canonical template root; historical inputs stay read-only and generated workspaces remain below the site's canonical MLIPFlow work root.
 
 ### Preserved diagnostic attempts
 
-- Job `27433040` (`hfacexclu08`) failed before training because the initially recorded foundation tree fingerprint was wrong. The runtime observed `8327c6...955a`; the failed attempt is preserved.
-- Job `27433162` was still `PENDING (Resources)` on `hfacexclu08`; at the user's request it was explicitly stopped through MLIPFlow and preserved before switching to the idle `hfacexclu09` node.
+- Job `27433040` failed before training because the initially recorded foundation tree fingerprint was wrong. The runtime observed `8327c6...955a`; the failed attempt is preserved.
+- Job `27433162` was still `PENDING (Resources)` on one CPU partition; at the user's request it was explicitly stopped through MLIPFlow and preserved before switching to an idle node.
 - Job `27433186` reached data graph construction but failed Lightning's Slurm validation because the first 09 template used `--ntasks=64` for a single Python process. Its structured result preserved the exact error.
 - The 09 template was corrected to `--ntasks=1 --cpus-per-task=64`, and the run template now takes the CPU thread budget from `SLURM_CPUS_PER_TASK`. The original 08 template was not modified.
 
 ### Bounded M3GNet fine-tune smoke
 
-`HFESHELL_M3GNET_FINETUNE_128_1EPOCH = PASS`
+`CPU_SITE_M3GNET_FINETUNE_128_1EPOCH = PASS`
 
-- Project/node: `m3gnet-hfeshell-finetune-1epoch-prefix-128-v2/finetune-m3gnet-prefix-128`.
-- Successful attempt: attempt 3, Slurm job `27433199`, `hfacexclu09`, exit `0:0`, final MLIPFlow state `OK`.
+- Project/node: `m3gnet-cpu-site-finetune-1epoch-prefix-128-v2/finetune-m3gnet-prefix-128`.
+- Successful attempt: attempt 3, Slurm job `27433199`, exit `0:0`, final MLIPFlow state `OK`.
 - Operation is true `finetune`; the approved foundation identity matches the observed identity and foundation element references are present.
 - Requested/completed epochs: `1/1`; normal completion true; every recorded metric finite.
 - Final train Energy/Force MAE: `0.0490935519 / 0.3821626902`.
@@ -405,10 +405,10 @@ This addendum supersedes the CHGNet next step. M3GNet fine-tuning and fresh trai
 
 ### Bounded M3GNet fresh-train smoke on the identical split
 
-`HFESHELL_M3GNET_TRAIN_128_1EPOCH = PASS`
+`CPU_SITE_M3GNET_TRAIN_128_1EPOCH = PASS`
 
-- Project/node: `m3gnet-hfeshell-train-1epoch-prefix-128/train-m3gnet-prefix-128`.
-- Slurm job `27433379`, `hfacexclu09`, exit `0:0`, final MLIPFlow state `OK`.
+- Project/node: `m3gnet-cpu-site-train-1epoch-prefix-128/train-m3gnet-prefix-128`.
+- Slurm job `27433379`, exit `0:0`, final MLIPFlow state `OK`.
 - Operation is true fresh `train`: no foundation model reference; the M3GNet architecture is initialized from scratch.
 - Requested/completed epochs: `1/1`; normal completion true; every recorded metric finite.
 - Final train Energy/Force/Stress MAE: `4.6592001915 / 0.4497961104 / 13.2503004074`.
@@ -451,7 +451,7 @@ git diff --check
 
 Result: Ruff `PASS`; `72 passed`; `git diff --check` `PASS`.
 
-Current validation boundary: only the `legacy` MatGL `1.1.3` route has real `hfeshell` numerical evidence. Both high-level and legacy control paths remain in code, but do not claim high-level PyG execution, historical full-dataset epoch equivalence, production convergence, GPU behavior, multi-node behavior, or model-quality ranking from these one-epoch smoke tests.
+Current validation boundary: only the `legacy` MatGL `1.1.3` route has real CPU-site numerical evidence. Both high-level and legacy control paths remain in code, but do not claim high-level PyG execution, historical full-dataset epoch equivalence, production convergence, GPU behavior, multi-node behavior, or model-quality ranking from these one-epoch smoke tests.
 
 ## N. Scheduled CPU resource semantics addendum (2026-08-15)
 
@@ -500,7 +500,7 @@ and VASP/LAMMPS/LASP to `mpi`.
 ### Temporary workaround cleanup status
 
 The exact cleanup targets were inventoried as the local validation-only site
-profile/bootstrap and the remote `templates-hfacexclu09` tree. The deletion
+profile/bootstrap and the dedicated remote CPU template tree. The deletion
 approval was rejected, and a subsequent read-only check confirmed all three
 targets still exist. No validation result, attempt, or workspace was deleted.
 Cleanup therefore remains pending explicit permission; do not claim it has been

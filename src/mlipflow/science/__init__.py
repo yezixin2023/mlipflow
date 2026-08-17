@@ -10,12 +10,38 @@ from .transport import (
     linear_fit,
     nernst_einstein_conductivity,
 )
+from .model_runtime import (
+    MODEL_FAMILIES,
+    MODEL_FAMILY_ALIASES,
+    MODEL_FAMILY_FRAMEWORKS,
+    RuntimeCompatibilityError,
+    canonical_model_family,
+    framework_version,
+    load_inference_predictor,
+)
+from .artifact_identity import (
+    ArtifactIdentityError,
+    fingerprint_path,
+    sha256_bytes,
+    sha256_file,
+)
 from .voltage import average_intercalation_voltage
 
 __all__ = [
+    "ArtifactIdentityError",
+    "MODEL_FAMILIES",
+    "MODEL_FAMILY_ALIASES",
+    "MODEL_FAMILY_FRAMEWORKS",
+    "RuntimeCompatibilityError",
     "arrhenius_from_diffusivities",
     "average_intercalation_voltage",
     "linear_diffusion_from_msd",
     "linear_fit",
     "nernst_einstein_conductivity",
+    "canonical_model_family",
+    "framework_version",
+    "fingerprint_path",
+    "load_inference_predictor",
+    "sha256_bytes",
+    "sha256_file",
 ]

@@ -32,7 +32,12 @@ EXACT_EXECUTION_OPERATIONS = {
     "high-entropy-structure": ["generate-sqs"],
     "ionic-transport": ["analyze-existing", "md-smoke-and-analyze"],
     "lammps-md": ["lammps-prepare", "execute"],
-    "mlip-benchmark": ["evaluate-static", "normalize-replay", "normalize-execute"],
+    "mlip-benchmark": [
+        "evaluate-fresh",
+        "evaluate-static",
+        "normalize-replay",
+        "normalize-execute",
+    ],
     "mlip-training": ["train", "finetune"],
     "pes-sampling": [
         "direct-select",
