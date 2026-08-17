@@ -162,6 +162,10 @@ prepared benchmark、source table 和 source document 的摘要链。
 该 artifact 重放已经完成的 ranking。它没有重新生成 247 个 SQS，也没有执行
 247 次模型推理或 MD。
 
+现行实现为 `candidate-ranking`。artifact 中原 `composition-screening` plugin ID、
+旧 locator 与 SHA-256 作为历史 provenance 原样保留；`reproduce.py` 固定校验这些
+legacy 记录，并用现行 `rank.py` 对紧凑 top-10 再做兼容排序检查。
+
 top-1 的 canonical composition 与历史目录 token `6_3_8_4_7` 形成精确身份映射。
 三个既有 `target.msd` 经历史 sampling/Arrhenius convention 后，对历史 stdout 达到
 `EXACT_NUMERICAL_PARITY`，300 K mean-MSD conductivity 同样为

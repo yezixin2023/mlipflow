@@ -1,4 +1,4 @@
-"""Numerical and format parity tests for the manuscript-era Li10 screen."""
+"""Numerical and format parity tests for candidate ranking and legacy Li10 input."""
 
 from __future__ import annotations
 
@@ -12,19 +12,28 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "composition-screening"
+PLUGIN = ROOT / "plugins" / "candidate-ranking"
 
 
 def _adapter():
     path = PLUGIN / "adapter.py"
-    spec = importlib.util.spec_from_file_location("manuscript_screen_adapter", path)
+    spec = importlib.util.spec_from_file_location("candidate_ranking_adapter", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.Adapter()
 
 
-class ManuscriptScreeningTests(unittest.TestCase):
+def _ranker():
+    path = PLUGIN / "rank.py"
+    spec = importlib.util.spec_from_file_location("candidate_ranking_runner", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class CandidateRankingTests(unittest.TestCase):
     def test_legacy_element_orders_and_real_top_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -55,7 +64,7 @@ class ManuscriptScreeningTests(unittest.TestCase):
                 encoding="utf-8",
             )
             candidate_manifest = root / "candidates.json"
-            transport_manifest = root / "transport.json"
+            metric_results_manifest = root / "metrics.json"
             subprocess.run(
                 [
                     sys.executable,
@@ -70,31 +79,66 @@ class ManuscriptScreeningTests(unittest.TestCase):
                     "S/m",
                     "--candidate-manifest",
                     str(candidate_manifest),
-                    "--transport-results-manifest",
-                    str(transport_manifest),
+                    "--metric-results-manifest",
+                    str(metric_results_manifest),
                 ],
                 check=True,
             )
             normalized = json.loads(candidate_manifest.read_text(encoding="utf-8"))
             self.assertEqual("Mn6_Fe3_Ni8_Cu4_Zn7", normalized["candidates"][2]["id"])
-            transport = json.loads(transport_manifest.read_text(encoding="utf-8"))
-            rendered = candidate_manifest.read_text(encoding="utf-8") + transport_manifest.read_text(
-                encoding="utf-8"
+            metric_results = json.loads(metric_results_manifest.read_text(encoding="utf-8"))
+            rendered = (
+                candidate_manifest.read_text(encoding="utf-8")
+                + metric_results_manifest.read_text(encoding="utf-8")
             )
             self.assertNotIn(str(root), rendered)
             self.assertEqual(
                 "output.txt", normalized["provenance"]["candidate_sources"][0]["locator"]
             )
             self.assertEqual(
-                "sigma.txt", transport["results"][0]["source_records"][0]["locator"]
+                "sigma.txt", metric_results["results"][0]["source_records"][0]["locator"]
             )
             values = {
                 item["candidate_id"]: item["metrics"]["ionic_conductivity_300k_s_per_m"]
-                for item in transport["results"]
+                for item in metric_results["results"]
             }
             self.assertEqual(18.420176685825222, values["Mn6_Fe3_Ni8_Cu4_Zn7"])
 
-    def test_bundled_screen_executes_and_adapter_rechecks(self) -> None:
+    def test_minimize_tie_break_and_missing_policies_are_deterministic(self) -> None:
+        ranker = _ranker()
+        candidates = {
+            "schema_version": 1,
+            "candidates": [{"id": "C"}, {"id": "B"}, {"id": "A"}],
+        }
+        metrics = {
+            "schema_version": 1,
+            "results": [
+                {"candidate_id": "B", "metrics": {"loss": 1.0}},
+                {"candidate_id": "A", "metrics": {"loss": 1.0}},
+            ],
+        }
+        result = ranker.build_result(
+            candidates,
+            metrics,
+            metric="loss",
+            direction="minimize",
+            top_k=3,
+            missing_metric_policy="reject",
+        )
+        self.assertEqual("candidate-ranking", result["plugin_id"])
+        self.assertEqual(["A", "B"], [item["candidate_id"] for item in result["ranked_candidates"]])
+        self.assertEqual(["C"], result["excluded_missing"])
+        with self.assertRaisesRegex(ValueError, "1 candidates have no metric"):
+            ranker.build_result(
+                candidates,
+                metrics,
+                metric="loss",
+                direction="minimize",
+                top_k=3,
+                missing_metric_policy="error",
+            )
+
+    def test_bundled_rank_executes_and_adapter_rechecks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
             attempt = project / "attempt"
@@ -111,7 +155,7 @@ class ManuscriptScreeningTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            (project / "transport.json").write_text(
+            (project / "metrics.json").write_text(
                 json.dumps(
                     {
                         "schema_version": 1,
@@ -134,7 +178,7 @@ class ManuscriptScreeningTests(unittest.TestCase):
                 "attempt_dir": str(attempt),
                 "inputs": {
                     "candidate_manifest": "candidates.json",
-                    "transport_results_manifest": "transport.json",
+                    "metric_results_manifest": "metrics.json",
                 },
                 "parameters": {
                     "metric": "ionic_conductivity_300k_s_per_m",
@@ -151,7 +195,7 @@ class ManuscriptScreeningTests(unittest.TestCase):
             self.assertTrue(plan["implementation"]["bundled"])
             subprocess.run(plan["argv"], cwd=plan["cwd"], check=True)
             self.assertEqual("OK", adapter.check(context)["status"])
-            result = json.loads((attempt / "screening-result.json").read_text(encoding="utf-8"))
+            result = json.loads((attempt / "ranking-result.json").read_text(encoding="utf-8"))
             self.assertEqual("Mn6_Fe3_Ni8_Cu4_Zn7", result["ranked_candidates"][0]["candidate_id"])
 
 

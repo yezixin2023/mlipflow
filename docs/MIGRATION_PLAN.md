@@ -75,7 +75,7 @@ replay(context) -> plugin_result
 4. `mlip-training`
 5. `mlip-benchmark`
 6. `ionic-transport`
-7. `composition-screening`
+7. `candidate-ranking`
 8. `electrochemical-voltage`
 
 可选辅助：`descriptor-analysis`、`model-export`。
@@ -168,7 +168,7 @@ Routing 先按元素、任务、场景、限制和关键指标完整性过滤，
 - `$mlip-training`
 - `$mlip-benchmark`
 - `$ionic-transport`
-- `$composition-screening`
+- `$candidate-ranking`
 - `$electrochemical-voltage`
 
 Skills 只指导观察、判断、调用、风险确认和解释结果，不实现数值算法。计算插件始终在 `plugins/`。

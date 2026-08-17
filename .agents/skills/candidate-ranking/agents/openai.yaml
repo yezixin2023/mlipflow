@@ -1,0 +1,4 @@
+interface:
+  display_name: "Candidate ranking"
+  short_description: "Rank existing candidates by an explicit metric"
+  default_prompt: "$candidate-ranking Rank existing candidates by an explicit numeric metric and return the requested deterministic top-k."

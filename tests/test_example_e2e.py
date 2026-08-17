@@ -49,7 +49,7 @@ class HighEntropySulfideExampleTests(unittest.TestCase):
                 "mlip-training",
                 "mlip-benchmark",
                 "ionic-transport",
-                "composition-screening",
+                "candidate-ranking",
                 "electrochemical-voltage",
             },
             uses,

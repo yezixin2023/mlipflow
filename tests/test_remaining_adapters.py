@@ -186,9 +186,9 @@ class DFTLabelingAdapterTests(unittest.TestCase):
             self.assertIn("completion.electronic", {item["code"] for item in checked["diagnostics"]})
 
 
-class CompositionScreeningAdapterTests(unittest.TestCase):
+class CandidateRankingAdapterTests(unittest.TestCase):
     def test_top_k_rule_is_recomputed_from_explicit_manifests(self) -> None:
-        module = load_adapter("composition-screening")
+        module = load_adapter("candidate-ranking")
         adapter = module.Adapter()
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
@@ -199,7 +199,7 @@ class CompositionScreeningAdapterTests(unittest.TestCase):
                 {"schema_version": 1, "candidates": [{"id": "A"}, {"id": "B"}, {"id": "C"}]},
             )
             write_json(
-                project / "transport.json",
+                project / "metrics.json",
                 {
                     "schema_version": 1,
                     "results": [
@@ -209,7 +209,7 @@ class CompositionScreeningAdapterTests(unittest.TestCase):
                 },
             )
             parameters = {
-                "screening_script": "scripts/screen.py",
+                "ranking_script": "scripts/rank.py",
                 "interpreter_argv": ["python"],
                 "metric": "conductivity",
                 "direction": "maximize",
@@ -221,14 +221,14 @@ class CompositionScreeningAdapterTests(unittest.TestCase):
                 attempt,
                 {
                     "candidate_manifest": "candidates.json",
-                    "transport_results_manifest": "transport.json",
+                    "metric_results_manifest": "metrics.json",
                 },
                 parameters,
             )
             self.assertEqual("READY", adapter.plan(ctx)["status"])
             result = {
                 "schema_version": 1,
-                "plugin_id": "composition-screening",
+                "plugin_id": "candidate-ranking",
                 "status": "OK",
                 "rule": {
                     "metric": "conductivity",
@@ -243,11 +243,11 @@ class CompositionScreeningAdapterTests(unittest.TestCase):
                     {"candidate_id": "A", "rank": 2, "value": 1.0},
                 ],
             }
-            write_json(attempt / "screening-result.json", result)
+            write_json(attempt / "ranking-result.json", result)
             self.assertEqual("OK", adapter.check(ctx)["status"])
             self.assertEqual(2, adapter.collect(ctx)["metrics"]["selected_count"])
             result["ranked_candidates"].reverse()
-            write_json(attempt / "screening-result.json", result)
+            write_json(attempt / "ranking-result.json", result)
             self.assertEqual("FAIL", adapter.check(ctx)["status"])
 
 
@@ -372,13 +372,13 @@ class AdapterSafetyBoundaryTests(unittest.TestCase):
                 },
             ),
             (
-                "composition-screening",
+                "candidate-ranking",
                 {
                     "candidate_manifest": "candidates.json",
-                    "transport_results_manifest": "transport.json",
+                    "metric_results_manifest": "metrics.json",
                 },
                 {
-                    "screening_script": "scripts/screen.py",
+                    "ranking_script": "scripts/rank.py",
                     "interpreter_argv": ["python"],
                     "metric": "conductivity",
                     "direction": "maximize",

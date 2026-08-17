@@ -63,18 +63,18 @@
         "parameters": {"fixture_kind": "synthetic", "executes_numerics": false}
       },
       {
-        "id": "screening-replay",
-        "uses": "composition-screening@0",
+        "id": "ranking-replay",
+        "uses": "candidate-ranking@0",
         "needs": ["benchmark-replay"],
         "mode": "replay",
         "backend": "local",
-        "inputs": {"result_manifest": "replay/screening-result.json"},
+        "inputs": {"result_manifest": "replay/ranking-result.json"},
         "parameters": {"fixture_kind": "synthetic", "executes_numerics": false}
       },
       {
         "id": "high-fidelity-validation-replay",
         "uses": "dft-labeling@0",
-        "needs": ["screening-replay"],
+        "needs": ["ranking-replay"],
         "mode": "replay",
         "backend": "local",
         "inputs": {"result_manifest": "replay/high-fidelity-validation-result.json"},

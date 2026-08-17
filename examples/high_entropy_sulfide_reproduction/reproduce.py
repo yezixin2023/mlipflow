@@ -36,6 +36,22 @@ REPORT_OUTPUTS = (
 )
 BENCHMARK_WRAPPER_LOCATOR = "plugins/mlip-benchmark/benchmark_wrapper.py"
 BENCHMARK_MANIFEST_LOCATOR = "plugins/mlip-benchmark/plugin.yaml"
+LEGACY_RANKING_IMPLEMENTATION = {
+    "plugins/composition-screening/screen.py": (
+        "sha256:18fab4cb37aae5c485277050a8ba0d2df03b27545082e75cd342df495b15d335"
+    ),
+    "plugins/composition-screening/normalize_legacy.py": (
+        "sha256:783a6db77ea116e045e4c4ad7a6f56b3a08b5ff5915e673d23389bec84af4d0b"
+    ),
+    "plugins/composition-screening/adapter.py": (
+        "sha256:ad43b2a8a12873eb188760ebfaeed4bb018925b3cbbd85890c4d8f9c0002edb5"
+    ),
+    "plugins/composition-screening/plugin.yaml": (
+        "sha256:413c0985d43df3cfa76bc3005ffcbb77178944a88bd17e619f7c938b3eec022e"
+    ),
+}
+CURRENT_RANKING_MANIFEST_LOCATOR = "plugins/candidate-ranking/plugin.yaml"
+CURRENT_RANKER_LOCATOR = "plugins/candidate-ranking/rank.py"
 
 
 class ReproductionEvidenceError(ValueError):
@@ -477,24 +493,11 @@ def _verify_screening_evidence(
     implementation_files = implementation.get("files", [])
     if len(implementation_files) != 4:
         raise ReproductionEvidenceError("screening implementation file provenance is incomplete")
-    expected_implementation_locators = {
-        "plugins/composition-screening/screen.py",
-        "plugins/composition-screening/normalize_legacy.py",
-        "plugins/composition-screening/adapter.py",
-        "plugins/composition-screening/plugin.yaml",
+    observed_legacy_implementation = {
+        item.get("locator"): item.get("sha256") for item in implementation_files
     }
-    observed_implementation_locators = {
-        item.get("locator") for item in implementation_files
-    }
-    if observed_implementation_locators != expected_implementation_locators:
-        raise ReproductionEvidenceError("screening implementation locator set drift")
-    for item in implementation_files:
-        _verify_repository_file_hash(
-            repository_root,
-            item.get("locator"),
-            item.get("sha256"),
-            "screening implementation",
-        )
+    if observed_legacy_implementation != LEGACY_RANKING_IMPLEMENTATION:
+        raise ReproductionEvidenceError("legacy screening implementation provenance drift")
 
     top_candidates = screening.get("top_candidates", [])
     if len(top_candidates) != 10:
@@ -517,6 +520,69 @@ def _verify_screening_evidence(
     )
     if top_candidates != expected_order:
         raise ReproductionEvidenceError("large-supercell top ten violates value/tie ordering")
+
+    current_manifest_path = _repository_file(
+        repository_root,
+        CURRENT_RANKING_MANIFEST_LOCATOR,
+        "current candidate-ranking manifest",
+    )
+    try:
+        current_manifest = _json(current_manifest_path)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ReproductionEvidenceError("current candidate-ranking manifest is invalid") from exc
+    if (
+        current_manifest.get("id") != "candidate-ranking"
+        or current_manifest.get("name") != "Candidate ranking"
+        or current_manifest.get("display_name") != "Candidate ranking"
+        or current_manifest.get("execution", {}).get("operations") != ["rank-candidates"]
+    ):
+        raise ReproductionEvidenceError("current candidate-ranking manifest identity drift")
+
+    ranker_path = _repository_file(
+        repository_root,
+        CURRENT_RANKER_LOCATOR,
+        "current candidate-ranking implementation",
+    )
+    ranker_spec = importlib.util.spec_from_file_location(
+        "mlipflow_manuscript_candidate_ranking_compatibility", ranker_path
+    )
+    if ranker_spec is None or ranker_spec.loader is None:
+        raise ReproductionEvidenceError("cannot load current candidate-ranking implementation")
+    ranker = importlib.util.module_from_spec(ranker_spec)
+    ranker_spec.loader.exec_module(ranker)
+    compatibility_result = ranker.build_result(
+        {
+            "schema_version": 1,
+            "candidates": [{"id": item["candidate_id"]} for item in top_candidates],
+        },
+        {
+            "schema_version": 1,
+            "results": [
+                {
+                    "candidate_id": item["candidate_id"],
+                    "metrics": {metric["name"]: item["value"]},
+                }
+                for item in top_candidates
+            ],
+        },
+        metric=metric["name"],
+        direction=rule["direction"],
+        top_k=rule["top_k"],
+        missing_metric_policy=rule["missing_metric_policy"],
+    )
+    if (
+        compatibility_result.get("plugin_id") != "candidate-ranking"
+        or compatibility_result.get("ranked_candidates")
+        != [
+            {
+                "candidate_id": item["candidate_id"],
+                "rank": item["rank"],
+                "value": item["value"],
+            }
+            for item in top_candidates
+        ]
+    ):
+        raise ReproductionEvidenceError("current candidate-ranking compatibility replay drift")
 
     identity = top_link.get("identity_link", {})
     top_candidate = top_candidates[0]

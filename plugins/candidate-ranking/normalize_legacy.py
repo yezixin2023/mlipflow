@@ -6,8 +6,8 @@ The manuscript-era files use two incompatible element orders:
 * conductivity rows: ``Mn#_Fe#_Ni#_Cu#_Zn# value``.
 
 This read-only parser maps both forms by element label and writes the two
-versioned manifests consumed by the composition-screening adapter.  It does
-not infer missing candidates or units.
+versioned manifests consumed by the candidate-ranking adapter. It does not
+infer missing candidates or units.
 """
 
 from __future__ import annotations
@@ -201,7 +201,7 @@ def normalize(
         "candidates": [candidates[key] for key in sorted(candidates)],
         "provenance": common_provenance,
     }
-    transport_manifest = {
+    metric_results_manifest = {
         "schema_version": 1,
         "metric_definition": {
             "name": metric_name,
@@ -220,7 +220,7 @@ def normalize(
         ],
         "provenance": common_provenance,
     }
-    return candidate_manifest, transport_manifest
+    return candidate_manifest, metric_results_manifest
 
 
 def _write_new_json(path: Path, value: dict[str, Any]) -> None:
@@ -247,7 +247,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--metric-name", required=True)
     parser.add_argument("--metric-unit", required=True)
     parser.add_argument("--candidate-manifest", type=Path, required=True)
-    parser.add_argument("--transport-results-manifest", type=Path, required=True)
+    parser.add_argument("--metric-results-manifest", type=Path, required=True)
     return parser
 
 
@@ -261,9 +261,9 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("expected_metal_sites must be positive")
         if not args.metric_name or not args.metric_unit:
             raise ValueError("metric name and unit must be non-empty")
-        if args.candidate_manifest.absolute() == args.transport_results_manifest.absolute():
+        if args.candidate_manifest.absolute() == args.metric_results_manifest.absolute():
             raise ValueError("the two output manifests must be different files")
-        candidates, transport = normalize(
+        candidates, metric_results = normalize(
             args.candidate_list,
             args.metric_file,
             candidate_order=candidate_order,
@@ -274,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         _write_new_json(args.candidate_manifest, candidates)
         try:
-            _write_new_json(args.transport_results_manifest, transport)
+            _write_new_json(args.metric_results_manifest, metric_results)
         except Exception:
             args.candidate_manifest.unlink(missing_ok=True)
             raise

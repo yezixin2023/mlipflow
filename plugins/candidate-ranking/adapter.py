@@ -1,7 +1,7 @@
-"""Thin adapter for deterministic top-k composition screening.
+"""Thin adapter for deterministic single-metric candidate ranking.
 
-The scoring implementation remains user-owned.  This adapter passes explicit
-candidate and transport manifests to that implementation and independently
+The ranking implementation may be bundled or project-owned.  This adapter passes
+explicit candidate and metric-results manifests to it and independently
 checks that the returned ranking obeys the approved metric, direction, missing
 value policy and top-k limit.
 """
@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any
 
 
-PLUGIN_ID = "composition-screening"
-BUILTIN_SCREEN = Path(globals().get("__file__", "adapter.py")).absolute().with_name("screen.py")
+PLUGIN_ID = "candidate-ranking"
+BUILTIN_RANK = Path(globals().get("__file__", "adapter.py")).absolute().with_name("rank.py")
 SHELL_EXECUTABLES = frozenset(
     {"bash", "csh", "cmd", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "tcsh", "zsh"}
 )
@@ -101,7 +101,7 @@ def _read_json(path: Path) -> tuple[dict[str, Any] | None, dict[str, str] | None
 
 
 class Adapter:
-    """Plan a screening script and verify its top-k ranking evidence."""
+    """Plan a ranking script and verify its top-k evidence."""
 
     def validate(self, context: Any) -> list[dict[str, str]]:
         diagnostics = _base_diagnostics(context)
@@ -111,21 +111,21 @@ class Adapter:
         parameters = context.get("parameters")
         if not isinstance(inputs, dict) or not isinstance(parameters, dict):
             return diagnostics
-        for key in ("candidate_manifest", "transport_results_manifest"):
+        for key in ("candidate_manifest", "metric_results_manifest"):
             if not _safe_relative(inputs.get(key)):
                 diagnostics.append(
                     _diagnostic(
                         "error", f"inputs.{key}", f"{key} 必须是 project_root 下的安全相对路径。"
                     )
                 )
-        if parameters.get("screening_script") is not None and not _safe_relative(
-            parameters.get("screening_script")
+        if parameters.get("ranking_script") is not None and not _safe_relative(
+            parameters.get("ranking_script")
         ):
             diagnostics.append(
                 _diagnostic(
                     "error",
-                    "parameters.screening_script",
-                    "screening_script 若提供，必须是 project_root 下显式的相对脚本路径。",
+                    "parameters.ranking_script",
+                    "ranking_script 若提供，必须是 project_root 下显式的相对脚本路径。",
                 )
             )
         interpreter = parameters.get("interpreter_argv", [sys.executable])
@@ -180,7 +180,7 @@ class Adapter:
                     "missing_metric_policy 仅支持 reject 或 error；不做隐式插值。",
                 )
             )
-        if not _safe_relative(parameters.get("result_manifest", "screening-result.json")):
+        if not _safe_relative(parameters.get("result_manifest", "ranking-result.json")):
             diagnostics.append(
                 _diagnostic(
                     "error",
@@ -203,13 +203,13 @@ class Adapter:
         inputs = context["inputs"]
         parameters = context["parameters"]
         result_path = _path(
-            context["attempt_dir"], parameters.get("result_manifest", "screening-result.json")
+            context["attempt_dir"], parameters.get("result_manifest", "ranking-result.json")
         )
-        script_value = parameters.get("screening_script")
+        script_value = parameters.get("ranking_script")
         script_path = (
             _path(context["project_root"], script_value)
             if isinstance(script_value, str)
-            else BUILTIN_SCREEN.absolute()
+            else BUILTIN_RANK.absolute()
         )
         argv = list(parameters.get("interpreter_argv", [sys.executable]))
         argv.extend(
@@ -217,8 +217,8 @@ class Adapter:
                 str(script_path),
                 "--candidate-manifest",
                 str(_path(context["project_root"], inputs["candidate_manifest"])),
-                "--transport-results-manifest",
-                str(_path(context["project_root"], inputs["transport_results_manifest"])),
+                "--metric-results-manifest",
+                str(_path(context["project_root"], inputs["metric_results_manifest"])),
                 "--metric",
                 parameters["metric"],
                 "--direction",
@@ -267,10 +267,10 @@ class Adapter:
     def _paths(self, context: dict[str, Any]) -> tuple[Path, Path, Path]:
         return (
             _path(context["project_root"], context["inputs"]["candidate_manifest"]),
-            _path(context["project_root"], context["inputs"]["transport_results_manifest"]),
+            _path(context["project_root"], context["inputs"]["metric_results_manifest"]),
             _path(
                 context["attempt_dir"],
-                context["parameters"].get("result_manifest", "screening-result.json"),
+                context["parameters"].get("result_manifest", "ranking-result.json"),
             ),
         )
 
@@ -278,7 +278,7 @@ class Adapter:
         self,
         context: dict[str, Any],
         candidate_manifest: dict[str, Any],
-        transport_manifest: dict[str, Any],
+        metric_results_manifest: dict[str, Any],
         result: dict[str, Any],
     ) -> list[dict[str, str]]:
         diagnostics: list[dict[str, str]] = []
@@ -289,10 +289,10 @@ class Adapter:
                     "error", "candidates.schema", "candidate manifest schema_version 必须为 1。"
                 )
             )
-        if transport_manifest.get("schema_version") != 1:
+        if metric_results_manifest.get("schema_version") != 1:
             diagnostics.append(
                 _diagnostic(
-                    "error", "transport.schema", "transport manifest schema_version 必须为 1。"
+                    "error", "metrics.schema", "metric-results manifest schema_version 必须为 1。"
                 )
             )
         candidates = candidate_manifest.get("candidates")
@@ -311,18 +311,18 @@ class Adapter:
         if len(candidate_ids) != len(set(candidate_ids)):
             diagnostics.append(_diagnostic("error", "candidates.duplicate", "候选 id 必须唯一。"))
 
-        transport_results = transport_manifest.get("results")
-        if not isinstance(transport_results, list):
+        metric_results = metric_results_manifest.get("results")
+        if not isinstance(metric_results, list):
             diagnostics.append(
-                _diagnostic("error", "transport.results", "transport results 必须是数组。")
+                _diagnostic("error", "metrics.results", "metric results 必须是数组。")
             )
             return diagnostics
         metric_values: dict[str, float] = {}
-        seen_transport: set[str] = set()
-        for item in transport_results:
+        seen_metric_results: set[str] = set()
+        for item in metric_results:
             if not isinstance(item, dict):
                 diagnostics.append(
-                    _diagnostic("error", "transport.item", "transport 记录必须是对象。")
+                    _diagnostic("error", "metrics.item", "metric 记录必须是对象。")
                 )
                 continue
             candidate_id = item.get("candidate_id")
@@ -331,23 +331,23 @@ class Adapter:
             if candidate_id not in candidate_ids:
                 diagnostics.append(
                     _diagnostic(
-                        "error", "transport.unknown_candidate", "transport 结果引用未知候选。"
+                        "error", "metrics.unknown_candidate", "metric 结果引用未知候选。"
                     )
                 )
-            elif candidate_id in seen_transport:
+            elif candidate_id in seen_metric_results:
                 diagnostics.append(
-                    _diagnostic("error", "transport.duplicate", "同一候选的 transport 结果重复。")
+                    _diagnostic("error", "metrics.duplicate", "同一候选的 metric 结果重复。")
                 )
             else:
-                seen_transport.add(candidate_id)
+                seen_metric_results.add(candidate_id)
                 if _finite_number(value):
                     metric_values[candidate_id] = float(value)
                 else:
                     diagnostics.append(
                         _diagnostic(
                             "error",
-                            "transport.metric",
-                            "已声明的 transport 记录必须包含有限目标指标；缺失候选应完全省略。",
+                            "metrics.metric",
+                            "已声明的 metric 记录必须包含有限目标指标；缺失候选应完全省略。",
                         )
                     )
 
@@ -362,7 +362,7 @@ class Adapter:
                 _diagnostic("error", "result.identity", "结果 schema/plugin 标识不正确。")
             )
         if result.get("status") != "OK":
-            diagnostics.append(_diagnostic("error", "result.status", "筛选结果未声明 status=OK。"))
+            diagnostics.append(_diagnostic("error", "result.status", "排序结果未声明 status=OK。"))
         if result.get("rule") != expected_rule:
             diagnostics.append(_diagnostic("error", "result.rule", "结果规则与已批准参数不一致。"))
 
@@ -370,7 +370,7 @@ class Adapter:
         if parameters["missing_metric_policy"] == "error" and missing_ids:
             diagnostics.append(
                 _diagnostic(
-                    "error", "result.missing_metric", "error 策略下存在缺失 transport 指标。"
+                    "error", "result.missing_metric", "error 策略下存在缺失 metric。"
                 )
             )
         declared_missing = result.get("excluded_missing", [])
@@ -409,7 +409,7 @@ class Adapter:
                 float(value), metric_values[candidate_id], rel_tol=1e-12, abs_tol=1e-12
             ):
                 diagnostics.append(
-                    _diagnostic("error", "result.value", "排名值必须等于 transport 清单中的原值。")
+                    _diagnostic("error", "result.value", "排名值必须等于 metric-results 清单中的原值。")
                 )
         reverse = parameters["direction"] == "maximize"
         expected_ids = [
@@ -438,9 +438,9 @@ class Adapter:
         if _errors(diagnostics):
             return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
         assert isinstance(context, dict)
-        candidate_path, transport_path, result_path = self._paths(context)
+        candidate_path, metric_results_path, result_path = self._paths(context)
         manifests: list[dict[str, Any]] = []
-        for path in (candidate_path, transport_path, result_path):
+        for path in (candidate_path, metric_results_path, result_path):
             manifest, read_diagnostic = _read_json(path)
             if manifest is None:
                 assert read_diagnostic is not None
@@ -469,8 +469,8 @@ class Adapter:
             "status": "OK",
             "artifacts": [
                 {
-                    "name": "screening-result",
-                    "path": context["parameters"].get("result_manifest", "screening-result.json"),
+                    "name": "ranking-result",
+                    "path": context["parameters"].get("result_manifest", "ranking-result.json"),
                     "media_type": "application/json",
                 }
             ],
@@ -482,7 +482,7 @@ class Adapter:
         }
 
     def replay(self, context: Any) -> dict[str, Any]:
-        """Re-verify explicit manifests without executing the screening script."""
+        """Re-verify explicit manifests without executing the ranking script."""
 
         collected = self.collect(context)
         collected["executable"] = False

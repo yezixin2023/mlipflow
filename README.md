@@ -170,7 +170,7 @@ benchmark / model evidence
         +---------------------+--------------------+
         |                     |                    |
         v                     v                    v
-ionic transport      composition screening   voltage analysis
+ionic transport        candidate ranking     voltage analysis
                               |
                               v
                     high-fidelity validation
@@ -188,7 +188,7 @@ ionic transport      composition screening   voltage analysis
 | `lammps-md` | `lammps-prepare` / `execute` + binary restart | ASE + LAMMPS-ready DeepMD/MACE/MatGL 模型 | prepare `local`；execute 受控 `ssh-slurm` |
 | `mlip-benchmark` | benchmark normalize/evaluate | 内置或用户 prediction wrapper | `local` |
 | `ionic-transport` | `analyze-existing` / bounded `md-smoke-and-analyze` | trajectory/MSD + 可选 ASE calculator | `local` |
-| `composition-screening` | deterministic top-k | 已有候选和指标 | `local` |
+| `candidate-ranking` | deterministic top-k | 已有候选和数值指标 | `local` |
 | `electrochemical-voltage` | energy -> voltage / replay | 已有总能量序列 | `local` |
 
 更严格的实现状态见：
@@ -1083,7 +1083,7 @@ model fingerprint
 
 ---
 
-## 15. benchmark / transport / screening / voltage 分别需要什么
+## 15. benchmark / transport / ranking / voltage 分别需要什么
 
 ### 15.1 `mlip-benchmark`
 
@@ -1134,9 +1134,9 @@ mps
 
 Linux NVIDIA GPU 使用 `cuda`。
 
-### 15.3 `composition-screening`
+### 15.3 `candidate-ranking`
 
-对已有候选指标做确定性排序/top-k。它不应自己启动 DFT 或训练。
+对已有候选和数值指标做确定性排序/top-k。它不生成候选、不计算性质、不选择模型，也不启动 MLIP、MD、DFT 或训练。
 
 ### 15.4 `electrochemical-voltage`
 

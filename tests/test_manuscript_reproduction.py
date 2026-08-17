@@ -304,12 +304,11 @@ class ManuscriptReproductionTests(unittest.TestCase):
         for item in screening["implementation"]["files"]:
             self.assertFalse(Path(item["locator"]).is_absolute())
             self.assertEqual(71, len(item["sha256"]))
-        implementation_hashes = {
+        legacy_implementation = {
             item["locator"]: item["sha256"]
             for item in screening["implementation"]["files"]
         }
-        for locator, recorded_sha256 in implementation_hashes.items():
-            self.assertEqual(_sha256(ROOT / locator), recorded_sha256)
+        self.assertEqual(self.reproduce.LEGACY_RANKING_IMPLEMENTATION, legacy_implementation)
         rendered = json.dumps(screening, sort_keys=True)
         for prefix in ("/Users/", "/public/", "/private/", "/tmp/"):
             self.assertNotIn(prefix, rendered)
@@ -461,10 +460,10 @@ class ManuscriptReproductionTests(unittest.TestCase):
             locators = (
                 "plugins/mlip-benchmark/benchmark_wrapper.py",
                 "plugins/mlip-benchmark/plugin.yaml",
-                "plugins/composition-screening/screen.py",
-                "plugins/composition-screening/normalize_legacy.py",
-                "plugins/composition-screening/adapter.py",
-                "plugins/composition-screening/plugin.yaml",
+                "plugins/candidate-ranking/rank.py",
+                "plugins/candidate-ranking/normalize_legacy.py",
+                "plugins/candidate-ranking/adapter.py",
+                "plugins/candidate-ranking/plugin.yaml",
                 "plugins/ionic-transport/adapter.py",
             )
             for locator in locators:
@@ -478,14 +477,16 @@ class ManuscriptReproductionTests(unittest.TestCase):
                 benchmark_wrapper_path=copied_wrapper,
                 write=True,
             )
-            tampered = checkout / "plugins" / "composition-screening" / "plugin.yaml"
+            tampered = checkout / "plugins" / "candidate-ranking" / "plugin.yaml"
             tampered.write_text(
-                tampered.read_text(encoding="utf-8") + "\n# provenance tamper\n",
+                tampered.read_text(encoding="utf-8").replace(
+                    '"id": "candidate-ranking"', '"id": "candidate-rankings"', 1
+                ),
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(
                 self.reproduce.ReproductionEvidenceError,
-                "screening implementation SHA-256 mismatch",
+                "current candidate-ranking manifest identity drift",
             ):
                 self.reproduce.reproduce(
                     relocated,

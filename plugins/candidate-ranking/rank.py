@@ -1,8 +1,8 @@
-"""Deterministic single-metric composition screening.
+"""Deterministic single-metric candidate ranking.
 
 This module is the executable implementation used by the
-``composition-screening`` adapter.  It deliberately does not run an ML model:
-it ranks explicit, already-computed transport metrics and records every
+``candidate-ranking`` adapter.  It deliberately does not run an ML model or
+calculate a property: it ranks explicit, already-computed metrics and records every
 selection rule in a small JSON manifest.
 """
 
@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 
-PLUGIN_ID = "composition-screening"
+PLUGIN_ID = "candidate-ranking"
 
 
 def _load_object(path: Path) -> dict[str, Any]:
@@ -48,7 +48,7 @@ def _finite(value: Any) -> bool:
 
 def build_result(
     candidate_manifest: dict[str, Any],
-    transport_manifest: dict[str, Any],
+    metric_results_manifest: dict[str, Any],
     *,
     metric: str,
     direction: str,
@@ -60,8 +60,8 @@ def build_result(
 
     if candidate_manifest.get("schema_version") != 1:
         raise ValueError("candidate manifest schema_version must equal 1")
-    if transport_manifest.get("schema_version") != 1:
-        raise ValueError("transport manifest schema_version must equal 1")
+    if metric_results_manifest.get("schema_version") != 1:
+        raise ValueError("metric-results manifest schema_version must equal 1")
     if not isinstance(metric, str) or not metric:
         raise ValueError("metric must be a non-empty string")
     if direction not in {"minimize", "maximize"}:
@@ -83,22 +83,22 @@ def build_result(
             raise ValueError(f"duplicate candidate id: {candidate_id}")
         candidate_ids.append(candidate_id)
 
-    results = transport_manifest.get("results")
+    results = metric_results_manifest.get("results")
     if not isinstance(results, list):
-        raise ValueError("transport_manifest.results must be an array")
+        raise ValueError("metric_results_manifest.results must be an array")
     values: dict[str, float] = {}
     for index, record in enumerate(results):
         if not isinstance(record, dict):
-            raise ValueError(f"transport record {index} must be an object")
+            raise ValueError(f"metric record {index} must be an object")
         candidate_id = record.get("candidate_id")
         if candidate_id not in candidate_ids:
-            raise ValueError(f"transport record references unknown candidate: {candidate_id!r}")
+            raise ValueError(f"metric record references unknown candidate: {candidate_id!r}")
         if candidate_id in values:
-            raise ValueError(f"duplicate transport record: {candidate_id}")
+            raise ValueError(f"duplicate metric record: {candidate_id}")
         metrics = record.get("metrics")
         value = metrics.get(metric) if isinstance(metrics, dict) else None
         if not _finite(value):
-            raise ValueError(f"transport record {candidate_id!r} has no finite metric {metric!r}")
+            raise ValueError(f"metric record {candidate_id!r} has no finite metric {metric!r}")
         values[candidate_id] = float(value)
 
     missing = sorted(set(candidate_ids) - set(values))
@@ -126,7 +126,7 @@ def build_result(
         ],
         "input_fingerprints": dict(input_fingerprints or {}),
         "implementation": {
-            "name": "mlipflow-deterministic-single-metric-screen",
+            "name": "mlipflow-deterministic-single-metric-ranking",
             "version": 1,
             "tie_break": "candidate_id-ascending",
         },
@@ -152,7 +152,7 @@ def _write_new_json(path: Path, value: dict[str, Any]) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate-manifest", type=Path, required=True)
-    parser.add_argument("--transport-results-manifest", type=Path, required=True)
+    parser.add_argument("--metric-results-manifest", type=Path, required=True)
     parser.add_argument("--metric", required=True)
     parser.add_argument("--direction", choices=("minimize", "maximize"), required=True)
     parser.add_argument("--top-k", type=int, required=True)
@@ -165,17 +165,17 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         candidate_manifest = _load_object(args.candidate_manifest)
-        transport_manifest = _load_object(args.transport_results_manifest)
+        metric_results_manifest = _load_object(args.metric_results_manifest)
         result = build_result(
             candidate_manifest,
-            transport_manifest,
+            metric_results_manifest,
             metric=args.metric,
             direction=args.direction,
             top_k=args.top_k,
             missing_metric_policy=args.missing_metric_policy,
             input_fingerprints={
                 "candidate_manifest": _sha256(args.candidate_manifest),
-                "transport_results_manifest": _sha256(args.transport_results_manifest),
+                "metric_results_manifest": _sha256(args.metric_results_manifest),
             },
         )
         _write_new_json(args.result_manifest, result)

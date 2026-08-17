@@ -20,13 +20,13 @@ EXPECTED_PLUGINS = {
     "mlip-training",
     "mlip-benchmark",
     "ionic-transport",
-    "composition-screening",
+    "candidate-ranking",
     "electrochemical-voltage",
 }
 CONTRACT_METHODS = {"validate", "plan", "prepare", "check", "collect", "replay"}
 EXACT_EXECUTION_OPERATIONS = {
     "ase-md": ["run"],
-    "composition-screening": ["rank-candidates"],
+    "candidate-ranking": ["rank-candidates"],
     "dft-labeling": ["vasp-prepare", "label"],
     "electrochemical-voltage": ["compute-from-energies", "replay-si-table-s11"],
     "high-entropy-structure": ["generate-sqs"],
@@ -42,7 +42,7 @@ EXACT_EXECUTION_OPERATIONS = {
 }
 EXPECTED_EXECUTION_BACKENDS = {
     "ase-md": ["ssh-slurm"],
-    "composition-screening": ["local"],
+    "candidate-ranking": ["local"],
     "dft-labeling": ["local", "ssh-slurm"],
     "electrochemical-voltage": ["local"],
     "high-entropy-structure": ["local"],

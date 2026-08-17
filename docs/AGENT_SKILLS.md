@@ -13,10 +13,14 @@
 | `$lammps-md` | 为 LAMMPS-ready DeepMD/MACE/MatGL-M3GNet 准备和执行 CPU/GPU NVT/NPT，并监督 binary restart salvage 与断点续跑 | `lammps-md` |
 | `$mlip-benchmark` | 产生机器可读 benchmark/ranking | `mlip-benchmark` |
 | `$ionic-transport` | 仅本地监督已有 ASE/LAMMPS/VASP trajectory 或 MSD → MSD/D/电导/Arrhenius，以及 bounded MD smoke | `ionic-transport` |
-| `$composition-screening` | 大超胞组分筛选与 top-k 验证 | `composition-screening` |
+| `$candidate-ranking` | 按已有数值指标做确定性 ranking/top-k | `candidate-ranking` |
 | `$electrochemical-voltage` | Li 含量能量与电压曲线 | `electrochemical-voltage` |
 
 Skills 是监督说明，不是计算实现。更新 Skill 时，应以当前 CLI 帮助、plugin manifest 和 schema 为接口事实；旧 claw skills 已发现命令名和参数漂移，不可直接复制。
+
+## Candidate ranking
+
+`$candidate-ranking` 只监督已有 candidate manifest 与 metric-results manifest 的单指标确定性排序。必须显式给出 metric、maximize/minimize、top-k 和 `reject`/`error` missing policy，并调用 `candidate-ranking` plugin；Skill 不生成候选、不运行 MLIP/MD/DFT、不计算性质，也不承担模型选择。
 
 ## Ionic transport
 

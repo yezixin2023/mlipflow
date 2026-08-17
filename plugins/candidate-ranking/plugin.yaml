@@ -1,12 +1,12 @@
 {
   "$schema": "../../schemas/plugin.schema.json",
   "schema_version": 1,
-  "id": "composition-screening",
-  "name": "Composition screening",
-  "display_name": "Composition screening",
+  "id": "candidate-ranking",
+  "name": "Candidate ranking",
+  "display_name": "Candidate ranking",
   "version": "0.3.0",
   "api_version": 1,
-  "description": "Executable deterministic top-k screening with a bundled legacy Li10 normalizer, explicit metric units, provenance, and independent result verification.",
+  "description": "Executable deterministic top-k ranking of existing candidates by an existing finite numeric metric, with explicit direction, missing policy, provenance, and independent result verification.",
   "category": "screening",
   "contract": {
     "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
@@ -22,10 +22,10 @@
       "inventory://local-readonly/MLP/supply/code/Li10"
     ],
     "limitations": [
-      "The bundled implementation ranks existing metrics only; candidate generation and transport inference remain upstream responsibilities.",
-      "Multi-objective Pareto ranking, uncertainty calibration, imputation, and model choice are deliberately outside this adapter.",
-      "The legacy normalizer preserves the source value and requires an explicit unit; it does not reinterpret conductivity physics.",
-      "Only local execution is enabled until scheduled completion is rechecked through this adapter."
+      "The bundled implementation ranks existing finite metrics only; candidate generation and property calculation remain upstream responsibilities.",
+      "Multi-objective Pareto ranking, uncertainty calibration, imputation, model choice, and high-fidelity validation are deliberately outside this adapter.",
+      "The bundled legacy Li10 normalizer preserves source values and requires explicit units; it does not reinterpret conductivity physics.",
+      "Only local execution is enabled."
     ]
   },
   "execution": {
@@ -42,44 +42,42 @@
     "supported": true,
     "behavior": "parse-existing-artifacts",
     "accepted_media_types": ["application/json"],
-    "reason": "Replay reads candidate, transport, and ranking manifests and verifies the approved rule without invoking inference or the screening script."
+    "reason": "Replay reads candidate, metric-results, and ranking manifests and verifies the declared rule without calculating a property or invoking the ranking script."
   },
   "inputs": [
     {"name": "candidate-manifest", "kind": "manifest", "required": true, "media_type": "application/json"},
-    {"name": "transport-results-manifest", "kind": "manifest", "required": true, "media_type": "application/json"}
+    {"name": "metric-results-manifest", "kind": "manifest", "required": true, "media_type": "application/json"}
   ],
   "parameters": [
-    {"name": "screening-script", "type": "string", "required": false, "description": "Optional project-relative override; omitted uses the fingerprinted bundled deterministic implementation."},
+    {"name": "ranking-script", "type": "string", "required": false, "description": "Optional project-relative override; omitted uses the fingerprinted bundled deterministic implementation."},
     {"name": "interpreter-argv", "type": "array", "required": false, "description": "Optional one-item interpreter argv passed without a shell; defaults to the current Python interpreter."},
-    {"name": "metric", "type": "string", "required": true, "description": "Finite transport metric key used for ranking."},
+    {"name": "metric", "type": "string", "required": true, "description": "Finite numeric metric key used for ranking."},
     {"name": "direction", "type": "string", "required": true, "description": "minimize or maximize."},
     {"name": "top-k", "type": "integer", "required": true, "description": "Positive selection count cap."},
     {"name": "missing-metric-policy", "type": "string", "required": true, "description": "Deterministic reject or error policy; no implicit imputation."},
-    {"name": "result-manifest", "type": "string", "required": false, "description": "Safe attempt-relative standardized result path.", "default": "screening-result.json"}
+    {"name": "result-manifest", "type": "string", "required": false, "description": "Safe attempt-relative standardized result path.", "default": "ranking-result.json"}
   ],
   "outputs": [
     {"name": "ranked-candidates", "kind": "artifact-reference", "required": true, "media_type": "application/json"},
-    {"name": "routing-evidence", "kind": "manifest", "required": true, "media_type": "application/json"}
+    {"name": "ranking-evidence", "kind": "manifest", "required": true, "media_type": "application/json"}
   ],
   "dependencies": {
-    "upstream_plugins": ["high-entropy-structure", "ionic-transport"],
-    "python_packages": [
-      {"name": "numpy", "required": false, "bundled": false, "purpose": "Future deterministic scoring and stable ranking."}
-    ],
+    "upstream_plugins": [],
+    "python_packages": [],
     "external_programs": []
   },
   "safety": {
-    "expensive": true,
+    "expensive": false,
     "destructive": false,
     "network_access": false,
-    "requires_approval_before_execution": true,
-    "notes": ["Large enumeration or inference batches require count and cost estimates before approval."]
+    "requires_approval_before_execution": false,
+    "notes": ["The operation ranks existing values only and never generates candidates or computes properties."]
   },
   "completion": {
     "status": "implemented",
     "checks": [
-      {"id": "legacy-element-order", "implemented": true, "description": "Normalize Zn-Fe-Cu-Ni-Mn candidate rows and element-labelled Mn-Fe-Ni-Cu-Zn metric rows without positional ambiguity."},
-      {"id": "candidate-identity-and-count", "implemented": true, "description": "Require unique candidate identities and reject transport records for unknown candidates."},
+      {"id": "legacy-element-order", "implemented": true, "description": "The optional legacy normalizer maps labelled candidate and metric identities without positional ambiguity."},
+      {"id": "candidate-identity-and-count", "implemented": true, "description": "Require unique candidate identities and reject metric records for unknown candidates."},
       {"id": "ranking-evidence", "implemented": true, "description": "Recompute deterministic single-metric ordering, missing decisions, tie breaks, and top-k count from explicit manifests."}
     ],
     "success_state": "OK",
@@ -93,6 +91,6 @@
     "requires_approval": false,
     "max_attempts": null,
     "limit_enforced": false,
-    "notes": ["Retry preserves the candidate-space and policy digests unless a new plan is explicitly approved."]
+    "notes": ["Retry preserves the candidate-manifest, metric-results, and ranking-rule digests unless a new plan is explicitly approved."]
   }
 }

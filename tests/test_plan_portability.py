@@ -45,7 +45,7 @@ EXAMPLE = ROOT / "examples" / "high_entropy_sulfide"
 # could not find would leak an absolute path into a signed plan.
 PLUGIN_NODES = {
     "ase-md": {"calculator": "mace", "ensemble": "nvt-langevin"},
-    "composition-screening": {"operation": "rank-candidates"},
+    "candidate-ranking": {"operation": "rank-candidates"},
     "dft-labeling": {"operation": "vasp-prepare"},
     "electrochemical-voltage": {"operation": "compute-from-energies"},
     "high-entropy-structure": {"operation": "generate-sqs"},

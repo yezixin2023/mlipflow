@@ -49,7 +49,7 @@ archive（`allstr.arc`、`best.arc`、可选 `md.arc`）与 `lasp.in` 到临时�
 | `3-Element/Li8/replace_sqs_6.5-4.5.py` | CONTCAR/CIF、整数组分、cutoff → SQS CIF/POSCAR | ASE、icet、pymatgen、mendeleev；无 CLI；位点硬编码 | C/D | `high-entropy-structure` |
 | `Li10M7P8S32/SQS/*/replace_sqs.py` | 原型结构与组分 → SQS 结构 | 多个近重复版本 | C/E | `high-entropy-structure` |
 | `Li10M7P8S32/SQS/7-5/gen_val_data.py` | 随机组分 → 2×2×2 验证结构 | 未固定随机种子 | B/C | `high-entropy-structure` |
-| `Li10M7P8S32/SQS/supercell/replace_sqs.py` | 原型 → 2×2×1、约 2460 个候选 | 规模较大，无标准 manifest | C/D | `composition-screening` |
+| `Li10M7P8S32/SQS/supercell/replace_sqs.py` | 原型 → 2×2×1、约 2460 个候选 | 规模较大，无标准 manifest | C/D | `candidate-ranking`（仅消费已有候选/指标） |
 
 迁移要求：随机种子、原型指纹、组分约束、超胞、cutoff 和输出结构哈希必须进入 manifest；不得静默改变原子占位规则。
 
@@ -131,7 +131,7 @@ MSD 时间轴、体积、Li 数量、扩散维度、拟合窗、平衡段和电�
 
 | 代表路径 | 能力 | 等级 | 目标插件 |
 |---|---|---:|---|
-| `supply` 组分 CSV 与批量目录 | 枚举候选并在多温度评估 | D | `composition-screening` |
+| `supply` 组分 CSV 与批量目录 | 枚举候选并在多温度评估 | D | `candidate-ranking`（仅负责后续已有指标排序） |
 | `supply/code/Li10/.../get_order.py` | 参考位点比较 → 组成/占位 Excel | C/D | `descriptor-analysis` |
 
 未发现统一 top-k 排序器或结构化候选 manifest。首版排序必须显式列出约束、指标方向、缺失值策略和稳定 tie-break。

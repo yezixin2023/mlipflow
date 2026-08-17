@@ -1,4 +1,3 @@
-candidate_id,m_sublattice,screening_score,uncertainty,route_model,evidence_kind
+candidate_id,m_sublattice,ranking_metric,uncertainty,route_model,evidence_kind
 hes-candidate-01,Mn|Fe|Ni|Cu|Zn,0.82,0.08,chgnet-demo,synthetic
 hes-candidate-02,Mn|Fe|Ni|Cu|Zn,0.76,0.11,chgnet-demo,synthetic
-

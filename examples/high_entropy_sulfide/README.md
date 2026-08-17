@@ -13,7 +13,7 @@ structure-replay
   → training-replay
   → benchmark-replay
       ├→ transport-replay
-      └→ screening-replay
+      └→ ranking-replay
             → high-fidelity-validation-replay
                 → voltage-replay
 ```
@@ -55,7 +55,7 @@ mlipflow --project "$DEMO_PROJECT" advance
 2. `labeling-replay`
 3. `training-replay`
 4. `benchmark-replay`
-5. `transport-replay` 与 `screening-replay`（benchmark 后两者同时变为 `READY`）
+5. `transport-replay` 与 `ranking-replay`（benchmark 后两者同时变为 `READY`）
 6. `high-fidelity-validation-replay`
 7. `voltage-replay`
 
