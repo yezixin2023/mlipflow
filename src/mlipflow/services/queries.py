@@ -31,7 +31,7 @@ def query_workflow(project: Project, node_id: str | None = None) -> dict[str, An
     database = state_path(project)
     if database.is_file():
         with StateStore(database, readonly=True) as store:
-            store.assert_project_id(project.project_id)
+            store.assert_project_topology(project.project_id, project.nodes)
             steps = [step.to_dict() for step in store.latest_steps(project.project_id)]
             for step in steps:
                 # The service returns the detailed source of truth. The CLI
@@ -99,6 +99,7 @@ def query_logs(project: Project, node_id: str, tail: int = 80) -> dict[str, Any]
     if not database.is_file():
         raise StateError("project has not been initialized")
     with StateStore(database, readonly=True) as store:
+        store.assert_project_topology(project.project_id, project.nodes)
         step = store.latest_step(project.project_id, node_id)
     directory = attempt_directory(project, node_id, step.attempt)
     logs: dict[str, Any] = {}
@@ -192,6 +193,7 @@ def query_doctor(
     if database.is_file():
         try:
             with StateStore(database, readonly=True) as store:
+                store.assert_project_topology(project.project_id, project.nodes)
                 store.latest_steps(project.project_id)
             diagnostics.append({"check": "state", "ok": True, "detail": str(database)})
         except Exception as exc:

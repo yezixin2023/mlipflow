@@ -47,10 +47,11 @@ plan `schema_version` 为 3。approval token 由独立的 execution identity 投
 
 ```text
 execution identity                            observational metadata
-  command / adapter implementation            warnings / diagnostics / human text
-  actual input contents                       URI / mtime / scheduler observations
-  execution parameters and resources          raw project/site/plugin configuration
-  backend and staged executable contents       duplicated fingerprints or object hashes
+  project / node / attempt                    warnings / diagnostics / human text
+  command / adapter implementation            URI / mtime / scheduler observations
+  actual input contents                       raw project/site/plugin configuration
+  execution parameters and resources          duplicated fingerprints or object hashes
+  backend and staged executable contents
   exact rendered scripts
 ```
 

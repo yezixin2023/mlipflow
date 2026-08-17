@@ -28,7 +28,9 @@ PLAN_SCHEMA_VERSION = 3
 APPROVAL_SCHEMA_VERSION = 1
 
 
-def node_plan(project: Project, node: dict[str, Any], plugin: PluginSpec) -> dict[str, Any]:
+def node_plan(
+    project: Project, node: dict[str, Any], plugin: PluginSpec, *, attempt: int
+) -> dict[str, Any]:
     mode = node.get("mode", "execute")
     backend = node.get("backend", "local")
     if mode == "replay" and not plugin.raw.get("replay", {}).get("supported", False):
@@ -57,6 +59,7 @@ def node_plan(project: Project, node: dict[str, Any], plugin: PluginSpec) -> dic
         "action": "run",
         "project_id": project.project_id,
         "node_id": node["id"],
+        "attempt": attempt,
         "plugin": {
             "id": plugin.plugin_id,
             "version": plugin.raw["version"],
@@ -173,6 +176,9 @@ def execution_identity(plan: dict[str, Any]) -> dict[str, Any]:
     identity: dict[str, Any] = {
         "schema_version": APPROVAL_SCHEMA_VERSION,
         "action": "run",
+        "project_id": plan.get("project_id"),
+        "node_id": plan.get("node_id"),
+        "attempt": plan.get("attempt"),
         "mode": plan.get("mode"),
         "backend": plan.get("backend"),
         "backend_profile": plan.get("backend_profile"),

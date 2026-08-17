@@ -452,7 +452,7 @@ def _load_pinned_scheduled_plan(
     if plugin_id not in plugins:
         raise ApprovalError(f"pinned scheduled plugin is unavailable: {plugin_id}")
     plugin = plugins[plugin_id]
-    current = node_plan(project, node, plugin)
+    current = node_plan(project, node, plugin, attempt=step.attempt)
     current_plugin = current.get("plugin")
     if (
         pinned_plugin.get("id") != current_plugin.get("id")

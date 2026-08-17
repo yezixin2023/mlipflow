@@ -71,12 +71,8 @@ def initialize(target: Path) -> dict[str, Any]:
         created_project = True
     project = load_project(project_file)
     database = state_path(project)
-    existed = database.is_file()
     with StateStore(database, readonly=False) as store:
-        if existed:
-            store.assert_project_id(project.project_id)
-        else:
-            store.initialize_project(project.project_id, project.nodes)
+        store.initialize_project(project.project_id, project.nodes)
     return {
         "project": str(project_file),
         "state_database": str(database),
@@ -95,15 +91,15 @@ def make_run_plan(
     database = state_path(project)
     if database.is_file():
         with StateStore(database, readonly=True) as store:
-            store.assert_project_id(project.project_id)
+            store.assert_project_topology(project.project_id, project.nodes)
     node = project.node(node_id)
     plugins = discover_plugins(plugin_root)
     plugin = select_plugin(plugins, str(node["uses"]))
-    plan = node_plan(project, node, plugin)
+    attempt = _planned_attempt(project, node_id)
+    plan = node_plan(project, node, plugin, attempt=attempt)
     if node.get("mode", "execute") == "execute" and plugin.raw.get("implementation", {}).get(
         "status"
     ) in {"adapter-ready", "implemented"}:
-        attempt = _planned_attempt(project, node_id)
         context = _adapter_context(project, node, attempt)
         adapter = load_adapter(plugin)
         diagnostics = adapter.validate(context)
@@ -201,10 +197,12 @@ def run_node(
     existed = database.is_file()
     with StateStore(database, readonly=False) as store:
         if existed:
-            store.assert_project_id(project.project_id)
+            store.assert_project_topology(project.project_id, project.nodes)
         else:
             store.initialize_project(project.project_id, project.nodes)
         step = store.latest_step(project.project_id, node_id)
+        if step.attempt != plan["attempt"]:
+            raise StateError("planned attempt changed before execution; generate a fresh dry-run")
         if step.state == RunState.WAIT.value:
             if not store.dependencies_satisfied(project.project_id, node_id):
                 raise StateError(f"node {node_id} is waiting for dependencies")
@@ -240,7 +238,7 @@ def make_advance_plan(
     observations: list[dict[str, Any]] = []
     if database.is_file():
         with StateStore(database, readonly=True) as store:
-            store.assert_project_id(project.project_id)
+            store.assert_project_topology(project.project_id, project.nodes)
             for step in store.latest_steps(project.project_id):
                 if step.state in {
                     RunState.SUBMITTED.value,
@@ -317,7 +315,7 @@ def advance(
         raise StateError("project has not been initialized")
     changed: list[dict[str, Any]] = []
     with StateStore(database, readonly=False) as store:
-        store.assert_project_id(project.project_id)
+        store.assert_project_topology(project.project_id, project.nodes)
         for change in plan["details"]["transitions"]:
             step = store.latest_step(project.project_id, change["node_id"])
             if change.get("action") == "adapter-finalize":
@@ -386,7 +384,7 @@ def make_retry_plan(
     if not database.is_file():
         raise StateError("project has not been initialized")
     with StateStore(database, readonly=True) as store:
-        store.assert_project_id(project.project_id)
+        store.assert_project_topology(project.project_id, project.nodes)
         step = store.latest_step(project.project_id, node_id)
     if step.state not in {RunState.FAIL.value, RunState.STOPPED.value}:
         raise StateError(f"retry requires FAIL or STOPPED, got {step.state}")
@@ -420,7 +418,7 @@ def retry(
 ) -> dict[str, Any]:
     make_retry_plan(project, node_id, plugin_root)
     with StateStore(state_path(project), readonly=False) as store:
-        store.assert_project_id(project.project_id)
+        store.assert_project_topology(project.project_id, project.nodes)
         retried = store.create_retry(project.project_id, node_id)
     return {"step": retried.to_dict()}
 
@@ -432,7 +430,7 @@ def make_stop_plan(
     if not database.is_file():
         raise StateError("project has not been initialized")
     with StateStore(database, readonly=True) as store:
-        store.assert_project_id(project.project_id)
+        store.assert_project_topology(project.project_id, project.nodes)
         step = store.latest_step(project.project_id, node_id)
         node = store.node_snapshot(step.run_id)
     scheduler_target: dict[str, Any] | None = None
@@ -466,7 +464,7 @@ def stop(
     if not database.is_file():
         raise StateError("project has not been initialized")
     with StateStore(database, readonly=False) as store:
-        store.assert_project_id(project.project_id)
+        store.assert_project_topology(project.project_id, project.nodes)
         step = store.latest_step(project.project_id, node_id)
         node = store.node_snapshot(step.run_id)
         state = RunState(step.state)

@@ -8,7 +8,8 @@ from pathlib import Path
 from mlipflow.config import load_project
 from mlipflow.errors import ApprovalError
 from mlipflow.planning import execution_identity, with_digest
-from mlipflow.services import initialize, make_run_plan, run_node
+from mlipflow.services import initialize, make_run_plan, retry, run_node, state_path
+from mlipflow.state import RunState, StateStore
 
 from .helpers import plugin_manifest, project_config, write_json
 
@@ -19,6 +20,7 @@ def _semantic_plan() -> dict:
         "action": "run",
         "project_id": "display-project",
         "node_id": "display-node",
+        "attempt": 1,
         "plugin": {
             "id": "demo",
             "version": "1.0.0",
@@ -52,8 +54,6 @@ class ApprovalIdentityTests(unittest.TestCase):
     def test_cosmetic_and_duplicate_fields_do_not_change_digest(self) -> None:
         first = with_digest(_semantic_plan())
         changed = _semantic_plan()
-        changed["project_id"] = "renamed-project"
-        changed["node_id"] = "renamed-node"
         changed["plugin"]["version"] = "9.9.9"
         changed["warnings"] = ["different warning"]
         changed["adapter_diagnostics"] = [{"message": "different diagnostic"}]
@@ -79,6 +79,9 @@ class ApprovalIdentityTests(unittest.TestCase):
         original = with_digest(_semantic_plan())["plan_digest"]
         changes = []
         for path, value in (
+            (("project_id",), "another-project"),
+            (("node_id",), "another-node"),
+            (("attempt",), 2),
             (("backend",), "ssh-slurm"),
             (("resources", "cpus"), 8),
             (("adapter_plan", "argv"), ["python", "worker.py", "--steps", "20"]),
@@ -92,6 +95,48 @@ class ApprovalIdentityTests(unittest.TestCase):
             target[path[-1]] = value
             changes.append(with_digest(changed)["plan_digest"])
         self.assertTrue(all(item != original for item in changes))
+
+    def test_actual_node_and_retry_attempts_have_distinct_approval_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plugins = root / "plugins"
+            manifest = plugin_manifest()
+            manifest["safety"] = {"requires_approval_before_execution": True}
+            write_json(plugins / "demo" / "plugin.yaml", manifest)
+            write_json(
+                root / "project.yaml",
+                project_config(
+                    [
+                        {"id": "x", "uses": "demo@1"},
+                        {"id": "y", "uses": "demo@1"},
+                    ]
+                ),
+            )
+            initialize(root)
+            project = load_project(root)
+
+            first = make_run_plan(project, "x", plugins)
+            other_node = make_run_plan(project, "y", plugins)
+            with StateStore(state_path(project), readonly=False) as store:
+                step = store.latest_step(project.project_id, "x")
+                store.transition(step.run_id, RunState.RUNNING)
+                store.transition(step.run_id, RunState.FAIL)
+            retry(project, "x")
+            second = make_run_plan(project, "x", plugins)
+
+            self.assertEqual(1, first["attempt"])
+            self.assertEqual(1, other_node["attempt"])
+            self.assertEqual(2, second["attempt"])
+            self.assertEqual(
+                3,
+                len(
+                    {
+                        first["plan_digest"],
+                        other_node["plan_digest"],
+                        second["plan_digest"],
+                    }
+                ),
+            )
 
     def test_approval_required_run_rejects_missing_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

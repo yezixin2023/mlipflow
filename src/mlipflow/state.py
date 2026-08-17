@@ -189,19 +189,9 @@ class StateStore:
             raise
 
     def initialize_project(self, project_id: str, nodes: list[dict[str, Any]]) -> None:
+        self.assert_project_topology(project_id, nodes)
         now = utc_now()
         with self.transaction() as connection:
-            owners = {
-                str(row[0])
-                for row in connection.execute(
-                    "SELECT DISTINCT project_id FROM step_runs"
-                ).fetchall()
-            }
-            if owners and owners != {project_id}:
-                raise StateError(
-                    f"state database belongs to project(s) {sorted(owners)!r}, "
-                    f"not {project_id!r}"
-                )
             for node in nodes:
                 needs = list(node.get("needs", []))
                 initial = RunState.WAIT if needs else RunState.READY
@@ -236,12 +226,38 @@ class StateStore:
                 "SELECT DISTINCT project_id FROM step_runs"
             ).fetchall()
         }
-        if not owners:
-            raise StateError("state database has no project identity")
-        if owners != {project_id}:
+        if owners and owners != {project_id}:
             raise StateError(
                 f"state database belongs to project(s) {sorted(owners)!r}, "
                 f"not {project_id!r}"
+            )
+
+    def assert_project_topology(
+        self, project_id: str, nodes: list[dict[str, Any]]
+    ) -> None:
+        """Keep node IDs and dependency edges fixed after non-empty initialization."""
+
+        self.assert_project_id(project_id)
+        node_rows = self.connection.execute(
+            "SELECT DISTINCT node_id FROM step_runs WHERE project_id = ?",
+            (project_id,),
+        ).fetchall()
+        if not node_rows:
+            return
+        persisted = {str(row[0]): set() for row in node_rows}
+        for row in self.connection.execute(
+            "SELECT node_id, needs_node_id FROM dependencies WHERE project_id = ?",
+            (project_id,),
+        ).fetchall():
+            persisted[str(row[0])].add(str(row[1]))
+        configured = {
+            str(node["id"]): {str(dependency) for dependency in node.get("needs", [])}
+            for node in nodes
+        }
+        if persisted != configured:
+            raise StateError(
+                "workflow DAG topology differs from initialized state; "
+                "node IDs and needs cannot change"
             )
 
     def bind_attempt_node(self, run_id: str, node: dict[str, Any]) -> StepRun:

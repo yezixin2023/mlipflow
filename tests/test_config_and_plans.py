@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import tempfile
 import unittest
 from pathlib import Path
@@ -140,6 +141,52 @@ class ConfigTests(unittest.TestCase):
 
 
 class PlanTests(unittest.TestCase):
+    def test_empty_workflow_can_bootstrap_nodes_on_later_initialize(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_json(root / "project.yaml", project_config([]))
+            initialize(root)
+
+            config = project_config(
+                [{"id": "x", "uses": "demo@1", "mode": "replay", "parameters": {}}]
+            )
+            write_json(root / "project.yaml", config)
+            initialize(root)
+
+            project = load_project(root)
+            with StateStore(state_path(project), readonly=True) as store:
+                self.assertEqual("x", store.latest_step(project.project_id, "x").node_id)
+
+    def test_initialized_workflow_rejects_node_id_or_dependency_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plugins = root / "plugins"
+            write_json(plugins / "demo" / "plugin.yaml", plugin_manifest())
+            original = project_config(
+                [
+                    {"id": "x", "uses": "demo@1", "mode": "replay"},
+                    {"id": "y", "uses": "demo@1", "mode": "replay", "needs": ["x"]},
+                ]
+            )
+            write_json(root / "project.yaml", original)
+            initialize(root)
+
+            changed_ids = project_config(
+                [
+                    {"id": "x", "uses": "demo@1", "mode": "replay"},
+                    {"id": "z", "uses": "demo@1", "mode": "replay", "needs": ["x"]},
+                ]
+            )
+            write_json(root / "project.yaml", changed_ids)
+            with self.assertRaisesRegex(StateError, "DAG topology"):
+                make_run_plan(load_project(root), "x", plugins)
+
+            changed_needs = copy.deepcopy(original)
+            changed_needs["workflow"]["nodes"][1]["needs"] = []
+            write_json(root / "project.yaml", changed_needs)
+            with self.assertRaisesRegex(StateError, "DAG topology"):
+                make_run_plan(load_project(root), "x", plugins)
+
     def test_unrelated_config_changes_do_not_block_existing_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
