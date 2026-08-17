@@ -2,7 +2,6 @@
   <img src="docs/assets/mlipflow-logo.png" alt="MLIPFlow logo" width="720">
 </p>
 
-<h1 align="center">MLIPFlow</h1>
 
 <p align="center"><strong>Deterministic, auditable workflow orchestration for machine-learned interatomic-potential research.</strong></p>
 
