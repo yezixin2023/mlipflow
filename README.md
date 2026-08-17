@@ -1,4 +1,3 @@
-# MLIPFlow
 
 <p align="center">
   <img src="docs/assets/mlipflow-logo.png" alt="MLIPFlow logo" width="760">
