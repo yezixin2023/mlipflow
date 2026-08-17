@@ -69,18 +69,21 @@ mlipflow doctor
 
 ### 3. Try the bundled replay example
 
-The repository contains a complete small workflow that can be exercised without launching expensive scientific programs:
+From the MLIPFlow repository root, copy the example to a disposable working directory so the checked-in fixture stays untouched:
 
 ```bash
-mlipflow --project examples/high_entropy_sulfide init
-mlipflow --project examples/high_entropy_sulfide list
-mlipflow --project examples/high_entropy_sulfide run structure-replay --dry-run
-mlipflow --project examples/high_entropy_sulfide run structure-replay
-mlipflow --project examples/high_entropy_sulfide advance
-mlipflow --project examples/high_entropy_sulfide status
+cd /path/to/mlipflow
+cp -R examples/high_entropy_sulfide /tmp/mlipflow-replay-demo
+
+mlipflow --project /tmp/mlipflow-replay-demo init
+mlipflow --project /tmp/mlipflow-replay-demo list
+mlipflow --project /tmp/mlipflow-replay-demo run structure-replay --dry-run
+mlipflow --project /tmp/mlipflow-replay-demo run structure-replay
+mlipflow --project /tmp/mlipflow-replay-demo advance
+mlipflow --project /tmp/mlipflow-replay-demo status
 ```
 
-For a larger evidence-reproduction example, see [`examples/high_entropy_sulfide_reproduction/`](examples/high_entropy_sulfide_reproduction/).
+This replay path consumes bundled result manifests rather than launching expensive scientific programs. For a larger evidence-reproduction example, see [`examples/high_entropy_sulfide_reproduction/`](examples/high_entropy_sulfide_reproduction/).
 
 ## The command model
 
@@ -340,4 +343,4 @@ Contributions are welcome across workflow core, plugins, scientific validation, 
 
 MLIPFlow is licensed under the [Apache License 2.0](LICENSE). See [`NOTICE`](NOTICE) for project and third-party boundary information.
 
-If MLIPFlow contributes to published research, cite the software release using [`CITATION.cff`](CITATION.cff) and also cite the scientific methods, models, datasets, and external codes used by the plugins you executed.
+If MLIPFlow contributes to published research, cite the software version or commit using [`CITATION.cff`](CITATION.cff) and also cite the scientific methods, models, datasets, and external codes used by the plugins you executed.
