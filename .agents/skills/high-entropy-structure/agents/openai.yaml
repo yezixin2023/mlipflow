@@ -1,0 +1,4 @@
+interface:
+  display_name: "High Entropy Structure"
+  short_description: "监督生成和验证可复现的高熵/SQS 无序结构候选。"
+  default_prompt: "$high-entropy-structure 根据明确的 prototype、alloy sublattice 和整数 composition counts，监督生成或回放验证可复现的 SQS 候选。"

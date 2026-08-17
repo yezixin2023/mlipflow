@@ -23,6 +23,8 @@ from typing import Any
 
 
 PLUGIN_ID = "high-entropy-structure"
+GENERATOR_IDENTITY = "mlipflow-bundled:icet.generate_sqs_from_supercells"
+SEED_POLICY = "base-seed-plus-candidate-index"
 IDENTIFIER = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 FORMATS = {
     "vasp": (".vasp", "chemical/x-vasp-poscar"),
@@ -281,8 +283,13 @@ def generate(
         "plugin_id": PLUGIN_ID,
         "status": "OK",
         "seed": seed,
+        "candidate_count": len(structures),
         "prototype_fingerprint": _sha256(prototype_path),
         "composition_manifest_fingerprint": _sha256(composition_path),
+        "generator": {
+            "identity": GENERATOR_IDENTITY,
+            "fingerprint": _sha256(Path(__file__).resolve()),
+        },
         "structures": structures,
         "method": {
             "library": "icet",
@@ -292,7 +299,7 @@ def generate(
             "cluster_cutoffs_angstrom": spec["cluster_cutoffs_angstrom"],
             "supercell_repeat": spec["supercell_repeat"],
             "n_steps": spec["n_steps"],
-            "random_seed_policy": "base-seed-plus-candidate-index",
+            "random_seed_policy": SEED_POLICY,
         },
     }
     _write_new_json(result_path, result)

@@ -4,9 +4,9 @@
   "id": "high-entropy-structure",
   "name": "High-entropy structure generation",
   "display_name": "High-entropy structure generation",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "api_version": 1,
-  "description": "Executable, seeded icet SQS generation from explicit sublattice/count/cutoff/supercell manifests, plus immutable structure provenance and replay checks.",
+    "description": "Executable, seeded icet SQS generation from explicit sublattice/count/cutoff/supercell manifests, plus independently checked composition, seed, structure, provenance, and replay contracts.",
   "category": "structure-generation",
   "contract": {
     "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
@@ -22,7 +22,7 @@
     ],
     "limitations": [
       "The bundled generator implements the manuscript workflow through icet; sublattice mappings, exact counts, cluster cutoffs and supercells remain explicit inputs.",
-      "MLIPFlow verifies declared structure identities and sha256 fingerprints, but does not independently prove SQS optimality.",
+      "MLIPFlow re-reads the approved composition manifest and actual structures, but does not recompute the icet objective or prove SQS global optimality.",
       "The historical generator was unseeded, so newly seeded structures are reproducible executions rather than byte-identical historical replay.",
       "Only local execution is enabled until scheduled completion is rechecked through this adapter."
     ]
@@ -41,7 +41,7 @@
     "supported": true,
     "behavior": "parse-existing-artifacts",
     "accepted_media_types": ["application/json"],
-    "reason": "Replay only validates a standardized generation manifest and its explicitly referenced files; it never regenerates structures."
+    "reason": "Replay only validates a standardized generation manifest, approved inputs, and explicitly referenced structure artifacts; it never imports or executes a generator and never regenerates structures."
   },
   "inputs": [
     {"name": "prototype-structure", "kind": "artifact-reference", "required": true, "description": "Project-relative prototype structure supplied to the user generator."},
@@ -79,8 +79,10 @@
     "status": "implemented",
     "checks": [
       {"id": "sqs-input-contract", "implemented": true, "description": "Require exact alloy species/counts, cluster cutoffs, repeat vector, Monte Carlo steps and a deterministic seed policy."},
-      {"id": "result-manifest-schema", "implemented": true, "description": "Require schema version, plugin identity, approved seed, and status OK."},
-      {"id": "structure-count-and-fingerprints", "implemented": true, "description": "Enforce the candidate cap, unique IDs, non-empty files, compositions, and matching sha256 fingerprints."}
+      {"id": "result-manifest-schema", "implemented": true, "description": "Require schema version, plugin identity, approved base seed, deterministic per-candidate seed policy, method identity, generator identity/fingerprint, candidate count, and status OK."},
+      {"id": "candidate-coverage-and-composition", "implemented": true, "description": "Re-read the approved composition manifest and require exact ordered candidate coverage, unique IDs, exact alloy species/counts, and alloy site totals."},
+      {"id": "structure-count-and-fingerprints", "implemented": true, "description": "Parse each actual structure, compare its full composition with prototype plus approved alloy counts, and require non-empty files with matching sha256 fingerprints."},
+      {"id": "optional-cluster-vector", "implemented": true, "description": "If declared, require a non-empty finite numeric cluster_vector without claiming objective recomputation or global optimality."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"

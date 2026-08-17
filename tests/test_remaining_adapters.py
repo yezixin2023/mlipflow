@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import json
@@ -34,6 +35,29 @@ def fingerprint(path: Path) -> str:
     return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
 
 
+def write_poscar(path: Path, counts: dict[str, int]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atom_count = sum(counts.values())
+    coordinates = [f"{index / max(atom_count, 1):.8f} 0.0 0.0" for index in range(atom_count)]
+    path.write_text(
+        "\n".join(
+            [
+                "contract fixture",
+                "1.0",
+                "10.0 0.0 0.0",
+                "0.0 10.0 0.0",
+                "0.0 0.0 10.0",
+                " ".join(counts),
+                " ".join(str(value) for value in counts.values()),
+                "Direct",
+                *coordinates,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def context(project: Path, attempt: Path, inputs: dict, parameters: dict) -> dict:
     return {
         "project_root": str(project),
@@ -46,6 +70,84 @@ def context(project: Path, attempt: Path, inputs: dict, parameters: dict) -> dic
 
 
 class HighEntropyAdapterTests(unittest.TestCase):
+    def _valid_case(self, project: Path, attempt: Path) -> tuple[dict, dict]:
+        script = project / "scripts" / "sqs.py"
+        script.parent.mkdir()
+        script.write_text("raise SystemExit('generator must not run during checking')\n")
+        prototype = project / "prototype.vasp"
+        write_poscar(prototype, {"Li": 1, "Zn": 2})
+        composition = project / "composition.json"
+        write_json(
+            composition,
+            {
+                "schema_version": 1,
+                "alloy_sublattice": {
+                    "prototype_species": "Zn",
+                    "allowed_species": ["Zn", "Fe"],
+                },
+                "cluster_cutoffs_angstrom": [5.0],
+                "supercell_repeat": [1, 1, 1],
+                "n_steps": 100,
+                "output_format": "vasp",
+                "candidates": [
+                    {"id": "sqs-001", "counts": {"Zn": 1, "Fe": 1}},
+                    {"id": "sqs-002", "counts": {"Zn": 0, "Fe": 2}},
+                ],
+            },
+        )
+        structure_one = attempt / "structures" / "sqs-001.vasp"
+        structure_two = attempt / "structures" / "sqs-002.vasp"
+        write_poscar(structure_one, {"Li": 1, "Zn": 1, "Fe": 1})
+        write_poscar(structure_two, {"Li": 1, "Fe": 2})
+        ctx = context(
+            project,
+            attempt,
+            {
+                "prototype_structure": "prototype.vasp",
+                "composition_manifest": "composition.json",
+            },
+            {
+                "sqs_script": "scripts/sqs.py",
+                "interpreter_argv": ["python"],
+                "seed": 17,
+                "max_candidates": 2,
+            },
+        )
+        result = {
+            "schema_version": 1,
+            "plugin_id": "high-entropy-structure",
+            "status": "OK",
+            "seed": 17,
+            "candidate_count": 2,
+            "prototype_fingerprint": fingerprint(prototype),
+            "composition_manifest_fingerprint": fingerprint(composition),
+            "generator": {
+                "identity": "user-supplied:scripts/sqs.py",
+                "fingerprint": fingerprint(script),
+            },
+            "method": {"random_seed_policy": "base-seed-plus-candidate-index"},
+            "structures": [
+                {
+                    "id": "sqs-001",
+                    "path": "structures/sqs-001.vasp",
+                    "fingerprint": fingerprint(structure_one),
+                    "composition": {"Zn": 1, "Fe": 1},
+                    "media_type": "chemical/x-vasp-poscar",
+                    "random_seed": 17,
+                    "cluster_vector": [0.0, 1.0],
+                },
+                {
+                    "id": "sqs-002",
+                    "path": "structures/sqs-002.vasp",
+                    "fingerprint": fingerprint(structure_two),
+                    "composition": {"Zn": 0, "Fe": 2},
+                    "media_type": "chemical/x-vasp-poscar",
+                    "random_seed": 18,
+                },
+            ],
+        }
+        return ctx, result
+
     def test_seeded_plan_and_fingerprint_checked_collection(self) -> None:
         module = load_adapter("high-entropy-structure")
         adapter = module.Adapter()
@@ -72,40 +174,202 @@ class HighEntropyAdapterTests(unittest.TestCase):
             self.assertIn("17", plan["argv"])
             self.assertEqual(before, sorted(project.rglob("*")), "validate/plan must be pure")
 
-            prototype = project / "prototype.cif"
-            prototype.write_text("data_prototype\n", encoding="utf-8")
-            composition = project / "composition.json"
-            write_json(composition, {"schema_version": 1, "species": ["Li", "P", "S"]})
-            structure = attempt / "structures" / "sqs-001.cif"
-            structure.parent.mkdir()
-            structure.write_text("data_sqs\n_cell_length_a 10\n", encoding="utf-8")
-            write_json(
-                attempt / "generation-result.json",
-                {
-                    "schema_version": 1,
-                    "plugin_id": "high-entropy-structure",
-                    "status": "OK",
-                    "seed": 17,
-                    "prototype_fingerprint": fingerprint(prototype),
-                    "composition_manifest_fingerprint": fingerprint(composition),
-                    "structures": [
-                        {
-                            "id": "sqs-001",
-                            "path": "structures/sqs-001.cif",
-                            "fingerprint": fingerprint(structure),
-                            "composition": {"Li": 8, "P": 8, "S": 32},
-                            "media_type": "chemical/x-cif",
-                        }
-                    ],
-                },
-            )
+            ctx, result = self._valid_case(project, attempt)
+            write_json(attempt / "generation-result.json", result)
             self.assertEqual("OK", adapter.check(ctx)["status"])
             collected = adapter.collect(ctx)
             self.assertEqual("OK", collected["status"])
-            self.assertEqual(1, collected["metrics"]["structure_count"])
-            self.assertEqual("structures/sqs-001.cif", collected["artifacts"][1]["path"])
+            self.assertEqual(2, collected["metrics"]["structure_count"])
+            self.assertEqual("structures/sqs-001.vasp", collected["artifacts"][1]["path"])
+            structure = attempt / "structures" / "sqs-001.vasp"
             structure.write_text("tampered\n", encoding="utf-8")
             self.assertEqual("FAIL", adapter.check(ctx)["status"])
+
+    def test_generation_result_rejects_candidate_contract_failures(self) -> None:
+        module = load_adapter("high-entropy-structure")
+        adapter = module.Adapter()
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            attempt = project / "attempt"
+            attempt.mkdir()
+            ctx, valid = self._valid_case(project, attempt)
+
+            cases: dict[str, tuple[dict, str]] = {}
+            wrong_id = copy.deepcopy(valid)
+            wrong_id["structures"][0]["id"] = "not-approved"
+            cases["wrong candidate id"] = (wrong_id, "structures[0].approved_id")
+
+            missing = copy.deepcopy(valid)
+            missing["structures"].pop()
+            missing["candidate_count"] = 1
+            cases["missing candidate"] = (missing, "result.candidate_coverage")
+
+            extra = copy.deepcopy(valid)
+            extra["structures"].append(
+                {
+                    **copy.deepcopy(valid["structures"][1]),
+                    "id": "sqs-extra",
+                    "random_seed": 19,
+                }
+            )
+            extra["candidate_count"] = 3
+            cases["extra candidate"] = (extra, "result.candidate_coverage")
+
+            wrong_count = copy.deepcopy(valid)
+            wrong_count["structures"][0]["composition"] = {"Zn": 2, "Fe": 0}
+            cases["wrong species count"] = (wrong_count, "structures[0].composition")
+
+            wrong_species = copy.deepcopy(valid)
+            wrong_species["structures"][0]["composition"] = {"Zn": 1, "Ni": 1}
+            cases["wrong composition species"] = (
+                wrong_species,
+                "structures[0].composition",
+            )
+
+            wrong_seed = copy.deepcopy(valid)
+            wrong_seed["structures"][1]["random_seed"] = 999
+            cases["wrong candidate seed"] = (wrong_seed, "structures[1].random_seed")
+
+            duplicate = copy.deepcopy(valid)
+            duplicate["structures"][1]["id"] = "sqs-001"
+            cases["duplicate candidate"] = (duplicate, "structures[1].id")
+
+            empty_vector = copy.deepcopy(valid)
+            empty_vector["structures"][0]["cluster_vector"] = []
+            cases["empty cluster vector"] = (
+                empty_vector,
+                "structures[0].cluster_vector",
+            )
+
+            nonfinite_vector = copy.deepcopy(valid)
+            nonfinite_vector["structures"][0]["cluster_vector"] = [float("inf")]
+            cases["non-finite cluster vector"] = (
+                nonfinite_vector,
+                "structures[0].cluster_vector",
+            )
+
+            wrong_generator = copy.deepcopy(valid)
+            wrong_generator["generator"]["identity"] = "unapproved-generator"
+            cases["wrong generator identity"] = (
+                wrong_generator,
+                "result.generator_identity",
+            )
+
+            wrong_generator_fingerprint = copy.deepcopy(valid)
+            wrong_generator_fingerprint["generator"]["fingerprint"] = "sha256:" + "0" * 64
+            cases["wrong generator fingerprint"] = (
+                wrong_generator_fingerprint,
+                "result.generator_fingerprint",
+            )
+
+            wrong_seed_policy = copy.deepcopy(valid)
+            wrong_seed_policy["method"]["random_seed_policy"] = "result-selected-seed"
+            cases["wrong seed policy"] = (wrong_seed_policy, "result.seed_policy")
+
+            wrong_candidate_count = copy.deepcopy(valid)
+            wrong_candidate_count["candidate_count"] = 1
+            cases["wrong candidate count"] = (
+                wrong_candidate_count,
+                "result.candidate_count",
+            )
+
+            for name, (result, expected_code) in cases.items():
+                with self.subTest(name=name):
+                    write_json(attempt / "generation-result.json", result)
+                    checked = adapter.check(ctx)
+                    self.assertEqual("FAIL", checked["status"])
+                    self.assertIn(expected_code, {item["code"] for item in checked["diagnostics"]})
+
+    def test_bundled_generator_requires_icet_and_ase_identity_not_version_parity(self) -> None:
+        module = load_adapter("high-entropy-structure")
+        adapter = module.Adapter()
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            attempt = project / "attempt"
+            attempt.mkdir()
+            ctx, valid = self._valid_case(project, attempt)
+            del ctx["parameters"]["sqs_script"]
+            valid["generator"] = {
+                "identity": "mlipflow-bundled:icet.generate_sqs_from_supercells",
+                "fingerprint": fingerprint(ROOT / "plugins" / "high-entropy-structure" / "sqs.py"),
+            }
+            valid["method"] = {
+                "library": "icet",
+                "library_version": "recorded-version-not-runtime-parity",
+                "api": "generate_sqs_from_supercells",
+                "ase_version": "recorded-version-not-runtime-parity",
+                "random_seed_policy": "base-seed-plus-candidate-index",
+            }
+            write_json(attempt / "generation-result.json", valid)
+
+            self.assertEqual("OK", adapter.check(ctx)["status"])
+
+    def test_generation_result_rejects_input_drift_and_actual_structure_mismatch(self) -> None:
+        module = load_adapter("high-entropy-structure")
+        adapter = module.Adapter()
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            attempt = project / "attempt"
+            attempt.mkdir()
+            ctx, valid = self._valid_case(project, attempt)
+            result_path = attempt / "generation-result.json"
+            write_json(result_path, valid)
+
+            prototype = project / "prototype.vasp"
+            original_prototype = prototype.read_text(encoding="utf-8")
+            prototype.write_text(
+                original_prototype.replace("contract fixture", "drifted prototype"),
+                encoding="utf-8",
+            )
+            checked = adapter.check(ctx)
+            self.assertEqual("FAIL", checked["status"], "prototype drift")
+            self.assertIn(
+                "result.prototype_fingerprint",
+                {item["code"] for item in checked["diagnostics"]},
+            )
+            prototype.write_text(original_prototype, encoding="utf-8")
+
+            composition = project / "composition.json"
+            original_composition = composition.read_text(encoding="utf-8")
+            composition.write_text(original_composition + " ", encoding="utf-8")
+            checked = adapter.check(ctx)
+            self.assertEqual("FAIL", checked["status"], "composition manifest drift")
+            self.assertIn(
+                "result.composition_manifest_fingerprint",
+                {item["code"] for item in checked["diagnostics"]},
+            )
+            composition.write_text(original_composition, encoding="utf-8")
+
+            structure = attempt / "structures" / "sqs-001.vasp"
+            write_poscar(structure, {"Li": 1, "Zn": 2})
+            actual_mismatch = copy.deepcopy(valid)
+            actual_mismatch["structures"][0]["fingerprint"] = fingerprint(structure)
+            write_json(result_path, actual_mismatch)
+            checked = adapter.check(ctx)
+            self.assertEqual("FAIL", checked["status"])
+            self.assertIn(
+                "structures[0].structure_composition",
+                {item["code"] for item in checked["diagnostics"]},
+            )
+
+    def test_replay_only_reads_and_never_executes_generator(self) -> None:
+        module = load_adapter("high-entropy-structure")
+        adapter = module.Adapter()
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            attempt = project / "attempt"
+            attempt.mkdir()
+            ctx, valid = self._valid_case(project, attempt)
+            marker = project / "generator-executed"
+            script = project / "scripts" / "sqs.py"
+            script.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
+            valid["generator"]["fingerprint"] = fingerprint(script)
+            write_json(attempt / "generation-result.json", valid)
+
+            replayed = adapter.replay(ctx)
+            self.assertEqual("OK", replayed["status"])
+            self.assertFalse(replayed["executable"])
+            self.assertFalse(marker.exists())
 
 
 class DFTLabelingAdapterTests(unittest.TestCase):

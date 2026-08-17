@@ -6,11 +6,14 @@
   "scientific_claim": {
     "production_sqs_executed": false,
     "historical_structure_parity_established": false,
+    "global_optimality_established": false,
     "purpose": "Verify the real ASE/icet wrapper, deterministic seed handling, structure writing, and immutable generation manifest on one bounded Li-M-P-S candidate."
   },
   "implementation": {
     "entrypoint_locator": "plugins/high-entropy-structure/sqs.py",
-    "entrypoint_sha256": "f24907f7c0f3799696a6c84a347c76306f89ef52525d65efbf319bf205547d1f",
+    "entrypoint_sha256": "6d17b972ec38347953cffd91b038c9f2eabd37105ed13d0d5e0156e0a6617aff",
+    "smoke_executed_entrypoint_sha256": "f24907f7c0f3799696a6c84a347c76306f89ef52525d65efbf319bf205547d1f",
+    "post_smoke_change_scope": "Result-contract metadata only: generator identity/fingerprint and candidate_count. The icet call, parameters, seed derivation, and structure writing behavior are unchanged.",
     "python_version": "3.11.14",
     "ase_version": "3.28.0",
     "icet_version": "3.2",
@@ -46,6 +49,8 @@
   "limitations": [
     "The 100-step run is an integration smoke only and is not a converged or production-quality SQS search.",
     "The historical generator did not expose a seed, so this proves deterministic new execution rather than byte parity with a historical structure.",
+    "The bounded smoke and recorded cluster vector do not prove SQS global optimality.",
+    "Recorded ASE/icet versions identify the implementation environment; version agreement or change does not establish scientific structure parity.",
     "The external prototype is fingerprinted but is not copied into the public repository pending data-sharing review."
   ]
 }

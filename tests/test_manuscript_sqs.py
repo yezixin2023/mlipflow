@@ -39,6 +39,7 @@ class ManuscriptSQSTests(unittest.TestCase):
         self.assertLessEqual(report["bounded_parameters"]["n_steps"], 100)
         self.assertFalse(report["scientific_claim"]["production_sqs_executed"])
         self.assertFalse(report["scientific_claim"]["historical_structure_parity_established"])
+        self.assertFalse(report["scientific_claim"]["global_optimality_established"])
         serialized = json.dumps(report, sort_keys=True)
         self.assertNotIn("/Users/", serialized)
         self.assertNotIn("/public/home/", serialized)
