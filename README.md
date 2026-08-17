@@ -2,7 +2,6 @@
   <img src="docs/assets/mlipflow-logo.png" alt="MLIPFlow logo" width="720">
 </p>
 
-
 <p align="center"><strong>Deterministic, auditable workflow orchestration for machine-learned interatomic-potential research.</strong></p>
 
 MLIPFlow turns an MLIP research workflow into an explicit, versioned DAG. It coordinates structure generation, PES sampling, DFT labeling, model training, molecular dynamics, benchmarking, transport analysis, candidate ranking, and voltage analysis while keeping execution plans, approvals, attempts, artifacts, model evidence, and provenance inspectable.
