@@ -160,7 +160,7 @@ MSD 时间轴、体积、Li 数量、扩散维度、拟合窗、平衡段和电�
 
 | 路径（相对 `../claw`） | 能力与输入输出 | 复用判断 | 目标映射与风险 |
 |---|---|---:|---|
-| `direct_sampling/direct.py` | MAML DIRECT/Birch 代表性采样 CLI；POSCAR/CIF/vasprun/XDATCAR/ASE/LAMMPS → POSCAR、`manifest.csv`、PCA/FCS 图 | B | `pes-sampling`；需去绝对默认路径，禁止默认 `rmtree`，补版本/输入哈希与失败 manifest |
+| `direct_sampling/direct.py` | MAML DIRECT/Birch 代表性采样 CLI；POSCAR/CIF/vasprun/XDATCAR/ASE/LAMMPS → POSCAR、`manifest.csv`、PCA/FCS 图 | B | 已适配为 `pes-sampling` 内置 local-only runner：全部输入/参数显式，继续调用 MAML DIRECT，拒绝已有输出目录；不复制临时目录的数据、环境或历史输出 |
 | `finetune_mace/collect.py` | 检查 VASP 完整性、SCF/离子收敛和 E/F/stress；固定 seed 划分 → train/valid/all extxyz、坏样本清单 | B | `dft-labeling` dataset assembly；改为无顶层副作用的 CLI，参数化阈值和是否取终态 |
 | `finetune_mace/{finetune.sh,convert.sh}` | extxyz/foundation model → MACE 微调模型/LAMMPS 导出 | C | `mlip-training.mace` + model export；抽象资源由 node 声明，CUDA/module/launcher/程序路径迁至站点远端模板 |
 | `MD/ase_MD/ase_md_only_multi_calc.py` | MACE/CHGNet/M3GNet/EMT/LJ，NPT/NVT → trajectory/log/metadata | D | `ionic-transport` MD adapter；关键参数、device/dtype/seed 必须显式，禁止覆盖轨迹，增加恢复点 |

@@ -36,7 +36,6 @@ scientific contract and stop.
 
 Use `backend: local`. Require:
 
-- `inputs.direct_script`: the reviewed `direct.py`;
 - `inputs.input_dirs`: one or more existing local structure directories;
 - non-empty relative `globs`, boolean `recursive`, positive `stride`, `n_clusters`,
   `threshold_init`, and `k_per_cluster`;
@@ -45,14 +44,21 @@ Use `backend: local`. Require:
 - an explicit non-negative recorded `seed` and
   `acknowledge_uncontrolled_seed: true`.
 
-The reviewed DIRECT CLI has no seed flag. Record the declared seed but state that it
-does not control the source CLI. Do not claim seeded reproducibility.
+MLIPFlow uses the bundled `plugins/pes-sampling/direct_select.py`; do not ask the user
+for a DIRECT script. The runner adapts the reviewed multi-format reader/output flow but
+delegates representative selection to MAML's `DIRECTSampler`, `BirchClustering`, and
+`SelectKFromClusters`. Its Python runtime must provide compatible `pymatgen` and `maml`
+packages, plus ASE for ASE/LAMMPS inputs and Plotly only for optional diagnostics.
+
+The bundled MAML path has no exposed seed control. Record the declared seed but state
+that it does not control the selection implementation. Do not claim seeded
+reproducibility.
 
 Keep `output_subdir` fresh, relative, confined to the attempt, and disjoint from every
-input directory. The source CLI deletes an existing `--out-dir`; MLIPFlow therefore
-blocks an existing output rather than allowing destructive reuse. Preserve
-`shell: false`. Completion requires a valid non-empty `manifest.csv` and confined
-selected structure files; optional plots are diagnostics only.
+input directory. Both the adapter and bundled runner reject an existing output
+directory; neither deletes or reuses it. Preserve `shell: false`. Completion requires a
+valid non-empty `manifest.csv` and confined selected structure files; optional plots are
+diagnostics only.
 
 Use only the current manifest parameter names. Do not invent aliases for cluster count,
 threshold, input limits, or output directory.

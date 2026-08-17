@@ -4,7 +4,7 @@
   "id": "pes-sampling",
   "name": "Potential-energy-surface sampling",
   "display_name": "Potential-energy-surface sampling",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "api_version": 1,
   "description": "Safe local DIRECT/LASP sampling plus scheduler-backed LASP stochastic-surface-walking execution through MLIPFlow's ssh-slurm lifecycle; LASP remains user/site supplied and is never bundled.",
   "category": "sampling",
@@ -25,7 +25,7 @@
       "The historical normalizer reproduces the reviewed Energy-frame split, energy filter, accepted-order stride, structure ordering, and provenance contract. This is post-processing parity, not LASP numerical parity.",
       "The reviewed LASP inputs and scripts did not record a random seed. LASP operations therefore require seed_status=HISTORICAL_PARAMETER_UNKNOWN and explicit acknowledgement; no seed is reconstructed.",
       "AIMD and MLIP-MD execution remain separate and out of scope. best.arc and md.arc may only be normalized as structure lineage evidence.",
-      "DIRECT remains local-only and still uses the reviewed source CLI, which has no seed flag and deletes an existing --out-dir; the adapter requires a fresh confined output directory.",
+      "DIRECT remains local-only. The bundled runner adapts the reviewed implementation and calls MAML DIRECTSampler with BirchClustering and SelectKFromClusters; it exposes no seed control and refuses an existing --out-dir.",
       "Scheduled LASP uses one approved ssh-slurm submission followed by scheduler observation, bounded verified fetch, and scientific checks. Dynamically selected ARC structures are returned as selected-structures.tar.gz plus manifests so the fetch allowlist remains finite.",
       "Authorized LASP numerical execution and site-specific scheduler validation must still be performed on the user's cluster; repository tests use fake scheduler/LASP fixtures and do not establish SSW numerical parity.",
       "LASP completion is rebound to approved input fingerprints and reparsed source ARC frames; output manifests cannot replace or self-sign around the approved source files."
@@ -52,7 +52,6 @@
     "reason": "The approved normalize operation converts existing LASP/SSW ARC outputs into a portable sampling-result contract; generic MLIPFlow replay then references the normalized artifacts without loading or running LASP."
   },
   "inputs": [
-    {"name": "direct-script", "kind": "file", "required": false, "description": "DIRECT only: explicit path to the reviewed claw/direct_sampling/direct.py; runtime key direct_script."},
     {"name": "input-dirs", "kind": "directory", "required": false, "description": "DIRECT only: one or more existing local structure directories; runtime key input_dirs."},
     {"name": "historical-run-dir", "kind": "directory", "required": false, "description": "LASP normalize only: read-only directory containing allstr.arc and optional best.arc/md.arc; runtime key historical_run_dir."},
     {"name": "lasp-input", "kind": "file", "required": false, "description": "LASP operations: explicit lasp.in template that is copied or fingerprinted, never synthesized; runtime key lasp_input."},
@@ -73,7 +72,7 @@
     {"name": "threshold_init", "type": "number", "required": false, "description": "DIRECT only: finite positive Birch initial threshold."},
     {"name": "k_per_cluster", "type": "integer", "required": false, "description": "DIRECT only: positive structures selected per cluster."},
     {"name": "lammps_type_map", "type": "object", "required": false, "description": "DIRECT only: optional positive integer atom types mapped to element symbols."},
-    {"name": "seed", "type": "integer", "required": false, "description": "DIRECT only: non-negative provenance seed; the reviewed CLI cannot consume it."},
+    {"name": "seed", "type": "integer", "required": false, "description": "DIRECT only: non-negative provenance seed; the bundled MAML DIRECT path cannot consume it."},
     {"name": "historical_source_id", "type": "string", "required": false, "description": "LASP operations: portable, non-secret source identifier without an absolute local path."},
     {"name": "selection_stride", "type": "integer", "required": false, "description": "LASP operations: positive stride applied to accepted structures after the energy filter."},
     {"name": "energy_max_ev", "type": "number", "required": false, "description": "LASP operations: optional inclusive energy threshold in eV; null keeps all frames."},
@@ -97,8 +96,8 @@
   "dependencies": {
     "upstream_plugins": ["high-entropy-structure"],
     "python_packages": [
-      {"name": "pymatgen", "required": false, "bundled": false, "purpose": "DIRECT operation only: structure and VASP parsing in the reviewed source CLI."},
-      {"name": "maml", "required": false, "bundled": false, "purpose": "DIRECT operation only: DIRECTSampler, BirchClustering, and SelectKFromClusters."},
+      {"name": "pymatgen", "required": false, "bundled": false, "purpose": "DIRECT operation only: structure/VASP parsing and selected POSCAR writing in the bundled runner."},
+      {"name": "maml", "required": false, "bundled": false, "purpose": "DIRECT operation only: DIRECTSampler, BirchClustering, SelectKFromClusters, and their compatible descriptor runtime."},
       {"name": "ase", "required": false, "bundled": false, "purpose": "DIRECT operation only: ASE trajectory and LAMMPS dump inputs."},
       {"name": "plotly", "required": false, "bundled": false, "purpose": "DIRECT operation only: optional PCA/FCS diagnostics."}
     ],
@@ -146,8 +145,8 @@
       "family": "MAML DIRECT representative-structure selection",
       "status": "adapter-ready",
       "operations": ["direct-select"],
-      "external_programs": ["reviewed direct.py with MAML"],
-      "limitations": ["Local only; the reviewed source CLI has no seed flag and its numerical parity fixture remains external-validation pending."]
+      "external_programs": ["bundled direct_select.py using MAML DIRECT"],
+      "limitations": ["Local only; the bundled MAML selection path has no seed control and its historical numerical parity fixture remains external-validation pending."]
     },
     {
       "id": "lasp-ssw",

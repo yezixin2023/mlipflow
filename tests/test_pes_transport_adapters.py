@@ -1,4 +1,4 @@
-"""Dependency-free contract tests for the two reviewed claw CLI adapters."""
+"""Dependency-free contract tests for PES-sampling and transport adapters."""
 
 from __future__ import annotations
 
@@ -36,8 +36,6 @@ class DirectAdapterTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name).resolve()
-        self.script = self.root / "direct.py"
-        self.script.write_text("# reviewed CLI fixture\n", encoding="utf-8")
         self.inputs = self.root / "structures"
         self.inputs.mkdir()
         (self.inputs / "POSCAR").write_text("fixture\n", encoding="utf-8")
@@ -52,7 +50,6 @@ class DirectAdapterTests(unittest.TestCase):
             "project_root": str(self.root),
             "attempt_dir": str(self.attempt),
             "inputs": {
-                "direct_script": str(self.script),
                 "input_dirs": [str(self.inputs)],
             },
             "parameters": {
@@ -88,11 +85,28 @@ class DirectAdapterTests(unittest.TestCase):
         self.assertIsInstance(plan["argv"], list)
         self.assertTrue(all(isinstance(value, str) for value in plan["argv"]))
         self.assertEqual("python3", plan["argv"][0])
-        self.assertEqual(str(self.script), plan["argv"][1])
+        self.assertEqual(
+            str(ROOT / "plugins" / "pes-sampling" / "direct_select.py"),
+            plan["argv"][1],
+        )
         self.assertIn("--no-recursive", plan["argv"])
         self.assertEqual('{"1":"Li","2":"S"}', plan["argv"][-1])
         self.assertIn("seed.provenance_only", diagnostic_codes(diagnostics))
-        self.assertEqual("not-exposed-by-source-cli", plan["assumptions"]["seed_control"])
+        self.assertEqual(
+            "not-exposed-by-bundled-maml-interface",
+            plan["assumptions"]["seed_control"],
+        )
+        self.assertRegex(
+            plan["input_fingerprints"]["direct_wrapper"]["sha256"],
+            r"^sha256:[0-9a-f]{64}$",
+        )
+
+    def test_external_direct_script_is_not_part_of_the_operation_contract(self) -> None:
+        context = self.context()
+        context["inputs"]["direct_script"] = "legacy/direct.py"
+        plan = self.adapter.plan(context)
+        self.assertEqual("BLOCKED", plan["status"])
+        self.assertIn("input.unknown", diagnostic_codes(plan))
 
     def test_uncontrolled_seed_needs_explicit_acknowledgement(self) -> None:
         context = self.context()
@@ -158,6 +172,32 @@ class DirectAdapterTests(unittest.TestCase):
             {"sample-manifest", "selected-structure"},
             {artifact["role"] for artifact in collected["artifacts"]},
         )
+
+    def test_check_accepts_relative_outputs_through_symlinked_manifest_parent(self) -> None:
+        context, manifest, selected = self.result_context()
+        manifest.write_text(
+            "selected_order,input_index,source_kind,source_file,frame_index,output_file,formula\n"
+            "1,4,single_structure,%s,0,%s,Li2S\n"
+            % (self.inputs / "POSCAR", selected.name),
+            encoding="utf-8",
+        )
+        alias = self.root / "selected-alias"
+        try:
+            alias.symlink_to(manifest.parent, target_is_directory=True)
+        except OSError as exc:
+            self.skipTest("directory symlinks unavailable: %s" % exc)
+        alias_manifest = alias / manifest.name
+        context["execution"]["plan"] = {
+            "expected_outputs": [str(alias_manifest)],
+            "output_dir": str(alias),
+        }
+
+        checked = self.adapter.check(context)
+        collected = self.adapter.collect(context)
+
+        self.assertEqual("OK", checked["status"])
+        self.assertEqual("OK", collected["status"])
+        self.assertIn(str(selected.resolve()), {item["path"] for item in collected["artifacts"]})
 
     def test_missing_explicit_manifest_waits(self) -> None:
         context = self.context()

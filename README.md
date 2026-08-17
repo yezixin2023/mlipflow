@@ -660,7 +660,8 @@ lasp-ssw-normalize-replay
 
 ### 9.1 DIRECT
 
-按使用的 reviewed DIRECT 源，需要的 Python 包可能包括：
+`direct-select` 使用插件内置的 `direct_select.py` 调用 MAML DIRECT；项目不再提供或
+引用外部 `direct.py`。执行该 operation 的 Python 环境需要：
 
 ```text
 pymatgen
@@ -677,7 +678,10 @@ conda activate mlipflow-direct
 python -m pip install pymatgen maml ase plotly
 ```
 
-DIRECT 历史源没有可消费的 seed 参数；Adapter 会把 seed 限制写进 provenance，而不会伪造历史随机性。
+其中 ASE 只用于 ASE/LAMMPS 输入，Plotly 只用于可选诊断图。MAML DIRECT 路径没有
+可消费的 seed 参数；Adapter 会把 seed 限制写进 provenance，而不会伪造受 seed
+控制的可复现性。输入目录、globs 与所有 DIRECT/Birch 参数仍须由项目显式声明；
+bundled runner 只接受 fresh output directory，绝不删除已有结果。
 
 ### 9.2 LASP / SSW
 

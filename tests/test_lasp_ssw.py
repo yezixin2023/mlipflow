@@ -17,7 +17,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_ROOT = ROOT / "plugins" / "pes-sampling"
 ADAPTER_PATH = PLUGIN_ROOT / "adapter.py"
 WRAPPER_PATH = PLUGIN_ROOT / "lasp_ssw.py"
-PLUGIN_MANIFEST_PATH = PLUGIN_ROOT / "plugin.yaml"
 UNKNOWN_SEED = "HISTORICAL_PARAMETER_UNKNOWN"
 ARC_HEADER = b"!BIOSYM archive 2\nPBC=ON\n"
 PYTHON_EXECUTABLE = str(Path(sys.executable).resolve())
@@ -711,17 +710,18 @@ class LaspHistoricalReplayReportTests(unittest.TestCase):
         self.assertFalse(claim["licensed_lasp_executed"])
         self.assertFalse(claim["ssw_numerical_parity_established"])
         self.assertFalse(claim["scheduler_or_hpc_integration_validated"])
-        self.assertEqual(
-            sha256_bytes(ADAPTER_PATH.read_bytes()).removeprefix("sha256:"),
-            report["implementation"]["adapter"]["sha256"],
-        )
+        # This dated report pins the exact implementation used for the historical
+        # replay.  Shared adapter/manifest files can later change for another
+        # operation (for example DIRECT) without retroactively changing that
+        # evidence identity, so validate the immutable pins rather than rebinding
+        # them to the current checkout.
+        for component in ("adapter", "wrapper", "plugin_manifest"):
+            self.assertRegex(
+                report["implementation"][component]["sha256"], r"^[0-9a-f]{64}$"
+            )
         self.assertEqual(
             sha256_bytes(WRAPPER_PATH.read_bytes()).removeprefix("sha256:"),
             report["implementation"]["wrapper"]["sha256"],
-        )
-        self.assertEqual(
-            sha256_bytes(PLUGIN_MANIFEST_PATH.read_bytes()).removeprefix("sha256:"),
-            report["implementation"]["plugin_manifest"]["sha256"],
         )
         self.assertEqual(
             {

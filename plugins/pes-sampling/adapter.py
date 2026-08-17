@@ -2,8 +2,8 @@
 
 The adapter only describes local commands and reads explicit result manifests.  It
 never imports MAML/pymatgen/LASP, starts a process, creates directories, or submits
-jobs.  LASP execution and historical normalization are delegated to the bundled
-``lasp_ssw.py`` argv wrapper after MLIPFlow approval.
+jobs.  DIRECT selection and LASP execution/normalization are delegated to bundled
+argv wrappers after MLIPFlow approval.
 """
 
 from __future__ import annotations
@@ -24,6 +24,9 @@ DIRECT_OPERATION = "direct-select"
 LASP_OPERATIONS = frozenset({"lasp-ssw-execute", "lasp-ssw-normalize-replay"})
 OPERATIONS = frozenset({DIRECT_OPERATION}) | LASP_OPERATIONS
 UNKNOWN = "HISTORICAL_PARAMETER_UNKNOWN"
+BUNDLED_DIRECT_WRAPPER = (
+    Path(globals().get("__file__", "adapter.py")).absolute().with_name("direct_select.py")
+)
 BUNDLED_LASP_WRAPPER = (
     Path(globals().get("__file__", "adapter.py")).absolute().with_name("lasp_ssw.py")
 )
@@ -416,19 +419,21 @@ class Adapter:
                 )
             )
 
-        script = _resolve(inputs.get("direct_script"), project_root)
-        if script is None or not script.is_file():
+        unknown_inputs = sorted(set(inputs) - {"input_dirs", "result_manifest"})
+        if unknown_inputs:
             diagnostics.append(
                 _diagnostic(
                     "ERROR",
-                    "path.direct_script",
-                    "inputs.direct_script must name the reviewed direct.py file",
+                    "input.unknown",
+                    "unsupported DIRECT input(s): %s" % ", ".join(unknown_inputs),
                 )
             )
-        elif script.suffix != ".py":
+        if not BUNDLED_DIRECT_WRAPPER.is_file() or BUNDLED_DIRECT_WRAPPER.is_symlink():
             diagnostics.append(
                 _diagnostic(
-                    "ERROR", "path.direct_script_suffix", "direct_script must be a Python file"
+                    "ERROR",
+                    "path.bundled_direct_wrapper",
+                    "the bundled DIRECT runner is missing or is not an ordinary file",
                 )
             )
 
@@ -477,7 +482,7 @@ class Adapter:
                 _diagnostic(
                     "ERROR",
                     "path.output_exists",
-                    "DIRECT deletes an existing --out-dir; use a fresh attempt/output_subdir",
+                    "the bundled DIRECT runner requires a fresh attempt/output_subdir",
                 )
             )
         for input_dir in input_dirs:
@@ -549,7 +554,7 @@ class Adapter:
                 _diagnostic(
                     "ERROR",
                     "seed.no_cli_control",
-                    "reviewed direct.py has no seed flag; set acknowledge_uncontrolled_seed=true to accept this limitation",
+                    "MAML DIRECT exposes no seed control in this selection path; set acknowledge_uncontrolled_seed=true to accept this limitation",
                 )
             )
         else:
@@ -557,7 +562,7 @@ class Adapter:
                 _diagnostic(
                     "WARNING",
                     "seed.provenance_only",
-                    "seed is recorded in the plan but cannot be passed to the reviewed source CLI",
+                    "seed is recorded in the plan but cannot be passed to the bundled MAML DIRECT selection path",
                 )
             )
 
@@ -613,7 +618,7 @@ class Adapter:
         parameters = _mapping(context["parameters"])
         resources = _mapping(context.get("resources"))
         assert project_root is not None and attempt_dir is not None
-        script = _resolve(inputs["direct_script"], project_root)
+        script = BUNDLED_DIRECT_WRAPPER.resolve()
         input_dirs = [_resolve(value, project_root) for value in inputs["input_dirs"]]
         output_dir = (
             attempt_dir / str(parameters.get("output_subdir", "direct-selected"))
@@ -656,9 +661,16 @@ class Adapter:
             "shell": False,
             "expected_outputs": [str(output_dir / "manifest.csv")],
             "output_dir": str(output_dir),
+            "input_fingerprints": {
+                "direct_wrapper": {
+                    "sha256": _sha256(script),
+                    "size_bytes": script.stat().st_size,
+                }
+            },
             "assumptions": {
                 "seed": parameters["seed"],
-                "seed_control": "not-exposed-by-source-cli",
+                "seed_control": "not-exposed-by-bundled-maml-interface",
+                "selection_implementation": "maml.sampling.direct.DIRECTSampler",
                 "fresh_output_directory_required": True,
             },
             "diagnostics": diagnostics,
@@ -1287,6 +1299,7 @@ class Adapter:
                     "ERROR", "result.no_samples", "manifest.csv contains no selected structures"
                 )
             )
+        manifest_dir = path.parent.resolve()
         seen_orders = set()
         for index, row in enumerate(rows):
             try:
@@ -1311,8 +1324,8 @@ class Adapter:
                     )
                 )
             seen_orders.add(order)
-            output_file = _resolve(row.get("output_file"), path.parent)
-            if output_file is None or not _is_within(output_file, path.parent):
+            output_file = _resolve(row.get("output_file"), manifest_dir)
+            if output_file is None or not _is_within(output_file, manifest_dir):
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
@@ -1373,8 +1386,9 @@ class Adapter:
         ]
         formulas = set()
         sources = set()
+        manifest_dir = manifest.parent.resolve()
         for row in rows:
-            output_file = _resolve(row["output_file"], manifest.parent)
+            output_file = _resolve(row["output_file"], manifest_dir)
             assert output_file is not None
             artifacts.append(
                 {
@@ -1386,7 +1400,7 @@ class Adapter:
             formulas.add(row.get("formula", ""))
             sources.add(row.get("source_file", ""))
         for name in _OPTIONAL_PLOTS:
-            path = manifest.parent / name
+            path = manifest_dir / name
             if path.is_file():
                 artifacts.append(
                     {
