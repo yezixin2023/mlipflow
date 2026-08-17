@@ -41,19 +41,15 @@ DEMO_PROJECT="$DEMO_ROOT/high_entropy_sulfide"
 mlipflow --project "$DEMO_PROJECT" init
 ```
 
-每次变更都先查看计划，再复制该计划自己的完整摘要批准。例如第一个节点：
+这些节点只回放既有小型证据，不启动数值程序，因此可以直接运行。例如第一个节点：
 
 ```bash
-mlipflow --project "$DEMO_PROJECT" run structure-replay --dry-run
-mlipflow --project "$DEMO_PROJECT" run structure-replay \
-  --approve 'sha256:<上一条计划的摘要>'
+mlipflow --project "$DEMO_PROJECT" run structure-replay
 
-mlipflow --project "$DEMO_PROJECT" advance --dry-run
-mlipflow --project "$DEMO_PROJECT" advance \
-  --approve 'sha256:<上一条 advance 计划的摘要>'
+mlipflow --project "$DEMO_PROJECT" advance
 ```
 
-保持相同的“检查 dry-run → 精确批准”步骤，依次执行：
+按相同方式依次执行：
 
 1. `sampling-replay`
 2. `labeling-replay`

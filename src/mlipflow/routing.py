@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from .errors import ConfigError
-from .io import canonical_json, load_mapping
+from .io import load_mapping
 
 
 @dataclass
@@ -226,24 +226,10 @@ def route_models(
             candidate.model_id,
         ),
     )
-    policy_digest = hashlib.sha256(canonical_json(policy).encode("utf-8")).hexdigest()
-    registry_public = {key: value for key, value in registry.items() if not key.startswith("_")}
-    registry_digest = hashlib.sha256(canonical_json(registry_public).encode("utf-8")).hexdigest()
-    routing_value = {
-        "policy_digest": policy_digest,
-        "registry_digest": registry_digest,
-        "task": task,
-        "elements": sorted(elements),
-        "scenario": scenario,
-    }
-    routing_digest = hashlib.sha256(canonical_json(routing_value).encode("utf-8")).hexdigest()
     return {
         "task": task,
         "elements": sorted(elements),
         "scenario": scenario,
-        "policy_digest": f"sha256:{policy_digest}",
-        "registry_digest": f"sha256:{registry_digest}",
-        "routing_digest": f"sha256:{routing_digest}",
         "selected_model": ranked[0].model_id if ranked else None,
         "ranking": [candidate.to_dict() for candidate in ranked],
         "rejected": [candidate.to_dict() for candidate in candidates if not candidate.eligible],

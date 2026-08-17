@@ -34,7 +34,6 @@ SINGLE_PYTHON_SUBMIT = """#!/bin/bash
 # logs={{LOG_DIR}}
 cd {{RUN_DIR}}
 """
-SUBMIT = MPI_SUBMIT
 RUN = """#!/bin/bash
 # {{INPUT_DIR}} -> {{OUTPUT_DIR}}
 cd {{RUN_DIR}}
@@ -50,8 +49,6 @@ class FakeLibrary:
             "slurm/mpi/gpu.sbatch": MPI_SUBMIT,
             "slurm/single-python/cpu.sbatch": SINGLE_PYTHON_SUBMIT,
             "slurm/single-python/gpu.sbatch": SINGLE_PYTHON_SUBMIT,
-            "slurm/cpu.sbatch": SUBMIT,
-            "slurm/gpu.sbatch": SUBMIT,
             "vasp/run.sh": RUN,
         }
         self.root_exists = root_exists
@@ -269,19 +266,22 @@ class HpcArchitectureTests(unittest.TestCase):
                 "memory": "64G",
                 "walltime": "04:00:00",
             },
-            scheduled_execution={"template_family": "vasp"},
+            scheduled_execution={
+                "template_family": "vasp",
+                "execution_model": "mpi",
+            },
             library=cpu_library,
         )
         self.assertIn(
-            ("/srv/templates/a", "slurm/cpu.sbatch"), cpu_library.reads
+            ("/srv/templates/a", "slurm/mpi/cpu.sbatch"), cpu_library.reads
         )
         self.assertIn(
             "#SBATCH --ntasks=16",
-            cpu["rendered_scripts"]["submit.sbatch"]["content"],
+            cpu["rendered_scripts"]["submit.sbatch"],
         )
         self.assertIn(
             "# gpus=0 memory=64G time=04:00:00",
-            cpu["rendered_scripts"]["submit.sbatch"]["content"],
+            cpu["rendered_scripts"]["submit.sbatch"],
         )
         repeated = resolve_hpc_execution_plan(
             profile=profile,
@@ -289,7 +289,10 @@ class HpcArchitectureTests(unittest.TestCase):
             node_id="node-y",
             attempt=2,
             resources_value=cpu["resources"],
-            scheduled_execution={"template_family": "vasp"},
+            scheduled_execution={
+                "template_family": "vasp",
+                "execution_model": "mpi",
+            },
             library=FakeLibrary(),
         )
         self.assertEqual(cpu, repeated)
@@ -305,11 +308,14 @@ class HpcArchitectureTests(unittest.TestCase):
                 "memory": "64G",
                 "walltime": "04:00:00",
             },
-            scheduled_execution={"template_family": "vasp"},
+            scheduled_execution={
+                "template_family": "vasp",
+                "execution_model": "mpi",
+            },
             library=gpu_library,
         )
         self.assertIn(
-            ("/srv/templates/a", "slurm/gpu.sbatch"), gpu_library.reads
+            ("/srv/templates/a", "slurm/mpi/gpu.sbatch"), gpu_library.reads
         )
 
     def test_v3_execution_models_bind_distinct_cpu_semantics(self) -> None:
@@ -339,7 +345,7 @@ class HpcArchitectureTests(unittest.TestCase):
             ("/srv/templates/a", "slurm/single-python/cpu.sbatch"),
             single_library.reads,
         )
-        single_submit = single["rendered_scripts"]["submit.sbatch"]["content"]
+        single_submit = single["rendered_scripts"]["submit.sbatch"]
         self.assertIn("#SBATCH --ntasks=1", single_submit)
         self.assertIn("#SBATCH --cpus-per-task=16", single_submit)
         self.assertEqual("threads-per-process", single["cpu_resource_semantics"]["cpus_meaning"])
@@ -361,7 +367,7 @@ class HpcArchitectureTests(unittest.TestCase):
         self.assertIn(
             ("/srv/templates/a", "slurm/mpi/cpu.sbatch"), mpi_library.reads
         )
-        mpi_submit = mpi["rendered_scripts"]["submit.sbatch"]["content"]
+        mpi_submit = mpi["rendered_scripts"]["submit.sbatch"]
         self.assertIn("#SBATCH --ntasks=16", mpi_submit)
         self.assertIn("#SBATCH --cpus-per-task=1", mpi_submit)
         self.assertEqual("mpi-task-count", mpi["cpu_resource_semantics"]["cpus_meaning"])
@@ -440,16 +446,27 @@ class HpcArchitectureTests(unittest.TestCase):
                 "memory": "1G",
                 "walltime": "00:01:00",
             },
-            "scheduled_execution": {"template_family": "vasp"},
+            "scheduled_execution": {
+                "template_family": "vasp",
+                "execution_model": "mpi",
+            },
         }
         with self.assertRaisesRegex(ConfigError, "required remote template is missing"):
-            resolve_hpc_execution_plan(**arguments, library=FakeLibrary({"slurm/cpu.sbatch": SUBMIT}))
+            resolve_hpc_execution_plan(
+                **arguments,
+                library=FakeLibrary({"slurm/mpi/cpu.sbatch": MPI_SUBMIT}),
+            )
         with self.assertRaisesRegex(ConfigError, "template root is missing"):
             resolve_hpc_execution_plan(
                 **arguments, library=FakeLibrary(root_exists=False)
             )
         incomplete = FakeLibrary(
-            {"slurm/cpu.sbatch": "#!/bin/bash\ncd {{RUN_DIR}}\n", "vasp/run.sh": RUN}
+            {
+                "slurm/mpi/cpu.sbatch": (
+                    "#!/bin/bash\n#SBATCH --ntasks={{CPUS}}\ncd {{RUN_DIR}}\n"
+                ),
+                "vasp/run.sh": RUN,
+            }
         )
         with self.assertRaisesRegex(ConfigError, "lacks required variables"):
             resolve_hpc_execution_plan(**arguments, library=incomplete)

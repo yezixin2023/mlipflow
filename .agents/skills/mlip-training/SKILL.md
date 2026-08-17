@@ -1,6 +1,6 @@
 ---
 name: mlip-training
-description: Supervise MLIPFlow training and fine-tuning for DeepMD, M3GNet/MatGL, CHGNet, and MACE. Use when choosing a framework, preparing local or SSH-SLURM training nodes, binding labeled datasets and foundation models by fingerprint, selecting train versus finetune, reviewing abstract compute resources, or verifying model/result artifacts.
+description: Supervise MLIPFlow training and fine-tuning for DeepMD, M3GNet/MatGL, CHGNet, and MACE. Use when choosing a framework, preparing local or SSH-SLURM training nodes, binding labeled datasets and foundation models, selecting train versus finetune, reviewing abstract compute resources, or verifying model/result artifacts.
 ---
 
 # MLIP training and fine-tuning
@@ -53,19 +53,19 @@ as VASP, LAMMPS, or LASP, where `CPUS` is the task/rank count.
 
 Do not copy production datasets or foundation models through the control plane. Scheduled nodes use small project-scoped reference manifests.
 
-A dataset reference must declare:
+A dataset reference declares:
 
 - `schema_version: 1`
 - stable `dataset_id`
 - safe site-root-relative `relative_path`
 - `kind: file` or `directory`
-- `fingerprint: sha256:...`
+- a verifiable content identity
 
-A fine-tune node additionally needs a foundation-model reference with `model_id`, `relative_path`, `kind`, and `fingerprint`.
+A fine-tune node additionally needs a foundation-model reference with `model_id`, `relative_path`, `kind`, and verifiable content identity.
 
 The framework determines the allowed kind: DeepMD datasets are directories; M3GNet/CHGNet/MACE datasets are files; M3GNet foundation models are directories; the currently bundled DeepMD/CHGNet/MACE foundation paths are files.
 
-The remote runner recomputes the referenced content fingerprint before training. Files use SHA-256. Directories use deterministic tree hashing over sorted relative file names, sizes, and per-file SHA-256 values. A mismatch is `FAIL`, never a warning.
+The remote runner verifies the referenced content before training. A mismatch is `FAIL`, never a warning.
 
 ## Build a scheduled node
 
@@ -82,19 +82,14 @@ Require these parameters:
 - `seed`
 - `device`
 - `precision`
-- `dataset_fingerprint`
-- `config_fingerprint`
-- `foundation_model_fingerprint` for `finetune`
 
-`result_manifest` may set the fetched result filename. Configs must be JSON on the generic scheduler path. Do not invent a missing fingerprint; obtain it from the actual approved artifact or keep the node blocked.
+`result_manifest` may set the fetched result filename. Configs must be JSON on the generic scheduler path. Bind actual dataset/config/foundation-model references; do not invent their identity or substitute similarly named files.
 
-For backward compatibility, an old DeepMD fresh-training dataset reference without `relative_path`/`kind` may use the earlier strict DeepMD scheduler contract. New workflows should use explicit generic references.
+## Execution
 
-## Approval and execution
+Before submission, show the user the framework, operation, config/dataset/foundation-model identity, seed, device, precision, abstract resources, selected backend profile, template family, important staged inputs, expected outputs, and fresh attempt workspace.
 
-Before submission, show the user the framework, operation, config fingerprint, dataset id/fingerprint, foundation model id/fingerprint if any, seed, device, precision, abstract resources, selected backend profile, template family, staged-file identities, fetch allowlist, and fresh attempt workspace.
-
-The first matching approval may stage and submit. Scheduler `COMPLETED` is not scientific success. After completion, require `advance --dry-run` to inspect the bounded remote inventory and a second matching approval before fetch/check/collect.
+Scheduler `COMPLETED` is not scientific success. After completion, ordinary `advance` bounded-fetches the run's declared outputs, then runs `check/collect`.
 
 For the generic path, required remote outputs are:
 
@@ -108,16 +103,13 @@ Optional training stdout/stderr logs are bounded and may also be fetched.
 
 Accept `OK` only when the pinned checker confirms:
 
-- framework and operation match the approved node;
+- framework and operation match the attempt snapshot;
 - seed, device, and precision match;
-- staged config SHA-256 matches;
-- cluster-resolved dataset fingerprint matches;
-- foundation-model fingerprint matches for fine-tuning;
+- staged config and cluster-resolved dataset match the requested inputs;
+- the foundation model matches for fine-tuning;
 - the cluster runner reports return code 0;
 - all reported numeric metrics are finite;
-- fetched model size and SHA-256 exactly match `training-result.json`.
-
-The legacy DeepMD fresh-training contract additionally checks its learning curve and checkpoint evidence. Do not generalize those DeepMD-specific columns to other frameworks.
+- the fetched model content matches `training-result.json`.
 
 Retry always creates a fresh attempt. Do not infer resume behavior from a failed attempt.
 

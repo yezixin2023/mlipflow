@@ -1441,7 +1441,7 @@ def _verify_scheduled_vasp_result(
     if (
         not isinstance(execution, Mapping)
         or execution.get("template_family") != scheduled.get("template_family")
-        or execution.get("templates") != hpc_execution.get("templates")
+        or execution.get("templates") != hpc_execution.get("template_paths")
     ):
         diagnostics.append(_diagnostic("error", "result.execution", "结果引用的远端模板与批准计划不一致。"))
     raw = manifest.get("raw_outputs")
@@ -1912,7 +1912,7 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
         "labels": "labels.json",
         "execution": {
             "template_family": "vasp",
-            "templates": hpc_execution.get("templates"),
+            "templates": hpc_execution.get("template_paths"),
             "vasp_version": version.group(1) if version else "UNKNOWN",
             "calculations": [
                 {

@@ -90,7 +90,7 @@
     "allowed_from": ["FAIL", "STOPPED"],
     "creates_new_attempt": true,
     "reuses_previous_run_directory": false,
-    "requires_approval": true,
+    "requires_approval": false,
     "max_attempts": null,
     "limit_enforced": false,
     "notes": ["The core creates a clean attempt; a project retry limit must be enforced before numerical execution is enabled."]

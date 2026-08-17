@@ -101,7 +101,7 @@
     "requires_approval_before_execution": true,
     "notes": [
       "lammps-prepare is the input-construction boundary; execute requires a separate plan approval binding prepared manifest SHA, target, model fingerprint, resources, restart policy and checkpoint cadence.",
-      "Scheduler COMPLETED is not scientific success. A second approved advance inventories and fetches bounded declared outputs before the pinned checker accepts the completion marker, identities and artifact SHA-256 values.",
+      "Scheduler COMPLETED is not scientific success. Advance inventories and fetches bounded declared outputs before the pinned checker accepts the completion marker, identities and artifact SHA-256 values.",
       "Scheduler terminal failure with restart enabled triggers a separate failure-salvage approval. Only already allowlisted logs, runtime sidecar, and alternating checkpoint files can be fetched; partial trajectory/final state is not silently treated as a successful calculation.",
       "A resumed attempt is fresh remote workspace work. The previous checkpoint/runtime SHA values enter the new approval plan and are staged as immutable scientific inputs."
     ]
@@ -124,7 +124,7 @@
     "allowed_from": ["FAIL", "STOPPED"],
     "creates_new_attempt": true,
     "reuses_previous_run_directory": false,
-    "requires_approval": true,
+    "requires_approval": false,
     "max_attempts": null,
     "limit_enforced": false,
     "notes": ["restart_policy=auto-from-previous-attempt consumes only the immediately previous approved failure-salvage checkpoint/runtime pair. Without a valid checkpoint, retry is blocked instead of silently starting fresh."]

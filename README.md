@@ -395,28 +395,29 @@ mlipflow --project "$DEMO_PROJECT" init
 mlipflow --project "$DEMO_PROJECT" run structure-replay --dry-run
 ```
 
-输出会包含精确：
+默认 text 输出只显示语义摘要：
 
 ```text
-plan_digest = sha256:...
+run structure-replay — READY
+mode/backend: replay / local
+will run: read existing results; no numerical program
+approval: not required
 ```
 
-### 5.5 批准同一计划
+`--format json` 返回同样紧凑的结构化视图。需要检查 artifact provenance、完整 plugin
+manifest、内部 adapter/HPC plan 或其他调试信息时显式添加 `--audit`。只有真正需要审批的
+`run --dry-run` 才在默认输出中显示 `approval_token`。
+
+### 5.5 批准需审批的执行计划
 
 ```bash
-mlipflow --project "$DEMO_PROJECT" run structure-replay --approve 'sha256:<PLAN_DIGEST>'
+mlipflow --project "$DEMO_PROJECT" run expensive-node --approve 'sha256:<PLAN_DIGEST>'
 ```
 
 ### 5.6 推进依赖
 
 ```bash
-mlipflow --project "$DEMO_PROJECT" advance --dry-run
-```
-
-复制新的 digest 后：
-
-```bash
-mlipflow --project "$DEMO_PROJECT" advance --approve 'sha256:<PLAN_DIGEST>'
+mlipflow --project "$DEMO_PROJECT" advance
 ```
 
 MLIPFlow 不会因为一个节点 `OK` 就自动执行下一个节点。
@@ -447,7 +448,7 @@ retry
 stop
 ```
 
-除 `init` 外，写操作遵循：
+只有声明为需审批的昂贵、外部或 scheduler-backed `run` 遵循：
 
 ```text
 dry-run
@@ -464,6 +465,16 @@ mlipflow --project <PROJECT> run <NODE> --approve 'sha256:<PLAN_DIGEST>'
 ```
 
 如果项目状态、输入、脚本或计划发生变化，旧 digest 不应被继续使用。
+
+`advance` 负责 observation/reconciliation/fetch/check/collect，`retry` 只创建 fresh attempt，
+显式 `stop NODE` 表达取消意图；它们都不要求复制摘要。查询和 dry-run 默认输出紧凑语义视图；
+`--audit` 才显示详细 provenance 与内部计划。例如：
+
+```bash
+mlipflow --project <PROJECT> status --audit
+mlipflow --project <PROJECT> --format json inspect <NODE> --audit
+mlipflow --project <PROJECT> --format json run <NODE> --dry-run --audit
+```
 
 ---
 
@@ -729,14 +740,14 @@ dft-labeling
 MLIPFlow plan/approval
 -> vasp-prepare：pymatgen 生成 POSCAR/INCAR/KPOINTS，运行时组装 POTCAR
 -> dft-input-manifest.json + MLIPFlow check/collect
--> 第二次 plan/approval
+-> 独立 label 节点的 plan/approval
 -> label：用户自备 Python labeling wrapper 运行/读取 DFT
 -> wrapper 写标准 result manifest
 -> MLIPFlow check
 -> MLIPFlow collect
 ```
 
-`vasp-prepare` 不运行 VASP、不调用 `sbatch`；`label` 不会继承第一次审批。
+`vasp-prepare` 不运行 VASP、不调用 `sbatch`；`label` 是新的外部执行，必须独立审批。
 
 ### 10.1 Python 环境
 
@@ -853,10 +864,11 @@ Python、VASP executable 或 launcher。backend 从 node 的 `backend_profile` �
 读取该 cluster 的 `slurm/mpi/cpu.sbatch` 或 `slurm/mpi/gpu.sbatch` 与 `vasp/run.sh`，确定性渲染后
 创建 fresh attempt workspace。
 
-首次 `run --dry-run` 会显示 profile、模板指纹、渲染脚本、资源和精确远端 attempt 路径；
+首次 `run --dry-run` 默认显示 profile、资源、执行模型和模板族；`--audit` 才显示渲染脚本、
+内部 staging identity 和精确远端 attempt 路径；
 为生成这些内容，它会通过选定 SSH alias 只读获取所需远端模板，但不创建目录、不 stage、
-不提交。批准后才 staging 与 submit。scheduler `COMPLETED` 后仍需 `advance --dry-run` 审查输出
-inventory，再批准 fetch。随后本地 pinned adapter 独立检查 XML、OUTCAR footer、电子
+不提交。批准后才 staging 与 submit。scheduler `COMPLETED` 后，普通 `advance` 会重新读取并
+核对 bounded output inventory，然后 fetch。随后本地 pinned adapter 独立检查 XML、OUTCAR footer、电子
 收敛、标签数值与 artifact hashes，再 collect；POTCAR 从不进入 fetch 清单。
 
 ---
@@ -1326,8 +1338,7 @@ MLIPFlow 不把这些值复制进 project，也不猜它们。
 - `mpi`（VASP、scheduled LAMMPS、LASP）：必须 `--ntasks={{CPUS}}`；`CPUS` 是
   task/rank 数，不能再用于 `cpus-per-task`。
 
-核心在 staging 前检查这些 directive。旧 schema v2 的 `slurm/{cpu,gpu}.sbatch` 只为既有
-批准计划兼容，新内置插件均使用 v3 分型模板。
+核心在 staging 前检查这些 directive。scheduled contract 只支持 schema v3 分型模板。
 
 模板只支持下列精确占位符，不支持表达式、include、循环或任意代码模板语言：
 
@@ -1628,15 +1639,14 @@ mlipflow --project <PROJECT_ROOT> run <NODE_ID> --dry-run
 
 ```text
 输入
-脚本
-模型
+将执行的命令/作业类型
+所选模型
 backend=local
 resources
-输出目录
-plan_digest
+approval token（仅需审批时）
 ```
 
-复制准确 digest。
+需审批时复制准确 token；详细内部 plan 用 `--audit` 检查。
 
 ### 23.2 CPU batch wrapper
 
@@ -2180,9 +2190,9 @@ resolve profile
 
 缺少 site config、backend profile、template root、必需模板、必需模板变量或资源字段时，
 resolution 直接失败；不会猜 cluster 配置。所有 staged 文件在提交前核对 SHA-256。
-第一次 `run` 审批负责 staging + submit；scheduler `COMPLETED` 后还要对远端输出
-大小/SHA-256 的 `advance --dry-run` 进行第二次审批，随后才 fetch 与 `check/collect`。
-远端文件在两次 observation 间变化会拒绝执行。
+`run` 审批负责 staging + submit，并绑定允许回收的 bounded outputs；scheduler `COMPLETED`
+后的 `advance` 不要求第二个摘要。它在 fetch 前重新核对远端大小/SHA-256，远端文件在
+observation 与 transport 之间变化会拒绝执行。
 
 `scheduler COMPLETED` 永远不是 scientific `OK`。当前 static VASP contract 已用 synthetic
 site.yaml、fake template library、fake scheduler/fetch 做完 mocked integration tests；真实 SSH、

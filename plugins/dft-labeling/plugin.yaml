@@ -28,7 +28,7 @@
       "vasp-prepare generates POSCAR, INCAR, KPOINTS, and runtime-only POTCAR files in a fresh local attempt but never launches VASP or submits a scheduler job.",
       "POTCAR is assembled only from the user's licensed PMG_VASP_PSP_DIR, is fingerprinted, and is explicitly excluded from portable collection, reports, packages, and repository content.",
       "The first scheduled contract is intentionally limited to one fresh static VASP calculation per node; relax, AIMD, continuation, arrays, and multi-structure batching remain pending.",
-      "SSH-SLURM staging accepts only a basename input allowlist, verifies every staged SHA-256, never fetches POTCAR, and requires a second approved advance before bounded output fetch and scientific check.",
+      "SSH-SLURM staging accepts only an input allowlist, verifies every staged SHA-256, never fetches POTCAR, and performs bounded output fetch and scientific checks as continuation of the approved run.",
       "Cluster-specific modules, executable paths, launchers, partitions, and environment initialization belong only to the selected remote vasp/run.sh and slurm templates, not plugin or project parameters.",
       "Real historical VASP numerical parity remains pending even when a local integration smoke succeeds.",
       "The manuscript static preset preserves EDIFF=5e-6 numerically while recording that the SI labels it eV/atom although VASP EDIFF is an absolute electronic threshold."
@@ -91,7 +91,7 @@
     "requires_approval_before_execution": true,
     "notes": [
       "vasp-prepare approval summarizes calculation type, structure count, pseudopotential reference, and runtime-only POTCAR policy.",
-      "label requires a second approval with DFT resource estimate, completion policy, units, and prepared-manifest binding."
+      "label submission approval binds the DFT resources, completion policy, units, prepared inputs, and rendered scripts."
       ,"SSH-SLURM label additionally requires fresh remote staging approval; completed output fetch/check is a separately approved advance action."
     ]
   },
@@ -111,7 +111,7 @@
     "allowed_from": ["FAIL", "STOPPED"],
     "creates_new_attempt": true,
     "reuses_previous_run_directory": false,
-    "requires_approval": true,
+    "requires_approval": false,
     "max_attempts": null,
     "limit_enforced": false,
     "notes": ["vasp-prepare requires a fresh output directory; label continuation/reuse must be explicit in a future approved plan."]

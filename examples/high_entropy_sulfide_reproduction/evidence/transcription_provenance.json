@@ -128,7 +128,7 @@
     },
     {
       "path": "large_supercell_screening_top10.json",
-      "sha256": "2e3ee482b678de54ee6d37bd80e7058d96b0a3e3e6bcd909bfd80411c9d6803f",
+      "sha256": "f4d99e909bef19e49dedee67d107b1a677d8e8d083b631f19444ac3c06a900dd",
       "size_bytes": 9391,
       "source_location": "Compact transcription of pinned ranking.json, candidates.json, transport.json, and 22 legacy source-text fingerprints",
       "records": 10,

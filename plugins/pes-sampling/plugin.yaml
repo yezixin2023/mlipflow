@@ -26,7 +26,7 @@
       "The reviewed LASP inputs and scripts did not record a random seed. LASP operations therefore require seed_status=HISTORICAL_PARAMETER_UNKNOWN and explicit acknowledgement; no seed is reconstructed.",
       "AIMD and MLIP-MD execution remain separate and out of scope. best.arc and md.arc may only be normalized as structure lineage evidence.",
       "DIRECT remains local-only and still uses the reviewed source CLI, which has no seed flag and deletes an existing --out-dir; the adapter requires a fresh confined output directory.",
-      "Scheduled LASP uses the generic two-approval ssh-slurm lifecycle and a fixed bounded fetch allowlist. Dynamically selected ARC structures are returned as selected-structures.tar.gz plus manifests so the fetch inventory is known before transfer.",
+      "Scheduled LASP uses one approved ssh-slurm submission followed by scheduler observation, bounded verified fetch, and scientific checks. Dynamically selected ARC structures are returned as selected-structures.tar.gz plus manifests so the fetch allowlist remains finite.",
       "Authorized LASP numerical execution and site-specific scheduler validation must still be performed on the user's cluster; repository tests use fake scheduler/LASP fixtures and do not establish SSW numerical parity.",
       "LASP completion is rebound to approved input fingerprints and reparsed source ARC frames; output manifests cannot replace or self-sign around the approved source files."
     ]
@@ -112,7 +112,7 @@
     "network_access": false,
     "requires_approval_before_execution": true,
     "notes": [
-      "Local operations retain string-list argv and shell=false. Scheduled LASP emits scheduled_execution schema v3 with execution_model=mpi; MLIPFlow core performs SSH staging, Slurm submission, status polling, second approval, bounded fetch, and finalization.",
+      "Local operations retain string-list argv and shell=false. Scheduled LASP emits scheduled_execution schema v3 with execution_model=mpi; MLIPFlow core performs approved SSH staging and Slurm submission followed by status polling, bounded fetch, and finalization.",
       "Scheduled LASP stages only explicit project/plugin files with pinned hashes. SSH targets, work roots, partitions, modules, LASP paths, and MPI launcher paths remain outside project.yaml in the user-local site profile and remote template library.",
       "The scheduled fetch allowlist is fixed before submission. Dynamic selected structures are normalized remotely and packed into selected-structures.tar.gz; the local checker reparses fetched allstr.arc and verifies every tar member against the approved selection policy.",
       "Failed local wrapper runs retain an INCOMPLETE.json marker inside the fresh attempt; scheduled failure is additionally governed by the core scheduler completion contract.",
@@ -135,7 +135,7 @@
     "allowed_from": ["FAIL", "STOPPED"],
     "creates_new_attempt": true,
     "reuses_previous_run_directory": false,
-    "requires_approval": true,
+    "requires_approval": false,
     "max_attempts": null,
     "limit_enforced": false,
     "notes": ["A retry always uses a fresh local attempt and, for ssh-slurm, a fresh remote attempt workspace."]

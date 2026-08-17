@@ -338,7 +338,7 @@ class TrainingLifecycle:
             autospec=True,
             side_effect=inspect,
         ):
-            approved = make_advance_plan(self.project, PLUGINS, self.site)
+            approved = make_advance_plan(self.project, PLUGINS)
         with patch(
             "mlipflow.services.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
@@ -351,7 +351,8 @@ class TrainingLifecycle:
             autospec=True,
             side_effect=fetch,
         ):
-            return advance(self.project, approved["plan_digest"], PLUGINS, self.site)
+            assert "plan_digest" not in approved
+            return advance(self.project, PLUGINS)
 
     def run(self, **overrides: Any) -> dict[str, Any]:
         self.submit()
@@ -405,16 +406,16 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
         hpc = plan["hpc_execution"]
         self.assertEqual(hpc["execution_model"], "single-python")
         self.assertEqual(
-            hpc["templates"]["submit.sbatch"]["relative_path"],
+            hpc["template_paths"]["submit.sbatch"],
             "slurm/single-python/cpu.sbatch",
         )
         self.assertIn(
             "#SBATCH --ntasks=1",
-            hpc["rendered_scripts"]["submit.sbatch"]["content"],
+            hpc["rendered_scripts"]["submit.sbatch"],
         )
         self.assertIn(
             "#SBATCH --cpus-per-task=16",
-            hpc["rendered_scripts"]["submit.sbatch"]["content"],
+            hpc["rendered_scripts"]["submit.sbatch"],
         )
 
     def test_plan_stages_exactly_the_config_and_dataset_reference(self) -> None:

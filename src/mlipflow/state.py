@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -80,11 +79,6 @@ class StepRun:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _config_digest(config: dict[str, Any]) -> str:
-    payload = json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 SCHEMA = """
@@ -197,6 +191,17 @@ class StateStore:
     def initialize_project(self, project_id: str, nodes: list[dict[str, Any]]) -> None:
         now = utc_now()
         with self.transaction() as connection:
+            owners = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT project_id FROM step_runs"
+                ).fetchall()
+            }
+            if owners and owners != {project_id}:
+                raise StateError(
+                    f"state database belongs to project(s) {sorted(owners)!r}, "
+                    f"not {project_id!r}"
+                )
             for node in nodes:
                 needs = list(node.get("needs", []))
                 initial = RunState.WAIT if needs else RunState.READY
@@ -224,58 +229,49 @@ class StateStore:
                         (project_id, node["id"], dependency),
                     )
 
-    def record_project_config(self, project_id: str, config: dict[str, Any]) -> None:
+    def assert_project_id(self, project_id: str) -> None:
+        owners = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT DISTINCT project_id FROM step_runs"
+            ).fetchall()
+        }
+        if not owners:
+            raise StateError("state database has no project identity")
+        if owners != {project_id}:
+            raise StateError(
+                f"state database belongs to project(s) {sorted(owners)!r}, "
+                f"not {project_id!r}"
+            )
+
+    def bind_attempt_node(self, run_id: str, node: dict[str, Any]) -> StepRun:
+        """Bind the current node definition to an unstarted attempt."""
+
         if self.readonly:
-            raise StateError("cannot record project config in read-only mode")
-        digest = _config_digest(config)
-        key = f"project_config:{project_id}"
+            raise StateError("cannot bind an attempt in read-only mode")
         with self.transaction() as connection:
-            existing = connection.execute(
-                "SELECT value FROM metadata WHERE key = ?", (key,)
+            row = connection.execute(
+                "SELECT state, node_id FROM step_runs WHERE run_id = ?", (run_id,)
             ).fetchone()
-            if existing is not None and existing[0] != digest:
-                raise StateError(
-                    "project configuration differs from initialized state; use an explicit "
-                    "migration or a new project state database"
-                )
+            if row is None:
+                raise StateError(f"unknown run id: {run_id}")
+            if row["state"] != RunState.READY.value:
+                raise StateError("only an unstarted READY attempt may bind execution config")
+            if row["node_id"] != str(node["id"]):
+                raise StateError("attempt node identity cannot change")
             connection.execute(
-                "INSERT OR IGNORE INTO metadata(key, value) VALUES(?, ?)", (key, digest)
+                """UPDATE step_runs
+                   SET plugin_id=?, backend=?, node_json=?, updated_at=?
+                   WHERE run_id=?""",
+                (
+                    str(node["uses"]),
+                    str(node.get("backend", "local")),
+                    json.dumps(node, sort_keys=True),
+                    utc_now(),
+                    run_id,
+                ),
             )
-
-    def assert_project_config(self, project_id: str, config: dict[str, Any]) -> None:
-        key = f"project_config:{project_id}"
-        row = self.connection.execute(
-            "SELECT value FROM metadata WHERE key = ?", (key,)
-        ).fetchone()
-        if row is None:
-            raise StateError(
-                "state database has no project configuration snapshot; explicit migration is required"
-            )
-        if row[0] != _config_digest(config):
-            raise StateError(
-                "project configuration differs from initialized state; use an explicit "
-                "migration or a new project state database"
-            )
-
-    def assert_project_nodes(self, project_id: str, nodes: list[dict[str, Any]]) -> None:
-        """Reject silent state/config drift before any mutation is planned."""
-
-        rows = self.latest_steps(project_id)
-        persisted = {row.node_id: self.node_snapshot(row.run_id) for row in rows}
-        configured = {str(node["id"]): node for node in nodes}
-        if set(persisted) != set(configured):
-            raise StateError(
-                "initialized workflow nodes differ from project.yaml; create an explicit "
-                "migration or a new project state database"
-            )
-        for node_id in sorted(configured):
-            if json.dumps(persisted[node_id], sort_keys=True) != json.dumps(
-                configured[node_id], sort_keys=True
-            ):
-                raise StateError(
-                    f"node {node_id} differs from its initialized snapshot; retries and "
-                    "submissions require an explicit migration or new project state"
-                )
+        return self.step_by_run_id(run_id)
 
     def latest_steps(self, project_id: str) -> list[StepRun]:
         rows = self.connection.execute(

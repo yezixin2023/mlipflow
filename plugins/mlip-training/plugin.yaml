@@ -90,7 +90,7 @@
     "network_access": false,
     "requires_approval_before_execution": true,
     "notes": [
-      "ssh-slurm uses the generic MLIPFlow two-approval lifecycle: approve stage/submit, then approve the immutable remote output inventory before bounded fetch.",
+      "ssh-slurm approves stage/submit once; scheduler observation, bounded transport verification, and scientific checks continue that approved run without another digest.",
       "Project files never contain SSH targets, partitions, module commands, absolute cluster data paths, or credentials; those remain in the selected site profile and remote template library.",
       "Scheduled datasets and foundation models are not copied through MLIPFlow. The remote runner resolves safe relative references below site-owned roots and recomputes file SHA-256 or deterministic tree-sha256-v1 before training.",
       "The remote runner invokes training_wrapper.main() in-process without a shell."
@@ -113,7 +113,7 @@
     "allowed_from": ["FAIL", "STOPPED"],
     "creates_new_attempt": true,
     "reuses_previous_run_directory": false,
-    "requires_approval": true,
+    "requires_approval": false,
     "max_attempts": null,
     "limit_enforced": false,
     "notes": ["Every retry receives a fresh attempt workspace; checkpoint/resume behavior is never inferred implicitly."]

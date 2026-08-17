@@ -5,7 +5,7 @@ description: Supervise local MLIPFlow ionic-transport analysis from existing ASE
 
 # Ionic transport
 
-Use `plugins/ionic-transport` as the deterministic implementation. This Skill supervises inputs, approval, and interpretation; it never estimates numerical transport results itself.
+Use `plugins/ionic-transport` as the deterministic implementation. This Skill supervises scientific inputs and interpretation; it never estimates numerical transport results itself.
 
 ## Scope and operations
 
@@ -45,7 +45,7 @@ Require an explicit drift correction and MSD mode for trajectory inputs. Explain
 
 ## Carrier-count conventions
 
-Normal `analyze-existing` never defaults to seven carriers. It uses a structure-derived or explicitly approved composition-corrected count.
+Normal `analyze-existing` never defaults to seven carriers. It uses a structure-derived or explicitly declared composition-corrected count.
 
 The plugin-local historical manuscript wrapper has a separate `legacy_script` convention that deliberately preserves the historical Li10 script literal `N=7` for bug-compatible numerical parity. Its `composition_corrected` convention requires an explicit or POSCAR-derived carrier count and keeps diffusivity unchanged while conductivity changes with `N/V`. Historical parity also retains the historical rounded charge and Boltzmann constants so the N=7 versus corrected comparison isolates carrier count.
 
@@ -55,15 +55,13 @@ Never report `N=7` as the physical default, ground truth, or a requirement for o
 
 Inspect the plugin and project first with read-only commands. For execution:
 
-1. Run the exact `mlipflow run ... --dry-run` plan.
-2. Review inputs, hashes, source type, temperature/timestep provenance, carrier count, charge, volume, fit window, MSD method, expected rows/files, local Python executable, and overwrite risk.
-3. Execute only with the exact returned `sha256:...` approval digest.
-4. Let the local MLIPFlow run invoke the pinned checker and collect phase. Do not bypass the state store by launching the packaged runner manually for a claimed workflow result.
-5. Treat success only as final plugin `OK`, not merely subprocess return code zero.
+1. Inspect the dry-run's source type, important inputs, temperature/timestep source, carrier count, charge, volume, fit window, MSD method, expected outputs, and overwrite risk.
+2. Let MLIPFlow invoke the pinned checker and collect phase. Do not bypass the state store by launching the packaged runner manually for a claimed workflow result.
+3. Treat success only as final plugin `OK`, not merely subprocess return code zero.
 
 Each attempt must use a fresh output directory. Do not delete, clear, or reuse an earlier attempt to simulate retry.
 
-## Checker and provenance contract
+## Checker and completion contract
 
 The runner writes:
 
@@ -73,14 +71,14 @@ The runner writes:
 - `analysis_manifest.json`;
 - per-run MSD curves and fit diagnostics.
 
-The analysis manifest pins approved parameters and SHA-256/size provenance for scientific source and result artifacts. The checker must rehash those files, reparse every MSD curve, select the recorded fit points, and independently verify:
+The analysis manifest binds the declared parameters and scientific source/result artifacts. The checker rereads those files and every MSD curve, selects the recorded fit points, and independently verifies:
 
 - reported slope, fit endpoints, and R2 against the curve;
 - `D = slope/(2d)` and the A²/ps to cm²/s conversion;
 - conductivity from reported D, T, carrier count, charge, and volume;
 - single-line Arrhenius slope, intercept, activation energy, prefactor, R2, and target-temperature diffusivity.
 
-A self-reported JSON status is not completion evidence. Missing, changed, non-finite, parameter-mismatched, equation-inconsistent, or out-of-tree result artifacts must fail. Non-empty `postprocess_failures.json` fails unless partial results were explicitly approved; partial success is never silently promoted.
+A self-reported JSON status is not completion evidence. Missing, changed, non-finite, parameter-mismatched, equation-inconsistent, or out-of-tree result artifacts must fail. Non-empty `postprocess_failures.json` fails unless partial results were explicitly requested; partial success is never silently promoted.
 
 ## Tiny MD smoke boundary
 

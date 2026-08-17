@@ -142,6 +142,7 @@ def _scheduled_contract(
     *,
     node_id: str | None = None,
     attempt: int | None = None,
+    verify_staged_sources: bool = True,
 ) -> dict[str, Any]:
     # Staging needs real paths, but a signed plan carries portable tokens, so
     # resolve before validating.  Doing it here rather than at each of the three
@@ -151,27 +152,11 @@ def _scheduled_contract(
         _portable_roots(project, plugin, node_id, attempt),
     )
     scheduled = adapter_plan.get("scheduled_execution") if isinstance(adapter_plan, dict) else None
-    if not isinstance(scheduled, dict) or scheduled.get("schema_version") not in {2, 3}:
-        raise PluginError(
-            "scheduled adapter plan requires scheduled_execution schema_version 2 or 3"
-        )
-    schema_version = int(scheduled["schema_version"])
-    expected_fields = {
-        "schema_version",
-        "template_family",
-        "staged_files",
-        "fetch_outputs",
-    }
-    if schema_version == 3:
-        expected_fields.add("execution_model")
-    if set(scheduled) != expected_fields:
-        expected_text = ", ".join(sorted(expected_fields))
-        raise PluginError(
-            f"scheduled_execution schema_version={schema_version} may contain only "
-            + expected_text
-        )
+    if not isinstance(scheduled, dict) or scheduled.get("schema_version") != 3:
+        raise PluginError("scheduled adapter plan requires scheduled_execution schema_version 3")
+    schema_version = 3
     execution_model = scheduled.get("execution_model")
-    if schema_version == 3 and execution_model not in EXECUTION_MODELS:
+    if execution_model not in EXECUTION_MODELS:
         raise PluginError(
             "scheduled_execution.execution_model must be single-python or mpi"
         )
@@ -201,15 +186,20 @@ def _scheduled_contract(
             raise PluginError(f"unsafe or duplicate remote staging name: {remote_name!r}")
         names.add(remote_name)
         source = Path(source_value).expanduser().absolute()
-        if source.is_symlink() or not source.is_file():
-            raise PluginError(f"staging source must be an ordinary file: {source}")
-        resolved = source.resolve()
-        if not any(_is_within(resolved, root) for root in allowed_roots):
-            raise PluginError(f"staging source is outside the project/plugin roots: {source}")
-        if not isinstance(declared, str) or declared != _sha256_file(source):
-            raise PluginError(f"staging source fingerprint changed: {source}")
-        if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes != source.stat().st_size:
-            raise PluginError(f"staging source size changed: {source}")
+        if not isinstance(declared, str):
+            raise PluginError(f"scheduled staged file {index} lacks a content fingerprint")
+        if isinstance(size_bytes, bool) or not isinstance(size_bytes, int):
+            raise PluginError(f"scheduled staged file {index} lacks a byte size")
+        if verify_staged_sources:
+            if source.is_symlink() or not source.is_file():
+                raise PluginError(f"staging source must be an ordinary file: {source}")
+            resolved = source.resolve()
+            if not any(_is_within(resolved, root) for root in allowed_roots):
+                raise PluginError(f"staging source is outside the project/plugin roots: {source}")
+            if declared != _sha256_file(source):
+                raise PluginError(f"staging source fingerprint changed: {source}")
+            if size_bytes != source.stat().st_size:
+                raise PluginError(f"staging source size changed: {source}")
         normalized_stage.append(
             {**item, "source": str(source), "remote_name": remote_name}
         )
@@ -281,7 +271,7 @@ def _scheduled_contract(
     )
     return {
         "schema_version": schema_version,
-        **({"execution_model": execution_model} if schema_version == 3 else {}),
+        "execution_model": execution_model,
         "template_family": template_family,
         "staged_files": normalized_stage,
         "fetch_outputs": normalized_outputs,
@@ -316,7 +306,7 @@ def _adapter_context(project: Project, node: dict[str, Any], attempt: int) -> di
 
 def _adapter_command_identities(
     project: Project,
-    adapter_plan: Any,
+    adapter_plan: dict[str, Any],
     *,
     plugin: PluginSpec | None = None,
     node_id: str | None = None,
@@ -330,8 +320,6 @@ def _adapter_command_identities(
     approval digest differ between two machines running identical software.
     """
 
-    if not isinstance(adapter_plan, dict):
-        return {}
     if isinstance(adapter_plan.get("scheduled_execution"), dict):
         # Scheduled scientific inputs are exhaustively fingerprinted by
         # staged_files.  Site-owned executable/launcher identity belongs to the
@@ -347,7 +335,6 @@ def _adapter_command_identities(
         return {}
     raw_cwd = adapter_plan.get("cwd")
     base = Path(raw_cwd) if isinstance(raw_cwd, str) else project.root
-    threshold = int(project.raw.get("fingerprints", {}).get("full_hash_max_bytes", 67108864))
     captured: dict[str, dict[str, Any]] = {}
     for index, raw in enumerate(argv):
         if not isinstance(raw, str) or not raw or "\x00" in raw:
@@ -355,22 +342,15 @@ def _adapter_command_identities(
         candidate = Path(raw)
         candidate = candidate if candidate.is_absolute() else base / candidate
         if candidate.exists():
-            captured[str(index)] = content_identity(
-                candidate, root=project.root, full_hash_max_bytes=threshold
-            )
+            captured[str(index)] = content_identity(candidate, root=project.root)
     return captured
 
 
 def _normalize_adapter_artifacts(
-    project: Project, attempt_dir: Path, raw_artifacts: Any
+    project: Project, attempt_dir: Path, raw_artifacts: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    if not isinstance(raw_artifacts, list):
-        raise PluginError("adapter artifacts must be a list")
-    threshold = int(project.raw.get("fingerprints", {}).get("full_hash_max_bytes", 67108864))
     normalized: list[dict[str, Any]] = []
-    for index, item in enumerate(raw_artifacts):
-        if not isinstance(item, dict):
-            raise PluginError(f"adapter artifact {index} must be a mapping")
+    for item in raw_artifacts:
         role = str(item.get("role", "output"))
         path_value = item.get("path")
         if isinstance(path_value, str):
@@ -387,7 +367,7 @@ def _normalize_adapter_artifacts(
                 ) from exc
             if not resolved.is_file():
                 raise PluginError(f"adapter artifact does not exist: {path}")
-            artifact = fingerprint(resolved, full_hash_max_bytes=threshold)
+            artifact = fingerprint(resolved)
             artifact["role"] = role
             if isinstance(item.get("media_type"), str):
                 artifact["media_type"] = item["media_type"]
@@ -397,7 +377,7 @@ def _normalize_adapter_artifacts(
         external_fingerprint = item.get("fingerprint")
         if not isinstance(uri, str) or not isinstance(external_fingerprint, str):
             raise PluginError(
-                f"adapter artifact {index} needs either path or uri plus fingerprint"
+                f"adapter artifact {role!r} needs either path or uri plus fingerprint"
             )
         normalized.append(
             {

@@ -810,9 +810,6 @@ def _compact_route(
         "selected_model": selected,
         "scenario": route["scenario"],
         "policy": project_raw["routing"]["policies"][task],
-        "policy_digest": route["policy_digest"],
-        "registry_digest": route["registry_digest"],
-        "routing_digest": route["routing_digest"],
         "selected_metrics": selected_candidate["metrics"],
         "selected_metric_units": {
             name: units[name] for name in selected_candidate["metrics"]

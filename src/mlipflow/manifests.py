@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any, Iterable
 
 from . import __version__
-from .io import canonical_json
 from .provenance import capture, redact
 
 
@@ -42,20 +40,9 @@ def run_manifest(
     execution_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     captured = capture(source_root=source_root)
-    config_value = {
-        "plugin": {"id": plugin_id, "version": plugin_version},
-        "mode": mode,
-        "backend": backend,
-        "inputs": inputs,
-        "parameters": parameters,
-        "command": command,
-        "resources": resources or {},
-    }
-    config_digest = hashlib.sha256(canonical_json(config_value).encode("utf-8")).hexdigest()
     time_values = timestamps or {}
     provenance = {
         "plan_digest": plan_digest,
-        "config_digest": f"sha256:{config_digest}",
         "created_by": "mlipflow",
         "software": [{"name": "mlipflow", "version": __version__}],
         "environment": {

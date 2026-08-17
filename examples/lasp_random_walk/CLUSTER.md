@@ -60,9 +60,9 @@ A scheduled LASP node has no `lasp_executable` input.  The licensed binary is re
 
 The approved scheduled plan stages only pinned project/plugin files: the project configuration, `input.arc`, `lasp.in`, declared auxiliary files, `lasp_ssw.py`, and `lasp_cluster.py`.  The cluster run template invokes the staged helper inside the Slurm allocation.
 
-## 4. Bounded outputs and the second approval
+## 4. Bounded outputs and verified continuation
 
-Before fetching anything, MLIPFlow inspects a fixed output allowlist and includes sizes/hashes in the advance approval.  Required LASP outputs include:
+The approved run binds a fixed output allowlist. After scheduler completion, ordinary `advance` inventories that allowlist and rechecks sizes/hashes during transport without requiring a second approval. Required LASP outputs include:
 
 - `cluster-run-report.json`
 - `sampling-result.json`

@@ -162,7 +162,8 @@ class Adapter:
             first = run_node(project, "fails", plugins, first_plan["plan_digest"])
             first_run_id = first["step"]["run_id"]
             retry_plan = make_retry_plan(project, "fails", plugins)
-            retry(project, "fails", retry_plan["plan_digest"], plugins)
+            self.assertNotIn("plan_digest", retry_plan)
+            retry(project, "fails", plugins)
             second_plan = make_run_plan(project, "fails", plugins)
             second = run_node(project, "fails", plugins, second_plan["plan_digest"])
             second_manifest = json.loads(

@@ -173,7 +173,9 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
             "model": {
                 "id": identity["model_id"],
                 "fingerprint": identity["model_fingerprint"],
+                "kind": identity["model_kind"],
                 "artifact_format": identity["artifact_format"],
+                "lammps_interface": identity["lammps_interface"],
             },
             "ensemble": identity["ensemble"],
             "steps_requested": identity["steps"],
@@ -206,6 +208,8 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
                 "target": identity["target"],
                 "model_id": identity["model_id"],
                 "model_fingerprint": identity["model_fingerprint"],
+                "model_kind": identity["model_kind"],
+                "lammps_interface": identity["lammps_interface"],
                 "input_manifest_fingerprint": identity["input_manifest_fingerprint"],
                 "steps_completed": identity["steps"],
                 "segment_start_step": 0,
@@ -259,7 +263,7 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
             autospec=True,
             side_effect=self._inspect,
         ):
-            approved = make_advance_plan(self.project, PLUGINS, self.site)
+            approved = make_advance_plan(self.project, PLUGINS)
         self.assertEqual(approved["details"]["transitions"][0]["action"], "adapter-finalize")
         self.assertFalse((attempt / "lammps-execution-result.json").exists())
 
@@ -275,9 +279,10 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
             autospec=True,
             side_effect=self._fetch,
         ):
-            outcome = advance(self.project, approved["plan_digest"], PLUGINS, self.site)
+            assert "plan_digest" not in approved
+            outcome = advance(self.project, PLUGINS)
 
-        self.assertEqual(outcome["changed"][0]["state"], "OK")
+        self.assertEqual(outcome["changed"][0]["state"], "OK", outcome)
         self.assertTrue((attempt / "lammps-execution-result.json").is_file())
         self.assertTrue((attempt / "final.restart").is_file())
 

@@ -1,8 +1,8 @@
 """Scheduler-backed execution: stage, submit, observe, fetch, finalize.
 
-This is the asynchronous two-approval lifecycle.  The first approval covers
-resolution, rendering, staging and submission; the second binds the remote output
-inventory before anything is fetched and handed to the pinned scientific checker.
+Submission is the approval boundary. Later scheduler observation, bounded
+transport, and scientific completion checks are continuations of that approved
+run and do not require another approval digest.
 """
 
 from __future__ import annotations
@@ -10,14 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import content_identity, fingerprint
+from ..artifacts import fingerprint
 from ..config import Project
 from ..errors import ApprovalError, BackendError, ConfigError, StateError
 from ..io import load_mapping, write_json_atomic, write_text_atomic
 from ..planning import node_plan, with_digest
-from ..plugins import PluginSpec, discover_plugins, load_adapter, select_plugin
+from ..plugins import PluginSpec, discover_plugins, load_adapter
 from ..portable import to_runtime
-from ..site import load_site_config
 from ..state import RunState, StateStore, StepRun, utc_now
 from .backend_factory import (
     SchedulerFactory,
@@ -46,17 +45,11 @@ def _materialize_hpc_scripts(
         raise BackendError("approved plan lacks rendered HPC scripts")
     paths: list[Path] = []
     for name in (_HPC_SUBMIT_SCRIPT, _HPC_RUN_SCRIPT):
-        record = rendered.get(name)
-        content = record.get("content") if isinstance(record, dict) else None
+        content = rendered.get(name)
         if not isinstance(content, str):
             raise BackendError(f"approved plan lacks rendered {name}")
         path = attempt_dir / name
         write_text_atomic(path, content)
-        if (
-            record.get("sha256") != _sha256_file(path)
-            or record.get("size_bytes") != path.stat().st_size
-        ):
-            raise BackendError(f"rendered HPC script identity mismatch: {name}")
         paths.append(path)
     return paths[0], paths[1]
 
@@ -214,7 +207,6 @@ def _observe_scheduled_step(
     project: Project,
     step: StepRun,
     plugin_root: Path | None = None,
-    site_path: Path | None = None,
     *,
     factory: SchedulerFactory | None = None,
 ) -> dict[str, Any]:
@@ -227,9 +219,7 @@ def _observe_scheduled_step(
                 raise ConfigError(
                     "plugin root is required to verify the pinned HPC execution plan"
                 )
-            pinned_plan, _, _ = _load_pinned_scheduled_plan(
-                project, step, plugin_root, site_path
-            )
+            pinned_plan, _, _ = _load_pinned_scheduled_plan(project, step, plugin_root)
             hpc_execution = pinned_plan.get("hpc_execution")
             cluster_record = (
                 hpc_execution.get("cluster_profile")
@@ -293,7 +283,7 @@ def _observe_scheduled_step(
         if approved_plan_path.is_file() and plugin_root is not None:
             try:
                 approved_plan, plugin, scheduled = _load_pinned_scheduled_plan(
-                    project, step, plugin_root, site_path
+                    project, step, plugin_root
                 )
                 salvage_outputs = _failure_salvage_outputs(approved_plan, scheduled)
                 if salvage_outputs:
@@ -303,9 +293,6 @@ def _observe_scheduled_step(
                         backend, workspace, salvage_outputs
                     )
                     observation["adapter_finalization"] = {
-                        "approved_plan_identity": content_identity(
-                            approved_plan_path, root=project.root
-                        ),
                         "plugin_id": plugin.plugin_id,
                         "remote_run_dir": workspace["run_dir"],
                         "outputs": inventory,
@@ -357,18 +344,12 @@ def _observe_scheduled_step(
                 return observation
             try:
                 approved_plan, plugin, scheduled = _load_pinned_scheduled_plan(
-                    project, step, plugin_root, site_path
+                    project, step, plugin_root
                 )
                 cluster_record, workspace = _approved_workspace(approved_plan, step)
                 backend = scheduler_from_cluster_record(cluster_record, factory=factory)
                 inventory = _remote_output_inventory(backend, workspace, scheduled)
                 observation["adapter_finalization"] = {
-                    # Content identity, not a filesystem fingerprint: this value
-                    # enters the advance approval digest, and re-staging or
-                    # copying the attempt directory must not invalidate it.
-                    "approved_plan_identity": content_identity(
-                        approved_plan_path, root=project.root
-                    ),
                     "plugin_id": plugin.plugin_id,
                     "remote_run_dir": workspace["run_dir"],
                     "outputs": inventory,
@@ -435,8 +416,8 @@ def _remote_output_inventory(
 ) -> list[dict[str, Any]]:
     """Read the bounded identity of every approved output without mutating it.
 
-    ``advance --dry-run`` and ``advance --approve`` must produce byte-identical
-    inventories for the fetch to be allowed, so both go through this one function.
+    The inventory is re-read immediately before fetch so a remote file cannot
+    change between observation and transport.
     """
 
     return _remote_output_inventory_items(
@@ -448,7 +429,6 @@ def _load_pinned_scheduled_plan(
     project: Project,
     step: StepRun,
     plugin_root: Path,
-    site_path: Path | None,
 ) -> tuple[dict[str, Any], PluginSpec, dict[str, Any]]:
     attempt_dir = attempt_directory(project, step.node_id, step.attempt)
     plan_path = attempt_dir / "approved-plan.json"
@@ -463,42 +443,57 @@ def _load_pinned_scheduled_plan(
     identity = _scheduler_expected_identity(step)
     if plan.get("plan_digest") != identity["plan_digest"]:
         raise ApprovalError("approved plan differs from the initial run manifest")
-    node = project.node(step.node_id)
-    plugin = select_plugin(discover_plugins(plugin_root), str(node["uses"]))
+    node = _attempt_node(plan, step)
+    pinned_plugin = plan.get("plugin")
+    if not isinstance(pinned_plugin, dict) or not isinstance(pinned_plugin.get("id"), str):
+        raise ApprovalError("approved scheduled plan lacks a plugin identity")
+    plugins = discover_plugins(plugin_root)
+    plugin_id = str(pinned_plugin["id"])
+    if plugin_id not in plugins:
+        raise ApprovalError(f"pinned scheduled plugin is unavailable: {plugin_id}")
+    plugin = plugins[plugin_id]
     current = node_plan(project, node, plugin)
-    for key in (
-        "project_id",
-        "node_id",
-        # ``plugin`` carries implementation_identity, so a real edit to the
-        # adapter source between submission and fetch is still caught here — but
-        # a touch, a re-clone or an rsync of identical bytes no longer is.
-        "plugin",
-        "backend",
-        "backend_profile",
-        "project_config_digest",
-        "inputs",
-        "input_identities",
-        "parameters",
-        "resources",
+    current_plugin = current.get("plugin")
+    if (
+        pinned_plugin.get("id") != current_plugin.get("id")
+        or pinned_plugin.get("implementation_identity")
+        != current_plugin.get("implementation_identity")
     ):
-        if plan.get(key) != current.get(key):
-            raise ApprovalError(f"pinned scheduled plan field changed: {key}")
-    site = load_site_config(site_path)
-    profile = site.cluster(node.get("backend_profile"))
-    hpc_execution = plan.get("hpc_execution")
-    cluster_record = (
-        hpc_execution.get("cluster_profile")
-        if isinstance(hpc_execution, dict)
-        else None
-    )
-    if plan.get("site_config_digest") != site.digest:
-        raise ApprovalError("site configuration changed after scheduler submission")
-    if cluster_record != profile.to_plan_dict():
-        raise ApprovalError("cluster profile changed after scheduler submission")
+        raise ApprovalError("pinned scheduled checker implementation changed")
     scheduled = _scheduled_contract(
-        project, plugin, plan, node_id=step.node_id, attempt=step.attempt
+        project,
+        plugin,
+        plan,
+        node_id=step.node_id,
+        attempt=step.attempt,
+        verify_staged_sources=False,
     )
     return plan, plugin, scheduled
+
+
+def _attempt_node(plan: dict[str, Any], step: StepRun) -> dict[str, Any]:
+    """Recover the node semantics bound into an approved attempt plan."""
+
+    plugin = plan.get("plugin")
+    plugin_id = plugin.get("id") if isinstance(plugin, dict) else step.plugin_id
+    return {
+        "id": step.node_id,
+        "uses": plugin_id,
+        "mode": plan.get("mode", "execute"),
+        "backend": plan.get("backend", step.backend),
+        "backend_profile": plan.get("backend_profile"),
+        "inputs": plan.get("inputs", {}),
+        "parameters": plan.get("parameters", {}),
+        "resources": plan.get("resources", {}),
+    }
+
+
+def _stored_fingerprint_mode(value: Any) -> str:
+    if isinstance(value, str) and value.startswith("sha256:"):
+        return "full"
+    if isinstance(value, str) and value.startswith("tree-sha256:"):
+        return "tree-full"
+    return "external"
 
 
 def _finalize_scheduled_adapter(
@@ -507,22 +502,14 @@ def _finalize_scheduled_adapter(
     change: dict[str, Any],
     plugin_root: Path,
     store: StateStore,
-    site_path: Path | None,
     *,
     factory: SchedulerFactory | None = None,
 ) -> StepRun:
     details = change.get("adapter_finalization")
     if not isinstance(details, dict):
         raise StateError("approved transition lacks adapter finalization details")
-    plan, plugin, scheduled = _load_pinned_scheduled_plan(
-        project, step, plugin_root, site_path
-    )
+    plan, plugin, scheduled = _load_pinned_scheduled_plan(project, step, plugin_root)
     attempt_dir = attempt_directory(project, step.node_id, step.attempt)
-    plan_path = attempt_dir / "approved-plan.json"
-    if content_identity(plan_path, root=project.root) != details.get(
-        "approved_plan_identity"
-    ):
-        raise StateError("approved scheduled plan changed after advance dry-run")
     hpc_execution = plan.get("hpc_execution")
     cluster_record = (
         hpc_execution.get("cluster_profile")
@@ -538,9 +525,9 @@ def _finalize_scheduled_adapter(
         or details.get("remote_run_dir") != workspace.get("run_dir")
     ):
         raise StateError("approved remote attempt workspace changed before fetch")
-    approved_inventory = details.get("outputs")
-    if not isinstance(approved_inventory, list):
-        raise StateError("advance plan lacks the approved remote output inventory")
+    observed_inventory = details.get("outputs")
+    if not isinstance(observed_inventory, list):
+        raise StateError("advance observation lacks the remote output inventory")
     failure_salvage = details.get("failure_salvage") is True
     backend = scheduler_from_cluster_record(cluster_record, factory=factory)
     if failure_salvage:
@@ -550,8 +537,8 @@ def _finalize_scheduled_adapter(
         )
     else:
         current_inventory = _remote_output_inventory(backend, workspace, scheduled)
-    if current_inventory != approved_inventory:
-        raise StateError("remote outputs changed after the approved advance plan")
+    if current_inventory != observed_inventory:
+        raise StateError("remote outputs changed between observation and fetch")
     fetched: list[dict[str, Any]] = []
     fetch_errors: list[str] = []
     for item in current_inventory:
@@ -585,7 +572,7 @@ def _finalize_scheduled_adapter(
         else:
             reason = str(change.get("reason", "scheduler terminal failure"))
     else:
-        node = project.node(step.node_id)
+        node = _attempt_node(plan, step)
         context = _adapter_context(project, node, step.attempt)
         context["execution"] = {
             "returncode": 0,
@@ -611,12 +598,12 @@ def _finalize_scheduled_adapter(
             reason = completion_error
         else:
             checked = adapter.check(context)
-            if not isinstance(checked, dict) or checked.get("status") != RunState.OK.value:
+            if checked.get("status") != RunState.OK.value:
                 final = RunState.FAIL
                 reason = f"pinned plugin completion check did not return OK: {checked}"
             else:
                 collected = adapter.collect(context)
-                if not isinstance(collected, dict) or collected.get("status") != RunState.OK.value:
+                if collected.get("status") != RunState.OK.value:
                     final = RunState.FAIL
                     reason = f"pinned plugin collection did not return OK: {collected}"
                 else:
@@ -627,8 +614,7 @@ def _finalize_scheduled_adapter(
                     fetched.extend(
                         item for item in normalized if str(item["uri"]) not in known
                     )
-                    raw_metrics = collected.get("metrics", {})
-                    metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+                    metrics = collected.get("metrics", {})
                     final = RunState.OK
                     reason = (
                         "scheduler completed; bounded fetch and pinned plugin checks succeeded"
@@ -638,12 +624,7 @@ def _finalize_scheduled_adapter(
     artifacts = [
         {
             **item,
-            "fingerprint_mode": (
-                "full"
-                if isinstance(item.get("fingerprint"), str)
-                and str(item["fingerprint"]).startswith("sha256:")
-                else "metadata"
-            ),
+            "fingerprint_mode": _stored_fingerprint_mode(item.get("fingerprint")),
             "mtime_ns": None,
         }
         for item in initial_artifacts

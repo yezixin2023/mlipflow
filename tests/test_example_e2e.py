@@ -74,7 +74,8 @@ class HighEntropySulfideExampleTests(unittest.TestCase):
                 if all(step["state"] == "OK" for step in workflow["steps"]):
                     break
                 plan = make_advance_plan(project)
-                advance(project, plan["plan_digest"])
+                self.assertNotIn("plan_digest", plan)
+                advance(project)
             completed = query_workflow(project)
             self.assertEqual({"OK": 9}, completed["counts"])
             try:

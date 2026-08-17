@@ -130,15 +130,14 @@ Checkpoint data is strict JSON; restart never unpickles remote content.
 
 ## TIMEOUT / PREEMPTED restart flow
 
-A scheduler failure does **not** automatically download the checkpoint. The remote failure workspace is still subject to the same two-approval trust boundary.
+A scheduler failure does **not** make arbitrary remote files eligible for download. Failure salvage remains limited to the allowlist approved with the run.
 
 1. Submit attempt 1 normally with the approved run plan.
-2. If Slurm reports `TIMEOUT`, `PREEMPTED`, `NODE_FAIL`, `OUT_OF_MEMORY`, `DEADLINE`, or another restart-eligible terminal state, run `advance --dry-run` before creating a retry.
-3. The advance plan inventories only the adapter's `failure_salvage` subset of the already approved fetch allowlist. For ASE MD this can include `md-checkpoint.json` and partial trajectory/index/thermo segment files. It shows existence, size, SHA-256, and oversize status.
-4. Approve that exact advance digest. Core fetches only that bounded salvage subset and leaves the attempt in `FAIL` or `STOPPED`. A salvaged checkpoint is not scientific success.
-5. Run `retry --dry-run` and approve the retry. This creates a **fresh attempt directory**; it does not reuse the failed remote workspace.
-6. Dry-run the new MD attempt. With `restart_policy: auto-from-previous-attempt`, the adapter reads only the immediately previous local attempt's salvaged `md-checkpoint.json`, verifies the previous scheduler terminal state and checkpoint identity, stages the checkpoint as `input/restart/md-checkpoint.json`, and binds its SHA-256 into the new plan.
-7. Review `restart_from_attempt`, `restart_checkpoint_sha256`, `segment_start_step`, `remaining_steps`, and the new segment's frame/thermo schedules, then approve submission.
+2. If Slurm reports `TIMEOUT`, `PREEMPTED`, `NODE_FAIL`, `OUT_OF_MEMORY`, `DEADLINE`, or another restart-eligible terminal state, run `advance` before creating a retry.
+3. Core inventories only the adapter's `failure_salvage` subset of the already approved fetch allowlist, rechecks it during transport, and leaves the attempt in `FAIL` or `STOPPED`. For ASE MD this can include `md-checkpoint.json` and partial trajectory/index/thermo segment files. A salvaged checkpoint is not scientific success.
+4. Run `retry`. This creates a **fresh attempt directory**; it does not reuse the failed remote workspace or launch computation.
+5. Dry-run the new MD attempt. With `restart_policy: auto-from-previous-attempt`, the adapter reads only the immediately previous local attempt's salvaged `md-checkpoint.json`, verifies the previous scheduler terminal state and checkpoint identity, stages the checkpoint as `input/restart/md-checkpoint.json`, and binds its SHA-256 into the new execution plan.
+6. Review `restart_from_attempt`, `restart_checkpoint_sha256`, `segment_start_step`, `remaining_steps`, and the new segment's frame/thermo schedules, then approve submission.
 
 There is no project parameter for an arbitrary restart path. This prevents an Agent from pointing a retry at an unrelated or unreviewed checkpoint.
 

@@ -19,8 +19,8 @@
    ```
 
    它们不得提交、拉取、重试、取消、修改输入、写状态或触发自动推进。
-4. `init/run/advance/retry/stop` 会改变状态或外部系统。`run/advance/retry/stop` 必须先执行 `--dry-run`，向用户展示计划、规模、后端、资源、输出和覆盖风险，再以完全匹配的 `--approve sha256:...` 执行。
-5. 以下行为总要单独获得明确批准：取消作业、删除或清理数据、覆盖模型/数据集、破坏性重跑、远端 staging、DFT/AIMD、长时间 MD、训练/微调和大规模筛选。
+4. `init/run/advance/retry/stop` 会改变状态或外部系统。启动声明为需审批的昂贵或外部计算前，先用 `run --dry-run` 审查执行语义，再传回该计划给出的 approval token。scheduler observation、bounded fetch、check/collect 不需要第二次审批；`retry` 只创建 fresh attempt；显式 `stop NODE` 本身就是取消意图。
+5. 以下行为总要单独获得明确意图：删除或清理数据、覆盖模型/数据集、破坏性重跑、远端 staging、DFT/AIMD、长时间 MD、训练/微调和大规模筛选。显式 `stop NODE` 可取消该节点的已知作业，但不得扩大到其他作业。
 6. 不要把密码、私钥路径、token、POTCAR、模型权重或私有大数据写入仓库。SSH 后端只引用用户 `~/.ssh/config` 中的 profile 名。
 7. `retry` 必须创建新 attempt 并保留旧结果。不要用 `rm` 模拟 retry。
 8. 调度器显示 `COMPLETED` 不等于科学结果 `OK`；只有插件完成判据和输出 schema 均通过才可标为 `OK`。
@@ -34,7 +34,7 @@
 2. 用对应仓库 Skill 理解任务和科学注意事项。
 3. `mlipflow inspect NODE` 检查插件契约、输入和已知限制。
 4. 如涉及模型选择，运行 `mlipflow route --task ...`，读取候选、淘汰原因和 benchmark 指标贡献；不要凭图或模型品牌选择。
-5. 对写操作先运行 `--dry-run`，逐项向用户说明，再请求批准。
+5. 对需审批的 `run` 先运行 `--dry-run`，逐项说明执行语义、规模、后端、资源、实际输入与 staged scripts，再请求批准。普通 `advance`/`retry` 和显式 `stop NODE` 不需要复制 approval token。
 6. 执行后按退出码和结构化 JSON 判断，不把非零退出码描述为成功。
 7. 对 FAIL 先读 `logs` 和 manifest；诊断后提出 retry 或参数修正，不能自动重试。
 

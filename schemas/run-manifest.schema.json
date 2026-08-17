@@ -127,7 +127,6 @@
       "type": "object",
       "required": [
         "plan_digest",
-        "config_digest",
         "created_by",
         "software",
         "environment",
@@ -136,7 +135,6 @@
       ],
       "properties": {
         "plan_digest": {"$ref": "#/$defs/digest"},
-        "config_digest": {"$ref": "#/$defs/digest"},
         "created_by": {"const": "mlipflow"},
         "software": {
           "type": "array",

@@ -963,7 +963,7 @@ def _check_scheduled_training(context: dict[str, Any]) -> tuple[list[dict[str, s
             )
     reported_templates = report.get("templates")
     if hpc_execution and reported_templates is not None and reported_templates != hpc_execution.get(
-        "templates"
+        "template_paths"
     ):
         diagnostics.append(
             _diagnostic("error", "training.report_templates", "the remote report cites different templates")
@@ -1024,7 +1024,7 @@ def _collect_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
         "model_artifacts": analysis["checkpoints"],
         "execution": {
             "template_family": _mapping(planned.get("scheduled_execution")).get("template_family"),
-            "templates": hpc_execution.get("templates"),
+            "templates": hpc_execution.get("template_paths"),
             "host": report.get("host"),
             "threads": report.get("threads"),
         },

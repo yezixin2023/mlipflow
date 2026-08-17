@@ -129,7 +129,29 @@ class ReadOnlyCliTests(unittest.TestCase):
             ]
         )
         self.assertEqual(code, 0, stderr)
-        self.assertTrue(json.loads(stdout)["data"]["plan_digest"].startswith("sha256:"))
+        compact = json.loads(stdout)["data"]
+        self.assertFalse(compact["approval_required"])
+        self.assertNotIn("plan_digest", compact)
+        self.assertNotIn("adapter_plan", compact)
+
+        code, stdout, stderr = run_cli(
+            [
+                "--project",
+                str(self.root),
+                "--plugins",
+                str(self.plugins),
+                "--format",
+                "json",
+                "run",
+                "benchmark",
+                "--dry-run",
+                "--audit",
+            ]
+        )
+        self.assertEqual(code, 0, stderr)
+        audit = json.loads(stdout)["data"]
+        self.assertTrue(audit["plan_digest"].startswith("sha256:"))
+        self.assertIn("input_identities", audit)
         self.assertEqual(snapshot(self.root), before)
 
 

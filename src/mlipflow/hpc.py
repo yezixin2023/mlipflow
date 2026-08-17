@@ -244,32 +244,21 @@ def resolve_hpc_execution_plan(
     if not isinstance(family, str) or not TEMPLATE_FAMILY.fullmatch(family):
         raise ConfigError("scheduled_execution.template_family is required and must be safe")
     execution_model = scheduled_execution.get("execution_model")
-    if execution_model is None:
-        # scheduled_execution v2 compatibility. New built-in contracts use v3
-        # and must state an execution model, but previously approved plans keep
-        # resolving through the historical site-defined scheduler templates.
-        submit_template = "slurm/gpu.sbatch" if resources.gpus > 0 else "slurm/cpu.sbatch"
-        cpu_semantics = {
-            "cpus_meaning": "legacy-site-defined",
-            "slurm_ntasks": "site-defined",
-            "slurm_cpus_per_task": "site-defined",
-        }
-    else:
-        if not isinstance(execution_model, str) or execution_model not in EXECUTION_MODELS:
-            raise ConfigError(
-                "scheduled_execution.execution_model must be single-python or mpi"
-            )
-        device = "gpu" if resources.gpus > 0 else "cpu"
-        submit_template = f"slurm/{execution_model}/{device}.sbatch"
-        cpu_semantics = dict(_SLURM_CPU_SEMANTICS[execution_model])
+    if not isinstance(execution_model, str) or execution_model not in EXECUTION_MODELS:
+        raise ConfigError(
+            "scheduled_execution.execution_model must be single-python or mpi"
+        )
+    device = "gpu" if resources.gpus > 0 else "cpu"
+    submit_template = f"slurm/{execution_model}/{device}.sbatch"
+    cpu_semantics = dict(_SLURM_CPU_SEMANTICS[execution_model])
     run_template = f"{family}/run.sh"
     selected = {
         "submit.sbatch": (submit_template, SUBMIT_REQUIRED),
         "run.sh": (run_template, RUN_REQUIRED),
     }
     variables = template_variables(profile, project_id, node_id, attempt, resources)
-    template_records: dict[str, dict[str, Any]] = {}
-    rendered_records: dict[str, dict[str, Any]] = {}
+    template_paths: dict[str, str] = {}
+    rendered_scripts: dict[str, str] = {}
     used_variables: set[str] = set()
     for destination, (relative, required) in selected.items():
         raw = library.read_template(profile.remote_template_root, relative)
@@ -287,7 +276,7 @@ def resolve_hpc_execution_plan(
         declared_size = raw.get("size_bytes")
         if declared_digest != digest or declared_size != len(raw_bytes):
             raise ConfigError(f"remote template identity is inconsistent: {relative}")
-        if destination == "submit.sbatch" and isinstance(execution_model, str):
+        if destination == "submit.sbatch":
             validate_slurm_cpu_semantics(
                 content, execution_model, template_name=relative
             )
@@ -295,17 +284,8 @@ def resolve_hpc_execution_plan(
             content, variables, template_name=relative, required=required
         )
         used_variables.update(PLACEHOLDER.findall(content))
-        rendered_bytes = rendered.encode("utf-8")
-        template_records[destination] = {
-            "relative_path": relative,
-            "sha256": digest,
-            "size_bytes": len(raw_bytes),
-        }
-        rendered_records[destination] = {
-            "content": rendered,
-            "sha256": "sha256:" + hashlib.sha256(rendered_bytes).hexdigest(),
-            "size_bytes": len(rendered_bytes),
-        }
+        template_paths[destination] = relative
+        rendered_scripts[destination] = rendered
     missing_contract = sorted(TEMPLATE_VARIABLES - used_variables)
     if missing_contract:
         raise ConfigError(
@@ -315,12 +295,12 @@ def resolve_hpc_execution_plan(
     return {
         "schema_version": 1,
         "cluster_profile": profile.to_plan_dict(),
-        "execution_model": execution_model or "legacy-v2",
+        "execution_model": execution_model,
         "cpu_resource_semantics": cpu_semantics,
         "resources": resources.to_plan_dict(),
         "template_variables": variables,
-        "templates": template_records,
-        "rendered_scripts": rendered_records,
+        "template_paths": template_paths,
+        "rendered_scripts": rendered_scripts,
         "workspace": remote_attempt_workspace(profile, project_id, node_id, attempt),
         "fresh_workspace_required": True,
         "overwrite": False,

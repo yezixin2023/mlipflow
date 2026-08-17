@@ -9,7 +9,7 @@ from .helpers import plugin_manifest, project_config, run_cli, write_json
 
 
 class ReplayCliTests(unittest.TestCase):
-    def test_replay_references_artifact_and_writes_manifest_after_approval(self) -> None:
+    def test_replay_references_artifact_without_cryptographic_approval(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             plugins = root / "plugins"
@@ -41,12 +41,15 @@ class ReplayCliTests(unittest.TestCase):
             base = ["--project", str(root), "--plugins", str(plugins), "--format", "json"]
             code, stdout, stderr = run_cli([*base, "run", "benchmark", "--dry-run"])
             self.assertEqual(code, 0, stderr)
-            digest = json.loads(stdout)["data"]["plan_digest"]
-            code, stdout, stderr = run_cli([*base, "run", "benchmark", "--approve", digest])
+            self.assertFalse(json.loads(stdout)["data"]["approval_required"])
+            code, stdout, stderr = run_cli([*base, "run", "benchmark"])
             self.assertEqual(code, 0, stderr)
             result = json.loads(stdout)["data"]
-            self.assertEqual(result["step"]["state"], "OK")
-            manifest = Path(result["step"]["manifest_path"])
+            self.assertEqual(result["state"], "OK")
+            self.assertNotIn("step", result)
+            code, status, stderr = run_cli([*base, "json", "benchmark", "--audit"])
+            self.assertEqual(code, 0, stderr)
+            manifest = Path(json.loads(status)["data"]["steps"][0]["manifest_path"])
             self.assertTrue(manifest.is_file())
             try:
                 import jsonschema
@@ -62,7 +65,7 @@ class ReplayCliTests(unittest.TestCase):
             self.assertFalse((manifest.parent / artifact.name).exists())
             code, status, stderr = run_cli([*base, "json", "benchmark"])
             self.assertEqual(code, 0, stderr)
-            self.assertEqual(json.loads(status)["data"]["steps"][0]["state"], "OK")
+            self.assertEqual(json.loads(status)["data"]["nodes"][0]["state"], "OK")
 
     def test_replay_refuses_explicit_failed_scientific_result(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -91,10 +94,8 @@ class ReplayCliTests(unittest.TestCase):
             self.assertEqual(code, 0, stderr)
             code, stdout, stderr = run_cli([*base, "run", "failed-result", "--dry-run"])
             self.assertEqual(code, 0, stderr)
-            digest = json.loads(stdout)["data"]["plan_digest"]
-            code, _, stderr = run_cli(
-                [*base, "run", "failed-result", "--approve", digest]
-            )
+            self.assertFalse(json.loads(stdout)["data"]["approval_required"])
+            code, _, stderr = run_cli([*base, "run", "failed-result"])
             self.assertEqual(code, 2)
             self.assertIn("not scientifically successful", stderr)
 

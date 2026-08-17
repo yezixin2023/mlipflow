@@ -12,13 +12,13 @@ from typing import Any, Sequence
 from . import __version__
 from .config import load_project
 from .errors import ApprovalError, MLIPFlowError
+from .presentation import compact_output, render_text
 from .services import (
     advance,
     initialize,
     make_advance_plan,
     make_retry_plan,
     make_run_plan,
-    make_stop_plan,
     query_doctor,
     query_inspect,
     query_logs,
@@ -66,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="local site.yaml (defaults to ~/.mlipflow/site.yaml only when HPC resolution needs it)",
     )
     parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser.add_argument(
+        "--audit",
+        action="store_true",
+        help="include detailed provenance and internal planning information",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="create/initialize a project (writes)")
@@ -91,22 +96,32 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("node")
     _approval_arguments(run_parser)
     advance_parser = subparsers.add_parser(
-        "advance", help="plan or apply dependency state transitions; never executes nodes"
+        "advance", help="observe and reconcile workflow state; never launches nodes"
     )
-    _approval_arguments(advance_parser)
+    advance_parser.add_argument(
+        "--dry-run", action="store_true", help="return observations and planned transitions"
+    )
     retry_parser = subparsers.add_parser("retry", help="create a new attempt without overwriting")
     retry_parser.add_argument("node")
-    _approval_arguments(retry_parser)
-    stop_parser = subparsers.add_parser("stop", help="cancel/stop a node after explicit approval")
+    retry_parser.add_argument(
+        "--dry-run", action="store_true", help="describe the fresh retry attempt without creating it"
+    )
+    stop_parser = subparsers.add_parser("stop", help="explicitly cancel/stop a node")
     stop_parser.add_argument("node")
-    _approval_arguments(stop_parser)
+    for command_parser in subparsers.choices.values():
+        command_parser.add_argument(
+            "--audit",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="include detailed provenance and internal planning information",
+        )
     return parser
 
 
 def _approval_arguments(parser: argparse.ArgumentParser) -> None:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--dry-run", action="store_true", help="return a plan and write nothing")
-    group.add_argument("--approve", metavar="PLAN_DIGEST", help="approve an exact dry-run digest")
+    group.add_argument("--approve", metavar="TOKEN", help="approve the exact dry-run execution")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -114,16 +129,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     output_format = "json" if args.command == "json" else args.format
     try:
-        data = dispatch(args)
+        raw_data = dispatch(args)
+        audit = bool(getattr(args, "audit", False))
+        data = (
+            raw_data
+            if audit
+            else compact_output(
+                args.command,
+                raw_data,
+                dry_run=bool(getattr(args, "dry_run", False)),
+            )
+        )
         envelope = {
             "schema_version": 1,
             "ok": True,
             "command": args.command,
             "read_only": args.command in READ_ONLY_COMMANDS,
+            "audit": audit,
             "data": data,
         }
         _emit(envelope, output_format, error=False)
-        if args.command == "doctor" and isinstance(data, dict) and not data.get("ok", False):
+        if args.command == "doctor" and not raw_data.get("ok", False):
             return 1
         return 0
     except (MLIPFlowError, OSError, ValueError) as exc:
@@ -175,30 +201,21 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         plan = make_run_plan(project, args.node, args.plugins, args.site)
         if args.dry_run:
             return plan
-        if not args.approve:
-            raise ApprovalError("run requires --dry-run or --approve PLAN_DIGEST")
+        if plan.get("approval_required") is True and not args.approve:
+            raise ApprovalError(
+                "this run launches approval-required work; use --dry-run and --approve TOKEN"
+            )
         return run_node(project, args.node, args.plugins, args.approve, args.site)
     if command == "advance":
-        plan = make_advance_plan(project, args.plugins, args.site)
         if args.dry_run:
-            return plan
-        if not args.approve:
-            raise ApprovalError("advance requires --dry-run or --approve PLAN_DIGEST")
-        return advance(project, args.approve, args.plugins, args.site)
+            return make_advance_plan(project, args.plugins)
+        return advance(project, args.plugins)
     if command == "retry":
-        plan = make_retry_plan(project, args.node, args.plugins)
         if args.dry_run:
-            return plan
-        if not args.approve:
-            raise ApprovalError("retry requires --dry-run or --approve PLAN_DIGEST")
-        return retry(project, args.node, args.approve, args.plugins)
+            return make_retry_plan(project, args.node, args.plugins)
+        return retry(project, args.node, args.plugins)
     if command == "stop":
-        plan = make_stop_plan(project, args.node, args.site)
-        if args.dry_run:
-            return plan
-        if not args.approve:
-            raise ApprovalError("stop requires --dry-run or --approve PLAN_DIGEST")
-        return stop(project, args.node, args.approve, args.site)
+        return stop(project, args.node, args.site)
     raise MLIPFlowError(f"unsupported command: {command}")
 
 
@@ -211,8 +228,14 @@ def _emit(envelope: dict[str, Any], output_format: str, error: bool) -> None:
         item = envelope["error"]
         print(f"ERROR [{item['code']}]: {item['message']}", file=stream)
         return
-    data = envelope["data"]
-    print(json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False), file=stream)
+    print(
+        render_text(
+            str(envelope["command"]),
+            envelope["data"],
+            audit=envelope.get("audit") is True,
+        ),
+        file=stream,
+    )
 
 
 if __name__ == "__main__":

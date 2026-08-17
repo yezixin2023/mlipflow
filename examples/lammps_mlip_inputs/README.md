@@ -98,9 +98,9 @@ LAMMPS alternates checkpoint.1.restart / checkpoint.2.restart
     ↓
 Slurm TIMEOUT or PREEMPTED
     ↓
-advance --dry-run
+advance
     ↓
-review remote size/SHA inventory for failure_salvage
+inventory and verify the bounded failure_salvage outputs
     ↓ approval
 bounded fetch of available checkpoint files + restart-runtime.json + diagnostics
     ↓

@@ -63,7 +63,7 @@ The same outer contract works for `deepmd`, `m3gnet`, `chgnet`, and `mace`, and 
 
 ## Scheduler lifecycle
 
-The generic path emits `scheduled_execution schema_version=3` with `execution_model: single-python`. MLIPFlow core stages the small approved files and bundled runner, renders the site-owned `slurm/single-python/{cpu,gpu}.sbatch` plus `mlip-<framework>/run.sh`, submits, polls, then requires a second approval over the immutable remote output inventory before bounded fetch.
+The generic path emits `scheduled_execution schema_version=3` with `execution_model: single-python`. MLIPFlow core stages the small approved files and bundled runner, renders the site-owned `slurm/single-python/{cpu,gpu}.sbatch` plus `mlip-<framework>/run.sh`, submits, polls, then inventories and verifies the bounded remote outputs as a continuation of the approved run.
 
 Training is one Python process. `resources.cpus` is its thread budget, so the Slurm template must use `--ntasks=1` and `--cpus-per-task={{CPUS}}`. Mapping `CPUS` to `--ntasks` is rejected before staging.
 

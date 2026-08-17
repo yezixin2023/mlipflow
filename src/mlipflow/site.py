@@ -7,14 +7,13 @@ in ``~/.mlipflow/site.yaml`` (or an explicitly supplied test/config path).
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .errors import ConfigError
-from .io import canonical_json, load_mapping
+from .io import load_mapping
 
 
 DEFAULT_SITE_PATH = Path("~/.mlipflow/site.yaml")
@@ -72,11 +71,6 @@ class SiteConfig:
     path: Path
     raw: dict[str, Any]
     clusters: dict[str, ClusterProfile]
-
-    @property
-    def digest(self) -> str:
-        payload = canonical_json(self.raw).encode("utf-8")
-        return "sha256:" + hashlib.sha256(payload).hexdigest()
 
     def cluster(self, name: str | None) -> ClusterProfile:
         if not isinstance(name, str) or not name:

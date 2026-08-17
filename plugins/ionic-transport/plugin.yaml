@@ -181,7 +181,7 @@
     "allowed_from": ["FAIL", "STOPPED"],
     "creates_new_attempt": true,
     "reuses_previous_run_directory": false,
-    "requires_approval": true,
+    "requires_approval": false,
     "max_attempts": null,
     "limit_enforced": false,
     "notes": ["Every retry preserves prior artifacts and requires a fresh attempt directory. The bounded MD handoff never resumes or overwrites a trajectory; a retry starts a new smoke attempt after approval."]

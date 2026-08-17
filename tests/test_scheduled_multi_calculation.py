@@ -265,7 +265,7 @@ class ScheduledLifecycle:
             "mlipflow.services.SshSlurmBackend.inspect_file", autospec=True,
             side_effect=inspect,
         ):
-            approved = make_advance_plan(self.project, PLUGINS, self.site)
+            approved = make_advance_plan(self.project, PLUGINS)
         with patch(
             "mlipflow.services.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
@@ -276,7 +276,8 @@ class ScheduledLifecycle:
             "mlipflow.services.SshSlurmBackend.fetch_from", autospec=True,
             side_effect=fetch,
         ):
-            return advance(self.project, approved["plan_digest"], PLUGINS, self.site)
+            assert "plan_digest" not in approved
+            return advance(self.project, PLUGINS)
 
     def run(self, **overrides: Any) -> dict[str, Any]:
         self.submit()

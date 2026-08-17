@@ -30,7 +30,7 @@
       },
       {
         "locator": "plugins/mlip-benchmark/plugin.yaml",
-        "sha256": "sha256:7830d4b4447b1ae04243410aa295095e38c2c78eda674ad6d9fd075581cf9159"
+        "sha256": "sha256:eacd2ece6dde74d2590da50e5b419c30708939315fa522181674f6a62e4832be"
       }
     ],
     "implementation_sha256": "sha256:c922c3bc6d003e5fa54084b1716db1352a76792ab7126dafce7b0fd629c1b51f",
@@ -149,7 +149,7 @@
         },
         {
           "locator": "plugins/composition-screening/plugin.yaml",
-          "sha256": "sha256:dd127dab0750b3be8d94e338be544a5ad656d6f59c79ba13d3938c7a76f9b5be"
+          "sha256": "sha256:413c0985d43df3cfa76bc3005ffcbb77178944a88bd17e619f7c938b3eec022e"
         }
       ],
       "plugin_id": "composition-screening",
@@ -503,7 +503,6 @@
           }
         ]
       },
-      "policy_digest": "sha256:320eb1522c10136a1030f225df27f64801c227e6f5cd21c2e49b3adc1d11a929",
       "ranking": [
         {
           "contributions": {
@@ -578,8 +577,6 @@
           "score": 0.0
         }
       ],
-      "registry_digest": "sha256:5ef8878d6e2298e4140738d0e9a01ae5e12ca8908f23539ea91fa4a9b8b8aa28",
-      "routing_digest": "sha256:0153d4fc333698d03a46c317974475067a6a0d0162862ed0be0bb56857c5e8b6",
       "scenario": "high-entropy-sulfide-manuscript-v1",
       "selected_metric_units": {
         "voltage_mae": "V"
@@ -616,7 +613,6 @@
           }
         ]
       },
-      "policy_digest": "sha256:0fcff56d0ad4f60c5ab2fbc658a0201aacd744c25342971a1583f3e010a973d7",
       "ranking": [
         {
           "contributions": {
@@ -691,8 +687,6 @@
           "score": 0.0
         }
       ],
-      "registry_digest": "sha256:5ef8878d6e2298e4140738d0e9a01ae5e12ca8908f23539ea91fa4a9b8b8aa28",
-      "routing_digest": "sha256:9dcee300e6ec0b1db604c9f7da94e409d944adfef823f55d06b4fca729767de3",
       "scenario": "high-entropy-sulfide-manuscript-v1",
       "selected_metric_units": {
         "conductivity_mae": "mS/cm"
@@ -733,7 +727,6 @@
           }
         ]
       },
-      "policy_digest": "sha256:ab66656228ba1019c651da11d6b02b71f304fa822e11b3e7173ae614be395eb0",
       "ranking": [
         {
           "contributions": {
@@ -820,8 +813,6 @@
           "score": 0.152551574376
         }
       ],
-      "registry_digest": "sha256:5ef8878d6e2298e4140738d0e9a01ae5e12ca8908f23539ea91fa4a9b8b8aa28",
-      "routing_digest": "sha256:6887f083783b9d131ce6e5f9dcb6e1a18a89df92741af57d764ef74fb23d1ae0",
       "scenario": "high-entropy-sulfide-manuscript-v1",
       "selected_metric_units": {
         "energy_rmse": "meV/atom",

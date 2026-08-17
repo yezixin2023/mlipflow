@@ -1,9 +1,8 @@
 """Mutating lifecycle commands: init, run, advance, retry, stop.
 
-Every function here either returns a plan (dry-run) or requires the exact digest
-of one.  The plan dictionaries produced by ``planning.node_plan`` and
-``planning.action_plan`` are the approval contract, so their key set, nesting and
-values must never change for cosmetic reasons.
+Only execution submission crosses the cryptographic approval boundary. State
+reconciliation, bounded finalization, creation of a fresh retry attempt, and an
+explicit stop command enforce their own concrete safety checks directly.
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import content_identity
 from ..backends import SshSlurmBackend
 from ..config import Project, load_project
 from ..errors import ApprovalError, BackendError, PluginError, StateError
@@ -33,7 +31,7 @@ from .contracts import (
     _scheduled_contract,
 )
 from .execution import _execute_ready
-from .paths import _assert_state_matches_project, state_path
+from .paths import state_path
 from .scheduled import (
     _finalize_scheduled_adapter,
     _finalize_scheduler_manifest,
@@ -76,10 +74,9 @@ def initialize(target: Path) -> dict[str, Any]:
     existed = database.is_file()
     with StateStore(database, readonly=False) as store:
         if existed:
-            _assert_state_matches_project(store, project)
+            store.assert_project_id(project.project_id)
         else:
             store.initialize_project(project.project_id, project.nodes)
-            store.record_project_config(project.project_id, project.raw)
     return {
         "project": str(project_file),
         "state_database": str(database),
@@ -98,7 +95,7 @@ def make_run_plan(
     database = state_path(project)
     if database.is_file():
         with StateStore(database, readonly=True) as store:
-            _assert_state_matches_project(store, project)
+            store.assert_project_id(project.project_id)
     node = project.node(node_id)
     plugins = discover_plugins(plugin_root)
     plugin = select_plugin(plugins, str(node["uses"]))
@@ -111,6 +108,8 @@ def make_run_plan(
         adapter = load_adapter(plugin)
         diagnostics = adapter.validate(context)
         adapter_plan = adapter.plan(context)
+        if not isinstance(adapter_plan, dict):
+            raise PluginError(f"plugin {plugin.plugin_id} plan must return a mapping")
         unsigned = {key: value for key, value in plan.items() if key != "plan_digest"}
         # Adapters emit this machine's absolute paths in argv, cwd, staged
         # sources and diagnostic messages.  Approval must describe the work, not
@@ -124,7 +123,6 @@ def make_run_plan(
         )
         if (
             str(node.get("backend", "local")) == "ssh-slurm"
-            and isinstance(adapter_plan, dict)
             and isinstance(adapter_plan.get("scheduled_execution"), dict)
         ):
             _scheduled_contract(
@@ -141,7 +139,6 @@ def make_run_plan(
                 if template_library is not None
                 else SshSlurmBackend(profile.ssh_profile)
             )
-            unsigned["site_config_digest"] = site.digest
             unsigned["hpc_execution"] = resolve_hpc_execution_plan(
                 profile=profile,
                 project_id=project.project_id,
@@ -159,7 +156,7 @@ def run_node(
     project: Project,
     node_id: str,
     plugin_root: Path,
-    approval: str,
+    approval: str | None = None,
     site_path: Path | None = None,
     template_library: TemplateLibrary | None = None,
     *,
@@ -173,7 +170,8 @@ def run_node(
     )
     _require_approval(plan, approval)
     adapter_plan = plan.get("adapter_plan")
-    if isinstance(adapter_plan, dict) and (
+    has_adapter = isinstance(adapter_plan, dict)
+    if has_adapter and (
         adapter_plan.get("status") != RunState.READY.value
         or adapter_plan.get("executable") is not True
     ):
@@ -182,16 +180,16 @@ def run_node(
         )
     if node.get("mode", "execute") == "execute":
         backend = str(node.get("backend", "local"))
-        if backend == "local" and not isinstance(adapter_plan, dict):
+        if backend == "local" and not has_adapter:
             raise PluginError(
                 "local execution requires an adapter-ready plugin with scientific check/collect"
             )
-        if backend == "slurm" and isinstance(adapter_plan, dict):
+        if backend == "slurm" and has_adapter:
             raise BackendError(
                 "local SLURM adapter execution is disabled; only the controlled ssh-slurm "
                 "staging/fetch/check contract is currently implemented"
             )
-        if backend == "ssh-slurm" and isinstance(adapter_plan, dict):
+        if backend == "ssh-slurm" and has_adapter:
             if not isinstance(adapter_plan.get("scheduled_execution"), dict) or not isinstance(
                 plan.get("hpc_execution"), dict
             ):
@@ -203,10 +201,9 @@ def run_node(
     existed = database.is_file()
     with StateStore(database, readonly=False) as store:
         if existed:
-            _assert_state_matches_project(store, project)
+            store.assert_project_id(project.project_id)
         else:
             store.initialize_project(project.project_id, project.nodes)
-            store.record_project_config(project.project_id, project.raw)
         step = store.latest_step(project.project_id, node_id)
         if step.state == RunState.WAIT.value:
             if not store.dependencies_satisfied(project.project_id, node_id):
@@ -214,6 +211,7 @@ def run_node(
             step = store.transition(step.run_id, RunState.READY)
         if step.state != RunState.READY.value:
             raise StateError(f"node {node_id} is {step.state}, expected READY")
+        step = store.bind_attempt_node(step.run_id, node)
         store.record_intent(plan["plan_digest"], project.project_id, node_id, plan)
         try:
             result = _execute_ready(
@@ -234,7 +232,6 @@ def run_node(
 def make_advance_plan(
     project: Project,
     plugin_root: Path | None = None,
-    site_path: Path | None = None,
     *,
     factory: SchedulerFactory | None = None,
 ) -> dict[str, Any]:
@@ -243,7 +240,7 @@ def make_advance_plan(
     observations: list[dict[str, Any]] = []
     if database.is_file():
         with StateStore(database, readonly=True) as store:
-            _assert_state_matches_project(store, project)
+            store.assert_project_id(project.project_id)
             for step in store.latest_steps(project.project_id):
                 if step.state in {
                     RunState.SUBMITTED.value,
@@ -251,7 +248,7 @@ def make_advance_plan(
                     RunState.RUNNING.value,
                 } and step.job_id:
                     observation = _observe_scheduled_step(
-                        project, step, plugin_root, site_path, factory=factory
+                        project, step, plugin_root, factory=factory
                     )
                     observations.append(observation)
                     finalization = observation.get("adapter_finalization")
@@ -281,15 +278,12 @@ def make_advance_plan(
                                 "reason": str(observation.get("reason", "scheduler reconciliation")),
                                 "scheduler_state": str(observation.get("scheduler_state", "UNKNOWN")),
                                 "completion_manifest": observation.get("completion_manifest"),
-                                "completion_identity": observation.get(
-                                    "completion_identity"
-                                ),
                             }
                         )
                     continue
                 if step.state not in {RunState.WAIT.value, RunState.BLOCKED.value}:
                     continue
-                node = project.node(step.node_id)
+                node = store.node_snapshot(step.run_id)
                 dependency_states = [
                     store.latest_step(project.project_id, dependency).state
                     for dependency in node.get("needs", [])
@@ -313,20 +307,17 @@ def make_advance_plan(
 
 def advance(
     project: Project,
-    approval: str,
     plugin_root: Path | None = None,
-    site_path: Path | None = None,
     *,
     factory: SchedulerFactory | None = None,
 ) -> dict[str, Any]:
-    plan = make_advance_plan(project, plugin_root, site_path, factory=factory)
-    _require_approval(plan, approval)
+    plan = make_advance_plan(project, plugin_root, factory=factory)
     database = state_path(project)
     if not database.is_file():
         raise StateError("project has not been initialized")
     changed: list[dict[str, Any]] = []
     with StateStore(database, readonly=False) as store:
-        _assert_state_matches_project(store, project)
+        store.assert_project_id(project.project_id)
         for change in plan["details"]["transitions"]:
             step = store.latest_step(project.project_id, change["node_id"])
             if change.get("action") == "adapter-finalize":
@@ -334,7 +325,7 @@ def advance(
                     raise PluginError("scheduled adapter finalization requires the plugin root")
                 changed.append(
                     _finalize_scheduled_adapter(
-                        project, step, change, plugin_root, store, site_path, factory=factory
+                        project, step, change, plugin_root, store, factory=factory
                     ).to_dict()
                 )
                 continue
@@ -346,14 +337,6 @@ def advance(
                 result_path = _project_scoped_result_path(
                     project, resolve_reference(manifest_ref, project.root)
                 )
-                approved_identity = change.get("completion_identity")
-                current_identity = content_identity(result_path, root=project.root)
-                if not isinstance(approved_identity, dict) or (
-                    current_identity != approved_identity
-                ):
-                    raise StateError(
-                        "completion manifest changed after the approved advance plan"
-                    )
                 result_data, artifacts = _load_result(
                     result_path, _scheduler_expected_identity(step)
                 )
@@ -393,7 +376,7 @@ def advance(
                 manifest_path=str(final_manifest) if final_manifest else None,
             )
             changed.append(updated.to_dict())
-    return {"plan_digest": plan["plan_digest"], "changed": changed}
+    return {"changed": changed}
 
 
 def make_retry_plan(
@@ -403,7 +386,7 @@ def make_retry_plan(
     if not database.is_file():
         raise StateError("project has not been initialized")
     with StateStore(database, readonly=True) as store:
-        _assert_state_matches_project(store, project)
+        store.assert_project_id(project.project_id)
         step = store.latest_step(project.project_id, node_id)
     if step.state not in {RunState.FAIL.value, RunState.STOPPED.value}:
         raise StateError(f"retry requires FAIL or STOPPED, got {step.state}")
@@ -433,15 +416,13 @@ def make_retry_plan(
 def retry(
     project: Project,
     node_id: str,
-    approval: str,
     plugin_root: Path | None = None,
 ) -> dict[str, Any]:
-    plan = make_retry_plan(project, node_id, plugin_root)
-    _require_approval(plan, approval)
+    make_retry_plan(project, node_id, plugin_root)
     with StateStore(state_path(project), readonly=False) as store:
-        _assert_state_matches_project(store, project)
+        store.assert_project_id(project.project_id)
         retried = store.create_retry(project.project_id, node_id)
-    return {"plan_digest": plan["plan_digest"], "step": retried.to_dict()}
+    return {"step": retried.to_dict()}
 
 
 def make_stop_plan(
@@ -451,15 +432,14 @@ def make_stop_plan(
     if not database.is_file():
         raise StateError("project has not been initialized")
     with StateStore(database, readonly=True) as store:
-        _assert_state_matches_project(store, project)
+        store.assert_project_id(project.project_id)
         step = store.latest_step(project.project_id, node_id)
+        node = store.node_snapshot(step.run_id)
     scheduler_target: dict[str, Any] | None = None
-    site_config_digest: str | None = None
     if step.backend == "ssh-slurm":
         site = load_site_config(site_path)
-        profile = site.cluster(project.node(node_id).get("backend_profile"))
+        profile = site.cluster(node.get("backend_profile"))
         scheduler_target = profile.to_plan_dict()
-        site_config_digest = site.digest
     return action_plan(
         "stop",
         project,
@@ -468,9 +448,8 @@ def make_stop_plan(
             "run_id": step.run_id,
             "state": step.state,
             "backend": step.backend,
-            "backend_profile": project.node(node_id).get("backend_profile"),
+            "backend_profile": node.get("backend_profile"),
             "scheduler_target": scheduler_target,
-            "site_config_digest": site_config_digest,
             "job_id": step.job_id,
         },
     )
@@ -479,22 +458,23 @@ def make_stop_plan(
 def stop(
     project: Project,
     node_id: str,
-    approval: str,
     site_path: Path | None = None,
     *,
     factory: SchedulerFactory | None = None,
 ) -> dict[str, Any]:
-    plan = make_stop_plan(project, node_id, site_path)
-    _require_approval(plan, approval)
-    with StateStore(state_path(project), readonly=False) as store:
-        _assert_state_matches_project(store, project)
+    database = state_path(project)
+    if not database.is_file():
+        raise StateError("project has not been initialized")
+    with StateStore(database, readonly=False) as store:
+        store.assert_project_id(project.project_id)
         step = store.latest_step(project.project_id, node_id)
+        node = store.node_snapshot(step.run_id)
         state = RunState(step.state)
         if state in {RunState.OK, RunState.FAIL, RunState.STOPPED}:
             raise StateError(f"cannot stop node in terminal state {state.value}")
         if step.job_id:
             scheduler = scheduler_for_node(
-                str(step.backend), project.node(node_id), site_path, factory=factory
+                str(step.backend), node, site_path, factory=factory
             )
             result = scheduler.cancel(step.job_id)
             if result.returncode != 0:
@@ -502,10 +482,11 @@ def stop(
         elif state == RunState.RUNNING:
             raise BackendError("cannot safely stop a local run without a persisted process handle")
         updated = store.transition(step.run_id, RunState.STOPPED)
-    return {"plan_digest": plan["plan_digest"], "step": updated.to_dict()}
+    return {"step": updated.to_dict()}
 
 
-def _require_approval(plan: dict[str, Any], approval: str) -> None:
+def _require_approval(plan: dict[str, Any], approval: str | None) -> None:
     expected = plan["plan_digest"]
-    if approval != expected:
-        raise ApprovalError(f"approval digest mismatch; run --dry-run and approve {expected}")
+    required = plan.get("approval_required") is True
+    if (required or approval is not None) and approval != expected:
+        raise ApprovalError("approval token mismatch; generate a fresh dry-run")

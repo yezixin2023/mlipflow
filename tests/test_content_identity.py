@@ -240,14 +240,13 @@ class ContentIdentityTests(unittest.TestCase):
         identity = content_identity(self.root / "absent.txt", root=inside)
         self.assertEqual({"locator": None, "exists": False}, identity)
 
-    def test_oversized_file_reports_size_only_not_a_metadata_hash(self) -> None:
-        """A metadata hash is not evidence of content and must not pose as one."""
+    def test_large_file_uses_its_content_not_a_metadata_hash(self) -> None:
 
         path = self.root / "big.bin"
         path.write_bytes(b"x" * 4096)
-        identity = content_identity(path, root=self.root, full_hash_max_bytes=16)
-        self.assertIsNone(identity["content"])
-        self.assertEqual("size-only", identity["content_mode"])
+        identity = content_identity(path, root=self.root)
+        self.assertTrue(identity["content"].startswith("sha256:"))
+        self.assertEqual("full", identity["content_mode"])
         self.assertEqual(4096, identity["size_bytes"])
 
     def test_oversized_file_identity_is_mtime_and_location_stable(self) -> None:
@@ -260,8 +259,8 @@ class ContentIdentityTests(unittest.TestCase):
         os.utime(first / "big.bin", OLD_MTIME)
         os.utime(second / "big.bin", NEW_MTIME)
         self.assertEqual(
-            content_identity(first / "big.bin", root=first, full_hash_max_bytes=16),
-            content_identity(second / "big.bin", root=second, full_hash_max_bytes=16),
+            content_identity(first / "big.bin", root=first),
+            content_identity(second / "big.bin", root=second),
         )
 
 
@@ -290,13 +289,13 @@ class TreeIdentityTests(unittest.TestCase):
         touch_tree(self.tree, NEW_MTIME)
         self.assertEqual(before, self.identity())
 
-    def test_large_tree_structure_mode_ignores_mtimes(self) -> None:
+    def test_tree_full_mode_ignores_mtimes(self) -> None:
         touch_tree(self.tree, OLD_MTIME)
-        before = self.identity(full_hash_max_bytes=1)
-        self.assertEqual("tree-size-only", before["content_mode"])
+        before = self.identity()
+        self.assertEqual("tree-full", before["content_mode"])
 
         touch_tree(self.tree, NEW_MTIME)
-        self.assertEqual(before, self.identity(full_hash_max_bytes=1))
+        self.assertEqual(before, self.identity())
 
     def test_tree_content_change_is_detected(self) -> None:
         touch_tree(self.tree, OLD_MTIME)
@@ -305,15 +304,13 @@ class TreeIdentityTests(unittest.TestCase):
         touch_tree(self.tree, OLD_MTIME)
         self.assertNotEqual(before, self.identity())
 
-    def test_tree_path_change_is_detected_in_both_modes(self) -> None:
+    def test_tree_path_change_is_detected(self) -> None:
         touch_tree(self.tree, OLD_MTIME)
         full_before = self.identity()
-        structure_before = self.identity(full_hash_max_bytes=1)
 
         (self.tree / "sub" / "b.dat").rename(self.tree / "sub" / "renamed.dat")
         touch_tree(self.tree, OLD_MTIME)
         self.assertNotEqual(full_before, self.identity())
-        self.assertNotEqual(structure_before, self.identity(full_hash_max_bytes=1))
 
     def test_tree_identity_survives_a_copy_to_another_root(self) -> None:
         touch_tree(self.tree, OLD_MTIME)

@@ -323,7 +323,14 @@ class ReadyPlanPortabilityTests(unittest.TestCase):
                 root = self.base / plugin_id
                 root.mkdir(parents=True)
                 before = plan_for_ready(root, plugin_id)["plan_digest"]
-                adapter = root / "plugins" / plugin_id / "adapter.py"
+                manifest = json.loads(
+                    (root / "plugins" / plugin_id / "plugin.yaml").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                adapter = root / "plugins" / plugin_id / manifest["implementation"][
+                    "entrypoint"
+                ].split(":", 1)[0]
                 adapter.write_text(
                     adapter.read_text(encoding="utf-8") + "\n# tampered\n",
                     encoding="utf-8",

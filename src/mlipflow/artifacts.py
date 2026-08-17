@@ -1,4 +1,4 @@
-"""Artifact references, content identity and bounded fingerprints.
+"""Artifact references and content identity.
 
 Two different questions get asked about a file, and conflating them was a defect:
 
@@ -14,9 +14,8 @@ provenance record stored with an artifact.  It keeps the absolute URI and
 never enter an approval digest.
 
 Both share one content digest, so a directory tree's identity is mtime-free in
-either view.  Before this split, ``_fingerprint_directory`` folded per-entry
-mtimes into the *content* hash, which meant even the "full" tree mode changed
-when nothing but a timestamp had.
+either view. Files are hashed when their content identity matters; MLIPFlow no
+longer manufactures ``metadata-sha256`` values for files it did not read.
 """
 
 from __future__ import annotations
@@ -24,9 +23,6 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from typing import Any
-
-
-DEFAULT_FULL_HASH_MAX_BYTES = 64 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +34,6 @@ def content_identity(
     path: Path,
     *,
     root: Path | None = None,
-    full_hash_max_bytes: int = DEFAULT_FULL_HASH_MAX_BYTES,
 ) -> dict[str, Any]:
     """Describe *what* a path contains, never *when it was touched*.
 
@@ -49,32 +44,30 @@ def content_identity(
     already bound elsewhere in the plan (in ``inputs`` or in the adapter's
     ``argv``), so repeating it here would only add machine dependence.
 
-    Files larger than ``full_hash_max_bytes`` are deliberately not read.  They
-    report ``content: None`` with ``content_mode: "size-only"`` rather than a
-    hash of their metadata, because a metadata hash is not evidence of content
-    and must not be mistaken for it.
+    Content identity is used only at real integrity boundaries, so regular files
+    and trees are fully hashed instead of substituting metadata for bytes.
     """
 
     locator = _locator(path, root)
     if not path.exists():
         return {"locator": locator, "exists": False}
     if path.is_dir():
-        content, mode, size, count = _tree_content(path, full_hash_max_bytes)
+        content, size, count = _tree_content(path)
         return {
             "locator": locator,
             "exists": True,
             "size_bytes": size,
             "file_count": count,
             "content": content,
-            "content_mode": mode,
+            "content_mode": "tree-full",
         }
-    content, mode, size = _file_content(path, full_hash_max_bytes)
+    content, size = _file_content(path)
     return {
         "locator": locator,
         "exists": True,
         "size_bytes": size,
         "content": content,
-        "content_mode": mode,
+        "content_mode": "full",
     }
 
 
@@ -89,20 +82,16 @@ def _locator(path: Path, root: Path | None) -> str | None:
         return None
 
 
-def _file_content(path: Path, full_hash_max_bytes: int) -> tuple[str | None, str, int]:
+def _file_content(path: Path) -> tuple[str, int]:
     size = path.stat().st_size
-    if size > full_hash_max_bytes:
-        return None, "size-only", size
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
-    return f"sha256:{digest.hexdigest()}", "full", size
+    return f"sha256:{digest.hexdigest()}", size
 
 
-def _tree_content(
-    path: Path, full_hash_max_bytes: int
-) -> tuple[str, str, int, int]:
+def _tree_content(path: Path) -> tuple[str, int, int]:
     """Hash a directory tree by structure and bytes, never by timestamps.
 
     Symlinks are recorded by their target text and never followed, so a tree
@@ -131,13 +120,6 @@ def _tree_content(
         structure.update(
             f"{kind}\0{relative}\0{size}\0{link_target or ''}\n".encode("utf-8")
         )
-    if total_size > full_hash_max_bytes:
-        return (
-            f"tree-structure-sha256:{structure.hexdigest()}",
-            "tree-size-only",
-            total_size,
-            file_count,
-        )
     digest = hashlib.sha256()
     digest.update(structure.digest())
     for item, relative, _, link_target in entries:
@@ -147,7 +129,7 @@ def _tree_content(
         with item.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
-    return f"tree-sha256:{digest.hexdigest()}", "tree-full", total_size, file_count
+    return f"tree-sha256:{digest.hexdigest()}", total_size, file_count
 
 
 # ---------------------------------------------------------------------------
@@ -155,9 +137,7 @@ def _tree_content(
 # ---------------------------------------------------------------------------
 
 
-def fingerprint(
-    path: Path, full_hash_max_bytes: int = DEFAULT_FULL_HASH_MAX_BYTES
-) -> dict[str, Any]:
+def fingerprint(path: Path) -> dict[str, Any]:
     """Record one artifact as observed on this filesystem.
 
     Includes the absolute ``uri`` and ``mtime_ns`` on purpose: this is the record
@@ -168,31 +148,21 @@ def fingerprint(
 
     stat = path.stat()
     if path.is_dir():
-        content, mode, size, count = _tree_content(path, full_hash_max_bytes)
+        content, size, count = _tree_content(path)
         return {
             "uri": path.resolve().as_uri(),
             "size_bytes": size,
             "mtime_ns": stat.st_mtime_ns,
             "file_count": count,
             "fingerprint": content,
-            "fingerprint_mode": "tree-full" if mode == "tree-full" else "tree-metadata",
+            "fingerprint_mode": "tree-full",
         }
     result: dict[str, Any] = {
         "uri": path.resolve().as_uri(),
         "size_bytes": stat.st_size,
         "mtime_ns": stat.st_mtime_ns,
     }
-    content, mode, _ = _file_content(path, full_hash_max_bytes)
-    if content is not None:
-        result["fingerprint"] = content
-        result["fingerprint_mode"] = "full"
-    else:
-        # Too large to hash.  The observational record still needs a stable
-        # non-empty identifier, and here — unlike in content identity — encoding
-        # the observed location and timestamp is the honest thing to report.
-        digest = hashlib.sha256(
-            f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")
-        ).hexdigest()
-        result["fingerprint"] = f"metadata-sha256:{digest}"
-        result["fingerprint_mode"] = "metadata"
+    content, _ = _file_content(path)
+    result["fingerprint"] = content
+    result["fingerprint_mode"] = "full"
     return result

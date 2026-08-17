@@ -107,9 +107,9 @@
     "requires_approval_before_execution": true,
     "notes": [
       "The project carries only portable structure/model/restart identities and abstract resources; SSH host, partition, modules, Python environment, model root, template root, and work root remain site-owned configuration.",
-      "Scheduler COMPLETED is not scientific success. Finalization requires a second approved bounded fetch followed by model/structure/restart identity, segment schedule, thermodynamic finiteness, completed-step, and SHA-256 checks.",
-      "For terminal scheduler failure or cancellation, checkpoint-enabled plans expose only an explicit failure-salvage subset of already approved fetch outputs. advance --dry-run must bind the remote size/SHA inventory before any checkpoint or partial segment is fetched, and the attempt remains FAIL/STOPPED afterward.",
-      "A retry creates a fresh attempt and a new approval plan. auto-from-previous-attempt stages the locally salvaged prior checkpoint as a new fingerprinted scientific input; it never reuses the prior remote run directory."
+      "Scheduler COMPLETED is not scientific success. Finalization performs a bounded fetch followed by model/structure/restart identity, segment schedule, thermodynamic finiteness, completed-step, and SHA-256 checks.",
+      "For terminal scheduler failure or cancellation, checkpoint-enabled plans expose only the failure-salvage subset of outputs already allowlisted by the approved run; transport rechecks remote size/SHA and the attempt remains FAIL/STOPPED afterward.",
+      "A retry only creates a fresh attempt. A later run approval stages the locally salvaged prior checkpoint as a new fingerprinted scientific input; it never reuses the prior remote run directory."
     ]
   },
   "completion": {
@@ -130,7 +130,7 @@
     "allowed_from": ["FAIL", "STOPPED"],
     "creates_new_attempt": true,
     "reuses_previous_run_directory": false,
-    "requires_approval": true,
+    "requires_approval": false,
     "max_attempts": null,
     "limit_enforced": false,
     "notes": [

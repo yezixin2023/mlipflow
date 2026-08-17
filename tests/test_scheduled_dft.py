@@ -53,7 +53,6 @@ SINGLE_PYTHON_SUBMIT_TEMPLATE = """#!/bin/bash
 cd {{RUN_DIR}}
 bash {{RUN_DIR}}/run.sh
 """
-SUBMIT_TEMPLATE = MPI_SUBMIT_TEMPLATE
 RUN_TEMPLATE = """#!/bin/bash
 # inputs={{INPUT_DIR}}
 # outputs={{OUTPUT_DIR}}
@@ -72,9 +71,6 @@ class FakeTemplateLibrary:
             "slurm/mpi/gpu.sbatch": MPI_SUBMIT_TEMPLATE,
             "slurm/single-python/cpu.sbatch": SINGLE_PYTHON_SUBMIT_TEMPLATE,
             "slurm/single-python/gpu.sbatch": SINGLE_PYTHON_SUBMIT_TEMPLATE,
-            # scheduled_execution v2 compatibility fixtures.
-            "slurm/cpu.sbatch": SUBMIT_TEMPLATE,
-            "slurm/gpu.sbatch": SUBMIT_TEMPLATE,
             "vasp/run.sh": RUN_TEMPLATE,
         }
 
@@ -594,7 +590,7 @@ class ScheduledDftTests(unittest.TestCase):
             )
             self.assertEqual(
                 "slurm/mpi/cpu.sbatch",
-                plan["hpc_execution"]["templates"]["submit.sbatch"]["relative_path"],
+                plan["hpc_execution"]["template_paths"]["submit.sbatch"],
             )
             remote = root / "fake-remote"
             write_vasp_outputs(remote)
@@ -608,7 +604,7 @@ class ScheduledDftTests(unittest.TestCase):
                 autospec=True,
                 side_effect=inspect,
             ):
-                approved = make_advance_plan(project, PLUGINS, site)
+                approved = make_advance_plan(project, PLUGINS)
             self.assertEqual(
                 "adapter-finalize", approved["details"]["transitions"][0]["action"]
             )
@@ -624,7 +620,8 @@ class ScheduledDftTests(unittest.TestCase):
                 autospec=True,
                 side_effect=fetch,
             ):
-                finished = advance(project, approved["plan_digest"], PLUGINS, site)
+                self.assertNotIn("plan_digest", approved)
+                finished = advance(project, PLUGINS)
             self.assertEqual("OK", finished["changed"][0]["state"])
             attempt = root / ".mlipflow/runs/label-li/attempt-1"
             self.assertTrue((attempt / "dft-labeling-result.json").is_file())
@@ -651,7 +648,7 @@ class ScheduledDftTests(unittest.TestCase):
                 ),
             )
             with patches[0], patches[1]:
-                approved = make_advance_plan(project, PLUGINS, site)
+                approved = make_advance_plan(project, PLUGINS)
             with patch(
                 "mlipflow.services.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
@@ -664,7 +661,8 @@ class ScheduledDftTests(unittest.TestCase):
                 autospec=True,
                 side_effect=fetch,
             ):
-                finished = advance(project, approved["plan_digest"], PLUGINS, site)
+                self.assertNotIn("plan_digest", approved)
+                finished = advance(project, PLUGINS)
             self.assertEqual("FAIL", finished["changed"][0]["state"])
             self.assertIn("completion check", finished["changed"][0]["diagnostic"])
 
@@ -676,9 +674,8 @@ class ScheduledDftTests(unittest.TestCase):
                 submitted = store.latest_step(project.project_id, "label-li")
                 store.transition(submitted.run_id, RunState.FAIL, diagnostic="synthetic failure")
             retry_plan = make_retry_plan(project, "label-li", PLUGINS)
-            retried = retry(
-                project, "label-li", retry_plan["plan_digest"], PLUGINS
-            )
+            self.assertNotIn("plan_digest", retry_plan)
+            retried = retry(project, "label-li", PLUGINS)
             self.assertEqual(2, retried["step"]["attempt"])
             second = make_run_plan(project, "label-li", PLUGINS, site, library)
             self.assertEqual(
@@ -702,7 +699,7 @@ class ScheduledDftTests(unittest.TestCase):
                 autospec=True,
                 side_effect=inspect,
             ):
-                approved = make_advance_plan(project, PLUGINS, site)
+                approved = make_advance_plan(project, PLUGINS)
             with patch(
                 "mlipflow.services.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
@@ -715,7 +712,8 @@ class ScheduledDftTests(unittest.TestCase):
                 autospec=True,
                 side_effect=fetch,
             ):
-                finished = advance(project, approved["plan_digest"], PLUGINS, site)
+                self.assertNotIn("plan_digest", approved)
+                finished = advance(project, PLUGINS)
             self.assertEqual("FAIL", finished["changed"][0]["state"])
             self.assertIn("field attempt", finished["changed"][0]["diagnostic"])
             attempt = root / ".mlipflow/runs/label-li/attempt-1"
@@ -771,7 +769,7 @@ class ScheduledDftTests(unittest.TestCase):
                 autospec=True,
                 side_effect=inspect,
             ):
-                approved = make_advance_plan(project, plugins, site)
+                approved = make_advance_plan(project, plugins)
             self.assertEqual(
                 "adapter-finalize", approved["details"]["transitions"][0]["action"]
             )
@@ -789,7 +787,7 @@ class ScheduledDftTests(unittest.TestCase):
             "mlipflow.backends.subprocess.run",
             side_effect=AssertionError("no subprocess may be spawned"),
         ):
-            observed = make_advance_plan(project, plugins, site)
+            observed = make_advance_plan(project, plugins)
         self.assertEqual([], observed["details"]["transitions"])
         return str(observed["details"]["observations"][0]["reason"])
 
@@ -806,11 +804,11 @@ class ScheduledDftTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertIn(
-                "pinned scheduled plan field changed: plugin",
+                "pinned scheduled checker implementation changed",
                 self._advance_expecting_rejection(project, plugins, site),
             )
 
-    def test_pinned_plan_still_rejects_a_real_input_change(self) -> None:
+    def test_pinned_plan_does_not_recheck_local_inputs_after_submission(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project, plugins, site = self._submit_with_plugin_copy(root)
@@ -819,9 +817,21 @@ class ScheduledDftTests(unittest.TestCase):
             original = manifest.read_text(encoding="utf-8")
             manifest.write_text(original + "\n", encoding="utf-8")
             self.assertNotEqual(original, manifest.read_text(encoding="utf-8"))
-            self.assertIn(
-                "pinned scheduled plan field changed: input_identities",
-                self._advance_expecting_rejection(project, plugins, site),
+            remote = root / "fake-remote"
+            write_vasp_outputs(remote)
+            write_completion(remote, project.project_id, "label-li", 1)
+            inspect, _ = self._inventory_hooks(remote)
+            with patch(
+                "mlipflow.services.SshSlurmBackend.status",
+                return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.inspect_file",
+                autospec=True,
+                side_effect=inspect,
+            ):
+                observed = make_advance_plan(project, plugins)
+            self.assertEqual(
+                "adapter-finalize", observed["details"]["transitions"][0]["action"]
             )
 
     def test_core_plan_fields_carry_no_mtime_and_no_absolute_path(self) -> None:
@@ -853,7 +863,7 @@ class ScheduledDftTests(unittest.TestCase):
                 project, "label-li", PLUGINS, site, FakeTemplateLibrary()
             )
 
-            self.assertEqual(2, plan["schema_version"])
+            self.assertEqual(3, plan["schema_version"])
             self.assertEqual(
                 [], [trail for trail, _ in leaves(plan) if "mtime" in trail.lower()]
             )
@@ -910,7 +920,7 @@ class ScheduledDftTests(unittest.TestCase):
                 )
             self.assertEqual(digests[0], digests[1])
 
-    def test_stop_plan_binds_full_cluster_profile_and_site_digest(self) -> None:
+    def test_stop_plan_uses_current_cluster_target_without_an_approval_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project, _, site, _ = self._submit(root)
@@ -925,7 +935,11 @@ class ScheduledDftTests(unittest.TestCase):
             raw["clusters"]["cluster-a"]["ssh_profile"] = "changed-alias"
             write_json(site, raw)
             changed = make_stop_plan(project, "label-li", site)
-            self.assertNotEqual(first["plan_digest"], changed["plan_digest"])
+            self.assertNotIn("plan_digest", first)
+            self.assertNotIn("plan_digest", changed)
+            self.assertEqual(
+                "changed-alias", changed["details"]["scheduler_target"]["ssh_profile"]
+            )
 
 
 if __name__ == "__main__":

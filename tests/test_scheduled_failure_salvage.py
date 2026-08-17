@@ -157,7 +157,7 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
         autospec=True,
         side_effect=inspect,
     ):
-        salvage_plan = make_advance_plan(project, PLUGINS, site)
+        salvage_plan = make_advance_plan(project, PLUGINS)
 
     transitions = salvage_plan["details"]["transitions"]
     assert len(transitions) == 1
@@ -185,7 +185,8 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
         autospec=True,
         side_effect=fetch,
     ):
-        outcome = advance(project, salvage_plan["plan_digest"], PLUGINS, site)
+        assert "plan_digest" not in salvage_plan
+        outcome = advance(project, PLUGINS)
 
     assert outcome["changed"][0]["state"] == "FAIL"
     local_checkpoint = (

@@ -1,4 +1,4 @@
-"""Project-scoped path resolution and state/config drift assertions.
+"""Project-scoped path resolution.
 
 This module is imported by both the query and the command side, so it must not
 import execution backends.
@@ -10,7 +10,6 @@ from pathlib import Path
 
 from ..config import Project
 from ..errors import ConfigError
-from ..state import StateStore
 
 
 STATE_RELATIVE = Path(".mlipflow/state.sqlite3")
@@ -37,8 +36,3 @@ def attempt_directory(project: Project, node_id: str, attempt: int) -> Path:
     """Return the fixed local workspace for one node attempt."""
 
     return project.root / ".mlipflow" / "runs" / str(node_id) / f"attempt-{attempt}"
-
-
-def _assert_state_matches_project(store: StateStore, project: Project) -> None:
-    store.assert_project_config(project.project_id, project.raw)
-    store.assert_project_nodes(project.project_id, project.nodes)

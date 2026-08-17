@@ -8,7 +8,7 @@ enforces that statically.
 
 Layout::
 
-    paths            project-scoped paths, state/config drift assertions
+    paths            project-scoped paths
     queries          read-only: list/status/json/inspect/logs/route/doctor
     contracts        pure validation, fingerprinting, context assembly
     backend_factory  the one place scheduler backends are constructed
@@ -75,7 +75,6 @@ from .paths import (  # noqa: F401
     STATE_RELATIVE,
     attempt_directory,
     state_path,
-    _assert_state_matches_project,
 )
 from .queries import (  # noqa: F401
     query_doctor,

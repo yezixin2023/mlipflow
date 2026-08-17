@@ -1,16 +1,17 @@
 """Attempt execution: the three lifecycle shapes a READY node can take.
 
-``replay`` parses existing evidence and runs no numerics.  ``local`` is a single
-synchronous approval.  The scheduled path is asynchronous and delegates to
-``scheduled.py`` after submission; its second approval happens in ``advance``.
+``replay`` parses existing evidence and runs no numerics. ``local`` is a single
+synchronous execution. The scheduled path is asynchronous and delegates to
+``scheduled.py`` after submission. Its later observation, bounded fetch, and
+scientific checks continue the approved submission without another approval.
 
-These are deliberately not collapsed into one polymorphic call: a synchronous
-run and a two-approval remote run are different lifecycles, not two
-implementations of one.
+These are deliberately not collapsed into one polymorphic call because local
+and remote executions have different lifecycle state transitions.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from ..artifacts import fingerprint
@@ -110,17 +111,26 @@ def _execute_ready(
                 plan.get("adapter_plan"),
                 _portable_roots(project, plugin, node_id, attempt),
             )
-            if not isinstance(adapter_plan, dict):
-                raise PluginError(
-                    "local execution requires an adapter-ready plugin with scientific check/collect"
-                )
-            if isinstance(adapter_plan, dict):
-                argv = adapter_plan.get("argv")
-            else:
-                argv = node.get("parameters", {}).get("argv")
+            argv = adapter_plan.get("argv")
             if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
                 raise ConfigError(f"node {node_id} execution plan must provide argv as a string list")
-            result = LocalBackend().run(argv, directory)
+            planned_cwd = adapter_plan.get("cwd")
+            if planned_cwd is not None and (
+                not isinstance(planned_cwd, str)
+                or Path(planned_cwd).resolve() != directory.resolve()
+            ):
+                raise ConfigError(
+                    f"node {node_id} execution plan must use its fresh attempt directory as cwd"
+                )
+            environment = adapter_plan.get("environment", {})
+            if not isinstance(environment, dict) or not all(
+                isinstance(key, str) and isinstance(value, str)
+                for key, value in environment.items()
+            ):
+                raise ConfigError(
+                    f"node {node_id} execution plan environment must map strings to strings"
+                )
+            result = LocalBackend().run(argv, directory, environment)
             write_text_atomic(directory / "stdout.log", result.stdout)
             write_text_atomic(directory / "stderr.log", result.stderr)
             artifacts = [fingerprint(path) | {"role": path.stem} for path in directory.glob("*.log")]
@@ -130,7 +140,7 @@ def _execute_ready(
             if result.returncode != 0:
                 final = RunState.FAIL
                 reason = f"process exited {result.returncode}"
-            elif isinstance(adapter_plan, dict):
+            else:
                 adapter = load_adapter(plugin)
                 context = _adapter_context(project, node, attempt)
                 context["execution"] = {
@@ -140,12 +150,12 @@ def _execute_ready(
                     "plan": adapter_plan,
                 }
                 check_result = adapter.check(context)
-                if not isinstance(check_result, dict) or check_result.get("status") != RunState.OK.value:
+                if check_result.get("status") != RunState.OK.value:
                     final = RunState.FAIL
                     reason = f"plugin completion check did not return OK: {check_result}"
                 else:
                     collected = adapter.collect(context)
-                    if not isinstance(collected, dict) or collected.get("status") != RunState.OK.value:
+                    if collected.get("status") != RunState.OK.value:
                         final = RunState.FAIL
                         reason = f"plugin collection did not return OK: {collected}"
                     else:
@@ -154,8 +164,7 @@ def _execute_ready(
                                 project, directory, collected.get("artifacts", [])
                             )
                         )
-                        raw_metrics = collected.get("metrics", {})
-                        metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+                        metrics = collected.get("metrics", {})
                         final = RunState.OK
                         reason = "external command and plugin completion checks succeeded"
             result_data = {
@@ -200,35 +209,21 @@ def _execute_ready(
                 diagnostic=None if final == RunState.OK else reason,
             )
             return {"plan_digest": plan["plan_digest"], "step": updated.to_dict(), "result": result_data}
-        adapter_plan = plan.get("adapter_plan")
         command: list[str]
-        if isinstance(adapter_plan, dict):
-            if backend != "ssh-slurm":
-                raise BackendError(
-                    "scheduled adapters currently require the site/template ssh-slurm contract"
-                )
-            hpc_execution = plan.get("hpc_execution")
-            workspace = (
-                hpc_execution.get("workspace")
-                if isinstance(hpc_execution, dict)
-                else None
-            )
-            if not isinstance(workspace, dict) or not isinstance(
-                workspace.get("run_dir"), str
-            ):
-                raise BackendError("approved plan lacks an exact remote attempt workspace")
-            remote_dir = str(workspace["run_dir"])
-            result, observed_remote_dir, command = _stage_and_submit_scheduled_adapter(
-                project, node, plugin, plan, directory, factory=factory
-            )
-            if observed_remote_dir != remote_dir:
-                raise BackendError("staged remote directory differs from the approved target")
-        else:
+        if backend != "ssh-slurm":
             raise BackendError(
-                "scheduled execution requires an adapter scientific contract plus "
-                "site-resolved remote templates; parameters.submit_script/remote_cwd "
-                "are not supported"
+                "scheduled adapters currently require the site/template ssh-slurm contract"
             )
+        hpc_execution = plan.get("hpc_execution")
+        workspace = hpc_execution.get("workspace")
+        if not isinstance(workspace, dict) or not isinstance(workspace.get("run_dir"), str):
+            raise BackendError("approved plan lacks an exact remote attempt workspace")
+        remote_dir = str(workspace["run_dir"])
+        result, observed_remote_dir, command = _stage_and_submit_scheduled_adapter(
+            project, node, plugin, plan, directory, factory=factory
+        )
+        if observed_remote_dir != remote_dir:
+            raise BackendError("staged remote directory differs from the approved target")
         if result.returncode != 0 or result.job_id is None:
             raise BackendError(result.stderr or result.stdout or "scheduler submission failed")
         store.transition(
@@ -238,13 +233,12 @@ def _execute_ready(
             run_id, RunState.PENDING, job_id=result.job_id, remote_dir=remote_dir
         )
         control_artifacts: list[dict[str, Any]] = []
-        if isinstance(adapter_plan, dict):
-            for path, role in (
-                (directory / "approved-plan.json", "approved-plan"),
-                (directory / _HPC_SUBMIT_SCRIPT, "scheduler-script"),
-                (directory / _HPC_RUN_SCRIPT, "application-script"),
-            ):
-                control_artifacts.append(fingerprint(path) | {"role": role})
+        for path, role in (
+            (directory / "approved-plan.json", "approved-plan"),
+            (directory / _HPC_SUBMIT_SCRIPT, "scheduler-script"),
+            (directory / _HPC_RUN_SCRIPT, "application-script"),
+        ):
+            control_artifacts.append(fingerprint(path) | {"role": role})
         manifest = run_manifest(
             project_id=project.project_id,
             node_id=node_id,

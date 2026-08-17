@@ -164,7 +164,7 @@ class PluginManifestTests(unittest.TestCase):
                 self.assertEqual({"FAIL", "STOPPED"}, set(retry["allowed_from"]))
                 self.assertTrue(retry["creates_new_attempt"])
                 self.assertFalse(retry["reuses_previous_run_directory"])
-                self.assertTrue(retry["requires_approval"])
+                self.assertFalse(retry["requires_approval"])
                 self.assertFalse(retry["limit_enforced"])
 
                 adapter_file, separator, object_name = implementation["entrypoint"].partition(":")

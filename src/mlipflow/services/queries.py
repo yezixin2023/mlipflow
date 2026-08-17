@@ -31,8 +31,11 @@ def query_workflow(project: Project, node_id: str | None = None) -> dict[str, An
     database = state_path(project)
     if database.is_file():
         with StateStore(database, readonly=True) as store:
+            store.assert_project_id(project.project_id)
             steps = [step.to_dict() for step in store.latest_steps(project.project_id)]
             for step in steps:
+                # The service returns the detailed source of truth. The CLI
+                # presentation layer removes provenance unless --audit is used.
                 step["artifacts"] = store.artifacts(step["run_id"])
                 step["persisted"] = True
     else:

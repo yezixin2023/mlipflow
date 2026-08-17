@@ -26,7 +26,7 @@
     },
     "plugin_manifest": {
       "locator": "plugins/pes-sampling/plugin.yaml",
-      "sha256": "d7ba334044444e5b23c2530b3a2f7eade58bba713422020b4238a14369db325b"
+      "sha256": "b60ac5bad8c44b1a7b93df767af81f6f97e2dbce098826242dcc3e34da38c405"
     }
   },
   "source_audit": {

@@ -8,14 +8,14 @@ description: Prepare, submit, verify, and restart portable LAMMPS MLIP workflows
 Use the `lammps-md` plugin as the implementation source of truth. Version 0.3 has two deliberately separate operations plus an optional restart protocol:
 
 - `lammps-prepare`: local input generation and verification only;
-- `execute`: separately approved `ssh-slurm` execution of one already prepared CPU or GPU target;
+- `execute`: separately reviewed `ssh-slurm` execution of one already prepared CPU or GPU target;
 - execute may opt into periodic binary checkpointing and `auto-from-previous-attempt` restart after scheduler interruption.
 
 Never treat preparation success as evidence that LAMMPS ran. Never treat scheduler `COMPLETED` as scientific success before bounded fetch/check.
 
 ## Model readiness
 
-Accept only an explicit model reference with content fingerprint, supported elements, site-root-relative path, and framework-specific LAMMPS export format.
+Accept only an explicit, verifiable model reference with supported elements, a site-root-relative path, and a framework-specific LAMMPS export format.
 
 Supported contracts:
 
@@ -26,7 +26,7 @@ Supported contracts:
   - `gnnp` + `kind: directory` + `artifact_format: matgl-model-directory`;
   - `m3gnet` + `kind: directory` + `artifact_format: matgl-model-directory`.
 
-Do not pass raw MACE checkpoints or a MatGL directory to the native TorchScript interface. A MatGL directory is accepted only when the declared Python-bridge interface loads that exact native directory directly; fingerprint it with deterministic `tree-sha256-v1`. Do not invent a CHGNet pair style; version 0.3 still blocks native CHGNet LAMMPS and should route CHGNet MD to `$ase-md` unless a separately reviewed bridge exists.
+Do not pass raw MACE checkpoints or a MatGL directory to the native TorchScript interface. A MatGL directory is accepted only when the declared Python-bridge interface loads that exact native directory directly. Do not invent a CHGNet pair style; version 0.3 still blocks native CHGNet LAMMPS and should route CHGNet MD to `$ase-md` unless a separately reviewed bridge exists.
 
 ## Preparation contract
 
@@ -68,7 +68,7 @@ For `operation: execute`, require:
 - `backend: ssh-slurm` and a named backend profile;
 - exactly one project-scoped `inputs.lammps_input_manifest`;
 - explicit `target: cpu|gpu`;
-- exact `input_manifest_fingerprint`;
+- the exact prepared input manifest;
 - resources containing exactly `cpus`, `gpus`, `memory`, `walltime`;
 - optional `checkpoint_interval`;
 - optional `restart_policy`, either `disabled` or `auto-from-previous-attempt`.
@@ -77,7 +77,7 @@ For `operation: execute`, require:
 
 CPU requires `gpus: 0`. GPU requires at least one GPU; MACE/MatGL are restricted to one GPU in this contract.
 
-The adapter must revalidate the prepared manifest, `structure.data`, selected deck, launcher/model contract, and their SHA/size before submission.
+The adapter binds the prepared manifest, `structure.data`, selected deck, and launcher/model contract before submission.
 
 ## Site boundary
 
@@ -96,9 +96,9 @@ Template families remain:
 - `lammps-m3gnet-gnnp-cpu`
 - `lammps-m3gnet-legacy-cpu`
 
-The v0.3 site `run.sh` invokes the staged `lammps_cluster_restart.py`. The site owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, optional legacy `INTERFACE_PATH`, and JSON launcher argv. Keep executable and launcher stable across restart attempts; version 0.3 fingerprints them.
+The v0.3 site `run.sh` invokes the staged `lammps_cluster_restart.py`. The site owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, optional `INTERFACE_PATH`, and JSON launcher argv. Keep executable and launcher stable across restart attempts.
 
-The compute-node runner resolves the prepared model only below MODEL_ROOT, verifies file SHA-256 or deterministic directory `tree-sha256-v1` before execution, passes it via `-var MODEL_FILE`, and verifies it again after execution.
+The compute-node runner resolves the prepared model only below MODEL_ROOT, verifies its content before execution, passes it via `-var MODEL_FILE`, and verifies it again after execution.
 
 ## Periodic restart policy
 
@@ -114,11 +114,11 @@ Before starting the long LAMMPS subprocess, write a bounded `restart-runtime.jso
 
 - attempt;
 - framework/target;
-- prepared manifest SHA;
-- model SHA;
+- prepared manifest identity;
+- model identity;
 - checkpoint cadence;
 - exact abstract resource object;
-- resolved LAMMPS executable SHA;
+- resolved LAMMPS executable identity;
 - site launcher prefix identity;
 - prepared launcher identity;
 - platform system/machine/byteorder.
@@ -129,16 +129,16 @@ These are failure-recovery artifacts, not normal successful outputs. After norma
 
 For a scheduler-terminal `TIMEOUT`, `PREEMPTED`, `NODE_FAIL`, `OUT_OF_MEMORY`, `FAILED`, `DEADLINE`, `CANCELLED`, or `REVOKED`, do not immediately run `retry`.
 
-First create the normal `advance --dry-run` failure-salvage plan. The core must inventory only allowlisted outputs and bind observed SHA/size before fetching. With periodic restart enabled, the salvage subset may include:
+First run ordinary `advance`. Core must inventory and verify only allowlisted outputs during bounded fetch. With periodic restart enabled, the salvage subset may include:
 
 - `checkpoint.1.restart` when present;
 - `checkpoint.2.restart` when present;
 - `restart-runtime.json` when present;
-- approved diagnostic report/logs.
+- declared diagnostic report/logs.
 
 Do not salvage partial trajectory/final state as successful science.
 
-After salvage approval/fetch, the original attempt remains `FAIL` or `STOPPED`. Only then create `retry`, which creates a fresh attempt.
+After salvage/fetch, the original attempt remains `FAIL` or `STOPPED`. Only then create `retry`, which creates a fresh attempt.
 
 If no periodic checkpoint exists because interruption occurred before the first checkpoint, auto restart must be BLOCKED. Do not silently fresh-start, do not rebuild from `final.data`, and do not reinitialize velocities while calling the result a restart.
 
@@ -154,15 +154,15 @@ For attempt N > 1 with `auto-from-previous-attempt`, accept only the immediately
 - at least one alternating checkpoint was locally salvaged;
 - previous runtime identity matches the new plan's framework, target, prepared manifest, model, checkpoint interval, and resources.
 
-Stage every approved available candidate plus the runtime sidecar into the new fresh attempt. Bind each candidate SHA/size, source attempt, previous executable SHA, and previous platform into the new approval plan.
+Stage every validated available candidate plus the runtime sidecar into the new fresh attempt. Bind each candidate to its source attempt and previous executable/platform identity.
 
 The control plane must not parse the binary LAMMPS restart or guess its timestep.
 
 ## Compute-node resume
 
-Before `read_restart`, require current runtime to match the salvaged sidecar for executable SHA, platform, site launcher identity, prepared launcher identity, resources, framework/target, prepared manifest, model, and checkpoint interval.
+Before `read_restart`, require current runtime to match the salvaged sidecar for executable identity, platform, site launcher identity, prepared launcher identity, resources, framework/target, prepared manifest, model, and checkpoint interval.
 
-Use the same LAMMPS executable to inspect each approved salvaged binary candidate. Ignore corrupt/unreadable/out-of-contract candidates and choose the largest valid timestep that lies on the approved checkpoint cadence and is below the global total step.
+Use the same LAMMPS executable to inspect each salvaged binary candidate. Ignore corrupt/unreadable/out-of-contract candidates and choose the largest valid timestep that lies on the declared checkpoint cadence and is below the global total step.
 
 The derived resume deck must:
 
@@ -189,12 +189,12 @@ Normal successful execute still requires:
 
 - matching `lammps-execution-result.json` and `cluster-run-report.json`;
 - bounded `trajectory.lammpstrj`, `final.data`, `final.restart`, `lammps.log`, `lammps.screen.log`;
-- matching output SHA/size records;
+- complete, internally consistent outputs;
 - recorded LAMMPS version;
-- `steps_completed == approved global steps`;
+- `steps_completed == requested global steps`;
 - exact completion marker in fetched `lammps.log`.
 
-For a resumed attempt, additionally require the selected checkpoint SHA to be one of the newly approved salvaged candidates, a valid periodic start step, the expected source attempt, runtime compatibility confirmation, and cluster/result restart identities that agree.
+For a resumed attempt, additionally require the selected checkpoint to be one of the staged salvaged candidates, a valid periodic start step, the expected source attempt, runtime compatibility confirmation, and cluster/result restart identities that agree.
 
 ## Scientific interpretation
 
