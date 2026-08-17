@@ -1,0 +1,19 @@
+MLIPFlow
+Copyright 2026 MLIPFlow contributors
+
+This product is licensed under the Apache License, Version 2.0.
+
+MLIPFlow orchestrates and interfaces with third-party scientific software,
+models, datasets, schedulers, and infrastructure. Unless explicitly stated
+otherwise, those third-party components are not bundled with MLIPFlow and
+remain subject to their own licenses, citation requirements, access terms,
+and redistribution restrictions.
+
+In particular, this distribution does not grant rights to proprietary or
+separately licensed software and data used through MLIPFlow, including VASP
+and POTCAR data, LASP, third-party MLIP model weights, external datasets, or
+site-provided executables and templates. Users are responsible for obtaining
+and using those components under the applicable terms.
+
+See CITATION.cff and the plugin documentation for software and scientific
+citation guidance.
