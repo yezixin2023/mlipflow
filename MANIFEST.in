@@ -1,4 +1,4 @@
-include README.md LICENSE CITATION.cff AGENTS.md CONTRIBUTING.md SECURITY.md
+include README.md LICENSE NOTICE CHANGELOG.md CITATION.cff AGENTS.md CONTRIBUTING.md SECURITY.md
 recursive-include schemas *.json
 recursive-include plugins *.yaml *.py
 recursive-include .agents *.md *.yaml
