@@ -1,45 +1,141 @@
-# 贡献指南
+# Contributing to MLIPFlow
 
-感谢你改进 MLIPFlow。当前项目处于 alpha 阶段，优先接受能强化确定性、安全边界、可复现性和科学可审计性的变更。
+Thanks for helping improve MLIPFlow. Contributions are welcome across the workflow core, scientific plugins, tests, documentation, examples, Agent Skills, and HPC integration patterns.
 
-## 开发环境
+MLIPFlow sits between workflow orchestration and scientific software, so a good contribution should make both its **software behavior** and its **scientific assumptions** reviewable.
+
+## Development setup
 
 ```bash
+git clone https://github.com/yezixin2023/mlipflow.git
+cd mlipflow
+
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[dev]'
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev,science,dft]"
+
 python -m pytest
 ruff check .
 ```
 
-提交应当小而聚焦，并说明动机、行为变化、验证方式及兼容性影响。涉及科学结果时，同时提交单位、约定、随机种子、参考值、容差和来源；不能只提交“能跑”的脚本。
+You can install a smaller set of extras if your change does not touch scientific adapters:
 
-## 不可破坏的边界
+```bash
+python -m pip install -e ".[dev]"
+```
 
-- `list`、`status`、`json`、`inspect`、`logs`、`route`、`doctor` 必须保持零副作用。相关变更必须包含文件树、数据库和外部命令均未改变的测试。
-- 高成本或破坏性操作必须经过 `--dry-run` 与精确 `plan_digest` 审批。
-- LLM 只能监督、解释和提出计划；确定性/数值操作必须由插件与后端完成。
-- 不得提交凭据、私钥、集群账户、个人绝对路径、POTCAR、未获授权的数据、模型权重或大型轨迹。
-- 不得在查询路径中导入插件代码、访问网络、提交/取消作业或启动监控进程。
-- 不得硬编码全局“最佳模型”；路由结论必须来自版本化的任务基准证据。
+## What to contribute
 
-## 插件与 Agent Skill
+Useful contribution areas include:
 
-计算插件放在 `plugins/<id>/`，其 `plugin.yaml` 必须声明版本、实现、后端、输入、输出、依赖、replay 能力和安全属性。优先包裹已有、可验证的代码；重写数值算法需要独立参考数据和等价性测试。
+- workflow configuration, state, planning, provenance, and CLI behavior;
+- new or improved scientific plugins;
+- scientific completion checks and small reference fixtures;
+- local or scheduler integration tests;
+- Agent Skills that supervise existing deterministic capabilities;
+- portable site-template examples for common HPC layouts;
+- examples and documentation that make real workflows easier to adopt;
+- reproducibility, packaging, security, and repository-quality improvements.
 
-Agent Skill 放在 `.agents/skills/<name>/`，只描述监督工作流和证据门槛，不能复制计算逻辑。修改 Skill 后运行仓库采用的 skill validator，并确认它没有扩大 Agent 的执行权限。
+For larger scientific or architectural changes, opening an issue or draft pull request early can make the intended contract easier to review before implementation grows.
 
-## 测试与 fixture
+## Keep changes reviewable
 
-- 单元测试默认离线、确定性且资源有界；
-- replay fixture 必须小、可公开、带来源和“synthetic/derived/real”标签；
-- 不提交依赖某个私人集群或个人目录才能通过的测试；
-- 调用外部程序或调度器的测试必须显式 opt-in 并使用 mock/fake；
-- 科学适配器至少覆盖正常输入、单位错误、缺字段、部分失败和重复运行。
+Prefer focused changes with a clear motivation. A pull request should explain:
 
-## 第三方代码、数据与 AI 辅助
+1. what behavior changes;
+2. why the change is needed;
+3. which user or developer workflow it affects;
+4. how it was validated;
+5. whether it changes a schema, plugin contract, scientific convention, artifact format, or compatibility boundary.
 
-引入外部代码或数据时，记录来源、版本、许可证、修改和分发许可。不要直接复制来源不清的集群脚本。使用 AI 辅助生成代码或文档时，请在合并请求中说明，并由贡献者亲自验证正确性、许可证和测试结果。
+If a change affects scientific results, include the relevant units, normalization conventions, seeds, reference values, tolerances, software/model versions, and source provenance. Do not treat "the program ran" as sufficient scientific validation.
 
-除非明确另有说明，你提交的贡献将按仓库根目录的 Apache License 2.0 许可。
+## Core behavior to preserve
 
+Some behaviors are part of the public workflow contract:
+
+- `list`, `status`, `json`, `inspect`, `logs`, `route`, and `doctor` are read-only commands.
+- Approval-gated execution is planned with `run --dry-run` and bound to the exact reviewed plan digest.
+- Retries create fresh attempts instead of overwriting prior attempts.
+- Scheduler completion is followed by scientific checking before a run is treated as scientifically successful.
+- Model routing is evidence- and policy-driven rather than hard-coded to a preferred model family.
+- Project configuration contains scientific intent and abstract resources; private cluster details belong in user-local site profiles and site-owned templates.
+
+Changes to these contracts are possible, but they should be explicit, documented, and covered by regression tests.
+
+## Adding or changing a scientific plugin
+
+Scientific plugins live under:
+
+```text
+plugins/<plugin-id>/
+  plugin.yaml
+  adapter.py
+```
+
+Start with [`docs/PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md) and [`schemas/plugin.schema.json`](schemas/plugin.schema.json).
+
+A plugin should expose explicit inputs, parameters, outputs, dependencies, backend capabilities, completion criteria, retry behavior, safety properties, and replay behavior. Prefer wrapping an existing scientific implementation behind a deterministic contract rather than reimplementing a numerical method without a strong reason.
+
+Adapter execution should use explicit argv lists and controlled working directories/environment. When an external program is involved, a zero process exit code is not by itself a scientific completion criterion.
+
+## Adding or changing an Agent Skill
+
+Agent Skills live under:
+
+```text
+.agents/skills/<skill-name>/
+  SKILL.md
+  agents/openai.yaml
+```
+
+See [`docs/AGENT_SKILLS.md`](docs/AGENT_SKILLS.md).
+
+Skills describe how an agent should supervise a capability: what evidence to request, which MLIPFlow operation to call, when approval is required, and how to interpret results. They should not duplicate scientific computation that belongs in plugins or external tools.
+
+When the repository's Skill validator is available, validate changed Skills before submitting them.
+
+## Tests and fixtures
+
+Tests should be deterministic, offline by default, and bounded in runtime/resource use.
+
+Good fixtures are small enough to review and redistribute, and clearly identify whether they are synthetic, derived, or based on real evidence. External programs, real schedulers, large datasets, model weights, and licensed inputs should use explicit opt-in integration paths rather than becoming requirements for the default test suite.
+
+Useful focused commands include:
+
+```bash
+python -m pytest tests/test_plugin_manifests.py
+python -m pytest tests/test_config_and_plans.py
+python -m pytest tests/test_readonly_cli.py
+python -m pytest tests/test_hpc_architecture.py
+```
+
+Run the broader suite when your environment supports the dependencies needed by the affected area.
+
+## Third-party code, models, and data
+
+When adding or wrapping third-party material, document its source, version, license, modifications, redistribution status, and required citations. Do not commit credentials, private keys, private cluster configuration, proprietary executables, VASP POTCAR data, unredistributable datasets, or model weights without explicit redistribution rights.
+
+MLIPFlow's Apache-2.0 license does not replace the terms of software, models, or data used through its plugins. See [`NOTICE`](NOTICE).
+
+## AI-assisted contributions
+
+AI-assisted code or documentation is welcome when the contributor reviews and validates the result. The submitting contributor remains responsible for correctness, licensing, provenance, tests, and scientific claims.
+
+## Documentation changes
+
+The top-level README is the user entry point. Keep it concise, capability-oriented, and aligned with implemented interfaces. Detailed validation boundaries belong in the relevant validation documents rather than being repeated throughout user-facing examples.
+
+When behavior changes, update the closest source of truth as needed:
+
+- schemas for configuration contracts;
+- plugin manifests for plugin interfaces;
+- `docs/AGENT_SKILLS.md` for Agent Skill contracts;
+- `docs/IMPLEMENTATION_STATUS.md` for implementation/validation state;
+- `CHANGELOG.md` for notable user-facing changes.
+
+## License
+
+Unless explicitly stated otherwise, contributions submitted for inclusion in MLIPFlow are licensed under the repository's [Apache License 2.0](LICENSE).
