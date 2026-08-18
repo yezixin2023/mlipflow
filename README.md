@@ -32,28 +32,48 @@ cd mlipflow
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e ".[local]"
 
 mlipflow --version
 ```
 
-Useful extras:
+`.[local]` is the recommended complete local MLIPFlow environment. It installs the
+common scientific runtime covered by the `science`, `dft`, and `transport` extras
+through one supported entry point. Because formal transport support comes from
+`pymatgen-analysis-diffusion`, this complete local environment requires Python >=3.10.
+
+The **MLIPFlow local environment** is the general control/science environment above.
+An **MLIP framework execution environment** contains a framework and its accelerator
+stack. `local` intentionally does not install DeepMD-kit, MACE, CHGNet, or
+MatGL/M3GNet. You only need a framework-specific environment if you actually execute
+that framework on this machine; remote/HPC execution can continue to use isolated,
+site-owned environments and templates.
+
+#### Advanced / minimal installation
+
+Advanced users can keep the control environment smaller by installing only the core
+or one fine-grained runtime extra:
 
 ```bash
-# Test, lint, schema validation, and development tools
-python -m pip install -e ".[dev]"
+# Workflow core only
+python -m pip install -e .
 
-# NumPy / ASE / icet / pandas / Plotly helpers used by scientific workflows
+# NumPy / ASE / icet / pandas / Plotly scientific helpers only
 python -m pip install -e ".[science]"
 
-# pymatgen support for VASP input preparation
+# pymatgen support for VASP input preparation only
 python -m pip install -e ".[dft]"
 
-# A practical development + science environment
-python -m pip install -e ".[dev,science,dft]"
+# Formal ionic transport only (Python >=3.10)
+python -m pip install -e ".[transport]"
+
+# Test, lint, schema validation, and development tools only
+python -m pip install -e ".[dev]"
 ```
 
-MLIP frameworks and external scientific programs such as DeepMD-kit, MACE, MatGL/M3GNet, CHGNet, LAMMPS, VASP, and LASP are **not forced into the MLIPFlow control environment**. Install the frameworks you actually execute in their own validated environments or provide them through your HPC site templates.
+MLIPFlow core and historical transport reproduction continue to support Python >=3.9.
+The formal `transport` extra requires Python >=3.10 and includes the runner's direct
+NumPy, pandas, Plotly, and ASE dependencies.
 
 ### 2. Create a project
 
@@ -251,14 +271,15 @@ The site schema is [`schemas/site.schema.json`](schemas/site.schema.json); concr
 
 ## Recommended environment layout
 
-For real research, use small, purpose-specific environments rather than one environment containing every MLIP framework:
+Use one general MLIPFlow local environment plus separate execution environments only
+for the MLIP frameworks you actually run:
 
 ```text
-mlipflow-control      -> mlipflow + PyYAML (+ optional science/dft extras)
-deepmd-exec           -> DeepMD-kit + project-specific dependencies
-mace-exec             -> MACE + PyTorch stack
-matgl-exec            -> MatGL/M3GNet stack
-chgnet-exec           -> CHGNet stack
+mlipflow-local        -> mlipflow[local] (control/science; no MLIP frameworks)
+deepmd-exec           -> DeepMD-kit + project-specific dependencies, when needed
+mace-exec             -> MACE + PyTorch stack, when needed
+matgl-exec            -> MatGL/M3GNet stack, when needed
+chgnet-exec           -> CHGNet stack, when needed
 site programs         -> VASP / LAMMPS / LASP / MPI / scheduler modules
 ```
 

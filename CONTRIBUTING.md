@@ -13,7 +13,7 @@ cd mlipflow
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev,science,dft]"
+python -m pip install -e ".[dev,local]"
 
 python -m pytest
 ruff check .

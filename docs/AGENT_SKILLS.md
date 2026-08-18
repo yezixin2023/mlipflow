@@ -25,7 +25,9 @@ Skills 是监督说明，不是计算实现。更新 Skill 时，应以当前 CL
 
 `$ionic-transport` 是 local-only 分析 Skill，不提供 `ssh-slurm`。正式 `analyze-existing` 使用 MLIPFlow 打包的 `ionic_conductivity.py` 与 `pymatgen-analysis-diffusion` public API；项目只绑定已有 trajectory/MSD，不提供或覆盖 `analysis_script`。当前输入为 ASE `production.traj`、信息完整的 LAMMPS unwrapped dump、VASP AIMD `vasprun.xml` 或显式 MSD 表。
 
-正式 trajectory 直接使用 `DiffusionAnalyzer` 的 dt/MSD/D/σ/charge transport/Haven ratio；MSD-only 使用 `get_diffusivity_from_msd`，只有真实 Structure 才通过 `get_conversion_factor` 产生 conductivity；Arrhenius 使用 `fit_arrhenius(..., mode="linear")`。缺少 `[transport]` 依赖或可靠 Structure/cell/species/timestep 时明确失败或将 MSD-only conductivity 标为 unavailable，不回退到 MLIPFlow 自定义公式。
+正式 trajectory 直接使用 `DiffusionAnalyzer` 的 dt/MSD/D/σ/charge transport/Haven ratio；MSD-only 使用 physical lag/elapsed time 和 `get_diffusivity_from_msd`，不把第一行擅自归零，`smoothed=max` 时明确排除 zero lag。只有真实 Structure 才通过 `get_conversion_factor` 产生 conductivity；Arrhenius 使用 `fit_arrhenius(..., mode="linear")`。缺少 `[transport]` 依赖或可靠 Structure/cell/species/timestep 时明确失败或将 MSD-only conductivity 标为 unavailable，不回退到 MLIPFlow 自定义公式。
+
+Formal 不接收 user `charge`、`dimensions`、`haven_ratio`、`drift_correction` 或 `msd_mode`；trajectory Haven ratio 只来自 analyzer。`fit_start_ps`/`fit_end_ps` 仅是可选的 MSD-table subset，不能用于 trajectory。
 
 Runner 的 `analysis_manifest.json` 固定科学参数、运行环境与 source/result identity。Checker 从原始输入重新调用相同 pymatgen public API，不复制其数学公式。历史 Li10 `N=7`、旧常数、旧 OLS/mean(MSD/t) 与旧 Arrhenius convention 只存在于隔离的 historical reproduction，formal 结果不与其混用。
 

@@ -100,16 +100,11 @@ _ANALYZE_PARAMETERS = {
     "output_subdir",
     "source",
     "specie",
-    "charge",
-    "dimensions",
-    "haven_ratio",
     "seed",
     "fit_start_ps",
     "fit_end_ps",
     "trajectory_start_ps",
     "trajectory_end_ps",
-    "drift_correction",
-    "msd_mode",
     "trajectory_msd_engine",
     "diffusion_analyzer_smoothed",
     "diffusion_analyzer_min_obs",
@@ -165,15 +160,8 @@ _SMOKE_PARAMETERS = {
     "input_index",
     "source",
     "specie",
-    "charge",
-    "dimensions",
-    "haven_ratio",
-    "fit_start_ps",
-    "fit_end_ps",
     "trajectory_start_ps",
     "trajectory_end_ps",
-    "drift_correction",
-    "msd_mode",
     "trajectory_msd_engine",
     "diffusion_analyzer_smoothed",
     "diffusion_analyzer_min_obs",
@@ -443,17 +431,12 @@ def _analysis_arguments(
 
     always = (
         ("specie", "--specie"),
-        ("charge", "--charge"),
         ("source", "--source"),
-        ("drift_correction", "--drift-correction"),
-        ("msd_mode", "--msd-mode"),
         ("trajectory_msd_engine", "--trajectory-msd-engine"),
         ("diffusion_analyzer_smoothed", "--diffusion-analyzer-smoothed"),
         ("diffusion_analyzer_min_obs", "--diffusion-analyzer-min-obs"),
         ("diffusion_analyzer_avg_nsteps", "--diffusion-analyzer-avg-nsteps"),
         ("diffusion_analyzer_step_skip", "--diffusion-analyzer-step-skip"),
-        ("fit_start_ps", "--fit-start-ps"),
-        ("fit_end_ps", "--fit-end-ps"),
         ("min_msd_fit_points", "--min-msd-fit-points"),
         ("fit_scope", "--fit-scope"),
         ("target_temperature_k", "--target-temperature-K"),
@@ -463,6 +446,8 @@ def _analysis_arguments(
         ("piecewise_bic_delta", "--piecewise-bic-delta"),
     )
     optional = (
+        ("fit_start_ps", "--fit-start-ps"),
+        ("fit_end_ps", "--fit-end-ps"),
         ("trajectory_start_ps", "--trajectory-start-ps"),
         ("trajectory_end_ps", "--trajectory-end-ps"),
         ("msd_smooth_window_points", "--msd-smooth-window-points"),
@@ -808,36 +793,12 @@ def _validate_md_smoke(
         diagnostics.append(
             _diagnostic("ERROR", "parameter.specie", "specie must be one element symbol")
         )
-    if not _positive_number(parameters.get("charge")):
-        diagnostics.append(
-            _diagnostic("ERROR", "parameter.charge", "charge must be a finite positive number")
-        )
-    if parameters.get("dimensions") != 3:
-        diagnostics.append(
-            _diagnostic(
-                "ERROR",
-                "assumption.dimensions_unsupported",
-                "the formal compatibility boundary requires dimensions=3",
-            )
-        )
-    if not _finite_number(parameters.get("haven_ratio")) or not math.isclose(
-        float(parameters.get("haven_ratio", float("nan"))), 1.0, rel_tol=0.0, abs_tol=1e-12
-    ):
-        diagnostics.append(
-            _diagnostic(
-                "ERROR",
-                "assumption.haven_unsupported",
-                "the input compatibility declaration requires haven_ratio=1; the trajectory "
-                "result comes directly from DiffusionAnalyzer",
-            )
-        )
-    _validate_interval(parameters, "fit_start_ps", "fit_end_ps", diagnostics, required=True)
     _validate_interval(
         parameters, "trajectory_start_ps", "trajectory_end_ps", diagnostics, required=False
     )
     if _finite_number(parameters.get("production_time_ps")):
         production_time = float(parameters["production_time_ps"])
-        for name in ("fit_end_ps", "trajectory_end_ps"):
+        for name in ("trajectory_end_ps",):
             value = parameters.get(name)
             if value is not None and _finite_number(value) and float(value) > production_time:
                 diagnostics.append(
@@ -846,8 +807,6 @@ def _validate_md_smoke(
                     )
                 )
     choices = {
-        "drift_correction": {"framework", "mobile", "none"},
-        "msd_mode": {"multi-origin", "single-origin"},
         "trajectory_msd_engine": {"diffusion-analyzer"},
         "diffusion_analyzer_smoothed": {"max", "constant", "none"},
         "piecewise": {"auto", "always", "never"},
@@ -2351,7 +2310,7 @@ def _verify_analysis_manifest(
     recorded_parameters = _mapping(manifest.get("parameters"))
     parameters = _mapping(context.get("parameters"))
     operation = _operation_name(parameters)
-    adapter_only = {"operation", "output_subdir", "dimensions", "haven_ratio", "seed", "allow_partial_results"}
+    adapter_only = {"operation", "output_subdir", "seed", "allow_partial_results"}
     runner_destinations = {
         "temperature_k": "temperature_K",
         "aimd_temperature_k": "aimd_temperature_K",
@@ -2870,35 +2829,6 @@ class Adapter:
             diagnostics.append(
                 _diagnostic("ERROR", "parameter.specie", "specie must be one element symbol")
             )
-        if not _positive_number(parameters.get("charge")):
-            diagnostics.append(
-                _diagnostic(
-                    "ERROR", "parameter.charge", "charge must be a finite positive charge number"
-                )
-            )
-
-        dimensions = parameters.get("dimensions")
-        if dimensions != 3:
-            diagnostics.append(
-                _diagnostic(
-                    "ERROR",
-                    "assumption.dimensions_unsupported",
-                    "the formal compatibility boundary requires dimensions=3; diffusivity is "
-                    "returned directly by pymatgen",
-                )
-            )
-        haven_ratio = parameters.get("haven_ratio")
-        if not _finite_number(haven_ratio) or not math.isclose(
-            float(haven_ratio), 1.0, rel_tol=0.0, abs_tol=1e-12
-        ):
-            diagnostics.append(
-                _diagnostic(
-                    "ERROR",
-                    "assumption.haven_unsupported",
-                    "the input compatibility declaration requires haven_ratio=1; the trajectory "
-                    "result comes directly from DiffusionAnalyzer",
-                )
-            )
         if parameters.get("seed") is not None:
             diagnostics.append(
                 _diagnostic(
@@ -2908,7 +2838,21 @@ class Adapter:
                 )
             )
 
-        _validate_interval(parameters, "fit_start_ps", "fit_end_ps", diagnostics, required=True)
+        if source in {"trajectory", "vasp"} and (
+            parameters.get("fit_start_ps") is not None
+            or parameters.get("fit_end_ps") is not None
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "parameter.msd_fit_window_trajectory",
+                    "fit_start_ps/fit_end_ps apply only to MSD-table input",
+                )
+            )
+        else:
+            _validate_interval(
+                parameters, "fit_start_ps", "fit_end_ps", diagnostics, required=False
+            )
         _validate_interval(
             parameters, "trajectory_start_ps", "trajectory_end_ps", diagnostics, required=False
         )
@@ -2925,8 +2869,6 @@ class Adapter:
             )
 
         choices = {
-            "drift_correction": {"framework", "mobile", "none"},
-            "msd_mode": {"multi-origin", "single-origin"},
             "trajectory_msd_engine": {"diffusion-analyzer"},
             "diffusion_analyzer_smoothed": {"max", "constant", "none"},
             "msd_time_unit": {"auto", "ps", "fs", "ns", "step"},
@@ -3191,9 +3133,7 @@ class Adapter:
                 "trajectory_paths": [str(path) for path in trajectory_paths],
                 "assumptions": {
                     "scientific_use": "integration-smoke-only",
-                    "dimensions": 3,
-                    "haven_ratio": 1.0,
-                    "conductivity_model": "uncorrected-nernst-einstein",
+                    "transport_values": "pymatgen-diffusion-analyzer",
                     "velocity_seed": int(parameters["seed"]),
                     "framework_rngs_fully_controlled": False,
                     "gpu_bitwise_determinism_guaranteed": False,
@@ -3233,10 +3173,9 @@ class Adapter:
             "expected_outputs": [str(output_dir / name) for name in _REQUIRED_RESULT_NAMES],
             "output_dir": str(output_dir),
             "assumptions": {
-                "dimensions": 3,
                 "formal_scientific_implementation": "pymatgen-analysis-diffusion",
-                "haven_ratio": "reported-directly-by-DiffusionAnalyzer-for-trajectories",
-                "conductivity_model": "pymatgen-public-api",
+                "trajectory_haven_ratio": "reported-directly-by-DiffusionAnalyzer",
+                "conductivity_method": "pymatgen-public-api-or-unavailable",
                 "seed": None,
             },
             "provenance": {
@@ -3651,9 +3590,7 @@ class Adapter:
                 "by_temperature": by_temperature,
                 "arrhenius": summary,
                 "assumptions": {
-                    "dimensions": 3,
-                    "haven_ratio": 1.0,
-                    "conductivity_model": "uncorrected-nernst-einstein",
+                    "formal_scientific_implementation": "pymatgen-analysis-diffusion",
                     "scientific_use": (
                         integration_manifest.get("scientific_use")
                         if integration_manifest is not None

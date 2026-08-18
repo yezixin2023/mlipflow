@@ -70,7 +70,7 @@ def write_lammps_run(root: Path, temperature_k: int, displacement_per_frame: flo
 
 
 class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
-    def test_tiny_lammps_trajectory_completes_formal_analysis_and_checker(self) -> None:
+    def test_smoothed_max_trajectory_matches_diffusion_analyzer_and_checker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary).resolve()
             trajectories = project / "trajectories"
@@ -86,19 +86,12 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
                     "output_subdir": "ionic-transport-postprocess",
                     "source": "trajectory",
                     "specie": "Li",
-                    "charge": 1.0,
-                    "dimensions": 3,
-                    "haven_ratio": 1.0,
                     "seed": None,
-                    "fit_start_ps": 0.0,
-                    "fit_end_ps": 5.0,
                     "trajectory_start_ps": None,
                     "trajectory_end_ps": None,
-                    "drift_correction": "framework",
-                    "msd_mode": "multi-origin",
                     "trajectory_msd_engine": "diffusion-analyzer",
-                    "diffusion_analyzer_smoothed": "none",
-                    "diffusion_analyzer_min_obs": 3,
+                    "diffusion_analyzer_smoothed": "max",
+                    "diffusion_analyzer_min_obs": 1,
                     "diffusion_analyzer_avg_nsteps": 3,
                     "diffusion_analyzer_step_skip": 1,
                     "min_msd_fit_points": 3,
@@ -185,8 +178,8 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
                         temperature=temperature,
                         time_step=1000.0,
                         step_skip=1,
-                        smoothed=False,
-                        min_obs=3,
+                        smoothed="max",
+                        min_obs=1,
                         avg_nsteps=3,
                     )
                 )
@@ -259,11 +252,10 @@ class IonicTransportMsdOnlyRegressionTests(unittest.TestCase):
         self.runner = load_runner()
         self.args = SimpleNamespace(
             specie="Li",
-            charge=1.0,
-            fit_start_ps=1.0,
-            fit_end_ps=5.0,
+            fit_start_ps=None,
+            fit_end_ps=None,
             min_msd_fit_points=3,
-            diffusion_analyzer_smoothed="none",
+            diffusion_analyzer_smoothed="max",
             diffusion_analyzer_min_obs=3,
             diffusion_analyzer_avg_nsteps=3,
         )
@@ -285,17 +277,40 @@ class IonicTransportMsdOnlyRegressionTests(unittest.TestCase):
             structure=structure,
         )
 
-    def test_msd_only_diffusivity_uses_pymatgen_and_conductivity_is_unavailable(self) -> None:
+    def test_smoothed_max_msd_excludes_zero_lag_and_matches_pymatgen(self) -> None:
         from pymatgen.analysis.diffusion.analyzer import get_diffusivity_from_msd
 
         result = self.runner.formal_result_values(self.run_data(), self.args)
         expected = get_diffusivity_from_msd(
-            self.msd_A2[1:], self.time_ps[1:] * 1000.0, smoothed=False
+            self.msd_A2[1:], self.time_ps[1:] * 1000.0, smoothed="max"
         )
         self.assertEqual(float(expected[0]), result["diffusivity_cm2_s"])
         self.assertEqual(float(expected[1]), result["diffusivity_std_dev_cm2_s"])
+        self.assertEqual([False, True, True, True, True, True], result["used"].tolist())
         self.assertIsNone(result["conductivity_mS_cm"])
         self.assertEqual("unavailable", result["conductivity_method"])
+
+    def test_read_msd_table_preserves_physical_lag_and_step_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary)
+            msd_path = run_dir / "msd.csv"
+            msd_path.write_text(
+                "time,msd_A2\n5,1\n6,2\n7,4\n",
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                msd_time_column="time",
+                msd_column="msd_A2",
+                msd_time_unit="step",
+                msd_step_ps=0.5,
+                lammps_timestep_ps=None,
+                msd_unit="A2",
+            )
+
+            time_ps, _, notes = self.runner.read_msd_table(msd_path, run_dir, args)
+
+            self.assertEqual([2.5, 3.0, 3.5], time_ps.tolist())
+            self.assertIn("time_semantics=physical_lag_or_elapsed", notes)
 
     def test_msd_structure_conductivity_uses_pymatgen_conversion_factor(self) -> None:
         from pymatgen.analysis.diffusion.analyzer import get_conversion_factor

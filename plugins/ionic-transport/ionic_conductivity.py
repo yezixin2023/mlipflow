@@ -1173,7 +1173,7 @@ def read_msd_table(msd_path: Path, run_dir: Path, args):
             if args.msd_step_ps is not None
             else infer_lammps_timestep_ps(run_dir, args.lammps_timestep_ps)
         )
-        time_ps = (raw_time - raw_time[0]) * float(step_ps)
+        time_ps = raw_time * float(step_ps)
     else:
         time_ps = raw_time
 
@@ -1189,11 +1189,17 @@ def read_msd_table(msd_path: Path, run_dir: Path, args):
     msd = msd[finite]
     if len(time_ps) < 2:
         raise ValueError(f"MSD file has fewer than two finite rows: {msd_path}")
-    time_ps = time_ps - time_ps[0]
+    if np.any(time_ps < 0.0):
+        raise ValueError(
+            f"MSD time must be physical non-negative lag/elapsed time: {msd_path}"
+        )
+    if np.any(np.diff(time_ps) <= 0.0):
+        raise ValueError(f"MSD time must be strictly increasing: {msd_path}")
 
     notes = (
         f"msd_file={msd_path.name}; time_column={time_name if time_name else time_col}; "
-        f"msd_column={msd_name if msd_name else msd_col}; time_unit={time_unit}; msd_unit={msd_unit}"
+        f"msd_column={msd_name if msd_name else msd_col}; time_unit={time_unit}; "
+        f"msd_unit={msd_unit}; time_semantics=physical_lag_or_elapsed"
     )
     return time_ps, msd, notes
 
@@ -1328,6 +1334,9 @@ def formal_result_values(run: RunData, args) -> dict:
             used &= time_ps >= float(args.fit_start_ps)
         if args.fit_end_ps is not None:
             used &= time_ps <= float(args.fit_end_ps)
+        smoothed = diffusion_analyzer_smoothed_arg(args)
+        if smoothed == "max":
+            used &= time_ps > 0.0
         if int(used.sum()) < int(args.min_msd_fit_points):
             raise ValueError(
                 f"MSD analysis window leaves {int(used.sum())} points; "
@@ -1337,7 +1346,7 @@ def formal_result_values(run: RunData, args) -> dict:
         diffusion_pair = api["get_diffusivity_from_msd"](
             np.asarray(msd_A2[used], dtype=float),
             dt_fs,
-            smoothed=diffusion_analyzer_smoothed_arg(args),
+            smoothed=smoothed,
         )
         diffusivity = float(diffusion_pair[0])
         diffusivity_std = finite_or_none(diffusion_pair[1])
@@ -1419,7 +1428,6 @@ def analyze_run(run: RunData, args, output_dir: Path):
         "diffusivity_stderr_cm2_s": values["diffusivity_std_dev_cm2_s"],
         "chg_diffusivity_cm2_s": values["chg_diffusivity_cm2_s"],
         "n_mobile_ions": run.n_mobile,
-        "charge": args.charge,
         "volume_A3": run.volume_A3,
         "mobile_ion_density_m3": density_m3(run.n_mobile, run.volume_A3),
         "conductivity_NE_mS_cm": values["conductivity_mS_cm"],
@@ -1430,7 +1438,6 @@ def analyze_run(run: RunData, args, output_dir: Path):
         "diffusion_method": values["diffusion_method"],
         "conductivity_method": values["conductivity_method"],
         "arrhenius_method": "pymatgen-fit-arrhenius-linear",
-        "dimensions": 3,
         "haven_ratio": values["haven_ratio"],
         "smoothed": args.diffusion_analyzer_smoothed,
         "min_obs": args.diffusion_analyzer_min_obs,
@@ -1655,28 +1662,10 @@ def build_parser():
     parser.add_argument("--output", type=Path, default=Path("li_conductivity_postprocess"))
     parser.add_argument("--specie", default="Li")
     parser.add_argument(
-        "--charge",
-        type=float,
-        default=1.0,
-        help="Mobile ion charge number z used in Nernst-Einstein conductivity, e.g. Li+=1, Mg2+=2.",
-    )
-    parser.add_argument(
         "--source",
         choices=["auto", "trajectory", "vasp", "msd"],
         default="auto",
         help="Read trajectories or precomputed MSD tables; auto chooses trajectory first, then MSD.",
-    )
-    parser.add_argument(
-        "--drift-correction",
-        choices=["framework", "mobile", "none"],
-        default="framework",
-        help="Used only when MSD is recomputed from trajectories.",
-    )
-    parser.add_argument(
-        "--msd-mode",
-        choices=["multi-origin", "single-origin"],
-        default="multi-origin",
-        help="Use multiple time origins by default to reduce MSD noise.",
     )
     parser.add_argument(
         "--trajectory-msd-engine",
@@ -1710,8 +1699,18 @@ def build_parser():
     )
     parser.add_argument("--trajectory-start-ps", type=float, default=None)
     parser.add_argument("--trajectory-end-ps", type=float, default=None)
-    parser.add_argument("--fit-start-ps", type=float, default=None)
-    parser.add_argument("--fit-end-ps", type=float, default=None)
+    parser.add_argument(
+        "--fit-start-ps",
+        type=float,
+        default=None,
+        help="Optional physical-lag subset start used only for MSD-table input.",
+    )
+    parser.add_argument(
+        "--fit-end-ps",
+        type=float,
+        default=None,
+        help="Optional physical-lag subset end used only for MSD-table input.",
+    )
     parser.add_argument(
         "--msd-smooth-window-points",
         type=int,
@@ -1755,7 +1754,7 @@ def build_parser():
         "--msd-time-unit",
         choices=["auto", "ps", "fs", "ns", "step"],
         default="auto",
-        help="Unit of the MSD table time column. step uses --msd-step-ps or LAMMPS timestep inference.",
+        help="Unit of physical lag/elapsed time. step multiplies values by --msd-step-ps.",
     )
     parser.add_argument("--msd-step-ps", type=float, default=None, help="ps per step for MSD tables.")
     parser.add_argument(

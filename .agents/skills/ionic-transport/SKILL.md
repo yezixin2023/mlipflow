@@ -23,7 +23,7 @@ ASE/VASP/reliably described LAMMPS trajectory
 -> ordered pymatgen Structure frames
 -> DiffusionAnalyzer values, including analyzer.dt / 1000 as time_ps
 
-MSD table -> get_diffusivity_from_msd
+MSD table with physical lag/elapsed time -> get_diffusivity_from_msd
 MSD + real Structure -> D * get_conversion_factor conductivity
 multi-temperature D -> fit_arrhenius(..., mode="linear")
 ```
@@ -32,6 +32,8 @@ Do not ask MLIPFlow to refit `analyzer.msd`, reconstruct the analyzer time axis,
 
 Do not expand this Skill to Green-Kubo, custom anisotropic analysis, piecewise Arrhenius models, bootstrap uncertainty, or replica aggregation. `piecewise` must be `never`. A trajectory Haven ratio is an analyzer result, not an Agent-selected correction.
 
+Do not request formal `charge`, `dimensions`, `haven_ratio`, `drift_correction`, or `msd_mode` inputs. They do not control the pymatgen formal calculation and are not part of the formal contract. Optional `fit_start_ps`/`fit_end_ps` bounds apply only to an MSD table; trajectory analysis uses `DiffusionAnalyzer` over the selected trajectory frames.
+
 ## Choose and declare the input contract
 
 The packaged runner currently handles:
@@ -39,7 +41,7 @@ The packaged runner currently handles:
 - ASE directories containing `production.traj`; frame spacing must come from a valid `metadata.json`, a valid `production_log.csv`, or explicit `ase_frame_step_fs`.
 - LAMMPS directories containing an unwrapped `traj.lammpstrj`. Formal conversion requires periodic cells, stable frame/atom order, all species, uniform physical timestep, and frame spacing fine enough to preserve motion through ordered pymatgen Structures. Missing information is an error, never a NumPy fallback.
 - VASP AIMD `vasprun.xml`; temperature must come from explicit override or VASP temperature metadata, and timestep must come from `POTIM` or explicit `vasp_step_fs`.
-- Precomputed text/CSV/TSV/XVG MSD. Require explicit `msd_time_unit` and `msd_unit` whenever the selected column names do not encode them. For step-valued time require explicit `msd_step_ps` unless a companion LAMMPS input/log declares it.
+- Precomputed text/CSV/TSV/XVG MSD. Time values are physical lag/elapsed time and are never rebased to the first row. Require explicit `msd_time_unit` and `msd_unit` whenever the selected column names do not encode them. For step-valued time require explicit `msd_step_ps` unless a companion LAMMPS input/log declares it. With `smoothed=max`, zero lag is excluded from the pymatgen call and marked false in `used_for_analysis`.
 
 ASE is mandatory when parsing `production.traj` or running `md-smoke-and-analyze`; a missing import must fail that selected path. Do not make pure MSD or non-ASE analysis import ASE when its actual source contract does not need it.
 
@@ -61,7 +63,7 @@ Never report `N=7` as the physical default, ground truth, or a requirement for o
 
 Inspect the plugin and project first with read-only commands. For execution:
 
-1. Inspect the dry-run's source type, important inputs, temperature/timestep source, carrier count, charge, volume, fit window, MSD method, expected outputs, and overwrite risk.
+1. Inspect the dry-run's source type, important inputs, temperature/timestep source, optional MSD-only subset, pymatgen smoothing settings, expected outputs, and overwrite risk.
 2. Let MLIPFlow invoke the pinned checker and collect phase. Do not bypass the state store by launching the packaged runner manually for a claimed workflow result.
 3. Treat success only as final plugin `OK`, not merely subprocess return code zero.
 

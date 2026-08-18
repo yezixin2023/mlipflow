@@ -24,7 +24,6 @@ dependencies = ["PyYAML>=6.0"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
@@ -43,7 +42,22 @@ Changelog = "https://github.com/yezixin2023/mlipflow/blob/main/CHANGELOG.md"
 dev = ["pytest>=7", "jsonschema>=4", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22"]
 science = ["numpy>=1.23", "ase>=3.22", "icet>=2.0", "pandas>=1.5", "plotly>=5"]
 dft = ["pymatgen>=2024.5"]
-transport = ["pymatgen-analysis-diffusion>=2025.11.15"]
+transport = [
+  "pymatgen-analysis-diffusion>=2025.11.15",
+  "numpy>=1.25",
+  "pandas>=1.5",
+  "plotly>=5",
+  "ase>=3.22",
+]
+local = [
+  "numpy>=1.25",
+  "ase>=3.22",
+  "icet>=2.0",
+  "pandas>=1.5",
+  "plotly>=5",
+  "pymatgen>=2024.5",
+  "pymatgen-analysis-diffusion>=2025.11.15",
+]
 
 [project.scripts]
 mlipflow = "mlipflow.cli:main"

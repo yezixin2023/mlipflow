@@ -240,17 +240,12 @@ class IonicTransportAdapterTests(unittest.TestCase):
                 "output_subdir": "ionic-transport-postprocess",
                 "source": "msd",
                 "specie": "Li",
-                "charge": 1.0,
-                "dimensions": 3,
-                "haven_ratio": 1.0,
-                "fit_start_ps": 10.0,
-                "fit_end_ps": 100.0,
+                "fit_start_ps": None,
+                "fit_end_ps": None,
                 "trajectory_start_ps": None,
                 "trajectory_end_ps": None,
-                "drift_correction": "framework",
-                "msd_mode": "multi-origin",
                 "trajectory_msd_engine": "diffusion-analyzer",
-                "diffusion_analyzer_smoothed": "none",
+                "diffusion_analyzer_smoothed": "max",
                 "diffusion_analyzer_min_obs": 30,
                 "diffusion_analyzer_avg_nsteps": 1000,
                 "diffusion_analyzer_step_skip": 1,
@@ -291,37 +286,59 @@ class IonicTransportAdapterTests(unittest.TestCase):
             ROOT / "plugins" / "ionic-transport" / "ionic_conductivity.py",
             Path(plan["argv"][1]),
         )
-        self.assertIn("--fit-start-ps", plan["argv"])
-        self.assertIn("--fit-end-ps", plan["argv"])
+        self.assertNotIn("--fit-start-ps", plan["argv"])
+        self.assertNotIn("--fit-end-ps", plan["argv"])
+        self.assertNotIn("--charge", plan["argv"])
+        self.assertNotIn("--drift-correction", plan["argv"])
+        self.assertNotIn("--msd-mode", plan["argv"])
         self.assertNotIn("--n-mobile-ions", plan["argv"])
-        self.assertEqual(3, plan["assumptions"]["dimensions"])
         self.assertEqual(
-            "reported-directly-by-DiffusionAnalyzer-for-trajectories",
-            plan["assumptions"]["haven_ratio"],
+            "reported-directly-by-DiffusionAnalyzer",
+            plan["assumptions"]["trajectory_haven_ratio"],
         )
         self.assertIsNone(plan["assumptions"]["seed"])
 
-    def test_unsupported_dimension_haven_and_seed_block(self) -> None:
-        for key, value, code in (
-            ("dimensions", 2, "assumption.dimensions_unsupported"),
-            ("haven_ratio", 0.7, "assumption.haven_unsupported"),
-            ("seed", 1, "parameter.seed_unsupported"),
+    def test_removed_formal_scientific_knobs_are_rejected(self) -> None:
+        for key, value in (
+            ("charge", 1.0),
+            ("dimensions", 3),
+            ("haven_ratio", 1.0),
+            ("drift_correction", "framework"),
+            ("msd_mode", "multi-origin"),
         ):
             with self.subTest(parameter=key):
                 context = self.context()
                 context["parameters"][key] = value
                 plan = self.adapter.plan(context)
                 self.assertEqual("BLOCKED", plan["status"])
-                self.assertIn(code, diagnostic_codes(plan))
+                self.assertIn("parameter.unknown", diagnostic_codes(plan))
+
+        context = self.context()
+        context["parameters"]["seed"] = 1
+        plan = self.adapter.plan(context)
+        self.assertEqual("BLOCKED", plan["status"])
+        self.assertIn("parameter.seed_unsupported", diagnostic_codes(plan))
 
     def test_invalid_fit_window_and_implicit_msd_units_block(self) -> None:
         context = self.context()
+        context["parameters"]["fit_start_ps"] = 10.0
         context["parameters"]["fit_end_ps"] = 5.0
         context["parameters"]["msd_time_unit"] = "auto"
         plan = self.adapter.plan(context)
         self.assertEqual("BLOCKED", plan["status"])
         self.assertIn("parameter.fit_start_ps_fit_end_ps", diagnostic_codes(plan))
         self.assertIn("unit.msd_time_explicit", diagnostic_codes(plan))
+
+    def test_trajectory_rejects_msd_only_subset_parameters(self) -> None:
+        context = self.context()
+        context["parameters"]["source"] = "trajectory"
+        context["parameters"]["fit_start_ps"] = 1.0
+        context["parameters"]["fit_end_ps"] = 2.0
+
+        plan = self.adapter.plan(context)
+
+        self.assertEqual("BLOCKED", plan["status"])
+        self.assertIn("parameter.msd_fit_window_trajectory", diagnostic_codes(plan))
 
     def test_unknown_parameter_is_not_silently_ignored(self) -> None:
         context = self.context()
@@ -394,21 +411,31 @@ class IonicTransportAdapterTests(unittest.TestCase):
         self.assertEqual("OK", checked["status"])
         self.assertEqual("OK", collected["status"])
         self.assertEqual(1, collected["metrics"]["run_count"])
-        self.assertEqual(3, collected["metrics"]["assumptions"]["dimensions"])
-        self.assertEqual(1.0, collected["metrics"]["assumptions"]["haven_ratio"])
+        self.assertEqual(
+            "pymatgen-analysis-diffusion",
+            collected["metrics"]["assumptions"]["formal_scientific_implementation"],
+        )
         result_path = next(path for path in files if path.name == "diffusion_results_by_temperature.csv")
         with result_path.open(encoding="utf-8", newline="") as stream:
             row = next(csv.DictReader(stream))
+        import numpy as np
         from pymatgen.analysis.diffusion.analyzer import get_diffusivity_from_msd
 
         expected_d, _ = get_diffusivity_from_msd(
-            [8.0, 14.0, 20.0, 26.0, 32.0, 38.0, 44.0, 50.0, 56.0, 62.0],
-            [value * 1000.0 for value in range(10, 101, 10)],
-            smoothed=False,
+            np.asarray([8.0, 14.0, 20.0, 26.0, 32.0, 38.0, 44.0, 50.0, 56.0, 62.0]),
+            np.asarray([value * 1000.0 for value in range(10, 101, 10)]),
+            smoothed="max",
         )
         self.assertEqual(expected_d, float(row["diffusivity_cm2_s"]))
+        self.assertNotIn("charge", row)
+        self.assertNotIn("dimensions", row)
         self.assertEqual("unavailable", row["conductivity_method"])
         self.assertEqual("", row["conductivity_NE_mS_cm"])
+        curve_path = next(path for path in files if path.parent.name == "msd_curves")
+        with curve_path.open(encoding="utf-8", newline="") as stream:
+            curve = list(csv.DictReader(stream))
+        self.assertEqual("False", curve[0]["used_for_analysis"])
+        self.assertTrue(all(item["used_for_analysis"] == "True" for item in curve[1:]))
         manifest_path = next(path for path in files if path.name == "analysis_manifest.json")
         runtime = json.loads(manifest_path.read_text(encoding="utf-8"))["runtime_provenance"]
         self.assertEqual(sys.executable, runtime["python_executable"])
