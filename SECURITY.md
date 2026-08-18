@@ -1,42 +1,68 @@
-# 安全策略
+# Security Policy
 
-MLIPFlow 0.1.x 是 alpha 版本。安全修复优先作用于最新的 `main` 和最新发布版；目前不承诺旧版本的长期支持或响应时限。
+MLIPFlow coordinates local programs, scientific adapters, SSH connections, schedulers, model files, and research artifacts. Security reports are therefore especially useful when they identify a way to cross an execution, approval, path, credential, or trust boundary.
 
-## 私下报告漏洞
+## Supported versions
 
-请使用代码托管平台的 **Security / Advisories / Report a vulnerability** 私下提交报告。若该入口尚未启用，请通过项目发布页列出的维护者私密联系方式报告。不要在公开 issue 中披露可利用细节、凭据或集群信息。
+MLIPFlow is currently an alpha project. Security fixes are targeted at the latest package version and the current `main` branch. Older versions do not currently have a long-term support commitment.
 
-报告请包含：受影响版本/提交、最小复现、预期与实际行为、影响范围、是否涉及本地/SLURM/SSH+SLURM，以及可行的缓解建议。请使用虚构主机名和已撤销的测试凭据。
+## Reporting a vulnerability
 
-## 重点风险
+Please report exploitable vulnerabilities privately.
 
-以下问题属于安全范围：
+If GitHub private vulnerability reporting is enabled for this repository, use **Security → Advisories → Report a vulnerability**. If that option is not available, contact the repository maintainers through a private channel available to collaborators or project users. Do not publish exploitable details, credentials, private cluster information, or proof-of-concept payloads in a public issue.
 
-- 只读命令产生写入、外部进程、网络或调度器副作用；
-- execution approval 可被绕过、重放到另一计划或审批后被替换；
-- argv、路径、manifest 或 SSH profile 导致命令注入/路径逃逸；
-- 日志、manifest 或 provenance 泄露令牌、密码、私钥或敏感集群路径；
-- 插件发现或读取配置时执行不受信任代码；
-- artifact 处理覆盖项目外文件或加载不安全的模型序列化格式。
+A useful report includes:
 
-单纯的科学精度争议通常不是安全漏洞，但可能严重影响研究结论；请按普通 bug 报告并附可复现证据。若科学错误可触发任意代码执行、数据破坏或凭据泄露，则按安全漏洞私下报告。
+- affected version or commit;
+- a minimal reproduction;
+- expected and observed behavior;
+- impact and required privileges;
+- whether the issue affects local, Slurm, or SSH + Slurm execution;
+- any known mitigation or workaround.
 
-## 使用者责任
+Use fictional hostnames and revoked/test credentials in reproductions.
 
-- 只运行受信任的项目、插件、脚本和模型；模型文件可能包含可执行序列化载荷。
-- 把 Python adapter 当作构建脚本而不是数据；`run --dry-run` 会执行其模块顶层及计划代码。当前版本没有第三方插件 sandbox。
-- 把 SSH 认证留在系统/站点配置中，不写入 `project.yaml`。
-- 批准前检查计划中的命令、后端、远端目录、资源、实际输入和 staged scripts。
-- 使用最小权限的集群账户与目录权限，并保留调度器和 MLIPFlow 审计记录。
-- 公开日志或 manifest 前先检查敏感信息。
+## Security-relevant issues
 
-## 当前强制边界
+Examples include:
 
-- local 外部程序使用 argv 与 `shell=False`，只继承白名单环境变量；凭据型参数、Bearer 值和带用户口令 URL 会被拒绝。
-- Adapter 产物和 replay/completion 文件限制在项目/attempt 内，拒绝绝对逃逸、`..` 与符号链接。
-- Python adapter 是受信任的构建/执行代码；其输出在 schema 边界解析一次。核心仍独立保护路径、凭据、子进程、远端 staging 和外部数据。
-- 每个 attempt 保存执行时的 node/plan snapshot；终态 attempt 不随之后的项目配置修改而改变，当前项目的无关修改也不冻结整个状态库。
-- SLURM completion 必须绑定 project/node/attempt 与成功退出状态；staging/fetch 使用内容校验保护 SSH transport，之后仍必须通过固定的科学 checker。
-- 外部或 metadata-only benchmark evidence 默认不能参与模型路由。
+- a documented read-only command performing writes, launching a process, accessing the network, or mutating scheduler state;
+- bypassing or replaying an execution approval against a different plan;
+- command, argument, path, manifest, SSH-profile, or template injection;
+- path traversal or artifact handling that can overwrite files outside the intended project/attempt workspace;
+- leakage of passwords, tokens, private keys, credentials, or sensitive cluster data into logs or manifests;
+- unsafe plugin discovery or configuration loading that executes code unexpectedly;
+- scheduler staging/fetch behavior that accepts the wrong project, node, attempt, or content identity;
+- unsafe loading of model or serialized data that creates an unexpected code-execution path in MLIPFlow-controlled behavior.
 
-这些边界不能替代科学软件本身的安全审计。用户提供的外部 wrapper、模型反序列化和站点 SLURM 脚本仍须按可信代码审查。
+A disagreement about numerical accuracy is normally a scientific bug rather than a security vulnerability. If a scientific-data path also enables code execution, destructive writes, credential exposure, or another security impact, report it privately as a security issue.
+
+## Trust model
+
+MLIPFlow separates workflow control from scientific execution, but it does not sandbox arbitrary third-party Python adapters or scientific software.
+
+Treat the following as trusted executable inputs:
+
+- Python adapters and plugin code;
+- site-owned scheduler templates;
+- external wrappers and scientific executables;
+- model formats that may deserialize executable objects;
+- scripts referenced by your research workflow.
+
+Review third-party plugins before running `run --dry-run`: planning a selected adapter imports and executes its Python planning code even though the dry-run is intended to avoid scientific execution or scheduler submission.
+
+## Operational guidance
+
+- Keep SSH authentication in your normal SSH/agent configuration and user-local site configuration; do not place secrets in `project.yaml`.
+- Review dry-run plans before approving expensive work, including commands, inputs, backend, resources, remote paths, and staged files.
+- Use least-privilege cluster accounts and filesystem permissions.
+- Keep site-owned templates and scientific environments under normal change control.
+- Review logs and manifests before publishing them.
+- Only run projects, plugins, models, wrappers, and serialized artifacts from sources you trust.
+
+## Current safeguards
+
+The current codebase includes controls such as explicit argv execution for local external programs, bounded project/attempt artifact paths, content identities for staged/fetched artifacts, plan-bound approvals for approval-gated execution, immutable attempt lineage, and scientific completion checks after scheduler completion.
+
+These controls reduce orchestration risk; they do not constitute a security audit of VASP, LAMMPS, LASP, MLIP frameworks, model files, site scripts, SSH, Slurm, or other external components used through MLIPFlow.

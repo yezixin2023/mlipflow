@@ -5,19 +5,39 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mlipflow"
 version = "0.1.0"
-description = "Deterministic, agent-supervised workflows for machine-learned interatomic potentials"
+description = "Deterministic, auditable workflows for machine-learned interatomic-potential research"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE"]
 authors = [{name = "MLIPFlow contributors"}]
+keywords = [
+  "machine-learned interatomic potentials",
+  "materials science",
+  "molecular dynamics",
+  "workflow",
+  "HPC",
+  "Slurm",
+  "DFT",
+]
 dependencies = ["PyYAML>=6.0"]
 classifiers = [
   "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
   "Topic :: Scientific/Engineering :: Chemistry",
   "Topic :: Scientific/Engineering :: Physics",
 ]
+
+[project.urls]
+Homepage = "https://github.com/yezixin2023/mlipflow"
+Repository = "https://github.com/yezixin2023/mlipflow"
+Documentation = "https://github.com/yezixin2023/mlipflow#readme"
+Issues = "https://github.com/yezixin2023/mlipflow/issues"
+Changelog = "https://github.com/yezixin2023/mlipflow/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "jsonschema>=4", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22"]
