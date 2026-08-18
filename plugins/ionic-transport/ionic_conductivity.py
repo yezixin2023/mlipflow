@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
+import platform
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -28,20 +30,10 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-try:
-    import mlipflow.science.transport as _transport_core
-except ModuleNotFoundError:  # Source-checkout execution before editable installation.
-    _source_root = Path(__file__).resolve().parents[2] / "src"
-    if not (_source_root / "mlipflow" / "science" / "transport.py").is_file():
-        raise
-    sys.path.insert(0, str(_source_root))
-    import mlipflow.science.transport as _transport_core
 
-from mlipflow.science.transport import (
-    arrhenius_from_diffusivities,
-    linear_diffusion_from_msd,
-    linear_fit,
-    nernst_einstein_conductivity,
+FORMAL_DEPENDENCY_ERROR = (
+    "Formal ionic transport requires pymatgen-analysis-diffusion. "
+    "Install with: pip install 'mlipflow[transport]'"
 )
 
 
@@ -74,16 +66,55 @@ class RunData:
     volume_A3: float | None
     drift_correction: str
     notes: str = ""
+    analyzer: object | None = None
+    structure: object | None = None
+    structure_path: Path | None = None
+    time_step_fs: float | None = None
+    step_skip: int = 1
+    uses_ase: bool = False
 
 
-@dataclass
-class LinearFit:
-    slope: float
-    intercept: float
-    r2: float
-    sse: float
-    slope_stderr: float | None
-    n_points: int
+def require_formal_diffusion_api():
+    """Import formal scientific APIs only when formal transport is selected."""
+
+    try:
+        from pymatgen.analysis.diffusion.analyzer import (
+            DiffusionAnalyzer,
+            fit_arrhenius,
+            get_conversion_factor,
+            get_diffusivity_from_msd,
+            get_extrapolated_diffusivity,
+        )
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise ImportError(FORMAL_DEPENDENCY_ERROR) from exc
+    return {
+        "DiffusionAnalyzer": DiffusionAnalyzer,
+        "fit_arrhenius": fit_arrhenius,
+        "get_conversion_factor": get_conversion_factor,
+        "get_diffusivity_from_msd": get_diffusivity_from_msd,
+        "get_extrapolated_diffusivity": get_extrapolated_diffusivity,
+    }
+
+
+def installed_version(distribution: str) -> str | None:
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def runtime_provenance(*, uses_ase: bool) -> dict:
+    return {
+        "python_executable": sys.executable,
+        "python_version": platform.python_version(),
+        "mlipflow_version": installed_version("mlipflow"),
+        "pymatgen_version": installed_version("pymatgen"),
+        "pymatgen_analysis_diffusion_version": installed_version(
+            "pymatgen-analysis-diffusion"
+        ),
+        "numpy_version": installed_version("numpy"),
+        "ase_version": installed_version("ase") if uses_ase else None,
+    }
 
 
 def finite_or_none(value):
@@ -280,15 +311,11 @@ def diffusion_analyzer_smoothed_arg(args):
     return args.diffusion_analyzer_smoothed
 
 
-def diffusion_analyzer_from_structures(structures, specie: str, temperature_K: float, time_step_fs: float, args):
+def diffusion_analyzer_from_structures(
+    structures, specie: str, temperature_K: float, time_step_fs: float, args
+):
     """Run pymatgen DiffusionAnalyzer and return analyzer plus its MSD/time arrays."""
-    try:
-        from pymatgen.analysis.diffusion.analyzer import DiffusionAnalyzer
-    except Exception as exc:
-        raise ImportError(
-            "pymatgen-analysis-diffusion is required for DiffusionAnalyzer. "
-            "Install it in the same environment as pymatgen, e.g. `pip install pymatgen-analysis-diffusion`."
-        ) from exc
+    DiffusionAnalyzer = require_formal_diffusion_api()["DiffusionAnalyzer"]
 
     step_skip = int(args.diffusion_analyzer_step_skip)
     if step_skip < 1:
@@ -312,15 +339,17 @@ def diffusion_analyzer_from_structures(structures, specie: str, temperature_K: f
     if msd.ndim != 1 or msd.size < 2:
         raise ValueError("DiffusionAnalyzer returned an invalid or too-short MSD array")
 
-    time_ps = np.arange(msd.size, dtype=float) * float(time_step_fs) * step_skip / 1000.0
-    return analyzer, time_ps, msd
+    time_ps = np.asarray(analyzer.dt, dtype=float) / 1000.0
+    if time_ps.shape != msd.shape or not np.all(np.isfinite(time_ps)):
+        raise ValueError("DiffusionAnalyzer returned an invalid dt array")
+    return analyzer, time_ps, msd, structures
 
 
 def pymatgen_structures_from_frames(symbols, basis_frames: np.ndarray, frac_frames: np.ndarray):
     try:
         from pymatgen.core import Lattice, Structure
-    except Exception as exc:
-        raise ImportError("pymatgen is required to build Structure objects for DiffusionAnalyzer") from exc
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise ImportError(FORMAL_DEPENDENCY_ERROR) from exc
 
     return [
         Structure(
@@ -334,75 +363,8 @@ def pymatgen_structures_from_frames(symbols, basis_frames: np.ndarray, frac_fram
     ]
 
 
-def compute_msd_series(
-    positions: np.ndarray,
-    time_ps: np.ndarray,
-    mobile_mask: np.ndarray,
-    framework_mask: np.ndarray,
-    drift_correction: str,
-    msd_mode: str,
-) -> tuple[np.ndarray, np.ndarray, str]:
-    mobile_positions = positions[:, mobile_mask, :].copy()
-    used_correction = drift_correction
-
-    if drift_correction == "framework":
-        if framework_mask.any():
-            frame_disp = positions[:, framework_mask, :] - positions[0:1, framework_mask, :]
-            drift = frame_disp.mean(axis=1)
-            mobile_positions = mobile_positions - drift[:, None, :]
-        else:
-            used_correction = "none"
-    elif drift_correction == "mobile":
-        mobile_disp_from_first = mobile_positions - mobile_positions[0:1, :, :]
-        drift = mobile_disp_from_first.mean(axis=1)
-        mobile_positions = mobile_positions - drift[:, None, :]
-    elif drift_correction != "none":
-        raise ValueError("drift correction must be one of: none, framework, mobile")
-
-    if msd_mode == "single-origin":
-        mobile_disp = mobile_positions - mobile_positions[0:1, :, :]
-        msd = np.mean(np.sum(mobile_disp**2, axis=2), axis=1)
-        return time_ps, msd, used_correction
-
-    if msd_mode != "multi-origin":
-        raise ValueError("msd_mode must be one of: multi-origin, single-origin")
-
-    n_frames, n_mobile, _ = mobile_positions.shape
-    lag_times = time_ps - time_ps[0]
-    msd = multi_origin_msd_fft(mobile_positions.reshape(n_frames, -1), n_mobile)
-
-    return lag_times, msd, used_correction
-
-
-def multi_origin_msd_fft(flat_positions: np.ndarray, n_mobile: int) -> np.ndarray:
-    """Time-averaged MSD using FFT autocorrelation.
-
-    flat_positions has shape (n_frames, n_mobile * 3), with unwrapped Cartesian
-    coordinates after any selected drift correction.
-    """
-    positions = np.asarray(flat_positions, dtype=float)
-    n_frames = positions.shape[0]
-    if n_frames < 2:
-        raise ValueError("Need at least two frames for MSD.")
-
-    squared = np.sum(positions * positions, axis=1)
-    n_fft = 1 << (2 * n_frames - 1).bit_length()
-    fft_pos = np.fft.rfft(positions, n=n_fft, axis=0)
-    autocorr = np.fft.irfft(fft_pos * np.conjugate(fft_pos), n=n_fft, axis=0)[:n_frames]
-    autocorr_sum = np.sum(autocorr, axis=1)
-
-    prefix = np.concatenate(([0.0], np.cumsum(squared)))
-    lags = np.arange(n_frames)
-    counts = n_frames - lags
-    sum_first = prefix[n_frames - lags] - prefix[0]
-    sum_second = prefix[n_frames] - prefix[lags]
-    numerator = sum_first + sum_second - 2.0 * autocorr_sum
-    msd = numerator / (counts * n_mobile)
-    msd[0] = 0.0
-    return np.maximum(msd, 0.0)
-
-
 def load_ase_trajectory(run_dir: Path, dataset: str, args) -> RunData:
+    require_formal_diffusion_api()
     try:
         from ase.io import read
     except ImportError as exc:
@@ -416,6 +378,10 @@ def load_ase_trajectory(run_dir: Path, dataset: str, args) -> RunData:
         frames = [frames]
     if len(frames) < 2:
         raise ValueError(f"Need at least two frames in {traj_path}")
+    if any(not bool(np.all(atoms.get_pbc())) for atoms in frames):
+        raise ValueError("ASE formal transport requires a periodic cell in every frame")
+    if any(float(atoms.get_volume()) <= 0.0 for atoms in frames):
+        raise ValueError("ASE formal transport requires a finite non-zero cell in every frame")
 
     dt_fs = infer_ase_dt_fs(run_dir, args.ase_frame_step_fs)
     raw_times_ps = np.arange(len(frames), dtype=float) * dt_fs / 1000.0
@@ -424,86 +390,45 @@ def load_ase_trajectory(run_dir: Path, dataset: str, args) -> RunData:
         raise ValueError(f"Trajectory segment leaves fewer than two frames: {traj_path}")
 
     frames = [frames[i] for i in idx]
-    time_ps = raw_times_ps[idx] - raw_times_ps[idx[0]]
-
     symbols = np.asarray(frames[0].get_chemical_symbols())
     mobile_mask = symbols == args.specie
-    framework_mask = ~mobile_mask
     if not mobile_mask.any():
         raise ValueError(f"No {args.specie} atoms found in {traj_path}")
 
     temperature_K = require_temperature(run_dir, "ASE trajectory", args)
-
-    if args.trajectory_msd_engine in {"diffusion-analyzer", "auto"}:
-        try:
-            basis_frames = np.asarray([np.asarray(atoms.get_cell().array, dtype=float) for atoms in frames], dtype=float)
-            frac_frames = np.asarray([np.asarray(atoms.get_scaled_positions(wrap=True), dtype=float) for atoms in frames], dtype=float)
-            structures = pymatgen_structures_from_frames(symbols, basis_frames, frac_frames)
-            analyzer, da_time_ps, da_msd = diffusion_analyzer_from_structures(
-                structures=structures,
-                specie=args.specie,
-                temperature_K=temperature_K,
-                time_step_fs=dt_fs,
-                args=args,
-            )
-            return RunData(
-                dataset=dataset,
-                run_dir=run_dir,
-                temperature_K=temperature_K,
-                source_kind="ase_diffusion_analyzer",
-                source_path=traj_path,
-                time_ps=da_time_ps,
-                msd_A2=da_msd,
-                n_mobile=int(mobile_mask.sum()),
-                volume_A3=float(frames[0].get_volume()),
-                drift_correction="DiffusionAnalyzer",
-                notes=(
-                    f"DiffusionAnalyzer.from_structures; dt_fs_between_frames={dt_fs:g}; "
-                    f"da_smoothed={args.diffusion_analyzer_smoothed}; "
-                    f"da_step_skip={args.diffusion_analyzer_step_skip}; "
-                    f"da_diffusivity_cm2_s={getattr(analyzer, 'diffusivity', None)}"
-                ),
-            )
-        except Exception:
-            if args.trajectory_msd_engine == "diffusion-analyzer":
-                raise
-
-    cell0 = np.asarray(frames[0].get_cell().array, dtype=float)
-    scaled0 = np.asarray(frames[0].get_scaled_positions(wrap=False), dtype=float)
-    acc_scaled = scaled0.copy()
-    prev_scaled = scaled0.copy()
-    unwrapped = [acc_scaled @ cell0]
-
-    for atoms in frames[1:]:
-        scaled = np.asarray(atoms.get_scaled_positions(wrap=False), dtype=float)
-        delta = scaled - prev_scaled
-        delta -= np.round(delta)
-        acc_scaled = acc_scaled + delta
-        unwrapped.append(acc_scaled @ cell0)
-        prev_scaled = scaled
-
-    positions = np.asarray(unwrapped, dtype=float)
-    time_ps, msd, used_correction = compute_msd_series(
-        positions=positions,
-        time_ps=time_ps,
-        mobile_mask=mobile_mask,
-        framework_mask=framework_mask,
-        drift_correction=args.drift_correction,
-        msd_mode=args.msd_mode,
+    basis_frames = np.asarray(
+        [np.asarray(atoms.get_cell().array, dtype=float) for atoms in frames], dtype=float
+    )
+    frac_frames = np.asarray(
+        [np.asarray(atoms.get_scaled_positions(wrap=True), dtype=float) for atoms in frames],
+        dtype=float,
+    )
+    structures = pymatgen_structures_from_frames(symbols, basis_frames, frac_frames)
+    analyzer, time_ps, msd, used_structures = diffusion_analyzer_from_structures(
+        structures=structures,
+        specie=args.specie,
+        temperature_K=temperature_K,
+        time_step_fs=dt_fs,
+        args=args,
     )
 
     return RunData(
         dataset=dataset,
         run_dir=run_dir,
         temperature_K=temperature_K,
-        source_kind="ase_numpy_msd",
+        source_kind="ase_trajectory",
         source_path=traj_path,
         time_ps=time_ps,
-        msd_A2=msd,
+        msd_A2=np.asarray(msd, dtype=float),
         n_mobile=int(mobile_mask.sum()),
         volume_A3=float(frames[0].get_volume()),
-        drift_correction=used_correction,
-        notes=f"numpy_fallback; dt_fs_between_frames={dt_fs:g}; msd_mode={args.msd_mode}",
+        drift_correction="pymatgen-framework-drift",
+        notes="DiffusionAnalyzer.from_structures over ASE frames",
+        analyzer=analyzer,
+        structure=used_structures[0],
+        time_step_fs=dt_fs,
+        step_skip=int(args.diffusion_analyzer_step_skip),
+        uses_ase=True,
     )
 
 
@@ -681,14 +606,16 @@ def lammps_scaled_to_cartesian(scaled: np.ndarray, origin: np.ndarray, cell: np.
 
 
 def load_lammps_trajectory(run_dir: Path, dataset: str, args) -> RunData:
+    require_formal_diffusion_api()
     dump_path = run_dir / "traj.lammpstrj"
     timestep_ps = infer_lammps_timestep_ps(run_dir, args.lammps_timestep_ps)
-    frames = []
+    data_path = run_dir / args.lammps_data_name
+    _, _, type_to_element = parse_lammps_data(data_path, args.specie, args.mobile_type)
+    frac_frames = []
+    basis_frames = []
     timesteps = []
     ids_ref = None
-    mobile_mask = None
-    framework_mask = None
-
+    symbols_ref = None
     coordinate_mode = None
 
     for timestep, columns, rows, box_header, box_lines in read_lammps_dump_frames(dump_path):
@@ -724,72 +651,94 @@ def load_lammps_trajectory(run_dir: Path, dataset: str, args) -> RunData:
             atom_id = int(row[col["id"]])
             values = np.asarray([float(row[col[name]]) for name in coord_names], dtype=float)
             if this_mode == "unwrapped_scaled":
-                xyz = lammps_scaled_to_cartesian(values, origin, cell)
+                unwrapped_frac = values
             else:
-                xyz = values
+                unwrapped_frac = (values - origin) @ np.linalg.inv(cell)
             element = row[col["element"]] if "element" in col else None
             atom_type = int(row[col["type"]]) if "type" in col else None
-            parsed.append((atom_id, xyz, element, atom_type))
+            if element is None and atom_type is not None:
+                element = type_to_element.get(atom_type)
+            if element is None:
+                raise ValueError(
+                    "LAMMPS formal transport needs every atom species from the dump element "
+                    "column or reviewed Masses comments in the data file"
+                )
+            parsed.append((atom_id, unwrapped_frac, element))
         parsed.sort(key=lambda item: item[0])
 
         ids = np.asarray([item[0] for item in parsed], dtype=int)
-        positions = np.asarray([item[1] for item in parsed], dtype=float)
+        unwrapped_frac = np.asarray([item[1] for item in parsed], dtype=float)
         elements = np.asarray([item[2] for item in parsed], dtype=object)
-        atom_types = np.asarray([item[3] for item in parsed], dtype=object)
 
         if ids_ref is None:
             ids_ref = ids
-            if elements[0] is not None:
-                mobile_mask = elements == args.specie
-            elif args.mobile_type is not None:
-                mobile_mask = atom_types == args.mobile_type
-            else:
-                raise ValueError("LAMMPS dump has no element column; pass --mobile-type.")
-            framework_mask = ~mobile_mask
+            symbols_ref = elements
         elif not np.array_equal(ids, ids_ref):
             raise ValueError(f"Atom ids changed order/content in {dump_path}")
+        elif not np.array_equal(elements, symbols_ref):
+            raise ValueError(f"Atom species changed order/content in {dump_path}")
 
         timesteps.append(timestep)
-        frames.append(positions)
+        basis_frames.append(cell)
+        frac_frames.append(unwrapped_frac)
 
-    if len(frames) < 2:
+    if len(frac_frames) < 2:
         raise ValueError(f"Need at least two frames in {dump_path}")
+    assert symbols_ref is not None
+    mobile_mask = symbols_ref == args.specie
     if not np.any(mobile_mask):
         raise ValueError(f"No {args.specie} atoms found in {dump_path}")
+    timestep_deltas = np.diff(np.asarray(timesteps, dtype=float))
+    if np.any(timestep_deltas <= 0) or not np.allclose(
+        timestep_deltas, timestep_deltas[0], rtol=0.0, atol=1e-12
+    ):
+        raise ValueError("LAMMPS formal transport requires strictly ordered, uniform frame timesteps")
 
     raw_times_ps = (np.asarray(timesteps, dtype=float) - float(timesteps[0])) * timestep_ps
     idx = slice_by_time_indices(raw_times_ps, args.trajectory_start_ps, args.trajectory_end_ps)
     if idx.size < 2:
         raise ValueError(f"Trajectory segment leaves fewer than two frames: {dump_path}")
 
-    positions = np.asarray(frames, dtype=float)[idx]
-    time_ps = raw_times_ps[idx] - raw_times_ps[idx[0]]
-    time_ps, msd, used_correction = compute_msd_series(
-        positions=positions,
-        time_ps=time_ps,
-        mobile_mask=mobile_mask,
-        framework_mask=framework_mask,
-        drift_correction=args.drift_correction,
-        msd_mode=args.msd_mode,
+    selected_unwrapped = np.asarray(frac_frames, dtype=float)[idx]
+    if np.any(np.abs(np.diff(selected_unwrapped, axis=0)) >= 0.5):
+        raise ValueError(
+            "LAMMPS frame spacing is too coarse to preserve unwrapped motion through ordered "
+            "pymatgen Structures; write frames frequently enough that fractional displacement "
+            "between adjacent frames is below half a cell"
+        )
+    selected_basis = np.asarray(basis_frames, dtype=float)[idx]
+    structures = pymatgen_structures_from_frames(
+        symbols_ref, selected_basis, np.mod(selected_unwrapped, 1.0)
     )
-
-    data_path = run_dir / args.lammps_data_name
-    n_mobile, volume_A3, _ = parse_lammps_data(data_path, args.specie, args.mobile_type)
-    if n_mobile is None:
-        n_mobile = int(np.sum(mobile_mask))
+    frame_step_fs = float(timestep_deltas[0]) * timestep_ps * 1000.0
+    temperature_K = require_temperature(run_dir, "LAMMPS trajectory", args)
+    analyzer, time_ps, msd, used_structures = diffusion_analyzer_from_structures(
+        structures=structures,
+        specie=args.specie,
+        temperature_K=temperature_K,
+        time_step_fs=frame_step_fs,
+        args=args,
+    )
 
     return RunData(
         dataset=dataset,
         run_dir=run_dir,
-        temperature_K=require_temperature(run_dir, "LAMMPS trajectory", args),
+        temperature_K=temperature_K,
         source_kind="lammps_trajectory",
         source_path=dump_path,
         time_ps=time_ps,
-        msd_A2=msd,
-        n_mobile=n_mobile,
-        volume_A3=volume_A3,
-        drift_correction=used_correction,
-        notes=f"lammps_timestep_ps={timestep_ps:g}; coordinate_mode={coordinate_mode}; msd_mode={args.msd_mode}",
+        msd_A2=np.asarray(msd, dtype=float),
+        n_mobile=int(np.sum(mobile_mask)),
+        volume_A3=float(used_structures[0].volume),
+        drift_correction="pymatgen-framework-drift",
+        notes=(
+            f"DiffusionAnalyzer.from_structures over LAMMPS frames; "
+            f"lammps_timestep_ps={timestep_ps:g}; coordinate_mode={coordinate_mode}"
+        ),
+        analyzer=analyzer,
+        structure=used_structures[0],
+        time_step_fs=frame_step_fs,
+        step_skip=int(args.diffusion_analyzer_step_skip),
     )
 
 
@@ -932,6 +881,7 @@ def unwrap_fractional_trajectory(frac_frames: np.ndarray, basis_frames: np.ndarr
 
 
 def load_vasp_aimd(run_dir: Path, dataset: str, args) -> RunData:
+    require_formal_diffusion_api()
     vasprun_path = run_dir / args.vasp_file_name
     if not vasprun_path.exists():
         raise FileNotFoundError(f"Cannot find AIMD vasprun: {vasprun_path}")
@@ -952,74 +902,40 @@ def load_vasp_aimd(run_dir: Path, dataset: str, args) -> RunData:
 
     frac_frames = frac_frames[idx]
     basis_frames = basis_frames[idx]
-    time_ps = raw_times_ps[idx] - raw_times_ps[idx[0]]
-
     symbols = np.asarray(symbols)
     mobile_mask = symbols == args.specie
-    framework_mask = ~mobile_mask
     if not mobile_mask.any():
         raise ValueError(f"No {args.specie} atoms found in {vasprun_path}")
 
     volumes = np.abs(np.linalg.det(basis_frames))
-
-    if args.trajectory_msd_engine in {"diffusion-analyzer", "auto"}:
-        try:
-            structures = pymatgen_structures_from_frames(symbols, basis_frames, frac_frames)
-            analyzer, da_time_ps, da_msd = diffusion_analyzer_from_structures(
-                structures=structures,
-                specie=args.specie,
-                temperature_K=temperature_K,
-                time_step_fs=potim_fs,
-                args=args,
-            )
-            return RunData(
-                dataset=dataset,
-                run_dir=run_dir,
-                temperature_K=temperature_K,
-                source_kind="vasp_diffusion_analyzer",
-                source_path=vasprun_path,
-                time_ps=da_time_ps,
-                msd_A2=da_msd,
-                n_mobile=int(mobile_mask.sum()),
-                volume_A3=float(np.median(volumes)),
-                drift_correction="DiffusionAnalyzer",
-                notes=(
-                    f"DiffusionAnalyzer.from_structures; POTIM_fs={potim_fs:g}; "
-                    f"n_raw_frames={len(raw_times_ps)}; n_used_structures={len(structures)}; "
-                    f"da_smoothed={args.diffusion_analyzer_smoothed}; "
-                    f"da_step_skip={args.diffusion_analyzer_step_skip}; "
-                    f"da_diffusivity_cm2_s={getattr(analyzer, 'diffusivity', None)}"
-                ),
-            )
-        except Exception:
-            if args.trajectory_msd_engine == "diffusion-analyzer":
-                raise
-
-    positions = unwrap_fractional_trajectory(frac_frames, basis_frames)
-    time_ps, msd, used_correction = compute_msd_series(
-        positions=positions,
-        time_ps=time_ps,
-        mobile_mask=mobile_mask,
-        framework_mask=framework_mask,
-        drift_correction=args.drift_correction,
-        msd_mode=args.msd_mode,
+    structures = pymatgen_structures_from_frames(symbols, basis_frames, frac_frames)
+    analyzer, time_ps, msd, used_structures = diffusion_analyzer_from_structures(
+        structures=structures,
+        specie=args.specie,
+        temperature_K=temperature_K,
+        time_step_fs=potim_fs,
+        args=args,
     )
 
     return RunData(
         dataset=dataset,
         run_dir=run_dir,
         temperature_K=temperature_K,
-        source_kind="vasp_numpy_msd",
+        source_kind="vasp_trajectory",
         source_path=vasprun_path,
         time_ps=time_ps,
-        msd_A2=msd,
+        msd_A2=np.asarray(msd, dtype=float),
         n_mobile=int(mobile_mask.sum()),
         volume_A3=float(np.median(volumes)),
-        drift_correction=used_correction,
+        drift_correction="pymatgen-framework-drift",
         notes=(
-            f"numpy_fallback; POTIM_fs={potim_fs:g}; n_raw_frames={len(raw_times_ps)}; "
-            f"n_used_frames={len(time_ps)}; msd_mode={args.msd_mode}"
+            f"DiffusionAnalyzer.from_structures over VASP frames; POTIM_fs={potim_fs:g}; "
+            f"n_raw_frames={len(raw_times_ps)}"
         ),
+        analyzer=analyzer,
+        structure=used_structures[0],
+        time_step_fs=potim_fs,
+        step_skip=int(args.diffusion_analyzer_step_skip),
     )
 
 
@@ -1298,48 +1214,39 @@ def infer_msd_temperature(run_dir: Path, args) -> float:
     raise ValueError("Could not infer MSD temperature. Put file under T*/ or pass --msd-temperature-K.")
 
 
-def infer_mobile_count_and_volume(run_dir: Path, args):
-    n_mobile = args.n_mobile_ions
-    volume_A3 = args.volume_A3
-
-    if (n_mobile is None or volume_A3 is None) and (run_dir / args.lammps_data_name).exists():
-        parsed_n, parsed_volume, _ = parse_lammps_data(run_dir / args.lammps_data_name, args.specie, args.mobile_type)
-        n_mobile = n_mobile if n_mobile is not None else parsed_n
-        volume_A3 = volume_A3 if volume_A3 is not None else parsed_volume
-
-    if (n_mobile is None or volume_A3 is None) and (run_dir / "production.traj").exists():
-        try:
-            from ase.io import read
-
-            atoms = read(str(run_dir / "production.traj"), index=0)
-            symbols = np.asarray(atoms.get_chemical_symbols())
-            n_mobile = n_mobile if n_mobile is not None else int(np.sum(symbols == args.specie))
-            volume_A3 = volume_A3 if volume_A3 is not None else float(atoms.get_volume())
-        except Exception:
-            pass
-
-    if (n_mobile is None or volume_A3 is None) and (run_dir / args.vasp_file_name).exists():
-        try:
-            _, symbols, basis = parse_vasprun_static_metadata(run_dir / args.vasp_file_name)
-            if symbols is not None:
-                symbols = np.asarray(symbols)
-                n_mobile = n_mobile if n_mobile is not None else int(np.sum(symbols == args.specie))
-            if basis is not None:
-                volume_A3 = volume_A3 if volume_A3 is not None else float(abs(np.linalg.det(basis)))
-        except Exception:
-            pass
-
-    return n_mobile, volume_A3
+def load_optional_msd_structure(run_dir: Path, args):
+    raw_path = getattr(args, "msd_structure", None)
+    if raw_path is None:
+        return None, None
+    structure_path = Path(raw_path)
+    if not structure_path.is_absolute():
+        structure_path = run_dir / structure_path
+    structure_path = structure_path.resolve()
+    if not structure_path.is_file():
+        raise FileNotFoundError(f"MSD Structure does not exist: {structure_path}")
+    try:
+        from pymatgen.core import Structure
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise ImportError(FORMAL_DEPENDENCY_ERROR) from exc
+    structure = Structure.from_file(structure_path)
+    if float(structure.composition[args.specie]) <= 0:
+        raise ValueError(f"MSD Structure contains no {args.specie}")
+    return structure, structure_path
 
 
 def load_msd_file(run_dir: Path, dataset: str, args) -> RunData:
+    require_formal_diffusion_api()
     msd_path = find_msd_file(run_dir, args)
     if msd_path is None:
         raise FileNotFoundError(f"No MSD table found in {run_dir}")
 
     time_ps, msd_A2, notes = read_msd_table(msd_path, run_dir, args)
     temperature_K = infer_msd_temperature(run_dir, args)
-    n_mobile, volume_A3 = infer_mobile_count_and_volume(run_dir, args)
+    structure, structure_path = load_optional_msd_structure(run_dir, args)
+    n_mobile = (
+        None if structure is None else int(round(float(structure.composition[args.specie])))
+    )
+    volume_A3 = None if structure is None else float(structure.volume)
 
     return RunData(
         dataset=dataset,
@@ -1353,6 +1260,8 @@ def load_msd_file(run_dir: Path, dataset: str, args) -> RunData:
         volume_A3=volume_A3,
         drift_correction="as_in_msd_file",
         notes=notes,
+        structure=structure,
+        structure_path=structure_path,
     )
 
 
@@ -1383,142 +1292,101 @@ def load_run_data(dataset: str, run_dir: Path, args) -> RunData:
     raise FileNotFoundError(f"No known post-processing input in {run_dir}")
 
 
-def fit_line(x: np.ndarray, y: np.ndarray) -> LinearFit:
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
-    mask = np.isfinite(x) & np.isfinite(y)
-    x = x[mask]
-    y = y[mask]
-    if x.size < 2:
-        raise ValueError("Need at least two finite points for linear fit")
-
-    fit = linear_fit(x.tolist(), y.tolist())
-    return LinearFit(
-        slope=float(fit["slope"]),
-        intercept=float(fit["intercept"]),
-        r2=float(fit["r_squared"]),
-        sse=float(fit["residual_sum_squares"]),
-        slope_stderr=(
-            None if fit["slope_stderr"] is None else float(fit["slope_stderr"])
-        ),
-        n_points=int(fit["point_count"]),
-    )
-
-
-def conductivity_NE_mS_cm(
-    diffusivity_cm2_s: float,
-    n_mobile: int | None,
-    volume_A3: float | None,
-    temperature_K: float,
-    charge: float = 1.0,
-):
-    if n_mobile is None or volume_A3 is None or volume_A3 <= 0:
-        return None
-    if not math.isfinite(diffusivity_cm2_s) or diffusivity_cm2_s <= 0:
-        return None
-    if not math.isfinite(charge) or charge <= 0:
-        return None
-
-    return nernst_einstein_conductivity(
-        diffusivity_cm2_s * 1.0e-4,
-        temperature_K,
-        int(n_mobile),
-        charge,
-        volume_A3,
-    )["conductivity_ms_cm"]
-
-
 def density_m3(n_mobile: int | None, volume_A3: float | None):
     if n_mobile is None or volume_A3 is None or volume_A3 <= 0:
         return None
     return n_mobile / (volume_A3 * 1e-30)
 
 
-def resolve_smooth_window_points(time_ps: np.ndarray, args) -> int | None:
-    """Return an odd moving-average window length, or None when smoothing is off."""
-    window_points = args.msd_smooth_window_points
-    if args.msd_smooth_window_ps is not None:
-        diffs = np.diff(np.asarray(time_ps, dtype=float))
-        diffs = diffs[np.isfinite(diffs) & (diffs > 0)]
-        if diffs.size == 0:
-            raise ValueError("Cannot use --msd-smooth-window-ps because time spacing is not positive")
-        dt_ps = float(np.median(diffs))
-        window_points = max(1, int(round(float(args.msd_smooth_window_ps) / dt_ps)))
+def formal_result_values(run: RunData, args) -> dict:
+    """Return formal transport values exclusively from pymatgen public APIs."""
 
-    if window_points is None or window_points <= 1:
-        return None
-    window_points = int(window_points)
-    if window_points % 2 == 0:
-        window_points += 1
-    return window_points
+    api = require_formal_diffusion_api()
+    if not math.isfinite(float(run.temperature_K)) or float(run.temperature_K) <= 0.0:
+        raise ValueError("temperature must be finite and positive")
+    time_ps = np.asarray(run.time_ps, dtype=float)
+    msd_A2 = np.asarray(run.msd_A2, dtype=float)
+    if time_ps.ndim != 1 or msd_A2.shape != time_ps.shape or time_ps.size < 3:
+        raise ValueError("formal transport requires paired one-dimensional time/MSD arrays")
 
+    if run.analyzer is not None:
+        analyzer = run.analyzer
+        used = np.ones(time_ps.shape, dtype=bool)
+        diffusivity = float(analyzer.diffusivity)
+        diffusivity_std = finite_or_none(analyzer.diffusivity_std_dev)
+        conductivity = finite_or_none(analyzer.conductivity)
+        conductivity_std = finite_or_none(analyzer.conductivity_std_dev)
+        chg_diffusivity = finite_or_none(analyzer.chg_diffusivity)
+        chg_conductivity = finite_or_none(analyzer.chg_conductivity)
+        haven_ratio = finite_or_none(analyzer.haven_ratio)
+        diffusion_method = "pymatgen-diffusion-analyzer"
+        conductivity_method = "pymatgen-diffusion-analyzer"
+        conductivity_reason = None
+    else:
+        used = np.isfinite(time_ps) & np.isfinite(msd_A2)
+        if args.fit_start_ps is not None:
+            used &= time_ps >= float(args.fit_start_ps)
+        if args.fit_end_ps is not None:
+            used &= time_ps <= float(args.fit_end_ps)
+        if int(used.sum()) < int(args.min_msd_fit_points):
+            raise ValueError(
+                f"MSD analysis window leaves {int(used.sum())} points; "
+                f"need at least {args.min_msd_fit_points}"
+            )
+        dt_fs = np.asarray(time_ps[used], dtype=float) * 1000.0
+        diffusion_pair = api["get_diffusivity_from_msd"](
+            np.asarray(msd_A2[used], dtype=float),
+            dt_fs,
+            smoothed=diffusion_analyzer_smoothed_arg(args),
+        )
+        diffusivity = float(diffusion_pair[0])
+        diffusivity_std = finite_or_none(diffusion_pair[1])
+        diffusion_method = "pymatgen-get-diffusivity-from-msd"
+        chg_diffusivity = None
+        chg_conductivity = None
+        haven_ratio = None
+        conductivity_std = None
+        if run.structure is None:
+            conductivity = None
+            conductivity_method = "unavailable"
+            conductivity_reason = "MSD-only conductivity requires a real Structure"
+        else:
+            factor = float(
+                api["get_conversion_factor"](
+                    run.structure, args.specie, float(run.temperature_K)
+                )
+            )
+            conductivity = diffusivity * factor
+            conductivity_std = (
+                None if diffusivity_std is None else diffusivity_std * factor
+            )
+            conductivity_method = "pymatgen-get-conversion-factor"
+            conductivity_reason = None
 
-def smooth_msd_series(msd_A2: np.ndarray, window_points: int | None) -> np.ndarray:
-    """Centered moving-average smoothing with edge padding."""
-    msd = np.asarray(msd_A2, dtype=float)
-    if window_points is None or window_points <= 1:
-        return msd.copy()
-    if window_points > msd.size:
-        window_points = msd.size if msd.size % 2 == 1 else msd.size - 1
-    if window_points <= 1:
-        return msd.copy()
-    pad = window_points // 2
-    padded = np.pad(msd, pad_width=pad, mode="edge")
-    kernel = np.ones(window_points, dtype=float) / float(window_points)
-    smoothed = np.convolve(padded, kernel, mode="valid")
-    smoothed[0] = msd[0]
-    return smoothed
+    if not math.isfinite(diffusivity) or diffusivity <= 0.0:
+        raise ValueError("pymatgen returned a non-positive or non-finite diffusivity")
+    return {
+        "time_ps": time_ps,
+        "msd_A2": msd_A2,
+        "used": used,
+        "diffusivity_cm2_s": diffusivity,
+        "diffusivity_std_dev_cm2_s": diffusivity_std,
+        "conductivity_mS_cm": conductivity,
+        "conductivity_std_dev_mS_cm": conductivity_std,
+        "chg_diffusivity_cm2_s": chg_diffusivity,
+        "chg_conductivity_mS_cm": chg_conductivity,
+        "haven_ratio": haven_ratio,
+        "diffusion_method": diffusion_method,
+        "conductivity_method": conductivity_method,
+        "conductivity_unavailable_reason": conductivity_reason,
+    }
 
 
 def analyze_run(run: RunData, args, output_dir: Path):
-    if not math.isfinite(float(run.temperature_K)) or float(run.temperature_K) <= 0.0:
-        raise ValueError("temperature must be finite and positive")
-    if (
-        run.n_mobile is None
-        or isinstance(run.n_mobile, bool)
-        or int(run.n_mobile) <= 0
-    ):
-        raise ValueError(
-            "mobile-ion count cannot be derived reliably; pass --n-mobile-ions explicitly"
-        )
-    if run.volume_A3 is None or not math.isfinite(float(run.volume_A3)) or run.volume_A3 <= 0:
-        raise ValueError("cell volume cannot be derived reliably; pass --volume-A3 explicitly")
-    time_ps = np.asarray(run.time_ps, dtype=float)
-    msd_A2 = np.asarray(run.msd_A2, dtype=float)
-    smooth_window_points = resolve_smooth_window_points(time_ps, args)
-    smoothed_msd_A2 = smooth_msd_series(msd_A2, smooth_window_points)
-    fit_msd_A2 = smoothed_msd_A2 if args.fit_smoothed_msd else msd_A2
-    mask = np.isfinite(time_ps) & np.isfinite(fit_msd_A2)
-    if args.fit_start_ps is not None:
-        mask &= time_ps >= args.fit_start_ps
-    if args.fit_end_ps is not None:
-        mask &= time_ps <= args.fit_end_ps
-    if int(mask.sum()) < args.min_msd_fit_points:
-        raise ValueError(
-            f"MSD fit window leaves {int(mask.sum())} points; "
-            f"need at least {args.min_msd_fit_points}"
-        )
-
-    diffusion = linear_diffusion_from_msd(
-        time_ps[mask].tolist(), fit_msd_A2[mask].tolist(), dimensions=3
-    )
-    fit = LinearFit(
-        slope=float(diffusion["slope_angstrom2_per_ps"]),
-        intercept=float(diffusion["intercept_angstrom2"]),
-        r2=float(diffusion["r_squared"]),
-        sse=float(diffusion["residual_sum_squares"]),
-        slope_stderr=(
-            None
-            if diffusion["slope_stderr_angstrom2_per_ps"] is None
-            else float(diffusion["slope_stderr_angstrom2_per_ps"])
-        ),
-        n_points=int(diffusion["samples"]),
-    )
-    diffusivity = float(diffusion["diffusion_cm2_per_s"])
-    diffusivity_stderr = (
-        fit.slope_stderr / 6.0 * 1e-4 if fit.slope_stderr is not None else None
-    )
-    sigma = conductivity_NE_mS_cm(diffusivity, run.n_mobile, run.volume_A3, run.temperature_K, args.charge)
+    values = formal_result_values(run, args)
+    time_ps = values["time_ps"]
+    msd_A2 = values["msd_A2"]
+    used = values["used"]
 
     slug = safe_slug(run)
     curve_path = output_dir / "msd_curves" / f"{slug}_msd.csv"
@@ -1526,15 +1394,13 @@ def analyze_run(run: RunData, args, output_dir: Path):
     curve_data = {
         "time_ps": time_ps,
         "msd_A2": msd_A2,
-        "msd_smoothed_A2": smoothed_msd_A2,
-        "fit_msd_A2": fit_msd_A2,
-        "used_for_fit": mask,
+        "used_for_analysis": used,
     }
     pd.DataFrame(curve_data).to_csv(curve_path, index=False)
 
     plot_path = output_dir / "msd_fits" / f"{slug}_msd_fit.html"
     plot_path.parent.mkdir(parents=True, exist_ok=True)
-    plot_single_msd(run, fit, mask, plot_path, smoothed_msd_A2=smoothed_msd_A2, fit_smoothed=args.fit_smoothed_msd)
+    plot_single_msd(run, plot_path)
 
     return {
         "dataset": run.dataset,
@@ -1542,28 +1408,36 @@ def analyze_run(run: RunData, args, output_dir: Path):
         "run_dir": str(run.run_dir),
         "source_kind": run.source_kind,
         "source_path": str(run.source_path),
+        "source_file": str(run.source_path),
         "drift_correction": run.drift_correction,
         "n_msd_points": int(time_ps.size),
-        "n_fit_points": fit.n_points,
-        "fit_start_ps": float(np.min(time_ps[mask])),
-        "fit_end_ps": float(np.max(time_ps[mask])),
-        "msd_start_A2": float(fit_msd_A2[mask][0]),
-        "msd_end_A2": float(fit_msd_A2[mask][-1]),
-        "msd_smoothing_window_points": smooth_window_points,
-        "fit_smoothed_msd": bool(args.fit_smoothed_msd),
-        "msd_slope_A2_per_ps": fit.slope,
-        "msd_slope_stderr_A2_per_ps": fit.slope_stderr,
-        "msd_fit_intercept_A2": fit.intercept,
-        "msd_fit_r2": fit.r2,
-        "diffusivity_cm2_s": diffusivity if diffusivity > 0 else float("nan"),
-        "diffusivity_stderr_cm2_s": diffusivity_stderr,
+        "n_analysis_points": int(np.sum(used)),
+        "analysis_start_ps": float(np.min(time_ps[used])),
+        "analysis_end_ps": float(np.max(time_ps[used])),
+        "diffusivity_cm2_s": values["diffusivity_cm2_s"],
+        "diffusivity_std_dev_cm2_s": values["diffusivity_std_dev_cm2_s"],
+        "diffusivity_stderr_cm2_s": values["diffusivity_std_dev_cm2_s"],
+        "chg_diffusivity_cm2_s": values["chg_diffusivity_cm2_s"],
         "n_mobile_ions": run.n_mobile,
         "charge": args.charge,
         "volume_A3": run.volume_A3,
         "mobile_ion_density_m3": density_m3(run.n_mobile, run.volume_A3),
-        "conductivity_NE_mS_cm": sigma,
+        "conductivity_NE_mS_cm": values["conductivity_mS_cm"],
+        "conductivity_std_dev_mS_cm": values["conductivity_std_dev_mS_cm"],
+        "chg_conductivity_mS_cm": values["chg_conductivity_mS_cm"],
+        "conductivity_available": values["conductivity_mS_cm"] is not None,
+        "conductivity_unavailable_reason": values["conductivity_unavailable_reason"],
+        "diffusion_method": values["diffusion_method"],
+        "conductivity_method": values["conductivity_method"],
+        "arrhenius_method": "pymatgen-fit-arrhenius-linear",
         "dimensions": 3,
-        "haven_ratio": 1.0,
+        "haven_ratio": values["haven_ratio"],
+        "smoothed": args.diffusion_analyzer_smoothed,
+        "min_obs": args.diffusion_analyzer_min_obs,
+        "avg_nsteps": args.diffusion_analyzer_avg_nsteps,
+        "step_skip": run.step_skip,
+        "time_step_fs": run.time_step_fs,
+        "species": args.specie,
         "msd_curve_csv": str(curve_path),
         "msd_fit_html": str(plot_path),
         "notes": run.notes,
@@ -1577,18 +1451,9 @@ def safe_slug(run: RunData) -> str:
     return f"{dataset}_{temp}_{digest}"
 
 
-def plot_single_msd(
-    run: RunData,
-    fit: LinearFit,
-    mask: np.ndarray,
-    output_path: Path,
-    smoothed_msd_A2: np.ndarray | None = None,
-    fit_smoothed: bool = False,
-):
+def plot_single_msd(run: RunData, output_path: Path):
     time_ps = np.asarray(run.time_ps, dtype=float)
     msd_A2 = np.asarray(run.msd_A2, dtype=float)
-    x_fit = time_ps[mask]
-    x_line = np.linspace(float(np.min(x_fit)), float(np.max(x_fit)), 100)
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -1599,25 +1464,6 @@ def plot_single_msd(
             name="MSD raw",
         )
     )
-    if smoothed_msd_A2 is not None:
-        fig.add_trace(
-            go.Scatter(
-                x=time_ps,
-                y=smoothed_msd_A2,
-                mode="lines",
-                line={"width": 2},
-                name="MSD smoothed" + (" used for fit" if fit_smoothed else ""),
-            )
-        )
-    fig.add_trace(
-        go.Scatter(
-            x=x_line,
-            y=fit.intercept + fit.slope * x_line,
-            mode="lines",
-            line={"width": 2},
-            name="linear fit",
-        )
-    )
     fig.update_layout(
         template="plotly_white",
         title=f"{run.dataset} T={run.temperature_K:g} K",
@@ -1626,113 +1472,6 @@ def plot_single_msd(
         legend_title_text="",
     )
     fig.write_html(output_path, include_plotlyjs="cdn")
-
-
-def bic_from_sse(sse: float, n: int, k: int) -> float:
-    sse = max(float(sse), 1e-300)
-    return n * math.log(sse / n) + k * math.log(n)
-
-
-def arrhenius_fit_from_xy(x_invK: np.ndarray, y_lnD: np.ndarray, indices: np.ndarray | None = None):
-    if indices is None:
-        indices = np.arange(x_invK.size)
-    temps = 1.0 / x_invK[indices]
-    diffusivities = np.exp(y_lnD[indices])
-    shared = arrhenius_from_diffusivities(temps.tolist(), diffusivities.tolist())
-    return {
-        "indices": indices.astype(int).tolist(),
-        "n_points": int(shared["point_count"]),
-        "temperature_min_K": float(np.min(temps)),
-        "temperature_max_K": float(np.max(temps)),
-        "slope_K": shared["slope_k"],
-        "intercept_lnD0": shared["intercept_ln_diffusivity"],
-        "Ea_eV": shared["activation_energy_ev"],
-        "Ea_meV": float(shared["activation_energy_ev"]) * 1000.0,
-        "D0_cm2_s": shared["prefactor_cm2_s"],
-        "r2_lnD": shared["r_squared"],
-        "sse_lnD": shared["residual_sum_squares"],
-        "slope_stderr_K": shared["slope_stderr_k"],
-        "Ea_stderr_eV": shared["activation_energy_stderr_ev"],
-    }
-
-
-def predict_arrhenius(fit_info: dict, temperature_K: float) -> float:
-    lnD = fit_info["intercept_lnD0"] + fit_info["slope_K"] * (1.0 / temperature_K)
-    return math.exp(lnD)
-
-
-def find_piecewise_arrhenius(T: np.ndarray, D: np.ndarray, args):
-    x = 1.0 / T
-    y = np.log(D)
-    order = np.argsort(x)
-    x = x[order]
-    y = y[order]
-    T_sorted = T[order]
-    n = x.size
-
-    single = arrhenius_fit_from_xy(x, y)
-    single["bic"] = bic_from_sse(single["sse_lnD"], n, 2)
-
-    best = None
-    min_points = args.min_segment_points
-    for split in range(min_points, n - min_points + 1):
-        left_idx = np.arange(0, split)
-        right_idx = np.arange(split, n)
-        left = arrhenius_fit_from_xy(x, y, left_idx)
-        right = arrhenius_fit_from_xy(x, y, right_idx)
-        left["segment_label"] = "high_temperature_segment"
-        right["segment_label"] = "low_temperature_segment"
-        left["x_invK_min"] = float(np.min(x[left_idx]))
-        left["x_invK_max"] = float(np.max(x[left_idx]))
-        right["x_invK_min"] = float(np.min(x[right_idx]))
-        right["x_invK_max"] = float(np.max(x[right_idx]))
-        sse = left["sse_lnD"] + right["sse_lnD"]
-        bic = bic_from_sse(sse, n, 4)
-        slope1 = left["slope_K"]
-        slope2 = right["slope_K"]
-        denom = max(0.5 * (abs(slope1) + abs(slope2)), 1e-300)
-        rel_slope_change = abs(slope1 - slope2) / denom
-        candidate = {
-            "split_index_sorted": split,
-            "temperature_sorting": "segments are sorted by increasing 1/T: high-temperature segment first, low-temperature segment second",
-            "break_high_temperature_edge_K": float(T_sorted[split - 1]),
-            "break_low_temperature_edge_K": float(T_sorted[split]),
-            "break_between_temperature_edges_K": [
-                float(T_sorted[split - 1]),
-                float(T_sorted[split]),
-            ],
-            "break_midpoint_invK": float(0.5 * (x[split - 1] + x[split])),
-            "segments": [left, right],
-            "sse_lnD": sse,
-            "bic": bic,
-            "bic_improvement_vs_single": single["bic"] - bic,
-            "relative_slope_change": rel_slope_change,
-        }
-        if best is None or candidate["bic"] < best["bic"]:
-            best = candidate
-
-    accepted = False
-    reason = "not_enough_points_for_two_segments"
-    if best is not None:
-        if args.piecewise == "always":
-            accepted = True
-            reason = "forced"
-        elif args.piecewise == "auto":
-            accepted = (
-                best["bic_improvement_vs_single"] >= args.piecewise_bic_delta
-                and best["relative_slope_change"] >= args.piecewise_slope_change
-            )
-            reason = "auto_accept" if accepted else "auto_reject"
-        else:
-            reason = "disabled"
-
-    return {
-        "single": single,
-        "piecewise_best": best,
-        "piecewise_accepted": accepted,
-        "piecewise_reason": reason,
-        "sort_order_original_indices": order.astype(int).tolist(),
-    }
 
 
 def summarize_arrhenius_one(results_df: pd.DataFrame, args):
@@ -1752,41 +1491,13 @@ def summarize_arrhenius_one(results_df: pd.DataFrame, args):
     if T.size < 2:
         raise ValueError("Need at least two positive diffusivity values for Arrhenius fit")
 
-    fit = find_piecewise_arrhenius(T, D, args)
-
-    densities = results_df.loc[valid, "mobile_ion_density_m3"].to_numpy(dtype=float)
-    densities = densities[np.isfinite(densities) & (densities > 0)]
-    reference_density = float(np.median(densities)) if densities.size else None
-
-    def sigma_at_target(D_target):
-        if reference_density is None:
-            return None
-        equivalent_volume_a3 = 1.0e30 / reference_density
-        return nernst_einstein_conductivity(
-            D_target * 1.0e-4,
-            args.target_temperature_K,
-            1,
-            args.charge,
-            equivalent_volume_a3,
-        )["conductivity_ms_cm"]
-
-    single_D_target = predict_arrhenius(fit["single"], args.target_temperature_K)
-    fit["single"][f"D_{args.target_temperature_K:g}K_cm2_s"] = single_D_target
-    fit["single"][f"sigma_NE_{args.target_temperature_K:g}K_mS_cm"] = sigma_at_target(single_D_target)
-
-    used_model = "single"
-    if fit["piecewise_accepted"] and fit["piecewise_best"] is not None:
-        used_model = "piecewise"
-        breakpoint_x = fit["piecewise_best"]["break_midpoint_invK"]
-        target_x = 1.0 / args.target_temperature_K
-        target_segment_index = 0 if target_x <= breakpoint_x else 1
-        segment = fit["piecewise_best"]["segments"][target_segment_index]
-        piece_D_target = predict_arrhenius(segment, args.target_temperature_K)
-        fit["piecewise_best"][f"D_{args.target_temperature_K:g}K_cm2_s"] = piece_D_target
-        fit["piecewise_best"][f"sigma_NE_{args.target_temperature_K:g}K_mS_cm"] = sigma_at_target(piece_D_target)
-        fit["piecewise_best"]["target_temperature_invK"] = target_x
-        fit["piecewise_best"]["target_temperature_segment_index"] = target_segment_index
-        fit["piecewise_best"]["target_temperature_segment_label"] = segment.get("segment_label")
+    api = require_formal_diffusion_api()
+    ea_eV, prefactor_cm2_s, ea_std_eV = api["fit_arrhenius"](
+        T, D, mode="linear"
+    )
+    target_diffusivity = api["get_extrapolated_diffusivity"](
+        T, D, float(args.target_temperature_K), mode="linear"
+    )
 
     return {
         "fit_scope": "all",
@@ -1796,9 +1507,13 @@ def summarize_arrhenius_one(results_df: pd.DataFrame, args):
         "fit_temperatures_K": T.tolist(),
         "fit_diffusivities_cm2_s": D.tolist(),
         "fit_row_indices": np.flatnonzero(valid).astype(int).tolist(),
-        "reference_mobile_ion_density_m3": reference_density,
-        "used_model": used_model,
-        **fit,
+        "arrhenius_method": "pymatgen-fit-arrhenius-linear",
+        "single": {
+            "Ea_eV": float(ea_eV),
+            "Ea_stderr_eV": finite_or_none(ea_std_eV),
+            "D0_cm2_s": float(prefactor_cm2_s),
+            f"D_{args.target_temperature_K:g}K_cm2_s": float(target_diffusivity),
+        },
     }
 
 
@@ -1873,47 +1588,6 @@ def plot_arrhenius(results_df: pd.DataFrame, summary: dict, output_path: Path):
             )
         )
 
-    def add_fit_lines(fit_summary: dict, prefix: str = ""):
-        T_all = np.asarray(fit_summary["fit_temperatures_K"], dtype=float)
-        if T_all.size:
-            T_line = np.linspace(float(np.min(T_all)), float(np.max(T_all)), 300)
-            single = fit_summary["single"]
-            y_line = single["intercept_lnD0"] + single["slope_K"] / T_line
-            fig.add_trace(
-                go.Scatter(
-                    x=1000.0 / T_line,
-                    y=y_line,
-                    mode="lines",
-                    line={"dash": "dash", "width": 2},
-                    name=f"{prefix}single Ea={single['Ea_eV']:.3f} eV",
-                )
-            )
-
-        if fit_summary.get("piecewise_accepted") and fit_summary.get("piecewise_best"):
-            for i, segment in enumerate(fit_summary["piecewise_best"]["segments"], start=1):
-                t_min = segment["temperature_min_K"]
-                t_max = segment["temperature_max_K"]
-                T_line = np.linspace(t_min, t_max, 120)
-                y_line = segment["intercept_lnD0"] + segment["slope_K"] / T_line
-                segment_label = segment.get("segment_label", f"segment {i}")
-                fig.add_trace(
-                    go.Scatter(
-                        x=1000.0 / T_line,
-                        y=y_line,
-                        mode="lines",
-                        line={"width": 3},
-                        name=f"{prefix}{segment_label} Ea={segment['Ea_eV']:.3f} eV",
-                    )
-                )
-
-    if "datasets" in summary:
-        for dataset, fit_summary in summary["datasets"].items():
-            add_fit_lines(fit_summary, prefix=f"{dataset} ")
-    elif "single" in summary:
-        add_fit_lines(summary)
-    else:
-        pass
-
     fig.update_layout(
         template="plotly_white",
         title="Arrhenius fit",
@@ -1953,6 +1627,8 @@ def artifact_record(path: Path, role: str) -> dict:
 
 def analysis_source_paths(run: RunData, args) -> list[Path]:
     candidates = [run.source_path]
+    if run.structure_path is not None:
+        candidates.append(run.structure_path)
     for name in (
         "metadata.json",
         "production_log.csv",
@@ -2004,13 +1680,9 @@ def build_parser():
     )
     parser.add_argument(
         "--trajectory-msd-engine",
-        choices=["diffusion-analyzer", "numpy", "auto"],
+        choices=["diffusion-analyzer"],
         default="diffusion-analyzer",
-        help=(
-            "MSD engine for trajectory inputs. diffusion-analyzer uses "
-            "pymatgen.analysis.diffusion.analyzer.DiffusionAnalyzer; numpy uses the older in-script MSD; "
-            "auto tries DiffusionAnalyzer and falls back to numpy."
-        ),
+        help="Formal trajectory analysis always uses pymatgen DiffusionAnalyzer.",
     )
     parser.add_argument(
         "--diffusion-analyzer-smoothed",
@@ -2093,6 +1765,12 @@ def build_parser():
         help="Unit of the MSD column.",
     )
     parser.add_argument("--msd-temperature-K", type=float, default=None)
+    parser.add_argument(
+        "--msd-structure",
+        type=Path,
+        default=None,
+        help="Real structure used only for pymatgen MSD-only conductivity conversion.",
+    )
     parser.add_argument("--n-mobile-ions", type=int, default=None)
     parser.add_argument("--volume-A3", type=float, default=None)
     parser.add_argument("--fit-temperatures", default=None, help="Comma/space separated T values to include.")
@@ -2186,17 +1864,17 @@ def main(argv: list[str] | None = None) -> int:
         "plugin_id": "ionic-transport",
         "operation": "analyze-existing",
         "scientific_contract": {
-            "dimensions": 3,
-            "einstein_relation": "D=slope/(2*d)",
-            "conductivity_model": "uncorrected-nernst-einstein",
-            "haven_ratio": 1.0,
-            "arrhenius_relation": "ln(D_cm2_s) vs 1/T_K",
-            "carrier_count_policy": "derived-from-structure-or-explicit; never historical-N7",
+            "formal_implementation": "pymatgen-analysis-diffusion public API",
+            "trajectory_diffusion": "DiffusionAnalyzer",
+            "msd_only_diffusion": "get_diffusivity_from_msd",
+            "msd_only_conductivity": "get_conversion_factor when a real Structure exists",
+            "arrhenius": "fit_arrhenius(mode='linear')",
+            "historical_implementation": "separate adapter-only legacy reproduction",
         },
         "parameters": json_ready(vars(args)),
+        "runtime_provenance": runtime_provenance(uses_ase=any(run.uses_ase for run in runs)),
         "implementation_artifacts": [
             artifact_record(Path(__file__), "packaged-analysis-runner"),
-            artifact_record(Path(_transport_core.__file__), "mlipflow-science-transport"),
         ],
         "source_artifacts": [
             artifact_record(path, f"analysis-source:{index}")
@@ -2222,32 +1900,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{label}] Arrhenius fit skipped: {fit_summary.get('skip_reason', 'not enough data')}")
             return
         single_fit = fit_summary["single"]
-        print(f"[{label}] single-line lnD fit: Ea={single_fit['Ea_eV']:.4f} eV, R2={single_fit['r2_lnD']:.4f}")
-        if fit_summary.get("piecewise_best") is not None:
-            best_fit = fit_summary["piecewise_best"]
-            print(
-                f"[{label}] piecewise check: "
-                f"accepted={fit_summary['piecewise_accepted']} "
-                f"reason={fit_summary['piecewise_reason']} "
-                f"relative_slope_change={best_fit['relative_slope_change']:.3g} "
-                f"BIC_improvement={best_fit['bic_improvement_vs_single']:.3g}"
-            )
-        model = fit_summary["used_model"]
-        if model == "piecewise" and fit_summary.get("piecewise_best"):
-            model_info = fit_summary["piecewise_best"]
-            print(
-                f"[{label}] target T segment: "
-                f"{model_info.get('target_temperature_segment_label')} "
-                f"(index {model_info.get('target_temperature_segment_index')})"
-            )
-        else:
-            model_info = single_fit
-        print(f"[{label}] model used for target extrapolation: {model}")
-        print(f"[{label}] D_{args.target_temperature_K:g}K={model_info.get(target_key):.4e} cm^2/s")
-        sigma_key = f"sigma_NE_{args.target_temperature_K:g}K_mS_cm"
-        sigma_value = model_info.get(sigma_key)
-        if sigma_value is not None:
-            print(f"[{label}] sigma_NE_{args.target_temperature_K:g}K={sigma_value:.4g} mS/cm")
+        print(f"[{label}] pymatgen linear Arrhenius fit: Ea={single_fit['Ea_eV']:.4f} eV")
+        print(
+            f"[{label}] D_{args.target_temperature_K:g}K="
+            f"{single_fit.get(target_key):.4e} cm^2/s"
+        )
 
     if summary.get("arrhenius_fit_skipped"):
         print(f"Arrhenius fit skipped: {summary.get('skip_reason')}")

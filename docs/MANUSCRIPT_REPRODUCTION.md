@@ -90,7 +90,7 @@ SHA-256，没有复制入仓库。reproduction example 不调用该 smoke；0.01
 也没有独立科学 baseline 或收敛性，所以只证明 integration handoff，科学 parity 状态
 仍为 `EXTERNAL_VALIDATION_PENDING`。
 
-该报告固定的是历史 smoke 当时的 adapter/source digest，不能冒充当前代码重跑。当前 `ionic-transport` 已把 runner 正式打包、把核心关系收敛到 `mlipflow.science.transport`，并增加 analysis manifest 与 checker 独立重算；本轮 deterministic local regression 不改变旧 smoke 的科学等级。
+该报告固定的是历史 smoke 当时的 adapter/source digest，不能冒充当前代码重跑。当前 `ionic-transport` formal runner 使用 `pymatgen-analysis-diffusion` public API，checker 从原始输入重跑相同 API；隔离的 historical reproduction 仍保留旧 MLIPFlow/脚本算法与数值 parity，本轮迁移不改变旧 smoke 的科学等级。
 
 ## LASP/SSW 对历史数据生成的贡献与边界
 

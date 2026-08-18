@@ -23,11 +23,11 @@ Skills 是监督说明，不是计算实现。更新 Skill 时，应以当前 CL
 
 ## Ionic transport
 
-`$ionic-transport` 是 local-only 分析 Skill，不提供 `ssh-slurm`。正式 `analyze-existing` 使用 MLIPFlow 打包的 `ionic_conductivity.py`；项目只绑定已有 trajectory/MSD，不再提供或覆盖 `analysis_script`。当前输入为 ASE `production.traj`、LAMMPS unwrapped dump、VASP AIMD `vasprun.xml` 或显式 MSD 表；无法从可靠 metadata/structure 得到 timestep、temperature、carrier count、charge 或 volume 时必须显式声明。
+`$ionic-transport` 是 local-only 分析 Skill，不提供 `ssh-slurm`。正式 `analyze-existing` 使用 MLIPFlow 打包的 `ionic_conductivity.py` 与 `pymatgen-analysis-diffusion` public API；项目只绑定已有 trajectory/MSD，不提供或覆盖 `analysis_script`。当前输入为 ASE `production.traj`、信息完整的 LAMMPS unwrapped dump、VASP AIMD `vasprun.xml` 或显式 MSD 表。
 
-正式链固定为 MSD → `D=slope/(2d)`（当前 `d=3`）→ 未做 Haven 修正的 Nernst–Einstein conductivity → 单直线 `ln(D)` 对 `1/T` Arrhenius。piecewise、Green-Kubo、Haven ratio estimation、anisotropic transport 和 bootstrap 不在合同内。`md-smoke-and-analyze` 只做 tiny local handoff，并复用同一分析 runner。
+正式 trajectory 直接使用 `DiffusionAnalyzer` 的 dt/MSD/D/σ/charge transport/Haven ratio；MSD-only 使用 `get_diffusivity_from_msd`，只有真实 Structure 才通过 `get_conversion_factor` 产生 conductivity；Arrhenius 使用 `fit_arrhenius(..., mode="linear")`。缺少 `[transport]` 依赖或可靠 Structure/cell/species/timestep 时明确失败或将 MSD-only conductivity 标为 unavailable，不回退到 MLIPFlow 自定义公式。
 
-Runner 的 `analysis_manifest.json` 固定科学参数与 source/result identity。Checker 会重新读取 MSD curve 并独立复算 D、conductivity 和 Arrhenius，不能只相信结果 JSON。历史 Li10 `N=7` 只存在于隔离的 `legacy_script` parity convention；普通分析从结构或显式参数获得 composition-corrected count，绝不默认 N=7。
+Runner 的 `analysis_manifest.json` 固定科学参数、运行环境与 source/result identity。Checker 从原始输入重新调用相同 pymatgen public API，不复制其数学公式。历史 Li10 `N=7`、旧常数、旧 OLS/mean(MSD/t) 与旧 Arrhenius convention 只存在于隔离的 historical reproduction，formal 结果不与其混用。
 
 ## PES sampling / LASP
 

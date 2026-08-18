@@ -4,9 +4,9 @@
   "id": "ionic-transport",
   "name": "Ionic transport analysis",
   "display_name": "Ionic transport analysis",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "api_version": 1,
-  "description": "Local-only trajectory/MSD to MSD, diffusion, uncorrected Nernst-Einstein conductivity, and single-line Arrhenius analysis with a packaged runner plus a tightly bounded MD integration smoke.",
+  "description": "Local-only formal ionic transport through pymatgen-analysis-diffusion, with separate unchanged historical reproduction and a tightly bounded MD integration smoke.",
   "category": "transport-analysis",
   "contract": {
     "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
@@ -25,19 +25,20 @@
     ],
     "limitations": [
       "operation=analyze-existing only post-processes explicit existing ASE/LAMMPS/VASP trajectories or MSD tables and does not launch MD or submit jobs.",
-      "The packaged analysis runner reads actual ASE production.traj, LAMMPS unwrapped dumps, VASP vasprun.xml AIMD, and text/CSV MSD inputs. Timestep, temperature, carrier count, volume, and units must be explicit when not encoded in reliable source metadata.",
+      "Formal analysis requires pymatgen-analysis-diffusion. The packaged runner converts reliable ASE/LAMMPS/VASP trajectories to ordered pymatgen Structures and uses DiffusionAnalyzer without a NumPy/MLIPFlow fallback.",
+      "Formal dependency validation and execution use the same local Python interpreter as MLIPFlow; this plugin does not select or configure a cluster interpreter.",
+      "Formal MSD-only analysis calls get_diffusivity_from_msd. Conductivity is available only when a real Structure is supplied and get_conversion_factor succeeds; n_mobile_ions/volume literals are not a formal fallback.",
       "operation=md-smoke-and-analyze is an integration-smoke-only handoff to an existing ASE-MD source and the same packaged formal analysis runner. It rejects production-scale settings, never submits jobs, and must not be cited as converged transport or manuscript parity.",
-      "The MD handoff overrides only the historical source's exposed module configuration and calls its run_single_temperature_md entrypoint; all MSD, diffusivity, conductivity, and Arrhenius analysis is performed by the formal runner using mlipflow.science.transport primitives.",
+      "The MD handoff overrides only the historical source's exposed module configuration and calls its run_single_temperature_md entrypoint; formal MSD, diffusivity, conductivity, charge transport, Haven ratio, and Arrhenius values come from pymatgen-analysis-diffusion public APIs.",
       "The explicit seed controls the historical NumPy velocity RNG per temperature. Calculator/framework RNGs and GPU/MPS kernels are not guaranteed bitwise deterministic.",
       "MACE, CHGNet, MatGL, and M3GNet require an explicit local model; only EMT/LJ accept the explicit default marker, so implicit network or package-cache model loading is blocked.",
       "The plugin-local manuscript wrapper reads existing target.msd/Li10 stdout only, fingerprints every source, and never starts a calculator, MD process, scheduler, or network operation.",
       "Historical Li10 MACE scripts used N=7 although the Li10 composition contains 10 mobile Li ions. legacy_script preserves N=7 strictly for numerical parity; composition_corrected requires an explicit/structure-derived carrier count and never silently reuses N=7.",
       "The parity wrapper retains the historical rounded q=1.6e-19 C and kB=1.38e-23 J/K in both carrier modes so an N=10/N=7 comparison isolates the carrier-count correction.",
-      "The reviewed source hard-codes the three-dimensional Einstein relation D=slope/6; dimensions other than 3 are blocked.",
-      "The source reports uncorrected Nernst-Einstein conductivity and exposes no Haven-ratio correction; only haven_ratio=1 is accepted.",
+      "Formal trajectory results directly record DiffusionAnalyzer dt, msd, diffusivity/std-dev, conductivity/std-dev, charge diffusivity/conductivity, and Haven ratio.",
       "analyze-existing exposes no stochastic stage, so a non-null seed is rejected there; md-smoke-and-analyze requires a non-negative seed and records its limited scope.",
       "The formal workflow permits only a single-line ln(D) versus 1/T Arrhenius fit; piecewise fitting is outside this contract.",
-      "Completion rehashes source/result artifacts, reparses every fetched MSD curve, and independently rechecks D=slope/(2d), Nernst-Einstein conductivity, and Arrhenius relations. It rejects partial results unless allow_partial_results=true is explicitly reviewed."
+      "Completion rehashes source/result artifacts and reruns the same pymatgen public APIs from original sources; the checker does not clone pymatgen equations. It rejects partial results unless allow_partial_results=true is explicitly reviewed."
     ]
   },
   "execution": {
@@ -59,7 +60,7 @@
   "inputs": [
     {"name": "input_paths", "kind": "artifact-reference", "required": false, "description": "One or more explicit existing trajectory/MSD files or directories; required by analyze-existing only."},
     {"name": "md_script", "kind": "file", "required": false, "description": "Explicit path to the reviewed claw/MD/ase_MD/ase_md_only_multi_calc.py; required by md-smoke-and-analyze only."},
-    {"name": "structure", "kind": "file", "required": false, "description": "Explicit local structure consumed by the historical ASE-MD source; required by md-smoke-and-analyze only."},
+    {"name": "structure", "kind": "file", "required": false, "description": "For md-smoke-and-analyze, the explicit MD input structure; for MSD-only formal analysis, a real structure enabling pymatgen get_conversion_factor conductivity."},
     {"name": "model", "kind": "artifact-reference", "required": false, "description": "Explicit local calculator model, or the string default only for EMT/LJ as supported by the reviewed source."},
     {"name": "result_files", "kind": "artifact-reference", "required": false, "description": "Explicit fixed result-file mapping for read-only check/collect outside normal execution."}
   ],
@@ -81,17 +82,17 @@
     {"name": "input_index", "type": "string", "required": false, "description": "Explicit ASE structure index forwarded to the historical MD source; defaults to -1."},
     {"name": "source", "type": "string", "required": true, "description": "Exact source CLI choice: auto, trajectory, vasp, or msd."},
     {"name": "specie", "type": "string", "required": true, "description": "One mobile-ion element symbol passed to --specie."},
-    {"name": "charge", "type": "number", "required": true, "description": "Finite positive charge number z used by the source Nernst-Einstein formula."},
-    {"name": "dimensions", "type": "integer", "required": true, "description": "Must equal 3 because the reviewed source hard-codes D=slope/6."},
-    {"name": "haven_ratio", "type": "number", "required": true, "description": "Must equal 1 because the source applies no Haven correction."},
+    {"name": "charge", "type": "number", "required": true, "description": "Compatibility declaration retained for reviewed inputs; formal conductivity comes from pymatgen and is not recomputed with this value."},
+    {"name": "dimensions", "type": "integer", "required": true, "description": "Compatibility boundary fixed at 3; formal diffusion is returned directly by pymatgen."},
+    {"name": "haven_ratio", "type": "number", "required": true, "description": "Compatibility declaration; trajectory result Haven ratio is returned directly by DiffusionAnalyzer."},
     {"name": "seed", "type": "integer", "required": false, "description": "Rejected by analyze-existing and required by md-smoke-and-analyze; seeds only the documented historical velocity initialization path."},
     {"name": "fit_start_ps", "type": "number", "required": true, "description": "Explicit non-negative start of the linear MSD fit window in ps."},
     {"name": "fit_end_ps", "type": "number", "required": true, "description": "Explicit end of the fit window in ps, greater than fit_start_ps."},
     {"name": "trajectory_start_ps", "type": "number", "required": false, "description": "Optional non-negative trajectory-analysis window start; must accompany trajectory_end_ps."},
     {"name": "trajectory_end_ps", "type": "number", "required": false, "description": "Optional trajectory-analysis window end; must exceed trajectory_start_ps."},
-    {"name": "drift_correction", "type": "string", "required": true, "description": "Exact source choice: framework, mobile, or none."},
-    {"name": "msd_mode", "type": "string", "required": true, "description": "Exact source choice: multi-origin or single-origin."},
-    {"name": "trajectory_msd_engine", "type": "string", "required": true, "description": "Exact source choice: diffusion-analyzer, numpy, or auto."},
+    {"name": "drift_correction", "type": "string", "required": true, "description": "Reviewed compatibility declaration; trajectory drift handling is DiffusionAnalyzer's framework drift correction."},
+    {"name": "msd_mode", "type": "string", "required": true, "description": "Reviewed compatibility declaration; formal smoothing and MSD construction are controlled by pymatgen."},
+    {"name": "trajectory_msd_engine", "type": "string", "required": true, "description": "Must be diffusion-analyzer; formal mode has no NumPy/auto fallback."},
     {"name": "diffusion_analyzer_smoothed", "type": "string", "required": true, "description": "Exact DiffusionAnalyzer smoothing choice: max, constant, or none."},
     {"name": "diffusion_analyzer_min_obs", "type": "integer", "required": true, "description": "Positive --diffusion-analyzer-min-obs value."},
     {"name": "diffusion_analyzer_avg_nsteps", "type": "integer", "required": true, "description": "Positive --diffusion-analyzer-avg-nsteps value."},
@@ -115,8 +116,8 @@
     {"name": "msd_step_ps", "type": "number", "required": false, "description": "Positive ps per step, required when msd_time_unit=step."},
     {"name": "msd_unit", "type": "string", "required": true, "description": "Exact source choice: auto, A2, or nm2; MSD source forbids auto."},
     {"name": "msd_temperature_k", "type": "number", "required": false, "description": "Optional positive precomputed-MSD temperature in K, passed to --msd-temperature-K."},
-    {"name": "n_mobile_ions", "type": "integer", "required": false, "description": "Positive carrier count; required for precomputed MSD conductivity."},
-    {"name": "volume_a3", "type": "number", "required": false, "description": "Positive cell volume in angstrom cubed; required for precomputed MSD conductivity and passed to --volume-A3."},
+    {"name": "n_mobile_ions", "type": "integer", "required": false, "description": "Legacy compatibility field; formal MSD-only analysis rejects it as a conductivity substitute for a real Structure."},
+    {"name": "volume_a3", "type": "number", "required": false, "description": "Legacy compatibility field; formal MSD-only analysis rejects it as a conductivity substitute for a real Structure."},
     {"name": "fit_temperatures", "type": "string", "required": false, "description": "Optional comma/space separated temperatures passed verbatim."},
     {"name": "exclude_temperatures", "type": "string", "required": false, "description": "Optional comma/space separated excluded temperatures passed verbatim."},
     {"name": "fit_scope", "type": "string", "required": true, "description": "Exact source choice: dataset or all."},
@@ -128,7 +129,7 @@
     {"name": "allow_partial_results", "type": "boolean", "required": true, "description": "Adapter-only policy; false rejects any source-reported skipped run."}
   ],
   "outputs": [
-    {"name": "transport-results", "kind": "file", "required": true, "media_type": "text/csv", "description": "diffusion_results_by_temperature.csv with finite per-run transport metrics."},
+    {"name": "transport-results", "kind": "file", "required": true, "media_type": "text/csv", "description": "diffusion_results_by_temperature.csv with pymatgen method identities and per-run values; MSD-only conductivity may be null without a Structure."},
     {"name": "arrhenius-summary", "kind": "file", "required": true, "media_type": "application/json", "description": "arrhenius_summary.json; may explicitly record that a fit was skipped for insufficient temperatures."},
     {"name": "postprocess-failures", "kind": "file", "required": true, "media_type": "application/json", "description": "Explicit list of skipped inputs; non-empty is rejected unless partial results are approved."},
     {"name": "analysis-manifest", "kind": "file", "required": true, "media_type": "application/json", "description": "Pinned analysis parameters plus SHA-256/size provenance for source and result artifacts."},
@@ -139,10 +140,11 @@
   "dependencies": {
     "upstream_plugins": ["pes-sampling", "mlip-benchmark"],
     "python_packages": [
-      {"name": "numpy", "required": true, "bundled": false, "purpose": "MSD, regression, and unit conversion in the reviewed script."},
+      {"name": "numpy", "required": true, "bundled": false, "purpose": "Input arrays, format conversion, and result serialization; scientific fitting is delegated to pymatgen-analysis-diffusion."},
       {"name": "pandas", "required": true, "bundled": false, "purpose": "Input tables and CSV output in the reviewed script."},
       {"name": "plotly", "required": true, "bundled": false, "purpose": "The script imports Plotly at startup and writes HTML diagnostics."},
-      {"name": "pymatgen", "required": false, "bundled": false, "purpose": "Required for DiffusionAnalyzer and some trajectory/VASP readers."},
+      {"name": "pymatgen-analysis-diffusion", "required": true, "bundled": false, "purpose": "Formal DiffusionAnalyzer, MSD diffusivity, conductivity conversion, and linear Arrhenius APIs; install MLIPFlow with the transport extra."},
+      {"name": "pymatgen", "required": true, "bundled": false, "purpose": "Transitive formal dependency providing Structure conversion and identity."},
       {"name": "ase", "required": false, "bundled": false, "purpose": "Source/operation-specific hard dependency for production.traj parsing and md-smoke-and-analyze; pure MSD and non-ASE sources remain independent."},
       {"name": "torch", "required": false, "bundled": false, "purpose": "Calculator runtime for supported learned-potential smoke paths when selected."},
       {"name": "mace-torch", "required": false, "bundled": false, "purpose": "Required only when the smoke explicitly selects a local MACE model."},
@@ -167,7 +169,7 @@
     "status": "implemented",
     "checks": [
       {"id": "fixed-results-readable", "implemented": true, "description": "Require the explicit CSV, Arrhenius JSON, and failure-list JSON outputs."},
-      {"id": "finite-transport-metrics", "implemented": true, "description": "Require non-empty rows with finite, positive diffusion and finite conductivity under explicit 3D/Haven assumptions."},
+      {"id": "pymatgen-formal-parity", "implemented": true, "description": "Rerun DiffusionAnalyzer/get_diffusivity_from_msd/get_conversion_factor/fit_arrhenius from original inputs and compare saved values; allow explicit null conductivity only for MSD without Structure."},
       {"id": "row-artifacts-confined", "implemented": true, "description": "Require every row-referenced MSD CSV/HTML artifact to exist inside the explicit output directory."},
       {"id": "partial-results-policy", "implemented": true, "description": "Reject skipped inputs by default; allow only with explicit allow_partial_results=true."},
       {"id": "md-smoke-handoff-integrity", "implemented": true, "description": "Require fresh confined MD/analysis outputs, shell=false analysis execution, exact temperature coverage, completed Arrhenius fit, explicit integration-smoke-only boundaries, and verified source/input/trajectory/result hashes."},

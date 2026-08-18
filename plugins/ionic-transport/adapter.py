@@ -1,8 +1,8 @@
-"""Safe adapter for ionic-conductivity analysis and a bounded local MD smoke handoff.
+"""Safe adapter for formal ionic transport and a bounded local MD smoke handoff.
 
-Planning is side-effect free.  The optional smoke operation delegates both MD and
-transport numerics to the reviewed historical sources, confines every output to a
-fresh attempt, and is never presented as production or scientific-parity evidence.
+Planning is side-effect free. The optional smoke delegates only the tiny MD stage
+to a reviewed historical source, then uses the pinned pymatgen formal runner. Every
+output stays in a fresh attempt and is never production or scientific-parity evidence.
 """
 
 from __future__ import annotations
@@ -10,17 +10,18 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import importlib.metadata
+import importlib.util
 import io
 import json
 import math
+import platform
 import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from mlipflow.science.transport import (
-    arrhenius_from_diffusivities,
-    linear_diffusion_from_msd,
     linear_fit,
     nernst_einstein_conductivity,
 )
@@ -80,15 +81,12 @@ _SMOKE_MAX_TOTAL_STEPS = 5000
 _RESULT_COLUMNS = {
     "temperature_K",
     "diffusivity_cm2_s",
-    "fit_start_ps",
-    "fit_end_ps",
-    "msd_fit_r2",
-    "n_mobile_ions",
-    "charge",
-    "volume_A3",
     "conductivity_NE_mS_cm",
-    "msd_slope_A2_per_ps",
-    "dimensions",
+    "diffusion_method",
+    "conductivity_method",
+    "arrhenius_method",
+    "analysis_start_ps",
+    "analysis_end_ps",
     "haven_ratio",
     "msd_curve_csv",
     "msd_fit_html",
@@ -379,6 +377,63 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return "sha256:" + digest.hexdigest()
+
+
+def _installed_version(name: str) -> Optional[str]:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _formal_runtime_probe() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    try:
+        from pymatgen.analysis.diffusion.analyzer import (
+            DiffusionAnalyzer,
+            fit_arrhenius,
+            get_conversion_factor,
+            get_diffusivity_from_msd,
+        )
+        _ = (
+            DiffusionAnalyzer,
+            fit_arrhenius,
+            get_conversion_factor,
+            get_diffusivity_from_msd,
+        )
+    except (ImportError, ModuleNotFoundError):
+        return None, "Formal ionic transport requires pymatgen-analysis-diffusion"
+    return (
+        {
+            "python_executable": sys.executable,
+            "python_version": platform.python_version(),
+            "mlipflow_version": _installed_version("mlipflow"),
+            "pymatgen_version": _installed_version("pymatgen"),
+            "pymatgen_analysis_diffusion_version": _installed_version(
+                "pymatgen-analysis-diffusion"
+            ),
+            "numpy_version": _installed_version("numpy"),
+            "ase_version": _installed_version("ase"),
+        },
+        None,
+    )
+
+
+def _formal_dependency_diagnostics() -> List[Dict[str, str]]:
+    _, error = _formal_runtime_probe()
+    if error is not None:
+        return [
+            _diagnostic(
+                "ERROR",
+                "dependency.pymatgen_analysis_diffusion",
+                f"{error}. Install with: pip install 'mlipflow[transport]'",
+            )
+        ]
+    return []
+
+
+def _is_current_python(python_executable: str) -> bool:
+    candidate = Path(python_executable).expanduser()
+    return candidate.is_absolute() and candidate.resolve() == Path(sys.executable).resolve()
 
 
 def _analysis_arguments(
@@ -759,13 +814,22 @@ def _validate_md_smoke(
         )
     if parameters.get("dimensions") != 3:
         diagnostics.append(
-            _diagnostic("ERROR", "assumption.dimensions_unsupported", "dimensions must equal 3")
+            _diagnostic(
+                "ERROR",
+                "assumption.dimensions_unsupported",
+                "the formal compatibility boundary requires dimensions=3",
+            )
         )
     if not _finite_number(parameters.get("haven_ratio")) or not math.isclose(
         float(parameters.get("haven_ratio", float("nan"))), 1.0, rel_tol=0.0, abs_tol=1e-12
     ):
         diagnostics.append(
-            _diagnostic("ERROR", "assumption.haven_unsupported", "haven_ratio must equal 1")
+            _diagnostic(
+                "ERROR",
+                "assumption.haven_unsupported",
+                "the input compatibility declaration requires haven_ratio=1; the trajectory "
+                "result comes directly from DiffusionAnalyzer",
+            )
         )
     _validate_interval(parameters, "fit_start_ps", "fit_end_ps", diagnostics, required=True)
     _validate_interval(
@@ -784,7 +848,7 @@ def _validate_md_smoke(
     choices = {
         "drift_correction": {"framework", "mobile", "none"},
         "msd_mode": {"multi-origin", "single-origin"},
-        "trajectory_msd_engine": {"diffusion-analyzer", "numpy", "auto"},
+        "trajectory_msd_engine": {"diffusion-analyzer"},
         "diffusion_analyzer_smoothed": {"max", "constant", "none"},
         "piecewise": {"auto", "always", "never"},
     }
@@ -884,6 +948,16 @@ def _validate_md_smoke(
                 "ERROR", "resource.python_executable", "python_executable must be a non-empty string"
             )
         )
+    elif not _is_current_python(python_executable):
+        diagnostics.append(
+            _diagnostic(
+                "ERROR",
+                "resource.python_executable",
+                "formal transport must use the same local Python interpreter that runs MLIPFlow",
+            )
+        )
+    else:
+        diagnostics.extend(_formal_dependency_diagnostics())
     return diagnostics
 
 
@@ -2200,18 +2274,79 @@ def _verify_analysis_manifest(
         )
     contract = _mapping(manifest.get("scientific_contract"))
     if (
-        contract.get("dimensions") != 3
-        or contract.get("einstein_relation") != "D=slope/(2*d)"
-        or contract.get("conductivity_model") != "uncorrected-nernst-einstein"
-        or contract.get("haven_ratio") != 1.0
-        or contract.get("carrier_count_policy")
-        != "derived-from-structure-or-explicit; never historical-N7"
+        contract.get("formal_implementation")
+        != "pymatgen-analysis-diffusion public API"
+        or contract.get("trajectory_diffusion") != "DiffusionAnalyzer"
+        or contract.get("msd_only_diffusion") != "get_diffusivity_from_msd"
+        or contract.get("arrhenius") != "fit_arrhenius(mode='linear')"
+        or contract.get("historical_implementation")
+        != "separate adapter-only legacy reproduction"
     ):
         diagnostics.append(
             _diagnostic(
                 "ERROR", "result.analysis_contract", "manifest scientific contract is invalid"
             )
         )
+
+    runtime = manifest.get("runtime_provenance")
+    required_runtime = (
+        "python_executable",
+        "python_version",
+        "mlipflow_version",
+        "pymatgen_version",
+        "pymatgen_analysis_diffusion_version",
+        "numpy_version",
+    )
+    if not isinstance(runtime, Mapping):
+        diagnostics.append(
+            _diagnostic(
+                "ERROR",
+                "result.runtime_provenance",
+                "manifest runtime_provenance must be an object",
+            )
+        )
+    else:
+        expected_runtime, probe_error = _formal_runtime_probe()
+        if probe_error is not None or expected_runtime is None:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "result.runtime_probe",
+                    f"cannot recheck the formal runtime: {probe_error}",
+                )
+            )
+        else:
+            for name in required_runtime:
+                actual = runtime.get(name)
+                expected = expected_runtime.get(name)
+                if not isinstance(actual, str) or not actual or actual != expected:
+                    diagnostics.append(
+                        _diagnostic(
+                            "ERROR",
+                            "result.runtime_identity",
+                            f"manifest runtime {name} differs from the selected local interpreter",
+                        )
+                    )
+            source_records = manifest.get("source_artifacts")
+            uses_ase = isinstance(source_records, list) and any(
+                isinstance(record, Mapping)
+                and Path(str(record.get("path", ""))).name == "production.traj"
+                for record in source_records
+            )
+            if uses_ase:
+                ase_version = runtime.get("ase_version")
+                if (
+                    not isinstance(ase_version, str)
+                    or not ase_version
+                    or ase_version != expected_runtime.get("ase_version")
+                ):
+                    diagnostics.append(
+                        _diagnostic(
+                            "ERROR",
+                            "result.runtime_identity",
+                            "manifest ASE version differs from the selected local interpreter",
+                        )
+                    )
 
     recorded_parameters = _mapping(manifest.get("parameters"))
     parameters = _mapping(context.get("parameters"))
@@ -2271,7 +2406,7 @@ def _verify_analysis_manifest(
         )
 
     implementation = manifest.get("implementation_artifacts")
-    if not isinstance(implementation, list) or len(implementation) != 2:
+    if not isinstance(implementation, list) or len(implementation) != 1:
         diagnostics.append(
             _diagnostic(
                 "ERROR", "result.implementation_artifacts", "manifest implementation is incomplete"
@@ -2280,7 +2415,6 @@ def _verify_analysis_manifest(
     else:
         expected_implementation = {
             "packaged-analysis-runner": _bundled_analysis_script(),
-            "mlipflow-science-transport": Path(linear_fit.__code__.co_filename).resolve(),
         }
         for index, record in enumerate(implementation):
             if isinstance(record, Mapping):
@@ -2306,6 +2440,9 @@ def _verify_analysis_manifest(
         )
     else:
         approved_roots = [Path(value).resolve() for value in expected_inputs]
+        structure_input = _resolve(inputs.get("structure"), project_root)
+        if structure_input is not None:
+            approved_roots.append(structure_input)
         for index, record in enumerate(sources):
             path, record_diagnostics = _verify_file_record(
                 record, role=f"source_artifacts[{index}]"
@@ -2333,78 +2470,128 @@ def _verify_analysis_manifest(
     return diagnostics
 
 
+def _load_formal_runner():
+    name = "mlipflow_ionic_transport_formal_runner"
+    spec = importlib.util.spec_from_file_location(name, _bundled_analysis_script())
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot load bundled formal ionic-transport runner")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _optional_csv_number(value: Any) -> Optional[float]:
+    if value is None or str(value).strip().lower() in {"", "nan", "none", "null"}:
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
 def _verify_transport_rows(
     rows: Sequence[Mapping[str, str]], output_dir: Path
 ) -> List[Dict[str, str]]:
     diagnostics: List[Dict[str, str]] = []
+    try:
+        manifest = json.loads(
+            (output_dir / "analysis_manifest.json").read_text(encoding="utf-8")
+        )
+        runner = _load_formal_runner()
+        args = argparse.Namespace(**_mapping(manifest.get("parameters")))
+    except (OSError, UnicodeError, json.JSONDecodeError, ImportError, TypeError) as exc:
+        return [
+            _diagnostic(
+                "ERROR",
+                "result.formal_dependency",
+                f"formal checker cannot load pymatgen analysis: {exc}",
+            )
+        ]
+
     for index, row in enumerate(rows, start=1):
         curve_path = _resolve(row.get("msd_curve_csv"), output_dir)
         if curve_path is None or not curve_path.is_file() or not _is_within(curve_path, output_dir):
             continue
         try:
+            run = runner.load_run_data(
+                str(row["dataset"]), Path(str(row["run_dir"])).resolve(), args
+            )
+            expected = runner.formal_result_values(run, args)
             curve_reader = csv.DictReader(curve_path.read_text(encoding="utf-8").splitlines())
             curve_rows = list(curve_reader)
-            if curve_reader.fieldnames is None or not {
-                "time_ps",
-                "fit_msd_A2",
-                "used_for_fit",
-            }.issubset(curve_reader.fieldnames):
+            required_curve_columns = {"time_ps", "msd_A2", "used_for_analysis"}
+            if curve_reader.fieldnames is None or not required_curve_columns.issubset(
+                curve_reader.fieldnames
+            ):
                 raise ValueError("curve columns are incomplete")
-            fit_rows = [
-                item
+            times = [float(item["time_ps"]) for item in curve_rows]
+            msd = [float(item["msd_A2"]) for item in curve_rows]
+            used = [
+                str(item["used_for_analysis"]).strip().lower() in {"true", "1"}
                 for item in curve_rows
-                if str(item["used_for_fit"]).strip().lower() in {"true", "1"}
             ]
-            times = [float(item["time_ps"]) for item in fit_rows]
-            msd = [float(item["fit_msd_A2"]) for item in fit_rows]
-            dimensions = int(row["dimensions"])
-            diffusion = linear_diffusion_from_msd(times, msd, dimensions=dimensions)
+            expected_times = [float(value) for value in expected["time_ps"]]
+            expected_msd = [float(value) for value in expected["msd_A2"]]
+            expected_used = [bool(value) for value in expected["used"]]
+            if len(times) != len(expected_times) or any(
+                not _numbers_close(actual, wanted)
+                for actual, wanted in zip(times, expected_times)
+            ):
+                raise ValueError("time_ps differs from the rerun pymatgen analysis")
+            if len(msd) != len(expected_msd) or any(
+                not _numbers_close(actual, wanted)
+                for actual, wanted in zip(msd, expected_msd)
+            ):
+                raise ValueError("MSD differs from the rerun pymatgen analysis")
+            if used != expected_used:
+                raise ValueError("analysis point mask differs from the approved window")
         except (OSError, UnicodeError, csv.Error, KeyError, TypeError, ValueError) as exc:
             diagnostics.append(
                 _diagnostic(
-                    "ERROR", "result.curve_reparse", f"row {index} curve cannot be verified: {exc}"
+                    "ERROR", "result.pymatgen_recheck", f"row {index} cannot be verified: {exc}"
                 )
             )
             continue
+
         comparisons = {
-            "msd_slope_A2_per_ps": float(diffusion["slope_angstrom2_per_ps"]),
-            "diffusivity_cm2_s": float(diffusion["diffusion_cm2_per_s"]),
-            "msd_fit_r2": float(diffusion["r_squared"]),
-            "fit_start_ps": min(times),
-            "fit_end_ps": max(times),
+            "diffusivity_cm2_s": expected["diffusivity_cm2_s"],
+            "diffusivity_std_dev_cm2_s": expected["diffusivity_std_dev_cm2_s"],
+            "conductivity_NE_mS_cm": expected["conductivity_mS_cm"],
+            "conductivity_std_dev_mS_cm": expected["conductivity_std_dev_mS_cm"],
+            "chg_diffusivity_cm2_s": expected["chg_diffusivity_cm2_s"],
+            "chg_conductivity_mS_cm": expected["chg_conductivity_mS_cm"],
+            "haven_ratio": expected["haven_ratio"],
         }
-        for name, expected in comparisons.items():
+        for name, wanted in comparisons.items():
             try:
-                actual = float(row[name])
-            except (KeyError, TypeError, ValueError):
-                actual = float("nan")
-            if not math.isfinite(actual) or not _numbers_close(actual, expected):
+                actual = _optional_csv_number(row.get(name))
+            except (TypeError, ValueError):
+                actual = None
+            if wanted is None:
+                matches = actual is None
+            else:
+                matches = actual is not None and _numbers_close(actual, float(wanted))
+            if not matches:
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
-                        "result.einstein_relation",
-                        f"row {index} {name} disagrees with the fetched MSD curve",
+                        "result.pymatgen_value",
+                        f"row {index} {name} differs from the rerun pymatgen API result",
                     )
                 )
-        try:
-            if dimensions != 3 or not _numbers_close(float(row["haven_ratio"]), 1.0):
-                raise ValueError("dimensions/haven ratio differ from the formal contract")
-            conductivity = nernst_einstein_conductivity(
-                float(row["diffusivity_cm2_s"]) * 1.0e-4,
-                float(row["temperature_K"]),
-                int(float(row["n_mobile_ions"])),
-                float(row["charge"]),
-                float(row["volume_A3"]),
-            )["conductivity_ms_cm"]
-            actual_conductivity = float(row["conductivity_NE_mS_cm"])
-            if not _numbers_close(actual_conductivity, conductivity):
-                raise ValueError("conductivity does not satisfy Nernst-Einstein")
-        except (KeyError, TypeError, ValueError) as exc:
-            diagnostics.append(
-                _diagnostic(
-                    "ERROR", "result.conductivity_relation", f"row {index} failed: {exc}"
+        methods = {
+            "diffusion_method": expected["diffusion_method"],
+            "conductivity_method": expected["conductivity_method"],
+            "arrhenius_method": "pymatgen-fit-arrhenius-linear",
+        }
+        for name, wanted in methods.items():
+            if row.get(name) != wanted:
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "result.method_identity",
+                        f"row {index} {name} is not {wanted}",
+                    )
                 )
-            )
     return diagnostics
 
 
@@ -2420,27 +2607,42 @@ def _verify_arrhenius_summary(summary: Mapping[str, Any]) -> List[Dict[str, str]
         )
     for label, candidate in candidates:
         try:
+            from pymatgen.analysis.diffusion.analyzer import (
+                fit_arrhenius,
+                get_extrapolated_diffusivity,
+            )
+
             temperatures = [float(value) for value in candidate["fit_temperatures_K"]]
             diffusivities = [float(value) for value in candidate["fit_diffusivities_cm2_s"]]
             target = float(candidate["target_temperature_K"])
-            recalculated = arrhenius_from_diffusivities(
-                temperatures, diffusivities, target_temperature_k=target
+            ea_eV, prefactor, ea_std = fit_arrhenius(
+                temperatures, diffusivities, mode="linear"
+            )
+            target_diffusivity = get_extrapolated_diffusivity(
+                temperatures, diffusivities, target, mode="linear"
             )
             single = _mapping(candidate["single"])
             expected = {
-                "slope_K": recalculated["slope_k"],
-                "intercept_lnD0": recalculated["intercept_ln_diffusivity"],
-                "Ea_eV": recalculated["activation_energy_ev"],
-                "D0_cm2_s": recalculated["prefactor_cm2_s"],
-                "r2_lnD": recalculated["r_squared"],
-                f"D_{target:g}K_cm2_s": recalculated["target_diffusivity_cm2_s"],
+                "Ea_eV": ea_eV,
+                "D0_cm2_s": prefactor,
+                f"D_{target:g}K_cm2_s": target_diffusivity,
             }
             for name, value in expected.items():
                 if not _finite_number(single.get(name)) or not _numbers_close(
                     float(single[name]), float(value)
                 ):
                     raise ValueError(f"{name} differs from the temperature rows")
-        except (KeyError, TypeError, ValueError) as exc:
+            actual_std = single.get("Ea_stderr_eV")
+            if ea_std is None:
+                if actual_std is not None:
+                    raise ValueError("Ea_stderr_eV must be null")
+            elif not _finite_number(actual_std) or not _numbers_close(
+                float(actual_std), float(ea_std)
+            ):
+                raise ValueError("Ea_stderr_eV differs from pymatgen")
+            if candidate.get("arrhenius_method") != "pymatgen-fit-arrhenius-linear":
+                raise ValueError("Arrhenius method identity is invalid")
+        except (ImportError, KeyError, TypeError, ValueError) as exc:
             diagnostics.append(
                 _diagnostic(
                     "ERROR", "result.arrhenius_relation", f"Arrhenius summary {label} failed: {exc}"
@@ -2577,6 +2779,17 @@ class Adapter:
                     )
                 else:
                     input_paths.append(resolved)
+        structure_input = _resolve(inputs.get("structure"), project_root)
+        if inputs.get("structure") is not None and (
+            structure_input is None or not structure_input.is_file()
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "path.structure",
+                    "inputs.structure must name a real structure file for MSD conductivity",
+                )
+            )
 
         output_subdir = parameters.get("output_subdir", "ionic-transport-postprocess")
         if not _safe_subdirectory(output_subdir):
@@ -2616,6 +2829,14 @@ class Adapter:
                     )
                 )
                 break
+        if structure_input is not None and (
+            _is_within(output_dir, structure_input) or _is_within(structure_input, output_dir)
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR", "path.input_output_overlap", "structure and output paths must not overlap"
+                )
+            )
 
         python_executable = resources.get("python_executable", sys.executable)
         if not isinstance(python_executable, str) or not python_executable.strip():
@@ -2626,6 +2847,16 @@ class Adapter:
                     "python_executable must be a non-empty string",
                 )
             )
+        elif not _is_current_python(python_executable):
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "resource.python_executable",
+                    "formal transport must use the same local Python interpreter that runs MLIPFlow",
+                )
+            )
+        else:
+            diagnostics.extend(_formal_dependency_diagnostics())
 
         source = parameters.get("source")
         if source not in {"auto", "trajectory", "vasp", "msd"}:
@@ -2652,7 +2883,8 @@ class Adapter:
                 _diagnostic(
                     "ERROR",
                     "assumption.dimensions_unsupported",
-                    "the formal contract is three-dimensional and uses D=slope/(2d)",
+                    "the formal compatibility boundary requires dimensions=3; diffusivity is "
+                    "returned directly by pymatgen",
                 )
             )
         haven_ratio = parameters.get("haven_ratio")
@@ -2663,7 +2895,8 @@ class Adapter:
                 _diagnostic(
                     "ERROR",
                     "assumption.haven_unsupported",
-                    "source reports uncorrected Nernst-Einstein conductivity; haven_ratio must be 1",
+                    "the input compatibility declaration requires haven_ratio=1; the trajectory "
+                    "result comes directly from DiffusionAnalyzer",
                 )
             )
         if parameters.get("seed") is not None:
@@ -2694,7 +2927,7 @@ class Adapter:
         choices = {
             "drift_correction": {"framework", "mobile", "none"},
             "msd_mode": {"multi-origin", "single-origin"},
-            "trajectory_msd_engine": {"diffusion-analyzer", "numpy", "auto"},
+            "trajectory_msd_engine": {"diffusion-analyzer"},
             "diffusion_analyzer_smoothed": {"max", "constant", "none"},
             "msd_time_unit": {"auto", "ps", "fs", "ns", "step"},
             "msd_unit": {"auto", "A2", "nm2"},
@@ -2734,20 +2967,13 @@ class Adapter:
                         "ERROR", "unit.msd_explicit", "MSD input requires an explicit MSD unit"
                     )
                 )
-            if not _positive_int(parameters.get("n_mobile_ions")):
+            if parameters.get("n_mobile_ions") is not None or parameters.get("volume_a3") is not None:
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
-                        "assumption.n_mobile_ions",
-                        "MSD conductivity requires explicit positive n_mobile_ions",
-                    )
-                )
-            if not _positive_number(parameters.get("volume_a3")):
-                diagnostics.append(
-                    _diagnostic(
-                        "ERROR",
-                        "assumption.volume_a3",
-                        "MSD conductivity requires explicit positive volume_a3",
+                        "assumption.legacy_ne_inputs_unsupported",
+                        "formal MSD conductivity does not accept n_mobile_ions/volume_a3; "
+                        "provide inputs.structure or leave conductivity unavailable",
                     )
                 )
         elif parameters.get("msd_time_unit") == "auto" or parameters.get("msd_unit") == "auto":
@@ -2820,6 +3046,17 @@ class Adapter:
                 diagnostics.append(
                     _diagnostic("ERROR", "parameter.%s" % name, "%s must be boolean" % name)
                 )
+        if parameters.get("fit_smoothed_msd") is True or parameters.get(
+            "msd_smooth_window_points"
+        ) is not None or parameters.get("msd_smooth_window_ps") is not None:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "parameter.custom_msd_smoothing_unsupported",
+                    "formal transport passes the declared smoothed mode directly to pymatgen and "
+                    "does not apply MLIPFlow moving-average smoothing",
+                )
+            )
         for name in (
             "lammps_data_name",
             "vasp_file_name",
@@ -2982,6 +3219,8 @@ class Adapter:
         argv.extend(["--output", str(output_dir)])
 
         argv.extend(_analysis_arguments(parameters))
+        if structure_input := _resolve(inputs.get("structure"), project_root):
+            argv.extend(["--msd-structure", str(structure_input)])
 
         return {
             "plugin_id": PLUGIN_ID,
@@ -2995,13 +3234,13 @@ class Adapter:
             "output_dir": str(output_dir),
             "assumptions": {
                 "dimensions": 3,
-                "haven_ratio": 1.0,
-                "conductivity_model": "uncorrected-nernst-einstein",
+                "formal_scientific_implementation": "pymatgen-analysis-diffusion",
+                "haven_ratio": "reported-directly-by-DiffusionAnalyzer-for-trajectories",
+                "conductivity_model": "pymatgen-public-api",
                 "seed": None,
             },
             "provenance": {
                 "analysis_source_sha256": _sha256_file(script),
-                "transport_core_sha256": _sha256_file(Path(linear_fit.__code__.co_filename)),
             },
             "diagnostics": diagnostics,
         }
@@ -3143,13 +3382,8 @@ class Adapter:
             for name in (
                 "temperature_K",
                 "diffusivity_cm2_s",
-                "fit_start_ps",
-                "fit_end_ps",
-                "msd_fit_r2",
-                "n_mobile_ions",
-                "charge",
-                "volume_A3",
-                "conductivity_NE_mS_cm",
+                "analysis_start_ps",
+                "analysis_end_ps",
             ):
                 try:
                     number = float(row.get(name, ""))
@@ -3173,14 +3407,33 @@ class Adapter:
                             "temperature and diffusivity must be positive in row %d" % (index + 1),
                         )
                     )
-                if float(row["fit_start_ps"]) >= float(row["fit_end_ps"]):
+                if float(row["analysis_start_ps"]) >= float(row["analysis_end_ps"]):
                     diagnostics.append(
                         _diagnostic(
                             "ERROR",
                             "result.fit_window",
-                            "result fit window is invalid in row %d" % (index + 1),
+                            "result analysis window is invalid in row %d" % (index + 1),
                         )
                     )
+            conductivity_method = row.get("conductivity_method")
+            conductivity = _optional_csv_number(row.get("conductivity_NE_mS_cm"))
+            if conductivity_method == "unavailable":
+                if conductivity is not None or not row.get("conductivity_unavailable_reason"):
+                    diagnostics.append(
+                        _diagnostic(
+                            "ERROR",
+                            "result.conductivity_unavailable",
+                            "row %d must explain unavailable conductivity" % (index + 1),
+                        )
+                    )
+            elif conductivity is None:
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "result.conductivity_missing",
+                        "row %d must contain pymatgen conductivity" % (index + 1),
+                    )
+                )
             for name in ("msd_curve_csv", "msd_fit_html"):
                 artifact = _resolve(row.get(name), output_dir)
                 if (
@@ -3364,10 +3617,26 @@ class Adapter:
                 {
                     "temperature_K": float(row["temperature_K"]),
                     "diffusivity_cm2_s": float(row["diffusivity_cm2_s"]),
-                    "conductivity_NE_mS_cm": float(row["conductivity_NE_mS_cm"]),
-                    "msd_fit_r2": float(row["msd_fit_r2"]),
-                    "fit_start_ps": float(row["fit_start_ps"]),
-                    "fit_end_ps": float(row["fit_end_ps"]),
+                    "diffusivity_std_dev_cm2_s": _optional_csv_number(
+                        row.get("diffusivity_std_dev_cm2_s")
+                    ),
+                    "conductivity_NE_mS_cm": _optional_csv_number(
+                        row.get("conductivity_NE_mS_cm")
+                    ),
+                    "conductivity_std_dev_mS_cm": _optional_csv_number(
+                        row.get("conductivity_std_dev_mS_cm")
+                    ),
+                    "chg_diffusivity_cm2_s": _optional_csv_number(
+                        row.get("chg_diffusivity_cm2_s")
+                    ),
+                    "chg_conductivity_mS_cm": _optional_csv_number(
+                        row.get("chg_conductivity_mS_cm")
+                    ),
+                    "haven_ratio": _optional_csv_number(row.get("haven_ratio")),
+                    "analysis_start_ps": float(row["analysis_start_ps"]),
+                    "analysis_end_ps": float(row["analysis_end_ps"]),
+                    "diffusion_method": row["diffusion_method"],
+                    "conductivity_method": row["conductivity_method"],
                 }
             )
         return {

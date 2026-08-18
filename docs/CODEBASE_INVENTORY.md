@@ -167,7 +167,7 @@ MSD 时间轴、体积、Li 数量、扩散维度、拟合窗、平衡段和电�
 | `MD/lammps_MD/generate_md.py` | 结构/模型/多温度/seed/超胞 → MACE-LAMMPS data 与 NPT/NVT/MSD 输入 | B/C | `ionic-transport`；去除 `Li type 1`、framework `2 3` 和 `data.LYC` 假设 |
 | `MD/lammps_MD/submit_mace_cond.sh` | 模块加载并调用绝对路径 LAMMPS | E | 只把抽象资源意图迁入 node；站点 module/launcher 由远端模板重建，不复用脚本文本 |
 | `MD/AIMD/generate_input.py` | pymatgen MITMDSet → NVT/NPT VASP 输入 | D | 已提炼为 `dft-labeling.vasp-prepare` 的显式 `aimd` contract；POTCAR 只由用户 `PMG_VASP_PSP_DIR` 运行时组装且禁止 collect/入库 |
-| `plugins/ionic-transport/ionic_conductivity.py` | `ionic-transport` 自包含并正式打包的 local runner；ASE/LAMMPS/VASP/MSD 多源 → CSV/JSON/HTML/analysis manifest | C | 核心 OLS、`D=slope/(2d)`、Nernst–Einstein、single-line Arrhenius 复用 `mlipflow.science.transport`；不依赖临时 `diffusion_analysis/` 目录，显式拟合窗/缺失科学参数，checker 重算关键关系 |
+| `plugins/ionic-transport/ionic_conductivity.py` | `ionic-transport` 自包含并正式打包的 local runner；ASE/LAMMPS/VASP/MSD 多源 → CSV/JSON/HTML/analysis manifest | C | formal 数值直接调用 `pymatgen-analysis-diffusion` 的 DiffusionAnalyzer/MSD/conversion/Arrhenius public API；checker 从原始输入重跑相同 API；历史公式仅留在 adapter 隔离 reproduction |
 | `skill/{direct-sampling,mace-sft,ase-md,diffusion_analysis}/SKILL.md` | 旧 Agent 操作说明 | D | 只提炼领域决策，重新编写九个 MLIPFlow Skills |
 
 旧 skill 与代码存在明显漂移：DIRECT 文档调用不存在的 `run_direct_sampling.py` 和错误参数名；MACE 文档调用不存在的 `run_mace_sft.py` 并错误描述标签/硬件；ASE MD 文档调用不存在的 `run_ase_md_multi.py`，声称的多结构并行和全参数 CLI 也不在实际脚本中。因此这些文档不能作为接口事实来源。

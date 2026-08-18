@@ -1,8 +1,8 @@
-"""Unit-explicit, deterministic ionic-transport primitives.
+"""Unit-explicit transport helpers retained for legacy/historical reproduction.
 
-These functions are the single implementation used by the ionic-transport
-runner, its checker, and the historical parity wrapper. They analyze supplied
-data only; they do not generate trajectories or choose scientific parameters.
+Formal ionic-transport analysis and its checker use pymatgen-analysis-diffusion
+public APIs directly. These helpers remain stable for isolated historical parity
+and low-level regression tests; they are not a fallback for formal analysis.
 """
 
 from __future__ import annotations

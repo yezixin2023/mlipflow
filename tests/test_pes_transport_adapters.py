@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import csv
+import importlib.metadata
 import importlib.util
 import json
+import math
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -245,8 +249,8 @@ class IonicTransportAdapterTests(unittest.TestCase):
                 "trajectory_end_ps": None,
                 "drift_correction": "framework",
                 "msd_mode": "multi-origin",
-                "trajectory_msd_engine": "numpy",
-                "diffusion_analyzer_smoothed": "max",
+                "trajectory_msd_engine": "diffusion-analyzer",
+                "diffusion_analyzer_smoothed": "none",
                 "diffusion_analyzer_min_obs": 30,
                 "diffusion_analyzer_avg_nsteps": 1000,
                 "diffusion_analyzer_step_skip": 1,
@@ -257,8 +261,8 @@ class IonicTransportAdapterTests(unittest.TestCase):
                 "msd_time_unit": "ps",
                 "msd_unit": "A2",
                 "msd_temperature_k": 800.0,
-                "n_mobile_ions": 24,
-                "volume_a3": 1200.0,
+                "n_mobile_ions": None,
+                "volume_a3": None,
                 "fit_scope": "dataset",
                 "target_temperature_k": 300.0,
                 "piecewise": "never",
@@ -289,9 +293,12 @@ class IonicTransportAdapterTests(unittest.TestCase):
         )
         self.assertIn("--fit-start-ps", plan["argv"])
         self.assertIn("--fit-end-ps", plan["argv"])
-        self.assertIn("--n-mobile-ions", plan["argv"])
+        self.assertNotIn("--n-mobile-ions", plan["argv"])
         self.assertEqual(3, plan["assumptions"]["dimensions"])
-        self.assertEqual(1.0, plan["assumptions"]["haven_ratio"])
+        self.assertEqual(
+            "reported-directly-by-DiffusionAnalyzer-for-trajectories",
+            plan["assumptions"]["haven_ratio"],
+        )
         self.assertIsNone(plan["assumptions"]["seed"])
 
     def test_unsupported_dimension_haven_and_seed_block(self) -> None:
@@ -329,6 +336,22 @@ class IonicTransportAdapterTests(unittest.TestCase):
         plan = self.adapter.plan(context)
         self.assertEqual("BLOCKED", plan["status"])
         self.assertIn("input.analysis_script_unsupported", diagnostic_codes(plan))
+
+    def test_missing_pymatgen_diffusion_dependency_blocks_formal_plan(self) -> None:
+        context = self.context()
+        with mock.patch.dict(
+            self.adapter.validate.__globals__,
+            {
+                "_formal_runtime_probe": lambda: (
+                    None,
+                    "Formal ionic transport requires pymatgen-analysis-diffusion",
+                )
+            },
+        ):
+            plan = self.adapter.plan(context)
+        self.assertEqual("BLOCKED", plan["status"])
+        self.assertIn("dependency.pymatgen_analysis_diffusion", diagnostic_codes(plan))
+        self.assertIn("mlipflow[transport]", json.dumps(plan["diagnostics"]))
 
     def test_existing_output_blocks_without_overwrite(self) -> None:
         output = self.attempt / "ionic-transport-postprocess"
@@ -373,6 +396,27 @@ class IonicTransportAdapterTests(unittest.TestCase):
         self.assertEqual(1, collected["metrics"]["run_count"])
         self.assertEqual(3, collected["metrics"]["assumptions"]["dimensions"])
         self.assertEqual(1.0, collected["metrics"]["assumptions"]["haven_ratio"])
+        result_path = next(path for path in files if path.name == "diffusion_results_by_temperature.csv")
+        with result_path.open(encoding="utf-8", newline="") as stream:
+            row = next(csv.DictReader(stream))
+        from pymatgen.analysis.diffusion.analyzer import get_diffusivity_from_msd
+
+        expected_d, _ = get_diffusivity_from_msd(
+            [8.0, 14.0, 20.0, 26.0, 32.0, 38.0, 44.0, 50.0, 56.0, 62.0],
+            [value * 1000.0 for value in range(10, 101, 10)],
+            smoothed=False,
+        )
+        self.assertEqual(expected_d, float(row["diffusivity_cm2_s"]))
+        self.assertEqual("unavailable", row["conductivity_method"])
+        self.assertEqual("", row["conductivity_NE_mS_cm"])
+        manifest_path = next(path for path in files if path.name == "analysis_manifest.json")
+        runtime = json.loads(manifest_path.read_text(encoding="utf-8"))["runtime_provenance"]
+        self.assertEqual(sys.executable, runtime["python_executable"])
+        self.assertEqual(importlib.metadata.version("pymatgen"), runtime["pymatgen_version"])
+        self.assertEqual(
+            importlib.metadata.version("pymatgen-analysis-diffusion"),
+            runtime["pymatgen_analysis_diffusion_version"],
+        )
         self.assertEqual(
             {
                 "transport-results",
@@ -404,8 +448,72 @@ class IonicTransportAdapterTests(unittest.TestCase):
         checked = self.adapter.check(context)
         self.assertEqual("FAIL", checked["status"])
         self.assertTrue(
-            {"result.manifest_sha256", "result.einstein_relation"}
+            {"result.manifest_sha256", "result.pymatgen_recheck"}
             & diagnostic_codes(checked)
+        )
+
+    def test_checker_rejects_tampered_pymatgen_result(self) -> None:
+        context, files = self.result_context()
+        result_path = next(path for path in files if path.name == "diffusion_results_by_temperature.csv")
+        with result_path.open(encoding="utf-8", newline="") as stream:
+            reader = csv.DictReader(stream)
+            rows = list(reader)
+            fieldnames = reader.fieldnames
+        assert fieldnames is not None
+        rows[0]["diffusivity_cm2_s"] = str(float(rows[0]["diffusivity_cm2_s"]) * 2.0)
+        with result_path.open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        checked = self.adapter.check(context)
+        self.assertEqual("FAIL", checked["status"])
+        self.assertTrue(
+            {"result.manifest_sha256", "result.pymatgen_value"}
+            & diagnostic_codes(checked)
+        )
+
+    def test_checker_rejects_tampered_runtime_provenance(self) -> None:
+        context, files = self.result_context()
+        manifest_path = next(path for path in files if path.name == "analysis_manifest.json")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["runtime_provenance"]["pymatgen_analysis_diffusion_version"] = "tampered"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        checked = self.adapter.check(context)
+
+        self.assertEqual("FAIL", checked["status"])
+        self.assertIn("result.runtime_identity", diagnostic_codes(checked))
+
+    def test_msd_structure_enables_pymatgen_conductivity(self) -> None:
+        from pymatgen.analysis.diffusion.analyzer import get_conversion_factor
+        from pymatgen.core import Lattice, Structure
+
+        structure = Structure(
+            Lattice.cubic(10), ["Li", "S"], [[0, 0, 0], [0.5, 0.5, 0.5]]
+        )
+        structure_path = self.root / "POSCAR"
+        structure.to(filename=structure_path, fmt="poscar")
+        context = self.context()
+        context["inputs"]["structure"] = str(structure_path)
+        plan = self.adapter.plan(context)
+        self.assertEqual("READY", plan["status"], plan.get("diagnostics"))
+        self.attempt.mkdir(parents=True)
+        completed = subprocess.run(
+            plan["argv"], cwd=plan["cwd"], check=False, capture_output=True, text=True
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        context["execution"] = {"returncode": completed.returncode, "plan": plan}
+        self.assertEqual("OK", self.adapter.check(context)["status"])
+        with (Path(plan["output_dir"]) / "diffusion_results_by_temperature.csv").open(
+            encoding="utf-8", newline=""
+        ) as stream:
+            row = next(csv.DictReader(stream))
+        expected = float(row["diffusivity_cm2_s"]) * get_conversion_factor(
+            structure, "Li", 800.0
+        )
+        self.assertEqual("pymatgen-get-conversion-factor", row["conductivity_method"])
+        self.assertTrue(
+            math.isclose(expected, float(row["conductivity_NE_mS_cm"]), rel_tol=1e-12)
         )
 
     def test_missing_explicit_results_wait(self) -> None:

@@ -118,7 +118,7 @@
       "wrapper": "ionic-transport.adapter.reproduce_manuscript_transport",
       "wrapper_version": "1.0",
       "wrapper_locator": "plugins/ionic-transport/adapter.py",
-      "wrapper_sha256": "sha256:2c6ad2ef72d3ad644084141105adf1f4056cf31187f9680ab6efd7075d0aa28e",
+      "wrapper_sha256": "sha256:ee2fa52bc06edfefd5589ca1138ec545aa2d346d2e4ea97cf48244d948d5812c",
       "historical_scripts": [
         {
           "locator": "historical-transport/code/get_MSD_Li10.py",

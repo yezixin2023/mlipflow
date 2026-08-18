@@ -269,7 +269,7 @@ def test_prepare_explicit_lammps_data_format_without_filename_inference(tmp_path
     assert manifest["source_structure_format"] == "lammps-data"
     structure_data = output / "structure.data"
     assert structure_data.is_file()
-    generated = read(structure_data, format="lammps-data", style="atomic")
+    generated = read(structure_data, format="lammps-data", atom_style="atomic")
     assert len(generated) == 1
     assert generated.get_chemical_symbols() == ["Li"]
 

@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import csv
 import importlib.util
+import json
+import math
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_PATH = ROOT / "plugins" / "ionic-transport" / "adapter.py"
+RUNNER_PATH = ROOT / "plugins" / "ionic-transport" / "ionic_conductivity.py"
 
 
 def load_adapter():
@@ -19,6 +24,16 @@ def load_adapter():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.Adapter()
+
+
+def load_runner():
+    name = "test_ionic_transport_formal_runner"
+    spec = importlib.util.spec_from_file_location(name, RUNNER_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def write_lammps_run(root: Path, temperature_k: int, displacement_per_frame: float) -> None:
@@ -79,9 +94,9 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
                     "fit_end_ps": 5.0,
                     "trajectory_start_ps": None,
                     "trajectory_end_ps": None,
-                    "drift_correction": "none",
-                    "msd_mode": "single-origin",
-                    "trajectory_msd_engine": "numpy",
+                    "drift_correction": "framework",
+                    "msd_mode": "multi-origin",
+                    "trajectory_msd_engine": "diffusion-analyzer",
                     "diffusion_analyzer_smoothed": "none",
                     "diffusion_analyzer_min_obs": 3,
                     "diffusion_analyzer_avg_nsteps": 3,
@@ -140,6 +155,177 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
                 rows = list(csv.DictReader(stream))
             self.assertEqual([400.0, 600.0, 800.0], [float(row["temperature_K"]) for row in rows])
             self.assertTrue(all(float(row["diffusivity_cm2_s"]) > 0.0 for row in rows))
+            self.assertTrue(
+                all(row["diffusion_method"] == "pymatgen-diffusion-analyzer" for row in rows)
+            )
+            self.assertTrue(
+                all(
+                    row["conductivity_method"] == "pymatgen-diffusion-analyzer"
+                    for row in rows
+                )
+            )
+
+            from pymatgen.analysis.diffusion.analyzer import DiffusionAnalyzer, fit_arrhenius
+            from pymatgen.core import Lattice, Structure
+
+            expected_analyzers = []
+            for temperature, displacement in ((400, 0.10), (600, 0.16), (800, 0.23)):
+                structures = [
+                    Structure(
+                        Lattice.cubic(10),
+                        ["Li", "He"],
+                        [[frame * displacement / 10.0, 0, 0], [0.5, 0.5, 0.5]],
+                    )
+                    for frame in range(6)
+                ]
+                expected_analyzers.append(
+                    DiffusionAnalyzer.from_structures(
+                        structures,
+                        specie="Li",
+                        temperature=temperature,
+                        time_step=1000.0,
+                        step_skip=1,
+                        smoothed=False,
+                        min_obs=3,
+                        avg_nsteps=3,
+                    )
+                )
+            for row, analyzer in zip(rows, expected_analyzers):
+                self.assertTrue(
+                    math.isclose(
+                        float(row["diffusivity_cm2_s"]),
+                        float(analyzer.diffusivity),
+                        rel_tol=1e-12,
+                    )
+                )
+                self.assertTrue(
+                    math.isclose(
+                        float(row["conductivity_NE_mS_cm"]),
+                        float(analyzer.conductivity),
+                        rel_tol=1e-12,
+                    )
+                )
+                with Path(row["msd_curve_csv"]).open(encoding="utf-8", newline="") as stream:
+                    curve = list(csv.DictReader(stream))
+                self.assertEqual(
+                    [float(item["time_ps"]) for item in curve],
+                    [float(value) / 1000.0 for value in analyzer.dt],
+                )
+
+            summary = json.loads(
+                (Path(plan["output_dir"]) / "arrhenius_summary.json").read_text(encoding="utf-8")
+            )
+            expected_ea, expected_prefactor, expected_std = fit_arrhenius(
+                [400.0, 600.0, 800.0],
+                [float(analyzer.diffusivity) for analyzer in expected_analyzers],
+                mode="linear",
+            )
+            self.assertEqual("pymatgen-fit-arrhenius-linear", summary["arrhenius_method"])
+            self.assertTrue(math.isclose(expected_ea, summary["single"]["Ea_eV"], rel_tol=1e-12))
+            self.assertTrue(
+                math.isclose(expected_prefactor, summary["single"]["D0_cm2_s"], rel_tol=1e-12)
+            )
+            self.assertTrue(
+                math.isclose(expected_std, summary["single"]["Ea_stderr_eV"], rel_tol=1e-12)
+            )
+
+    def test_step_skip_time_axis_comes_from_diffusion_analyzer_dt(self) -> None:
+        from pymatgen.core import Lattice, Structure
+
+        runner = load_runner()
+        structures = [
+            Structure(
+                Lattice.cubic(10),
+                ["Li", "He"],
+                [[frame * 0.01, 0, 0], [0.5, 0.5, 0.5]],
+            )
+            for frame in range(9)
+        ]
+        args = SimpleNamespace(
+            diffusion_analyzer_step_skip=2,
+            diffusion_analyzer_smoothed="none",
+            diffusion_analyzer_min_obs=3,
+            diffusion_analyzer_avg_nsteps=3,
+        )
+        analyzer, time_ps, _, _ = runner.diffusion_analyzer_from_structures(
+            structures, "Li", 600.0, 4.0, args
+        )
+        self.assertEqual(time_ps.tolist(), (analyzer.dt / 1000.0).tolist())
+        self.assertEqual([0.0, 0.008, 0.016, 0.024, 0.032], time_ps.tolist())
+
+
+class IonicTransportMsdOnlyRegressionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.runner = load_runner()
+        self.args = SimpleNamespace(
+            specie="Li",
+            charge=1.0,
+            fit_start_ps=1.0,
+            fit_end_ps=5.0,
+            min_msd_fit_points=3,
+            diffusion_analyzer_smoothed="none",
+            diffusion_analyzer_min_obs=3,
+            diffusion_analyzer_avg_nsteps=3,
+        )
+        self.time_ps = self.runner.np.asarray([0, 1, 2, 3, 4, 5], dtype=float)
+        self.msd_A2 = self.runner.np.asarray([1, 2, 4, 7, 11, 16], dtype=float)
+
+    def run_data(self, structure=None):
+        return self.runner.RunData(
+            dataset="fixture",
+            run_dir=Path("."),
+            temperature_K=700.0,
+            source_kind="msd_file",
+            source_path=Path("msd.csv"),
+            time_ps=self.time_ps,
+            msd_A2=self.msd_A2,
+            n_mobile=None if structure is None else 1,
+            volume_A3=None if structure is None else float(structure.volume),
+            drift_correction="as_in_msd_file",
+            structure=structure,
+        )
+
+    def test_msd_only_diffusivity_uses_pymatgen_and_conductivity_is_unavailable(self) -> None:
+        from pymatgen.analysis.diffusion.analyzer import get_diffusivity_from_msd
+
+        result = self.runner.formal_result_values(self.run_data(), self.args)
+        expected = get_diffusivity_from_msd(
+            self.msd_A2[1:], self.time_ps[1:] * 1000.0, smoothed=False
+        )
+        self.assertEqual(float(expected[0]), result["diffusivity_cm2_s"])
+        self.assertEqual(float(expected[1]), result["diffusivity_std_dev_cm2_s"])
+        self.assertIsNone(result["conductivity_mS_cm"])
+        self.assertEqual("unavailable", result["conductivity_method"])
+
+    def test_msd_structure_conductivity_uses_pymatgen_conversion_factor(self) -> None:
+        from pymatgen.analysis.diffusion.analyzer import get_conversion_factor
+        from pymatgen.core import Lattice, Structure
+
+        structure = Structure(Lattice.cubic(10), ["Li", "S"], [[0, 0, 0], [0.5, 0.5, 0.5]])
+        result = self.runner.formal_result_values(self.run_data(structure), self.args)
+        expected = result["diffusivity_cm2_s"] * get_conversion_factor(
+            structure, "Li", 700.0
+        )
+        self.assertEqual(expected, result["conductivity_mS_cm"])
+        self.assertEqual("pymatgen-get-conversion-factor", result["conductivity_method"])
+
+    def test_missing_formal_dependency_has_actionable_error_without_breaking_core_import(self) -> None:
+        import mlipflow
+
+        original_import = __import__
+
+        def blocked_import(name, *args, **kwargs):
+            if name == "pymatgen.analysis.diffusion.analyzer":
+                raise ModuleNotFoundError("simulated missing diffusion extra")
+            return original_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=blocked_import):
+            with self.assertRaisesRegex(
+                ImportError,
+                r"Formal ionic transport requires pymatgen-analysis-diffusion.*mlipflow\[transport\]",
+            ):
+                self.runner.require_formal_diffusion_api()
+        self.assertIsNotNone(mlipflow)
 
 
 if __name__ == "__main__":

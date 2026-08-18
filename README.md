@@ -330,6 +330,23 @@ python -m pip install -e .
 python -m pip install -e '.[dev]'
 ```
 
+正式 ionic transport 开发/测试环境（Python >= 3.10）：
+
+```bash
+python -m pip install -e '.[dev,transport]'
+```
+
+普通用户只启用 formal transport：
+
+```bash
+python -m pip install 'mlipflow[transport]'
+```
+
+Core 仍支持 Python >= 3.9；未安装 `transport` extra 时，MLIPFlow core 与隔离的
+historical transport reproduction 可用，formal transport 会明确报出安装提示且不会
+回退到 MLIPFlow/NumPy 自定义算法。Formal transport 使用运行 MLIPFlow 的同一本地
+Python 解释器，不涉及 SSH、SLURM 或集群 Python 环境。
+
 仓库通用科学 extra：
 
 ```bash

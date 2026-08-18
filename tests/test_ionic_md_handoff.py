@@ -129,9 +129,9 @@ class IonicMDHandoffTests(unittest.TestCase):
                 "fit_end_ps": 0.008,
                 "trajectory_start_ps": None,
                 "trajectory_end_ps": None,
-                "drift_correction": "none",
-                "msd_mode": "single-origin",
-                "trajectory_msd_engine": "numpy",
+                "drift_correction": "framework",
+                "msd_mode": "multi-origin",
+                "trajectory_msd_engine": "diffusion-analyzer",
                 "diffusion_analyzer_smoothed": "none",
                 "diffusion_analyzer_min_obs": 3,
                 "diffusion_analyzer_avg_nsteps": 3,
@@ -315,8 +315,8 @@ class IonicMDHandoffTests(unittest.TestCase):
         parameters["seed"] = None
         parameters["msd_time_unit"] = "ps"
         parameters["msd_unit"] = "A2"
-        parameters["n_mobile_ions"] = 1
-        parameters["volume_a3"] = 100.0
+        parameters["n_mobile_ions"] = None
+        parameters["volume_a3"] = None
         plan = self.adapter.plan(context)
         self.assertEqual("READY", plan["status"], plan.get("diagnostics"))
         self.assertEqual("analyze-existing", plan["operation"])
