@@ -2,6 +2,9 @@
 
 The bundled scheduler contract is the common workflow layer for DeepMD, M3GNet/MatGL, CHGNet, and MACE. The project declares scientific intent; the selected site profile and remote template library own SSH, Slurm, modules, Python environments, dataset roots, and foundation-model roots.
 
+For from-zero creation, framework-specific import/GPU checks, and `PYTHON_BIN`
+binding, see [`docs/CLUSTER_ENVIRONMENTS.md`](../../docs/CLUSTER_ENVIRONMENTS.md).
+
 ## Site template families
 
 Install one `run.sh` below the selected cluster profile's `remote_template_root` for every framework you enable:

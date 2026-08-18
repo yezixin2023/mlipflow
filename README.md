@@ -268,6 +268,9 @@ A project node selects that profile and declares only abstract resources:
 The site-owned template library is responsible for details such as modules/conda activation, executable paths, launchers, and Slurm directives. This keeps projects portable across clusters and keeps private infrastructure details out of version-controlled research manifests.
 
 The site schema is [`schemas/site.schema.json`](schemas/site.schema.json); concrete template examples are in [`examples/site_templates/`](examples/site_templates/).
+For step-by-step creation, validation, and `PYTHON_BIN` binding of isolated DeepMD,
+MACE, CHGNet, and MatGL execution environments, see
+[`docs/CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md).
 
 ## Recommended environment layout
 
