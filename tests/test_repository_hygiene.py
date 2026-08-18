@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import yaml
 
@@ -109,19 +110,31 @@ class RepositoryHygieneTests(unittest.TestCase):
 
         self.assertEqual(set(), publishable - declared)
 
-    def test_no_generated_build_directories(self) -> None:
-        # pytest and Python may create their own ignored caches before this
-        # test module is collected.  Treating those runtime caches as a test
-        # failure makes an ordinary ``python -m pytest`` self-defeating.  The
-        # publishable-tree check therefore rejects build products here and the
-        # release command separately runs from a cleaned tree.
-        found = {
-            path.relative_to(ROOT).as_posix()
-            for path in ROOT.rglob("*")
-            if path.is_dir()
-            and (path.name in {"build", "dist"} or path.name.endswith(".egg-info"))
-        }
-        self.assertEqual(set(), found)
+    def test_no_generated_build_artifacts_are_tracked(self) -> None:
+        result = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=ROOT,
+            check=True,
+            stdout=subprocess.PIPE,
+        )
+        tracked_paths = (
+            item.decode("utf-8", errors="surrogateescape")
+            for item in result.stdout.split(b"\0")
+            if item
+        )
+        violations = sorted(
+            path
+            for path in tracked_paths
+            if any(
+                part in {"build", "dist"} or part.endswith(".egg-info")
+                for part in PurePosixPath(path).parts
+            )
+        )
+        if violations:
+            self.fail(
+                "generated build artifacts must not be part of the repository source tree:\n"
+                + "\n".join(violations)
+            )
 
     def test_no_finder_metadata(self) -> None:
         found = {
