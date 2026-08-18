@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "report_id": "lammps-hfeshell-cpu-functional-smokes",
+  "status": "REAL_HPC_FUNCTIONAL_SMOKE_OK",
+  "generated_for": "MLIPFlow lammps-md real SSH-SLURM functional validation on one site",
+  "run_date": "2026-08-16",
+  "site": {
+    "profile": "hfeshell",
+    "backend": "ssh-slurm",
+    "template_layout": "one canonical remote_template_root with per-interface family subdirectories",
+    "work_layout": "one canonical work_root with fresh project/node/attempt workspaces"
+  },
+  "common_scope": {
+    "target": "cpu",
+    "cpus": 1,
+    "gpus": 0,
+    "ensemble": "nvt",
+    "temperature_k": 400.0,
+    "timestep_fs": 1.0,
+    "steps_requested": 5,
+    "simulated_time_ps": 0.005,
+    "thermostat_damping_fs": 100.0,
+    "seed": 11,
+    "type_map": [
+      "Li",
+      "P",
+      "S",
+      "Mn",
+      "Fe",
+      "Ni",
+      "Cu",
+      "Zn"
+    ],
+    "restart_policy": "disabled",
+    "purpose": "functional smoke only; not an equilibration, transport, accuracy, or production MD result"
+  },
+  "lifecycle_required": [
+    "local lammps-prepare",
+    "reviewed execute dry-run and exact approval",
+    "fresh ssh-slurm attempt workspace",
+    "scheduler terminal observation",
+    "bounded output inventory and fetch",
+    "pinned lammps-md scientific check and collect"
+  ],
+  "runs": [
+    {
+      "framework": "deepmd",
+      "project_id": "lammps-deepmd-hfeshell-cpu-smoke-execute",
+      "node_id": "execute-deepmd-cpu-5",
+      "attempt": 1,
+      "slurm_job_id": "27442624",
+      "scheduler_terminal_state": "COMPLETED",
+      "mlipflow_final_state": "OK",
+      "pair_style": "deepmd",
+      "model": {
+        "id": "deepmd-se-e2-a-para0-production-200k",
+        "kind": "file",
+        "artifact_format": "deepmd-lammps-model",
+        "relative_path": "graph.pb",
+        "fingerprint": "sha256:e137c85a566635606c5ad4ceccecec1781e56ecded901cb356f7248c862889aa"
+      },
+      "input_manifest_fingerprint": "sha256:c0be4b76b2a1a976acc6541d7c6f326325c6025cef67fabc39c16c85181b13b8",
+      "lammps": {
+        "version": "2 Aug 2023",
+        "executable_sha256": "sha256:c86fd02974e9b7dccd5eec8036f05a8b537d3dc92c01b468c07ec6cb35e1e856"
+      },
+      "completion": {
+        "process_exit_code": 0,
+        "steps_completed": 5,
+        "marker": "MLIPFLOW_LAMMPS_COMPLETED step=5",
+        "marker_after_final_data_and_restart": true
+      },
+      "artifacts": {
+        "result": "sha256:428c298be8eeaa71f6772167f29b422c2b023ff8adc079b74e40514e16fec4ba",
+        "trajectory": "sha256:582119b32f4223567f798694f8e927f9dc18367c7d2eab4149a6ee4c61d486a2",
+        "final_data": "sha256:0780d528d365236c9b2c2fa4a07e4448da7e196af4b28d99c0b5a6a471736332",
+        "final_restart": "sha256:0af759acd3b4e28c3652cb9db959eeeaf837b59016b0522a29a00119ffd70cdc",
+        "lammps_log": "sha256:fe6a8cd1ccf83326e63f78402cb59422e9414b68c7a33fedeed038e518e18725",
+        "cluster_report": "sha256:dd79cc23123e5ba4df3247d9267f4eae3bbe07413584a72a2848fe604e84a802"
+      },
+      "local_state_locator": ".mlipflow/lammps-deepmd-hfeshell-cpu-smoke-execute/.mlipflow/runs/execute-deepmd-cpu-5/attempt-1"
+    },
+    {
+      "framework": "m3gnet",
+      "lammps_interface": "gnnp",
+      "project_id": "lammps-m3gnet-hfeshell-gnnp-cpu-smoke-execute",
+      "node_id": "execute-m3gnet-gnnp-cpu-5",
+      "attempt": 2,
+      "slurm_job_id": "27442885",
+      "scheduler_terminal_state": "COMPLETED",
+      "mlipflow_final_state": "OK",
+      "pair_style": "gnnp ${INTERFACE_PATH}",
+      "pair_coeff_model_binding": "matgl ${MODEL_FILE}",
+      "model": {
+        "id": "m3gnet-historical-finetuned-production-50epoch",
+        "kind": "directory",
+        "artifact_format": "matgl-model-directory",
+        "relative_path": "finetune/finetuned_model",
+        "fingerprint_mode": "tree-sha256-v1",
+        "fingerprint": "sha256:dfe3f1291dae56220b59c19b43561d272b3fef295011b1b6e90c4ef5ea0425d4"
+      },
+      "input_manifest_fingerprint": "sha256:b468a3272857cfcc7a9e6d5315de3a473b3d9f8eaca55692410fc3aaaba61268",
+      "lammps": {
+        "version": "2 Aug 2023",
+        "executable_sha256": "sha256:adf720c1c1a5d4593fcbe2973c0120ff4e8ce01702d8083d509f8cc40df28d43"
+      },
+      "completion": {
+        "process_exit_code": 0,
+        "steps_completed": 5,
+        "marker": "MLIPFLOW_LAMMPS_COMPLETED step=5",
+        "marker_after_final_data_and_restart": true
+      },
+      "artifacts": {
+        "result": "sha256:6330e86be0467e760c0e43e160646ffa257d6eee7a87bcb0d030e7270e78ab9f",
+        "trajectory": "sha256:9f611e875dbdb13ed63c6d6b57ceae151bb04d7c2d1e10b30aa9c12e18853f17",
+        "final_data": "sha256:28607d5a6e6f239b4839133e81a6e18b5e2dfde012220d17fca59252d766b982",
+        "final_restart": "sha256:e279a337faa5f7f3d193578e141d562119c7daa21402af373428578f83e3c4b3",
+        "lammps_log": "sha256:8044b5ba739a418a83cd6a36fef26f8f9f93985b9df1559458b543a2bfa6eeff",
+        "cluster_report": "sha256:611bfc411320da53747afa4c09ae2ad6478c3da14c53a944243b35f678de3156"
+      },
+      "failed_attempt_before_success": {
+        "attempt": 1,
+        "slurm_job_id": "27442851",
+        "classification": "ENVIRONMENT/SITE",
+        "cause": "the GNNP embedded Python environment could not import MatGL",
+        "resolution": "the canonical lammps-m3gnet-gnnp-cpu site template was given its matching Python 3.11 prefix and site-packages; the retry used a fresh attempt workspace"
+      },
+      "known_interface_limitation": "this GNNP model does not provide virial pressure; NVT functional execution is valid, but reported pressure is not a scientific result",
+      "local_state_locator": ".mlipflow/lammps-m3gnet-hfeshell-gnnp-cpu-smoke-execute/.mlipflow/runs/execute-m3gnet-gnnp-cpu-5/attempt-2"
+    }
+  ],
+  "verified_claim": "MLIPFlow completed prepare -> scheduled execute -> scheduler terminal -> bounded fetch -> pinned check/collect for real DeepMD and MatGL/GNNP LAMMPS CPU five-step jobs on one site.",
+  "not_verified": [
+    "scientific accuracy or agreement with an independent reference",
+    "equilibration, diffusion, conductivity, phase stability, or production MD",
+    "GPU execution",
+    "multi-node execution",
+    "LAMMPS binary restart recovery",
+    "native matgl/matgl-kokkos execution",
+    "MACE or CHGNet LAMMPS execution",
+    "any site other than hfeshell"
+  ]
+}

@@ -115,9 +115,11 @@ lineage，但不证明仓库中的全部论文训练数据都由这一条链生�
 `reports/lasp_ssw_historical_replay.json` 的状态为
 `HISTORICAL_POSTPROCESS_REPLAY_PASS`；它不含原始结构、远端实际路径或凭据，临时副本已
 在审计后删除。`reproduce.py --check` 不执行 LASP；
-另行通过的 fake executable local contract smoke 也只证明 `shell=False` staging、直接或
-显式可指纹化 `mpirun`/`mpiexec` 路径加 `-np` argv、结果采集和失败边界。真实授权 LASP 未执行，SSW
-科学数值 parity、scheduler/HPC 均仍 pending。LASP/SSW 采样、LASP 势训练、以及
+另行通过的 fake executable local contract smoke 只证明 `shell=False` staging、直接或
+显式可指纹化 `mpirun`/`mpiexec` 路径加 `-np` argv、结果采集和失败边界。此后一个
+真实 LASP 3.6.0 NN 14-atom CPU tiny case 已经通过 scheduled lifecycle、bounded fetch
+与 checker/collect 到 `OK`；它是 functional smoke，不建立 SSW trajectory numerical
+parity 或生产能力。LASP/SSW 采样、LASP 势训练、以及
 DFT→LASP `TrainStr`/`TrainFor` 导出是三个独立能力，不能相互代替完成声明。
 
 ## 从证据到任务路由

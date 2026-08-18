@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "report_id": "pes-sampling-direct-local-integration-smoke-v1",
+  "plugin_id": "pes-sampling",
+  "operation": "direct-select",
+  "status": "LOCAL_INTEGRATION_SMOKE_PASS",
+  "executed_on": "2026-08-17",
+  "scientific_claim": {
+    "real_maml_direct_executed": true,
+    "bundled_runner_executed": true,
+    "adapter_checker_ok": true,
+    "adapter_collect_ok": true,
+    "mlipflow_core_run_lifecycle_executed": false,
+    "historical_selection_parity_established": false,
+    "production_sampling_executed": false,
+    "seed_controlled_reproducibility_established": false,
+    "purpose": "Bounded local verification that the bundled runner loads real CIF structures, calls MAML DIRECT, writes the canonical manifest/POSCAR contract, and is accepted by the pes-sampling checker/collect path."
+  },
+  "execution_scope": {
+    "backend": "local",
+    "scheduler_used": false,
+    "gpu_requested": false,
+    "runner_invocation": "bundled-direct-runner",
+    "completion_invocation": "pes-sampling adapter check/collect over the completed runner output",
+    "scientific_use": "integration-smoke-only",
+    "runtime_log_retained": false
+  },
+  "implementation": {
+    "runner_locator": "plugins/pes-sampling/direct_select.py",
+    "runner_sha256": "4d9a02479956674959fda06d4a97b27ea90fc06db709377ea25c5f0308e1df57",
+    "adapter_locator": "plugins/pes-sampling/adapter.py",
+    "adapter_sha256": "a47702351d989df822e13b83fe991ba6149cd06f37e13c5c3136bb15cde6f951",
+    "plugin_manifest_locator": "plugins/pes-sampling/plugin.yaml",
+    "plugin_manifest_sha256": "1435e70d27cae4e4412e3201f22871b776cab8a73a088fcc764764f71e33fcd6",
+    "python_version": "3.10.20",
+    "maml_version": "2025.4.3",
+    "pymatgen_version": "2025.10.7",
+    "ase_version": "3.22.1",
+    "numpy_version": "1.23.5",
+    "scikit_learn_version": "1.3.2",
+    "plotly_version": "6.8.0",
+    "selection_api": "maml.sampling.direct.DIRECTSampler",
+    "clustering_api": "maml.sampling.direct.BirchClustering",
+    "cluster_selection_api": "maml.sampling.direct.SelectKFromClusters"
+  },
+  "input": {
+    "fixture_locator": "temporary-reference/direct_sampling/Na_B_H_cifs",
+    "raw_files_committed": false,
+    "matched_file_count": 80,
+    "loaded_structure_count": 4,
+    "skipped_file_count": 0,
+    "ordered_sources": [
+      {
+        "name": "mp-1009220.cif",
+        "size_bytes": 779,
+        "sha256": "d3f2f906690dab26273954ba068622008131e3916438027fe44081a72ec2c83c"
+      },
+      {
+        "name": "mp-10172.cif",
+        "size_bytes": 775,
+        "sha256": "014d45fe1b724580185e475734edb0d42c6d2cf3abc66e928acf580f5946a996"
+      },
+      {
+        "name": "mp-1055985.cif",
+        "size_bytes": 717,
+        "sha256": "55ac73a1aef1c464dd7790dacfcd1245418aaa5a68246c1c5021dd2815285181"
+      },
+      {
+        "name": "mp-1056860.cif",
+        "size_bytes": 779,
+        "sha256": "359a4b108a113c1367c18c8b522e9f233dacc8adcf6495d3f17c655d1a85577f"
+      }
+    ]
+  },
+  "bounded_parameters": {
+    "globs": ["*.cif"],
+    "recursive": false,
+    "stride": 1,
+    "max_frames_per_file": null,
+    "max_input_structures": 4,
+    "n_clusters": 2,
+    "threshold_init": 0.05,
+    "k_per_cluster": 1,
+    "lammps_type_map": null,
+    "declared_seed": null,
+    "seed_status": "NOT_EXPOSED_BY_MAML_DIRECT_INTERFACE",
+    "acknowledgement_contract_exercised": false
+  },
+  "result": {
+    "manifest_name": "manifest.csv",
+    "manifest_size_bytes": 340,
+    "manifest_sha256": "1c34619bd0cf954d6107e3eedc604e9e46e8ccca4b98f4fd99e9463c914fe519",
+    "selected_structure_count": 2,
+    "selected_structures": [
+      {
+        "selected_order": 1,
+        "input_index": 2,
+        "source_name": "mp-1055985.cif",
+        "formula": "B",
+        "output_name": "00001_B.vasp",
+        "size_bytes": 284,
+        "sha256": "49f4cabd6a1bb3de5bb34d15ea352a6f548ddd3d2c83ca3031ed498614ec0d5e"
+      },
+      {
+        "selected_order": 2,
+        "input_index": 3,
+        "source_name": "mp-1056860.cif",
+        "formula": "NaB",
+        "output_name": "00002_NaB.vasp",
+        "size_bytes": 362,
+        "sha256": "d204d70c154490af6ff99829312e9e1d6ad0f7eaa0328049c3fc36f05165304c"
+      }
+    ],
+    "optional_diagnostics": [
+      {
+        "name": "direct_feature_coverage_score.html",
+        "size_bytes": 4851931,
+        "sha256": "5e1a142ceb619f218a2776e7b96b997dba003a4eb4aaea4d32c618eb03c2c113"
+      },
+      {
+        "name": "direct_pca_coverage.html",
+        "size_bytes": 4852588,
+        "sha256": "4786366588fc81643a7dc91331baf970ca8a41dd421f877cdbdd2096a0ae1a5c"
+      },
+      {
+        "name": "direct_pca_explained_variance.html",
+        "size_bytes": 4851964,
+        "sha256": "935ffd068383ff3ff49e7c19375637fafba2977cfe6f8025715a32c195c64d8a"
+      }
+    ],
+    "checker_status": "OK",
+    "checker_selected_structure_count": 2,
+    "collect_status": "OK",
+    "collect_metrics": {
+      "selected_structure_count": 2,
+      "source_file_count": 2,
+      "unique_formula_count": 2
+    }
+  },
+  "limitations": [
+    "This was a four-structure local integration smoke, not production representative-structure selection.",
+    "The smoke invoked the bundled runner and then the adapter checker/collect path; it did not exercise MLIPFlow init, dry-run approval, state persistence, or core local execution.",
+    "No historical same-input DIRECT result was available, so selected-index or cluster-assignment parity was not established.",
+    "The MAML DIRECT path exposes no seed control. This invocation had no declared provenance seed and did not exercise the adapter acknowledgement contract.",
+    "The external CIF inputs and generated POSCAR/HTML artifacts are fingerprinted but are not copied into the repository.",
+    "Optional Plotly diagnostics are integration artifacts and do not independently validate sampling quality."
+  ]
+}

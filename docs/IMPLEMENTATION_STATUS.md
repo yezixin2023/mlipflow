@@ -1,6 +1,6 @@
 # 实现状态
 
-最后更新：2026-08-17。
+最后更新：2026-08-18。
 
 ## 六个独立状态轴
 
@@ -12,10 +12,10 @@
 | 状态轴 | 状态 | 已完成 | 尚未完成/不可声称 |
 |---|---|---|---|
 | `SOFTWARE_CORE` | DONE | 配置/schema、DAG、SQLite attempt lineage、审批摘要、plugin discovery；多 cluster local site control plane；remote template selection/fingerprinting；确定性 CPU/GPU rendering；fresh remote workspace；SSH-SLURM stage/submit/monitor/fetch/check/collect 状态机；evidence-gated routing 与只读命令语义均有软件测试 | 该状态不代表任何科学算法、远端模板或真实集群已验证 |
-| `SCIENTIFIC_INTEGRATION` | DONE | 六模型 benchmark 归一化；真实 SQS/icet 薄封装；pymatgen `vasp-prepare` 与 DFT label contract；四框架 bundled training runner 与通用 scheduled contract；scheduled LASP；ASE NVT/NPT checkpoint restart；LAMMPS prepare/execute/binary restart；既有轨迹输运后处理、247 候选 normalization/ranking、电压 post-process 与论文证据 replay | DONE 只表示本阶段代码/契约/本地 fixture 集成完成；新 scheduled 能力除一次 DeepMD CPU 训练外尚未真实集群验证，不能据此声称生产数值 parity |
+| `SCIENTIFIC_INTEGRATION` | DONE | 六模型 benchmark 归一化；真实 SQS/icet 薄封装；pymatgen `vasp-prepare` 与 DFT label contract；四框架 bundled training runner 与通用 scheduled contract；scheduled LASP；ASE NVT/NPT checkpoint restart；LAMMPS prepare/execute/binary restart；既有轨迹输运后处理、247 候选 normalization/ranking、电压 post-process 与论文证据 replay | DONE 只表示本阶段代码/契约/本地 fixture 集成完成；真实集群证据目前包括一次 14-atom LASP CPU tiny smoke、一次 DeepMD CPU 训练和 DeepMD、MatGL/GNNP 两条 LAMMPS CPU 5-step functional smoke，仍不能据此声称生产数值 parity |
 | `MANUSCRIPT_REPRODUCTION` | DONE | 紧凑真实论文证据可重建 static/transport/voltage 路由、三组 speedup、六模型 registry、247/247 大超胞筛选、top-1 历史输运连接与 unseen claim-level record；10 项自动验收通过，报告为 `REPLAY_VERIFIED` | DONE 只适用于 evidence-replay contract；top-1 AIMD/DFT 高保真仍 pending，unseen 仍不可数值验证，也不能声称重新计算论文 |
 | `LOCAL_NUMERICAL_PARITY` | PARTIAL | 历史 MACE/DeepMD `target.msd` 输运脚本与 stdout 已作条件真实证据 parity；历史 247 候选 ID/数值规范化和排序已比较；两套 LASP/SSW archive 已由本地 wrapper 实际重放并经 Adapter check=`OK` | SQS、DIRECT、真实 LASP/SSW 数值、DFT、训练、RDF/局域结构、全部六模型 fresh prediction、总能→电压和 unseen transfer 尚无 numerical parity |
-| `REAL_HPC_INTEGRATION` | SCIENTIFIC_PROGRAM_VERIFIED_ON_ONE_SITE | synthetic multi-cluster `site.yaml`、fake template library/backend 覆盖 resolution、attempt path、stage、scheduler reconciliation、fetch 与 scientific check/collect；同一个真实 SSH-SLURM 站点上先完成 CPU tiny smoke，**随后由 MLIPFlow 端到端执行一次真实 DeePMD-kit 训练**（job `27356151`、500 步 fresh training、scheduler `COMPLETED`、MLIPFlow `OK`），并与历史 run 的前 6 个 reporting step 逐位一致 | 已验证的科学程序只有 DeePMD `dp train` 一个，且限于 CPU、单节点、单进程、`se_e2_a`、一个数据集、500 步 bounded run；VASP/LAMMPS 仍未在调度器上运行；GPU、多节点、cancellation、排队/容错、生产规模训练与该站点之外的集群同样未验证 |
+| `REAL_HPC_INTEGRATION` | SCIENTIFIC_PROGRAM_VERIFIED_ON_ONE_SITE | synthetic multi-cluster `site.yaml`、fake template library/backend 覆盖 resolution、attempt path、stage、scheduler reconciliation、fetch 与 scientific check/collect；同一个真实 SSH-SLURM 站点上完成基础 CPU tiny smoke、真实 LASP 3.6.0 NN 14-atom SSW smoke（job `27443025`）、真实 DeePMD-kit 500-step training（job `27356151`），以及真实 DeepMD/LAMMPS（job `27442624`）和 MatGL/GNNP/LAMMPS（job `27442885`）CPU 5-step functional smoke；科学任务均到 terminal→bounded fetch→checker/collect `OK` | LASP 只覆盖 CPU 单节点 12-rank tiny case且无 numerical parity；训练仍只覆盖 CPU 单节点 DeePMD；LAMMPS 仅覆盖 CPU 单节点单进程 5-step NVT。VASP、GPU、多节点、cancellation、scheduler fault recovery、binary restart、生产规模任务与该站点之外的集群仍未验证 |
 | `PRODUCTION_SCALE_RERUN` | NOT_PERFORMED | 有意复用既有输出，避免无必要的昂贵计算 | 未重跑真实 LASP/SSW、>60k DFT 数据、AIMD、长 MLIP-MD、完整训练、247 项筛选或生产电压 DFT；本阶段不要求这些工作 |
 
 生产 HPC 不可用不会单独阻止 `SCIENTIFIC_INTEGRATION` 或
@@ -27,11 +27,11 @@
 | 插件 | 当前可执行能力 | 可重放证据 | 已有科学比较 | 当前边界 |
 |---|---|---|---|---|
 | `high-entropy-structure` | bundled、seeded `icet.generate_sqs_from_supercells` wrapper；显式 sublattice/count/cutoff/repeat/steps/output | 标准 generation manifest | 用真实 57 原子 prototype、ASE 3.28.0/icet 3.2 完成两次 100-step bounded smoke；结构/manifest byte-identical，成分正确 | `LOCAL_INTEGRATION_SMOKE_PASS` 不等于 production SQS 或历史 parity；历史脚本无 seed，外部 prototype 未复制 |
-| `pes-sampling` | bundled、local-only MAML DIRECT runner；用户自备 LASP 的 local `shell=False` wrapper 与受控 `ssh-slurm` scheduled execute；已有 archive 的 normalize replay | DIRECT result manifest；LASP `allstr.arc`、可选 `best.arc`/`md.arc`、归一化结构和 bounded scheduled artifacts | DIRECT adapter/runner contract 测试；两套历史 archive 实际本地 replay；fake executable local/scheduled contract 测试通过 | DIRECT 不暴露 seed 控制且无历史同输入 numerical parity；不捆绑或实现 LASP；真实授权 LASP 和站点 scheduler 尚未执行 |
+| `pes-sampling` | bundled、local-only MAML DIRECT runner；用户自备 LASP 的 local `shell=False` wrapper 与受控 `ssh-slurm` scheduled execute；已有 archive 的 normalize replay | DIRECT result manifest 与 sanitized local-smoke fingerprints；LASP `allstr.arc`、可选 `best.arc`/`md.arc`、归一化结构和 bounded scheduled artifacts | 真实 MAML 2025.4.3 bounded smoke：4 个 CIF→2 个结构，adapter checker/collect=`OK`；两套历史 LASP archive 实际本地 replay；真实 LASP 3.6.0 NN 14-atom scheduled CPU smoke 在 fresh retry 后 14/14/14、checker/collect=`OK` | DIRECT smoke 未走 core run/approval/state lifecycle且无历史同输入 parity；不捆绑或实现 LASP；真实 LASP 仅为一个 tiny functional smoke，未建立 trajectory numerical parity、GPU/DFT/生产能力 |
 | `dft-labeling` | 两个独立操作：bundled pymatgen `vasp-prepare` 生成 static/relax/AIMD 输入；`label` 支持 local user wrapper，static VASP 可向通用 `ssh-slurm` backend 提供 scientific stage/fetch/check/collect 合同 | `dft-input-manifest.json`、可收集的 POSCAR/INCAR/KPOINTS；标准标签与 raw-output hashes；远端 input/output/logs/completion allowlist | SI/历史单点参数只读 source audit；真实 pymatgen 生成 smoke；synthetic site + fake template/backend 完成 fresh stage/submit/reconcile/bounded fetch/pinned check E2E | POTCAR 只从 `PMG_VASP_PSP_DIR` 组装；远端可上传但永不 fetch/collect/入库；真实 VASP/HPC 尚未运行、无数值 parity；relax/AIMD scheduler、array/continuation pending |
 | `mlip-training` | DeepMD、M3GNet/MatGL、CHGNet、MACE 的 bundled train/finetune runner；local compatibility path 与通用 `ssh-slurm` contract | 标准 training result、cluster run report、模型 artifact identity；一次真实 DeepMD scheduled learning curve | 5 份历史源审计；一次真实 DeepMD 500 步 early-training 数值复现逐 reporting step 一致 | 真实 scheduled 验证仅覆盖单节点 CPU DeepMD fresh train；其他框架、fine-tune、GPU、多节点和生产规模未验证 |
 | `ase-md` | 显式四框架模型的单温 NVT Langevin / isotropic MTK NPT；周期 JSON checkpoint、失败 salvage 和新 attempt 精确 restart | trajectory/index/thermo、checkpoint、final structure、result/cluster reports | fake scheduler 覆盖 NVT、NPT、checkpoint、TIMEOUT salvage 与 restart 身份 | 尚未在真实站点运行；不做轨迹拼接、温度序列或输运分析，NPT 必须由具体模型通过 finite-stress probe |
-| `lammps-md` | 本地生成 DeepMD/MACE/MatGL CPU/GPU NVT/NPT deck；受控 scheduled execute；交替 binary restart、salvage 与 runtime-bound resume | prepared manifest、trajectory/final data/restart/log/result；restart runtime identity | 本地 fixture 覆盖 prepare、scheduled lifecycle、completion 与 restart deck/identity | 尚未运行真实 LAMMPS；需要匹配模型接口的站点 build，restart 只保证 pinned runtime 下 state continuity，不保证跨平台 bitwise identity |
+| `lammps-md` | 本地生成 DeepMD/MACE/MatGL CPU/GPU NVT/NPT deck；受控 scheduled execute；交替 binary restart、salvage 与 runtime-bound resume | prepared manifest、trajectory/final data/restart/log/result；restart runtime identity；两条真实 CPU smoke 的匿名化 identity/fingerprint 报告 | 本地 fixture 覆盖 prepare、scheduled lifecycle、completion 与 restart deck/identity；真实 hfeshell 上 `pair_style deepmd` 与 MatGL/GNNP `pair_style gnnp` 各完成一次 5-step NVT，exit 0、marker/output identity 和 checker/collect 均为 `OK` | 真实验证仅为 CPU functional smoke；MACE、native MatGL、GPU、NPT、binary restart、科学数值对照与生产 MD 未验证。GNNP 模型无 virial，不能把 smoke 中 pressure 当科学结果 |
 | `mlip-benchmark` | `evaluate-fresh` 通过共享 model runtime 加载六个 exact family，生成 canonical prediction evidence，再复用唯一 MAE/RMSE/Pearson/ranking；`normalize-execute` 只重算 supplied pairs | 指纹固定的 DeepMD/CHGNet workbook、prepared JSON/CSV/XLSX、论文表 | fresh contract/injected-predictor 全链测试完成；三份 DeepMD 与一份 CHGNet 历史 source/output 为 `REPLAY_VERIFIED` | 真实六模型 production-scale fresh parity 未执行；M3GNet benchmark output 和 DPA-2 raw pairs 为 `MISSING_SOURCE`；历史 CHGNet/DeepMD 未声明的物理单位不猜测 |
 | `ionic-transport` | local-only formal runner：ASE/LAMMPS/VASP trajectory → pymatgen Structure/`DiffusionAnalyzer`；MSD → `get_diffusivity_from_msd`；Structure 可用时 `get_conversion_factor`；Arrhenius → `fit_arrhenius(linear)` | analysis manifest、runtime/source/result SHA/size、pymatgen API checker rerun；历史 stdout/integration manifest | trajectory D/σ/time、MSD-only D/σ、Arrhenius 均与 pymatgen public API parity；保留 MACE/DeepMD 历史 parity | formal 需要 `[transport]` 且无 NumPy fallback；极短轨迹不提供收敛输运数值；历史 N=7 仅限隔离 parity convention |
 | `candidate-ranking` | legacy order normalization、显式单位、稳定排序/确定 tie-break、missing policy、top-k | candidate/metric-results/ranking manifests | 247/247 历史候选与 top-k 已本地兼容复核 | 不生成候选、不计算性质、不执行 MLIP/MD/DFT、不选择模型或替代高保真验证 |
@@ -88,10 +88,12 @@ parity 或 production MD。
 `pes-sampling` 现在把三类行为明确拆成 `direct-select`、
 `lasp-ssw-execute` 和 `lasp-ssw-normalize-replay`：
 
-- `lasp-ssw-execute` 要求用户显式提供 LASP executable、`lasp_version`、ARC 输入结构、
-  `lasp.in` 和所需辅助文件；运行始终为 local、`shell=False`，可以直接调用；MPI 只接受
-  显式、可指纹化且 basename 为 `mpirun`/`mpiexec` 的普通文件路径与 `-np N`。fake executable 的 plan→execute→check→collect contract smoke
-  已通过，但没有运行真实授权 LASP，也没有 scheduler/HPC 支持声明。
+- `lasp-ssw-execute` 要求显式 `lasp_version`、ARC 输入结构、`lasp.in` 和所需辅助文件。
+  local 路径由用户提供 LASP executable，始终 `shell=False`；local MPI 只接受显式、
+  可指纹化且 basename 为 `mpirun`/`mpiexec` 的普通文件路径与 `-np N`。`ssh-slurm`
+  路径则由 site-owned template 提供 executable/MPI/site knowledge，project 不嵌这些绝对
+  信息。真实 LASP 3.6.0 NN 14-atom CPU smoke 在 job `27443025` 完成 14/14/14 结构并经
+  bounded fetch、pinned checker/collect 到 `OK`；这是功能闭环，不是 numerical parity。
 - `lasp-ssw-normalize-replay` 不执行 LASP。它解析现有 `allstr.arc`，先按
   `energy_max_ev` 过滤，再按 accepted order 应用 stride；可单独导出 `best.arc` 中的
   AIMD seed 候选，并记录 `md.arc` 清单。所有源文件和导出结构均绑定 SHA-256。

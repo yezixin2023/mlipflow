@@ -175,6 +175,30 @@ Install `run.sh.example` under every framework/target family you expose:
 
 The v0.3 example invokes the staged `lammps_cluster_restart.py` and passes the MLIPFlow attempt number. Each site template still owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, optional Python-bridge `INTERFACE_PATH`, modules/conda setup, and `LAMMPS_LAUNCHER_JSON`; none belong in the portable project.
 
+## Real CPU functional validation
+
+On 2026-08-16, two five-step NVT jobs completed the full MLIPFlow path on the
+`hfeshell` SSH-SLURM profile:
+
+| Interface | Slurm job | LAMMPS | Model identity | Prepared manifest | Result |
+|---|---:|---|---|---|---|
+| DeepMD `pair_style deepmd` | `27442624` | 2 Aug 2023; executable SHA-256 `c86fd0…e856` | `deepmd-lammps-model`; SHA-256 `e137c8…89aa` | SHA-256 `c0be4b…13b8` | 5/5 steps, exit 0, checker/collect `OK` |
+| MatGL/M3GNet `pair_style gnnp ${INTERFACE_PATH}` | `27442885` | 2 Aug 2023; executable SHA-256 `adf720…8d43` | `matgl-model-directory`; tree SHA-256 `dfe3f1…425d4` | SHA-256 `b468a3…1268` | 5/5 steps, exit 0, checker/collect `OK` |
+
+Both runs used one CPU rank, no GPU, 400 K NVT, a 1 fs timestep, and the same
+explicit `Li P S Mn Fe Ni Cu Zn` type map. The generated decks kept site paths out
+of the portable project, wrote `final.data` and `final.restart` before the exact
+completion marker, and returned only the bounded approved output set. The GNNP
+run preserved a failed first attempt caused by missing site Python initialization;
+after the canonical site family was corrected, retry created a fresh attempt.
+
+The machine-readable identities and output fingerprints are in
+[`reports/lammps_hfeshell_cpu_functional_smokes.json`](../../reports/lammps_hfeshell_cpu_functional_smokes.json).
+This is execution validation only. It does not validate force-field accuracy,
+equilibration, transport, GPU execution, NPT, or binary restart. The tested GNNP
+model does not supply virial pressure, so its pressure output is not a scientific
+result.
+
 ## Completion and scope
 
 Normal success still requires process exit zero, the exact approved completion marker, recorded LAMMPS version, unchanged input/model identities, bounded output files, matching SHA records, and consistent execution/result manifests.

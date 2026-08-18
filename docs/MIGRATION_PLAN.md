@@ -125,7 +125,7 @@ completed/failed/cancelled、fetch/check/collect；重启后能恢复。真实 c
 
 ### 4.4 PES 采样
 
-已把 sampler、snapshot policy 和 DFT labeling 拆开。当前 `pes-sampling` 有三个显式操作：插件内置、local-only 且继续调用 MAML DIRECT 的 `direct-select`；对用户自备 LASP 的 local/`ssh-slurm` `lasp-ssw-execute`；以及只解析现有 `allstr.arc`、可选 `best.arc`/`md.arc` 的 `lasp-ssw-normalize-replay`。DIRECT 不再接受外部脚本路径并拒绝复用已有输出目录。LASP execute 要求显式 LASP 版本与输入文件；local MPI 仅接受显式、可指纹化且 basename 为 `mpirun`/`mpiexec` 的普通可执行文件路径与 `-np` 数量，scheduled 路径则由 site template 提供 executable/MPI。历史 normalization 的 frame/过滤/stride 链已经按源哈希重放；真实授权 LASP、AIMD、MLP-MD 和完整科学数值 parity 仍待外部验证。
+已把 sampler、snapshot policy 和 DFT labeling 拆开。当前 `pes-sampling` 有三个显式操作：插件内置、local-only 且继续调用 MAML DIRECT 的 `direct-select`；对用户自备 LASP 的 local/`ssh-slurm` `lasp-ssw-execute`；以及只解析现有 `allstr.arc`、可选 `best.arc`/`md.arc` 的 `lasp-ssw-normalize-replay`。DIRECT 不再接受外部脚本路径并拒绝复用已有输出目录。LASP execute 要求显式 LASP 版本与输入文件；local MPI 仅接受显式、可指纹化且 basename 为 `mpirun`/`mpiexec` 的普通可执行文件路径与 `-np` 数量，scheduled 路径则由 site template 提供 executable/MPI。历史 normalization 的 frame/过滤/stride 链已经按源哈希重放；一个真实 LASP 3.6.0 NN 14-atom CPU tiny case 已完成 scheduled functional closure（job `27443025`，14/14/14，bounded fetch + checker/collect=`OK`）。AIMD、MLP-MD、生产 LASP 和完整科学数值 parity 仍待外部验证。
 
 ### 4.5 SQS 与组分枚举
 

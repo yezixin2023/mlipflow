@@ -505,3 +505,36 @@ approval was rejected, and a subsequent read-only check confirmed all three
 targets still exist. No validation result, attempt, or workspace was deleted.
 Cleanup therefore remains pending explicit permission; do not claim it has been
 completed or remove any broader template/work directory.
+
+## O. LAMMPS DeepMD and MatGL/GNNP CPU validation addendum (2026-08-16)
+
+The `lammps-md` real-site status is no longer “contract only.” Two independent
+CPU five-step NVT smokes completed the full MLIPFlow lifecycle on `hfeshell`:
+
+- DeepMD: job `27442624`, `pair_style deepmd`, LAMMPS 2 Aug 2023, 5/5 steps,
+  process exit 0, bounded fetch, checker/collect `OK`.
+- MatGL/M3GNet through AdvanceSoft GNNP: final job `27442885`,
+  `pair_style gnnp ${INTERFACE_PATH}` with `matgl ${MODEL_FILE}`, LAMMPS
+  2 Aug 2023, 5/5 steps, process exit 0, bounded fetch, checker/collect `OK`.
+
+Both used one CPU rank, no GPU, NVT at 400 K, timestep 1 fs, seed 11, and the
+explicit `Li P S Mn Fe Ni Cu Zn` type map. Both result manifests bind the model,
+prepared input manifest, LAMMPS executable, output files, step count and exact
+completion marker. The log order proves that `final.data` and `final.restart`
+were written before the marker.
+
+The GNNP run preserved a failed attempt (`27442851`) whose embedded Python could
+not import MatGL. This was classified as `ENVIRONMENT/SITE`, not a core failure.
+The existing canonical `lammps-m3gnet-gnnp-cpu` family received the matching
+Python 3.11 prefix/site-packages, and MLIPFlow retry created a fresh attempt.
+
+The generic LAMMPS contract now distinguishes current native MatGL TorchScript
+from explicit legacy `gnnp`/`m3gnet` Python bridges by interface, artifact kind
+and artifact format; it does not infer an interface from a LAMMPS version.
+
+Sanitized evidence is in
+`reports/lammps_hfeshell_cpu_functional_smokes.json`. Do not call these runs
+scientific validation or production MD. GPU, NPT, binary restart, native MatGL,
+MACE and CHGNet LAMMPS remain outside this recorded success. The tested GNNP
+model does not provide virial pressure, so its pressure output is not usable as
+a scientific result.

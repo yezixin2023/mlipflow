@@ -1,6 +1,6 @@
 # HPC 验证状态
 
-最后更新：2026-08-14。
+最后更新：2026-08-18。
 
 ```text
 REAL_HPC_INTEGRATION = SCIENTIFIC_PROGRAM_VERIFIED_ON_ONE_SITE
@@ -8,7 +8,7 @@ REAL_HPC_INTEGRATION = SCIENTIFIC_PROGRAM_VERIFIED_ON_ONE_SITE
 
 同一个真实 SSH-SLURM 集群上，通用生命周期
 `resolve → render → fresh attempt workspace → stage → sbatch → squeue/sacct →
-bounded fetch → completion 身份校验 → plugin check/collect` 已经走通两次：
+bounded fetch → completion 身份校验 → plugin check/collect` 已经承载以下有界验证：
 
 1. 一次 **CPU tiny smoke**，科学内容为零：远端脚本只对 staged 输入重算 SHA-256
    并回传，因此 `check` 只能证明输入字节完整到达计算节点、作业确实在计算节点
@@ -18,11 +18,20 @@ bounded fetch → completion 身份校验 → plugin check/collect` 已经走通
    由 MLIPFlow 端到端执行并通过科学 check：`dp train` 正常结束、实际完成步数等于
    请求步数、learning curve 全部有限、checkpoint 存在、dataset/config/version
    身份三项均与已批准 plan 一致。
+3. 一次 **DeepMD + LAMMPS CPU 5-step NVT functional smoke**（job `27442624`，
+   scheduler `COMPLETED`，MLIPFlow `OK`）。真实 `pair_style deepmd` 完成 5/5 步，
+   写出 trajectory、`final.data`、`final.restart`，随后才打印批准的 completion marker；
+   bounded fetch 后 checker 复核 LAMMPS/model/input/output identity。
+4. 一次 **MatGL/M3GNet GNNP + LAMMPS CPU 5-step NVT functional smoke**
+   （最终成功 job `27442885`，scheduler `COMPLETED`，MLIPFlow `OK`）。真实
+   `pair_style gnnp` 加载 tree-fingerprinted MatGL model directory 并完成 5/5 步；
+   前一 fresh attempt 的失败被保留并分类为站点 Python 环境缺失，修正 canonical
+   site template 后才在 attempt 2 成功。
 
-**这一条仍不能被读作**：production ready、VASP/LAMMPS 等其它科学程序已验证、
-GPU 已验证、多节点已验证、排队/容错行为已验证，或该站点之外的任何集群已验证。
-已验证的科学程序只有一个：CPU、单节点、单进程、TensorFlow 后端的 DeePMD-kit
-`dp train`。
+**这些记录仍不能被读作**：production ready、VASP 已验证、LAMMPS 科学精度或
+平衡态已验证、GPU/多节点/restart 已验证、调度故障恢复已验证，或该站点之外的
+任何集群已验证。LAMMPS 证据严格限于 CPU、单节点、单进程、5 步功能性执行；
+它证明真实 pair style 与 MLIPFlow 生命周期工作，不产生材料科学结论。
 
 ## 已做与未做
 
@@ -32,21 +41,22 @@ GPU 已验证、多节点已验证、排队/容错行为已验证，或该站点
 | remote template library | CPU/GPU Slurm 模板选择、program-family `run.sh`、固定变量合同、模板 identity 与不完整模板失败均有 fake library 测试 |
 | remote workspace | `<work_root>/<project>/<node>/attempt-XXXX`、attempt 递增、fresh directory、input/output/logs/completion 分层与逐文件 SHA-256 staging 有 mock 测试 |
 | core scheduler lifecycle | resolve → render → stage → submit → persist job ID → monitor → inventory/fetch → check → collect 状态逻辑有本地 fixture/mock 测试 |
-| scientific adapters | static `dft-labeling.label`、四框架 `mlip-training`、scheduled LASP、ASE MD 与 LAMMPS execute 已接入通用 `ssh-slurm` 合同；真实调度器仍只验证过 DeepMD CPU 训练，scheduler `COMPLETED` 不会自动变成科学 `OK` |
+| scientific adapters | static `dft-labeling.label`、四框架 `mlip-training`、scheduled LASP、ASE MD 与 LAMMPS execute 已接入通用 `ssh-slurm` 合同；真实调度器已验证 DeepMD CPU 训练，以及 DeepMD 与 MatGL/GNNP 两条 LAMMPS CPU functional smoke；scheduler `COMPLETED` 仍不会自动变成科学 `OK` |
 | SSH/remote access | 已在一个真实站点执行只读探索与受控写入；写入全部限制在本次新建的独立 MLIPFlow root 内 |
 | remote staging | 真实站点已验证：fresh attempt workspace、逐文件 SHA-256 staging |
-| real `sbatch` submission | 已执行 CPU tiny job 与一次真实 DeePMD 训练 job，均取得并持久化 job ID |
+| real `sbatch` submission | 已执行基础 CPU tiny job、一次真实 DeePMD 训练 job，以及两次最终成功的 LAMMPS CPU functional smoke；均取得并持久化 job ID，失败 attempt 也保留 lineage |
 | real queue monitoring | 已通过 `squeue`/`sacct` 观察到 terminal `COMPLETED` |
 | real cancellation | 未执行 |
 | remote result fetch + local re-check | 真实站点已验证：bounded allowlist 抓取、二次审批绑定 inventory、fetch 后指纹复核、completion 身份字段校验、pinned plugin `check`/`collect` |
-| scientific program on scheduler | **已验证一个**：DeePMD-kit v3.0.0b1（commit `4c565b9`、TensorFlow 2.15.0、float64、CPU）`dp train` 在 job `27356151` 上完成 500 步 fresh training，scientific check/collect 到 `OK`。VASP/LAMMPS 等仍未在调度器上运行 |
+| scientific program on scheduler | DeepMD-kit v3.0.0b1 CPU `dp train` 在 job `27356151` 完成 500 步并到 `OK`；LAMMPS 2 Aug 2023 分别在 job `27442624` 真实执行 `pair_style deepmd`、在 job `27442885` 真实执行 `pair_style gnnp`，两者均完成 5/5 步并经 bounded fetch + checker/collect 到 `OK`。VASP 尚未在调度器上运行 |
 | training numerical reproduction | **已验证一次**：与历史 run `split_train/se_e2_a/para0` 的前 6 个 reporting step（0/100/…/500）在 lcurve 全部 7 列上逐位相同，相对差 0.0 |
-| GPU / multi-node | **未验证**。两次真实执行均为单节点 CPU |
-| production scientific job | 未提交。DeePMD 训练为 500 步 bounded validation run，不是生产训练 |
+| GPU / multi-node | **未验证**。这里记录的训练和 LAMMPS 验证均为单节点 CPU |
+| production scientific job | 未提交。DeePMD 训练为 500 步 bounded validation run；LAMMPS 为 5 步 functional smoke，均不是生产任务 |
 
 因此仍不应使用“生产可用”“GPU/多节点已验证”等表述。可以说明的是：通用 scheduler
-合同已在一个真实站点完成端到端 CPU tiny smoke，并且已经承载一次真实 DeePMD
-训练，其早期优化轨迹可与历史 run 逐步对照。
+合同已在一个真实站点完成端到端 CPU tiny smoke，承载一次真实 DeePMD 训练，
+并完成两种真实 LAMMPS MLIP interface 的五步功能性闭环。训练的早期优化轨迹可与
+历史 run 逐步对照；LAMMPS 只证明执行合同，不证明模型准确性或 MD 收敛。
 
 ## 三层站点合同
 
@@ -114,6 +124,15 @@ train`）、一个 descriptor（`se_e2_a`）、一个数据集（180+180 Li10 sy
 500 步 bounded run。证据见
 [`reports/deepmd_early_training_reproduction.json`](../reports/deepmd_early_training_reproduction.json)。
 
+2026-08-16 的两次 LAMMPS CPU functional smoke 进一步证明了同一生命周期可以承载
+真实 `pair_style deepmd` 和 AdvanceSoft `pair_style gnnp`/MatGL interface。两者均从
+`lammps-prepare` 产生 portable deck，以 site-owned model/interface path 注入执行，
+随后经过 scheduler terminal observation、bounded fetch 和 pinned checker/collect
+到 `OK`。模型、input manifest、LAMMPS executable 和输出 artifact 的 SHA-256
+均已固定在匿名化报告
+[`reports/lammps_hfeshell_cpu_functional_smokes.json`](../reports/lammps_hfeshell_cpu_functional_smokes.json)
+中。该报告不保存绝对模型路径或权重。
+
 同一 smoke 暴露的一个通用缺陷已修复：`render_template` 原先在替换后拒绝任何残留
 的 `{{` 或 `}}`，使得合法的 shell/JSON（`"${value}}"`、`{"a":{"b":1}}`）无法写入
 模板；现在只拒绝真正未解析的 `{{ ... }}` 占位符语法。
@@ -135,5 +154,6 @@ HPC 状态轴与科学状态轴彼此独立。即使 HPC 仍处于早期验证�
 - LASP/SSW 已有 archive 的本地解析、能量过滤和 accepted-order stride 重放；
 - 从真实证据重建 task-aware model routing。
 
-它会阻止的主张是：生产级远端执行、真实调度容错、远端 artifact 回收闭环、站点
-性能或生产科学任务已经通过验证。
+它会阻止的主张是：生产级远端执行、真实调度故障恢复、站点性能或生产科学任务
+已经通过验证。远端 artifact bounded fetch/check 闭环本身已经在上述真实任务中完成，
+但这不自动提升任何科学结论。
