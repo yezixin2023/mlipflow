@@ -39,9 +39,9 @@ Issues = "https://github.com/yezixin2023/mlipflow/issues"
 Changelog = "https://github.com/yezixin2023/mlipflow/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "jsonschema>=4", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22"]
+dev = ["pytest>=7", "jsonschema>=4", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22", "dpdata>=0.2.18"]
 science = ["numpy>=1.23", "ase>=3.22", "icet>=2.0", "pandas>=1.5", "plotly>=5"]
-dft = ["pymatgen>=2024.5"]
+dft = ["pymatgen>=2024.5", "dpdata>=0.2.18", "ase>=3.22"]
 transport = [
   "pymatgen-analysis-diffusion>=2025.11.15",
   "numpy>=1.25",
@@ -57,6 +57,7 @@ local = [
   "plotly>=5",
   "pymatgen>=2024.5",
   "pymatgen-analysis-diffusion>=2025.11.15",
+  "dpdata>=0.2.18",
 ]
 
 [project.scripts]
@@ -79,7 +80,7 @@ where = ["src"]
 "share/mlipflow/examples/high_entropy_sulfide_reproduction/reports" = ["examples/high_entropy_sulfide_reproduction/reports/*.json", "examples/high_entropy_sulfide_reproduction/reports/*.md"]
 "share/mlipflow/examples/lasp_random_walk" = ["examples/lasp_random_walk/*.md", "examples/lasp_random_walk/*.in"]
 "share/mlipflow/examples/lasp_random_walk/cluster" = ["examples/lasp_random_walk/cluster/*.example"]
-"share/mlipflow/examples/training_all_models" = ["examples/training_all_models/*.md", "examples/training_all_models/*.json"]
+"share/mlipflow/examples/training_all_models" = ["examples/training_all_models/*.md", "examples/training_all_models/*.json", "examples/training_all_models/*.yaml"]
 "share/mlipflow/examples/training_all_models/cluster" = ["examples/training_all_models/cluster/*.example"]
 "share/mlipflow/examples/ase_md_cluster" = ["examples/ase_md_cluster/*.md", "examples/ase_md_cluster/*.example"]
 "share/mlipflow/examples/lammps_mlip_inputs" = ["examples/lammps_mlip_inputs/*.md", "examples/lammps_mlip_inputs/*.json", "examples/lammps_mlip_inputs/*.example"]

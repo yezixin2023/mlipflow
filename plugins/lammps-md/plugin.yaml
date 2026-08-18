@@ -39,7 +39,7 @@
       "The model is never copied through the control plane. The compute-node runner resolves the approved site-root-relative model below MODEL_ROOT and recomputes file SHA-256 or deterministic directory tree-sha256-v1 before and after LAMMPS execution.",
       "DeepMD CPU/GPU decks both use pair_style deepmd; site runtime owns GPU mapping. MACE and MatGL/M3GNet GPU remain pinned to one GPU in this contract.",
       "Legacy CHGNet model files remain blocked because version 0.3 does not pin a native CHGNet LAMMPS export/pair-style contract; CHGNet remains available through ase-md.",
-      "Version 0.3 supports prepared NVT or isotropic NPT only. It does not stitch trajectory segments, run replicas, or perform transport analysis."
+      "Version 0.3 supports prepared NVT or isotropic NPT only. The producer does not perform transport analysis; ionic-transport consumes collected old/new dump formats and stitches restart trajectory segments by global timestep."
     ]
   },
   "execution": {
@@ -78,8 +78,8 @@
     {"name": "structure-data", "kind": "file", "required": false, "media_type": "text/plain", "description": "Prepared ASE-generated LAMMPS atomic data file."},
     {"name": "cpu-input", "kind": "file", "required": false, "media_type": "text/plain", "description": "Prepared in.cpu.lammps when cpu was requested."},
     {"name": "gpu-input", "kind": "file", "required": false, "media_type": "text/plain", "description": "Prepared in.gpu.lammps when gpu was requested."},
-    {"name": "lammps-execution-result", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Successful execute result with LAMMPS version, input/model identities, completed steps, restart provenance, launcher contract and output fingerprints."},
-    {"name": "trajectory", "kind": "file", "required": false, "media_type": "text/plain", "description": "Current attempt trajectory segment fetched only through the bounded approved output contract."},
+    {"name": "lammps-execution-result", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Successful execute result with LAMMPS version, temperature/timestep/dump/type-map/ensemble metadata, structure/model identities, completed steps, restart provenance, launcher contract and output fingerprints."},
+    {"name": "trajectory", "kind": "file", "required": false, "media_type": "text/plain", "description": "Current attempt trajectory segment. New decks include x/y/z plus ix/iy/iz for exact downstream unwrap; scheduler-terminal restart salvage retains the bounded partial segment for later ionic-transport stitching."},
     {"name": "final-data", "kind": "file", "required": false, "media_type": "text/plain", "description": "Final LAMMPS data file written after the approved total run completes."},
     {"name": "final-restart", "kind": "file", "required": false, "media_type": "application/octet-stream", "description": "Final successful LAMMPS binary restart."},
     {"name": "periodic-restart", "kind": "artifact-reference", "required": false, "description": "Failure-only salvaged checkpoint. Up to two alternating binary restart candidates may be bound into the next attempt; they are removed after normal success."},

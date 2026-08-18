@@ -13,7 +13,15 @@ from collections.abc import Mapping
 from numbers import Real
 from pathlib import Path
 
-from mlip_common import TrainingError, mapping, records, section, work_dir
+from mlip_common import (
+    TrainingError,
+    mapping,
+    predefined_split_files,
+    predefined_split_identity,
+    records,
+    section,
+    work_dir,
+)
 
 TARGETS = {"e", "ef", "efs", "efm", "efsm"}
 DATASET_LAYOUTS = {"records", "columnar"}
@@ -184,7 +192,31 @@ def _normalized_records(data_path, contract, targets):
             raise TrainingError(
                 f"CHGNet record {index} is missing required labels: {', '.join(missing)}"
             )
-        yield {name: item[source_key] for name, source_key in required.items()}
+        converted = {name: item[source_key] for name, source_key in required.items()}
+        if isinstance(item.get("record_id"), str):
+            converted["record_id"] = item["record_id"]
+        yield converted
+
+
+def _records_and_split(data_path, contract, targets, cfg, seed):
+    files = predefined_split_files(data_path, "json")
+    if files is None:
+        selected = list(_normalized_records(data_path, contract, targets))
+        train, validation, test, evidence = _split_indices(len(selected), cfg, seed)
+        return selected, train, validation, test, evidence
+    if contract["max_records"] is not None:
+        raise TrainingError("dataset.max_records cannot truncate a predefined split")
+    partitions = {name: list(_normalized_records(path, contract, targets)) for name, path in files.items()}
+    selected = partitions["train"] + partitions["validation"] + partitions["test"]
+    train_end = len(partitions["train"])
+    valid_end = train_end + len(partitions["validation"])
+    return (
+        selected,
+        list(range(train_end)),
+        list(range(train_end, valid_end)),
+        list(range(valid_end, len(selected))),
+        predefined_split_identity(files),
+    )
 
 
 def _split_contract(cfg, sample_count):
@@ -392,12 +424,15 @@ def run(args, config, config_path, data_path):
     if requested_device == "cuda" and not torch.cuda.is_available():
         raise TrainingError("CHGNet CUDA execution requested but torch.cuda is unavailable")
     contract = _dataset_contract(cfg)
+    selected_records, train_ids, val_ids, test_ids, split_evidence = _records_and_split(
+        data_path, contract, targets, cfg, args.seed
+    )
     structures = []
     energies = []
     forces = []
     stresses = []
     magmoms = []
-    for item in _normalized_records(data_path, contract, targets):
+    for item in selected_records:
         structure = Structure.from_dict(item["structure"])
         structures.append(structure)
         energy = float(item["energy"])
@@ -419,7 +454,6 @@ def run(args, config, config_path, data_path):
         magmoms=magmoms or None,
         shuffle=False,
     )
-    train_ids, val_ids, test_ids, split_evidence = _split_indices(len(dataset), cfg, args.seed)
     opts = {
         "batch_size": int(cfg.get("batch_size", 32)),
         "collate_fn": collate_graphs,

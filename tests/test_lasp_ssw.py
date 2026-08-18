@@ -764,5 +764,55 @@ class LaspHistoricalReplayReportTests(unittest.TestCase):
             self.assertNotIn(forbidden, serialized)
 
 
+class LaspRealHpcSmokeReportTests(unittest.TestCase):
+    def test_report_records_complete_functional_closure_without_overclaiming(self) -> None:
+        report_path = ROOT / "reports" / "lasp_cpu_tiny_hpc_smoke.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual("REAL_HPC_FUNCTIONAL_SMOKE_OK", report["status"])
+
+        claim = report["scientific_claim"]
+        self.assertTrue(claim["real_lasp_executed"])
+        self.assertTrue(claim["real_scheduler_executed"])
+        self.assertTrue(claim["bounded_fetch_completed"])
+        self.assertTrue(claim["pinned_checker_collect_ok"])
+        self.assertFalse(claim["dft_or_vasp_executed"])
+        self.assertFalse(claim["lasp_ssw_numerical_parity_established"])
+        self.assertFalse(claim["production_sampling_executed"])
+
+        lineage = report["retry_lineage"]
+        self.assertEqual("FAIL", lineage["attempt_0001"]["mlipflow_state"])
+        self.assertEqual("OK", lineage["attempt_0002"]["mlipflow_state"])
+        self.assertTrue(
+            lineage["scientific_inputs_potential_parameters_and_resources_unchanged"]
+        )
+        self.assertTrue(lineage["fresh_attempt_workspace_used"])
+        self.assertFalse(lineage["third_job_submitted"])
+
+        result = report["result"]
+        self.assertEqual(
+            (14, 14, 14),
+            (
+                result["generated_structure_count"],
+                result["energy_accepted_count"],
+                result["selected_structure_count"],
+            ),
+        )
+        self.assertTrue(result["checker_reparsed_fetched_arc"])
+        self.assertEqual(
+            "HISTORICAL_PARAMETER_UNKNOWN",
+            report["scientific_input"]["mlipflow_selection_contract"]["seed_status"],
+        )
+        self.assertEqual("all.arc", report["arc_output_contract"]["compatible_source_name"])
+        self.assertEqual(
+            "allstr.native.arc",
+            report["arc_output_contract"]["preexisting_native_archive"]["preserved_as"],
+        )
+        self.assertEqual("OK", report["completion"]["final_mlipflow_state"])
+
+        serialized = json.dumps(report, sort_keys=True)
+        for forbidden in ("/Users/", "/public/home", "hfeshell", "lihr1008"):
+            self.assertNotIn(forbidden, serialized)
+
+
 if __name__ == "__main__":
     unittest.main()

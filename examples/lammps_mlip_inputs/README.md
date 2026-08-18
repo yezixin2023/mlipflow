@@ -203,4 +203,4 @@ result.
 
 Normal success still requires process exit zero, the exact approved completion marker, recorded LAMMPS version, unchanged input/model identities, bounded output files, matching SHA records, and consistent execution/result manifests.
 
-Version 0.3 supports NVT and isotropic NPT restart for the currently prepared MLIP interfaces. It does not yet stitch trajectory/log segments across attempts, run replicas, generate charged/molecular/hybrid force fields, or perform transport analysis.
+Version 0.3 supports NVT and isotropic NPT restart for the currently prepared MLIP interfaces. It does not itself run transport analysis, replicas, or charged/molecular/hybrid force fields. `ionic-transport` now consumes collected trajectory segments across attempts, stitches them by global timestep, and accepts both older wrapped dumps and new dumps containing image flags.

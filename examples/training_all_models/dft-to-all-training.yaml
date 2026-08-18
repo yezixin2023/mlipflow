@@ -1,0 +1,144 @@
+# Minimal artifact flow after vasp-prepare has produced prepared/dft-input-manifest.json.
+# After assemble-datasets reaches OK, the Agent replaces each all-zero dataset
+# fingerprint below with the exact fingerprint from the corresponding collected
+# *-dataset-reference.json. No dataset conversion command is supplied by the user.
+schema_version: 1
+project:
+  id: dft-to-all-training
+  name: DFT labels to four MLIP frameworks
+  description: Canonical DFT labels, remote dataset assembly, and artifact-first training
+workflow:
+  nodes:
+    - id: label-dft
+      uses: dft-labeling@0
+      backend: ssh-slurm
+      backend_profile: cluster-a
+      inputs:
+        structures_manifest: inputs/structures.json
+        labeling_config: inputs/labeling.json
+        dft_input_manifest: prepared/dft-input-manifest.json
+      parameters:
+        operation: label
+        engine: vasp
+        completion_policy:
+          require_ionic_convergence: false
+        units:
+          energy: eV
+          length: angstrom
+          force: eV/angstrom
+          stress: kbar-vasp-3x3
+      resources:
+        cpus: 32
+        gpus: 0
+        memory: 64G
+        walltime: "04:00:00"
+
+    - id: assemble-datasets
+      uses: dft-labeling@0
+      needs: [label-dft]
+      backend: ssh-slurm
+      backend_profile: cluster-a
+      inputs:
+        canonical_dataset: .mlipflow/runs/label-dft/attempt-1/canonical-labeled-dataset.json
+      parameters:
+        operation: dataset-assemble
+        frameworks: [deepmd, m3gnet, chgnet, mace]
+        split_strategy: deterministic
+        split_seed: 23
+        split_fractions:
+          train: 0.8
+          validation: 0.1
+          test: 0.1
+      resources:
+        cpus: 4
+        gpus: 0
+        memory: 8G
+        walltime: "00:30:00"
+
+    - id: train-deepmd
+      uses: mlip-training@0
+      needs: [assemble-datasets]
+      backend: ssh-slurm
+      backend_profile: cluster-a
+      inputs:
+        training_config: deepmd-se_e2_r.json
+        dataset_reference: .mlipflow/runs/assemble-datasets/attempt-1/deepmd-dataset-reference.json
+      parameters:
+        framework: deepmd
+        operation: train
+        seed: 23
+        device: gpu
+        precision: float64
+        dataset_fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
+        config_fingerprint: sha256:e8fe8f324915cb29ce63f51ed06c704366c0bb01c9d4532a61ab883721de5daf
+      resources:
+        cpus: 8
+        gpus: 1
+        memory: 32G
+        walltime: "12:00:00"
+
+    - id: train-m3gnet
+      uses: mlip-training@0
+      needs: [assemble-datasets]
+      backend: ssh-slurm
+      backend_profile: cluster-a
+      inputs:
+        training_config: m3gnet.json
+        dataset_reference: .mlipflow/runs/assemble-datasets/attempt-1/m3gnet-dataset-reference.json
+      parameters:
+        framework: m3gnet
+        operation: train
+        seed: 23
+        device: gpu
+        precision: float64
+        dataset_fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
+        config_fingerprint: sha256:243fc8a94139d01c04119da308fff82e725279c32819a54106fa6d17626ee7f8
+      resources:
+        cpus: 8
+        gpus: 1
+        memory: 32G
+        walltime: "12:00:00"
+
+    - id: train-chgnet
+      uses: mlip-training@0
+      needs: [assemble-datasets]
+      backend: ssh-slurm
+      backend_profile: cluster-a
+      inputs:
+        training_config: chgnet-efs.json
+        dataset_reference: .mlipflow/runs/assemble-datasets/attempt-1/chgnet-dataset-reference.json
+      parameters:
+        framework: chgnet
+        operation: train
+        seed: 23
+        device: gpu
+        precision: float32
+        dataset_fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
+        config_fingerprint: sha256:5ca45074cec1068e2fa86acf2bf54569e2d3ffa486a746bec112baa1ce3f8f2f
+      resources:
+        cpus: 8
+        gpus: 1
+        memory: 32G
+        walltime: "12:00:00"
+
+    - id: train-mace
+      uses: mlip-training@0
+      needs: [assemble-datasets]
+      backend: ssh-slurm
+      backend_profile: cluster-a
+      inputs:
+        training_config: mace.json
+        dataset_reference: .mlipflow/runs/assemble-datasets/attempt-1/mace-dataset-reference.json
+      parameters:
+        framework: mace
+        operation: train
+        seed: 23
+        device: gpu
+        precision: float64
+        dataset_fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
+        config_fingerprint: sha256:0d1e52da62799ae5ae434d4247cea826f74e7a7e93030c1d481b42673b0e3bde
+      resources:
+        cpus: 8
+        gpus: 1
+        memory: 32G
+        walltime: "12:00:00"

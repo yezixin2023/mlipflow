@@ -27,9 +27,15 @@ bounded fetch → completion 身份校验 → plugin check/collect` 已经承载
    `pair_style gnnp` 加载 tree-fingerprinted MatGL model directory 并完成 5/5 步；
    前一 fresh attempt 的失败被保留并分类为站点 Python 环境缺失，修正 canonical
    site template 后才在 attempt 2 成功。
+5. 一次 **LASP 3.6.0 NN 14-atom CPU SSW functional smoke**（最终成功 job
+   `27443025`，12 MPI ranks、0 GPU，scheduler `COMPLETED`，MLIPFlow `OK`）。前一
+   attempt 暴露 ARC 兼容名称选择 bug 并保留为 `FAIL`；通用修复后，相同科学输入、
+   potential、LASP 参数与资源在 fresh attempt 生成/接受/选择 14/14/14 个结构，随后
+   bounded fetch 与 pinned checker/collect 完整通过。
 
 **这些记录仍不能被读作**：production ready、VASP 已验证、LAMMPS 科学精度或
-平衡态已验证、GPU/多节点/restart 已验证、调度故障恢复已验证，或该站点之外的
+平衡态已验证、LASP trajectory numerical parity 已验证、GPU/多节点/restart 已验证、
+调度故障恢复已验证，或该站点之外的
 任何集群已验证。LAMMPS 证据严格限于 CPU、单节点、单进程、5 步功能性执行；
 它证明真实 pair style 与 MLIPFlow 生命周期工作，不产生材料科学结论。
 
@@ -41,22 +47,23 @@ bounded fetch → completion 身份校验 → plugin check/collect` 已经承载
 | remote template library | CPU/GPU Slurm 模板选择、program-family `run.sh`、固定变量合同、模板 identity 与不完整模板失败均有 fake library 测试 |
 | remote workspace | `<work_root>/<project>/<node>/attempt-XXXX`、attempt 递增、fresh directory、input/output/logs/completion 分层与逐文件 SHA-256 staging 有 mock 测试 |
 | core scheduler lifecycle | resolve → render → stage → submit → persist job ID → monitor → inventory/fetch → check → collect 状态逻辑有本地 fixture/mock 测试 |
-| scientific adapters | static `dft-labeling.label`、四框架 `mlip-training`、scheduled LASP、ASE MD 与 LAMMPS execute 已接入通用 `ssh-slurm` 合同；真实调度器已验证 DeepMD CPU 训练，以及 DeepMD 与 MatGL/GNNP 两条 LAMMPS CPU functional smoke；scheduler `COMPLETED` 仍不会自动变成科学 `OK` |
+| scientific adapters | static `dft-labeling.label`、四框架 `mlip-training`、scheduled LASP、ASE MD 与 LAMMPS execute 已接入通用 `ssh-slurm` 合同；真实调度器已验证 LASP NN CPU tiny SSW、DeepMD CPU 训练，以及 DeepMD 与 MatGL/GNNP 两条 LAMMPS CPU functional smoke；scheduler `COMPLETED` 仍不会自动变成科学 `OK` |
 | SSH/remote access | 已在一个真实站点执行只读探索与受控写入；写入全部限制在本次新建的独立 MLIPFlow root 内 |
 | remote staging | 真实站点已验证：fresh attempt workspace、逐文件 SHA-256 staging |
-| real `sbatch` submission | 已执行基础 CPU tiny job、一次真实 DeePMD 训练 job，以及两次最终成功的 LAMMPS CPU functional smoke；均取得并持久化 job ID，失败 attempt 也保留 lineage |
+| real `sbatch` submission | 已执行基础 CPU tiny job、一次真实 LASP CPU tiny job 的失败 attempt 与一次授权 fresh retry、一次真实 DeePMD 训练 job，以及两次最终成功的 LAMMPS CPU functional smoke；均取得并持久化 job ID，失败 attempt 也保留 lineage |
 | real queue monitoring | 已通过 `squeue`/`sacct` 观察到 terminal `COMPLETED` |
 | real cancellation | 未执行 |
 | remote result fetch + local re-check | 真实站点已验证：bounded allowlist 抓取、二次审批绑定 inventory、fetch 后指纹复核、completion 身份字段校验、pinned plugin `check`/`collect` |
-| scientific program on scheduler | DeepMD-kit v3.0.0b1 CPU `dp train` 在 job `27356151` 完成 500 步并到 `OK`；LAMMPS 2 Aug 2023 分别在 job `27442624` 真实执行 `pair_style deepmd`、在 job `27442885` 真实执行 `pair_style gnnp`，两者均完成 5/5 步并经 bounded fetch + checker/collect 到 `OK`。VASP 尚未在调度器上运行 |
+| scientific program on scheduler | LASP 3.6.0 NN 在 job `27443025` 完成 14-atom tiny SSW 并经 bounded fetch + checker/collect 到 `OK`；DeepMD-kit v3.0.0b1 CPU `dp train` 在 job `27356151` 完成 500 步并到 `OK`；LAMMPS 2 Aug 2023 分别在 job `27442624` 真实执行 `pair_style deepmd`、在 job `27442885` 真实执行 `pair_style gnnp`，两者均完成 5/5 步并到 `OK`。VASP 尚未在调度器上运行 |
 | training numerical reproduction | **已验证一次**：与历史 run `split_train/se_e2_a/para0` 的前 6 个 reporting step（0/100/…/500）在 lcurve 全部 7 列上逐位相同，相对差 0.0 |
-| GPU / multi-node | **未验证**。这里记录的训练和 LAMMPS 验证均为单节点 CPU |
-| production scientific job | 未提交。DeePMD 训练为 500 步 bounded validation run；LAMMPS 为 5 步 functional smoke，均不是生产任务 |
+| GPU / multi-node | **未验证**。这里记录的 LASP、训练和 LAMMPS 验证均为单节点 CPU |
+| production scientific job | 未提交。LASP 为 14-atom/10-step tiny smoke，DeePMD 训练为 500 步 bounded validation run，LAMMPS 为 5 步 functional smoke，均不是生产任务 |
 
 因此仍不应使用“生产可用”“GPU/多节点已验证”等表述。可以说明的是：通用 scheduler
-合同已在一个真实站点完成端到端 CPU tiny smoke，承载一次真实 DeePMD 训练，
-并完成两种真实 LAMMPS MLIP interface 的五步功能性闭环。训练的早期优化轨迹可与
-历史 run 逐步对照；LAMMPS 只证明执行合同，不证明模型准确性或 MD 收敛。
+合同已在一个真实站点完成端到端 CPU tiny smoke，承载一次真实 LASP SSW、一次真实
+DeePMD 训练，并完成两种真实 LAMMPS MLIP interface 的五步功能性闭环。训练的早期
+优化轨迹可与历史 run 逐步对照；LASP 与 LAMMPS functional smoke 只证明执行合同，
+不证明 SSW numerical parity、模型准确性或 MD 收敛。
 
 ## 三层站点合同
 
@@ -115,14 +122,23 @@ schema v3 的 execution model 使 `resources.cpus` 不再含糊：single Python 
 
 已完成的真实 CPU tiny smoke 把状态从 `EXTERNAL_VALIDATION_PENDING` 提升为
 `SCHEDULER_CONTRACT_VERIFIED_ON_ONE_SITE`，其边界严格限于：一个站点、单节点、
-单核、无 module、无科学程序。本地 fake LASP executable、fake VASP 输出和受限
-MPI argv 测试仍然不能改变 HPC 状态。
+单核、无 module、无科学程序。后续真实 LASP smoke 已独立提升相应科学程序的
+functional-integration 证据；本地 fake LASP executable、fake VASP 输出和受限 MPI
+argv 测试本身仍然不能改变 HPC 状态。
 
 随后的真实 DeePMD 训练把状态提升为 `SCIENTIFIC_PROGRAM_VERIFIED_ON_ONE_SITE`，
 其边界同样严格：一个站点、单节点、单进程 CPU、一个科学程序（DeePMD-kit `dp
 train`）、一个 descriptor（`se_e2_a`）、一个数据集（180+180 Li10 systems）、
 500 步 bounded run。证据见
 [`reports/deepmd_early_training_reproduction.json`](../reports/deepmd_early_training_reproduction.json)。
+
+2026-08-16 的真实 LASP CPU tiny smoke 证明同一生命周期能够承载 site-owned LASP
+executable 与 MPI launcher。attempt 1 暴露通用 ARC canonicalization bug 并保留；修复后
+仅有的一次授权 retry 使用相同 14-atom NN 输入、potential、LASP 参数和 12-rank CPU
+资源，在 job `27443025` 得到 14/14/14 结构，经 terminal observation、bounded fetch、
+pinned checker/collect 到 `OK`。匿名化 identity、fingerprints 与 retry lineage 见
+[`reports/lasp_cpu_tiny_hpc_smoke.json`](../reports/lasp_cpu_tiny_hpc_smoke.json)。该记录
+不含 potential 内容或 site 私有路径，也不建立 SSW numerical parity。
 
 2026-08-16 的两次 LAMMPS CPU functional smoke 进一步证明了同一生命周期可以承载
 真实 `pair_style deepmd` 和 AdvanceSoft `pair_style gnnp`/MatGL interface。两者均从

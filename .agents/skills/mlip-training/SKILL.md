@@ -16,9 +16,9 @@ Do not choose a framework from name recognition alone. Prefer an explicit user c
 Framework-specific execution shapes are:
 
 - DeepMD: labeled data is a directory. Fine-tuning uses a file foundation artifact for the currently bundled path and is limited to DeePMD backends whose verified entry points expose `--finetune` (TF/TF2/PyTorch/Paddle in the bundled runner).
-- M3GNet/MatGL: labeled data is a JSON/JSONL file. Fine-tuning requires an extracted MatGL model directory.
-- CHGNet: labeled data is a JSON/JSONL file. Fine-tuning requires a CHGNet checkpoint file. Precision must be `float32`.
-- MACE: labeled data is a framework-supported file such as extxyz/HDF5. Fine-tuning requires a MACE foundation model file. Optional LoRA is configured in the explicit MACE config, never inferred by the Skill.
+- M3GNet/MatGL: labeled data is a JSON/JSONL file or an assembled directory with train/valid/test JSON. Fine-tuning requires an extracted MatGL model directory.
+- CHGNet: labeled data is a JSON/JSONL file or an assembled directory with train/valid/test JSON. Fine-tuning requires a CHGNet checkpoint file. Precision must be `float32`.
+- MACE: labeled data is a framework-supported file or an assembled directory with train/valid/test extxyz. Fine-tuning requires a MACE foundation model file. Optional LoRA is configured in the explicit MACE config, never inferred by the Skill.
 
 Never silently convert a `train` request into `finetune`, reuse a checkpoint, change a foundation model, or enable LoRA.
 
@@ -63,9 +63,18 @@ A dataset reference declares:
 
 A fine-tune node additionally needs a foundation-model reference with `model_id`, `relative_path`, `kind`, and verifiable content identity.
 
-The framework determines the allowed kind: DeepMD datasets are directories; M3GNet/CHGNet/MACE datasets are files; M3GNet foundation models are directories; the currently bundled DeepMD/CHGNet/MACE foundation paths are files.
+All DFT-assembled datasets are directories so their predefined split remains intact.
+Legacy M3GNet/CHGNet/MACE single-file datasets remain supported. M3GNet foundation
+models are directories; the currently bundled DeepMD/CHGNet/MACE foundation paths are files.
 
 The remote runner verifies the referenced content before training. A mismatch is `FAIL`, never a warning.
+
+Prefer a matching `*-dataset-reference.json` collected from
+`dft-labeling.dataset-assemble`. Bind its necessary final artifact `fingerprint`
+unchanged as `parameters.dataset_fingerprint`. The four references from one assembly
+share one `split_id`; their train/validation/test partitions contain the same canonical
+record IDs. The framework runners must consume these predefined partitions and must not
+randomly split the combined data again.
 
 ## Build a scheduled node
 

@@ -4,7 +4,7 @@
   "id": "ionic-transport",
   "name": "Ionic transport analysis",
   "display_name": "Ionic transport analysis",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "api_version": 1,
   "description": "Local-only formal ionic transport through pymatgen-analysis-diffusion, with separate unchanged historical reproduction and a tightly bounded MD integration smoke.",
   "category": "transport-analysis",
@@ -24,7 +24,9 @@
       "inventory://local-manuscript-evidence/supply/Li10/Li10_test.out"
     ],
     "limitations": [
-      "operation=analyze-existing only post-processes explicit existing ASE/LAMMPS/VASP trajectories or MSD tables and does not launch MD or submit jobs.",
+      "operation=analyze-existing post-processes collected MLIPFlow ASE-MD/LAMMPS-MD artifacts or explicit historical ASE/LAMMPS/VASP trajectories/MSD tables and does not launch MD or submit jobs.",
+      "Native ASE-MD and LAMMPS-MD handoff reads timing, temperature, species/type mapping, ensemble, model and structure identities from upstream artifacts; preserved restart attempts are ordered by global step and duplicate boundary frames are removed.",
+      "LAMMPS ingestion accepts xu/yu/zu, xsu/ysu/zsu, wrapped x/y/z, and wrapped xs/ys/zs; image flags are preferred and otherwise fractional minimum-image continuity restores the unwrapped trajectory.",
       "Formal analysis requires pymatgen-analysis-diffusion. The packaged runner converts reliable ASE/LAMMPS/VASP trajectories to ordered pymatgen Structures and uses DiffusionAnalyzer without a NumPy/MLIPFlow fallback.",
       "MLIPFlow core remains Python >=3.9; the formal transport extra and execution path require Python >=3.10.",
       "Formal dependency validation and execution use the same local Python interpreter as MLIPFlow; this plugin does not select or configure a cluster interpreter.",
@@ -62,7 +64,7 @@
     "reason": "Replay returns an in-memory result-manifest reference without parsing trajectories/MSD, running analysis, or starting MD."
   },
   "inputs": [
-    {"name": "input_paths", "kind": "artifact-reference", "required": false, "description": "One or more explicit existing trajectory/MSD files or directories; required by analyze-existing only."},
+    {"name": "input_paths", "kind": "artifact-reference", "required": false, "description": "Optional explicit historical trajectory/MSD files or directories. analyze-existing can instead consume collected ase-md/lammps-md dependency artifacts automatically."},
     {"name": "md_script", "kind": "file", "required": false, "description": "Explicit path to the reviewed claw/MD/ase_MD/ase_md_only_multi_calc.py; required by md-smoke-and-analyze only."},
     {"name": "structure", "kind": "file", "required": false, "description": "For md-smoke-and-analyze, the explicit MD input structure; for MSD-only formal analysis, a real structure enabling pymatgen get_conversion_factor conductivity."},
     {"name": "model", "kind": "artifact-reference", "required": false, "description": "Explicit local calculator model, or the string default only for EMT/LJ as supported by the reviewed source."},
@@ -137,14 +139,14 @@
     {"name": "md-integration-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "integration-smoke-only manifest with source, input, trajectory, result, and wrapper SHA-256 records."}
   ],
   "dependencies": {
-    "upstream_plugins": ["pes-sampling", "mlip-benchmark"],
+    "upstream_plugins": ["ase-md", "lammps-md", "pes-sampling", "mlip-benchmark"],
     "python_packages": [
       {"name": "numpy", "required": true, "bundled": false, "purpose": "Input arrays, format conversion, and result serialization; scientific fitting is delegated to pymatgen-analysis-diffusion."},
       {"name": "pandas", "required": true, "bundled": false, "purpose": "Input tables and CSV output in the reviewed script."},
       {"name": "plotly", "required": true, "bundled": false, "purpose": "The script imports Plotly at startup and writes HTML diagnostics."},
       {"name": "pymatgen-analysis-diffusion", "required": true, "bundled": false, "purpose": "Formal DiffusionAnalyzer, MSD diffusivity, conductivity conversion, and linear Arrhenius APIs; install MLIPFlow with the transport extra."},
       {"name": "pymatgen", "required": true, "bundled": false, "purpose": "Transitive formal dependency providing Structure conversion and identity."},
-      {"name": "ase", "required": false, "bundled": false, "purpose": "Source/operation-specific hard dependency for production.traj parsing and md-smoke-and-analyze; pure MSD and non-ASE sources remain independent."},
+      {"name": "ase", "required": false, "bundled": false, "purpose": "Source/operation-specific hard dependency for native trajectory.traj, historical production.traj, and md-smoke-and-analyze; pure MSD and non-ASE sources remain independent."},
       {"name": "torch", "required": false, "bundled": false, "purpose": "Calculator runtime for supported learned-potential smoke paths when selected."},
       {"name": "mace-torch", "required": false, "bundled": false, "purpose": "Required only when the smoke explicitly selects a local MACE model."},
       {"name": "chgnet", "required": false, "bundled": false, "purpose": "Required only when the smoke selects CHGNet."},

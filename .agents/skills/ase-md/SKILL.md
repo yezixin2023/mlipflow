@@ -126,9 +126,9 @@ An explicit MLIPFlow `stop` that transitions state immediately may not provide t
 
 ## Segment semantics
 
-Every attempt has a fresh remote workspace and writes its own `trajectory.traj`, `trajectory-index.json`, and `thermo.csv`. Restarted segments use global MD step/time numbers beginning at the checkpoint step. Version 0.3 does not automatically concatenate these segments.
+Every attempt has a fresh remote workspace and writes its own `trajectory.traj`, `trajectory-index.json`, and `thermo.csv`. Restarted segments use global MD step/time numbers beginning at the checkpoint step. The producer keeps these per-attempt outputs; downstream `$ionic-transport` now recognizes all collected segments from the same node, orders them by global step, and removes a repeated restart-boundary frame automatically.
 
-Do not discard prior segments after restart. Keep each attempt's immutable artifacts so a later reviewed segment-stitching or transport stage can join them while checking the checkpoint boundary and global step continuity.
+Do not discard prior segments after restart. Keep each attempt's artifacts so `$ionic-transport` can join them while checking the checkpoint boundary and global step continuity. Never ask the user to rename, copy, or concatenate `trajectory.traj`.
 
 ## Cluster boundary
 

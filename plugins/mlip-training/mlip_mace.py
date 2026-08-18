@@ -93,11 +93,22 @@ def _argv(args, config, data_path, work):
     unknown = sorted(set(opts) - set(SAFE))
     if unknown:
         raise TrainingError("unsupported MACE options: " + ", ".join(unknown))
+    predefined = None
+    if data_path.is_dir():
+        predefined = {
+            "train": data_path / "train.extxyz",
+            "validation": data_path / "valid.extxyz",
+            "test": data_path / "test.extxyz",
+        }
+        missing = [name for name, path in predefined.items() if not path.is_file()]
+        if missing:
+            raise TrainingError("predefined MACE split lacks: " + ", ".join(missing))
+    train_path = predefined["train"] if predefined else data_path
     argv = [
         "--name",
         name,
         "--train_file",
-        str(data_path),
+        str(train_path),
         "--seed",
         str(args.seed),
         "--device",
@@ -128,8 +139,12 @@ def _argv(args, config, data_path, work):
             argv += [SAFE[key], str(value)]
         else:
             argv += [SAFE[key], str(value)]
-    auxiliary_test = _auxiliary_test_file(cfg, data_path)
-    if auxiliary_test is not None:
+    auxiliary_test = None if predefined else _auxiliary_test_file(cfg, data_path)
+    if predefined:
+        argv += ["--valid_file", str(predefined["validation"]), "--test_file", str(predefined["test"])]
+        if "valid_fraction" in opts:
+            raise TrainingError("mace.options.valid_fraction conflicts with a predefined split")
+    elif auxiliary_test is not None:
         argv += ["--test_file", str(auxiliary_test["path"])]
     if args.operation == "finetune":
         argv += ["--foundation_model", str(Path(args.foundation_model).absolute())]
@@ -322,8 +337,8 @@ def plan(args, config, config_path, data_path):
 
 
 def run(args, config, config_path, data_path):
-    if not data_path.is_file():
-        raise TrainingError("MACE --data must be an extxyz/HDF5 file")
+    if not data_path.is_file() and not data_path.is_dir():
+        raise TrainingError("MACE --data must be an extxyz/HDF5 file or predefined split directory")
     import torch
     from mace import __version__ as mace_source_version
     from mace import tools

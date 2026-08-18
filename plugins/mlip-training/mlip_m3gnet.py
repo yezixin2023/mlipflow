@@ -17,7 +17,14 @@ from collections.abc import Mapping
 from numbers import Real
 from pathlib import Path
 
-from mlip_common import TrainingError, mapping, section, work_dir
+from mlip_common import (
+    TrainingError,
+    mapping,
+    predefined_split_files,
+    predefined_split_identity,
+    section,
+    work_dir,
+)
 
 DATASET_LAYOUTS = {"records", "columnar"}
 API_FLAVORS = {"auto", "high_level", "legacy"}
@@ -143,9 +150,35 @@ def _normalized_records(data_path, contract, include_stress):
             "energy": raw[contract["energy_key"]],
             "forces": raw[contract["forces_key"]],
         }
+        if isinstance(raw.get("record_id"), str):
+            item["record_id"] = raw["record_id"]
         if include_stress:
             item["stress"] = raw[contract["stress_key"]]
         yield item
+
+
+def _records_and_split(data_path, contract, include_stress, cfg, seed):
+    files = predefined_split_files(data_path, "json")
+    if files is None:
+        records = list(_normalized_records(data_path, contract, include_stress))
+        train, validation, test, evidence = _split_indices(len(records), cfg, seed)
+        return records, train, validation, test, evidence
+    if contract["max_records"] is not None:
+        raise TrainingError("dataset.max_records cannot truncate a predefined split")
+    partitions = {
+        name: list(_normalized_records(path, contract, include_stress))
+        for name, path in files.items()
+    }
+    records = partitions["train"] + partitions["validation"] + partitions["test"]
+    train_end = len(partitions["train"])
+    valid_end = train_end + len(partitions["validation"])
+    return (
+        records,
+        list(range(train_end)),
+        list(range(train_end, valid_end)),
+        list(range(valid_end, len(records))),
+        predefined_split_identity(files),
+    )
 
 
 def _indices_fingerprint(indices):
@@ -361,8 +394,8 @@ def _environment(torch):
 
 
 def plan(args, config, data_path):
-    if not data_path.is_file():
-        raise TrainingError("M3GNet data must be a JSON or JSONL file")
+    if not data_path.is_file() and predefined_split_files(data_path, "json") is None:
+        raise TrainingError("M3GNet data must be JSON/JSONL or a predefined split directory")
     cfg = section(config, "m3gnet")
     contract = _dataset_contract(cfg)
     _, _, _, _, trainer = _config(cfg)
@@ -427,23 +460,45 @@ def _run_high_level(args, cfg, data_path, matgl, torch):
             "installed MGLDatasetLoader has no local from_json factory; use a pre-built "
             "MatPES dataset integration or select api=legacy for historical JSON"
         )
-    dataset = from_json(
-        data_path,
-        **_supported_kwargs(
-            from_json,
-            {
-                "cutoff": float(data_cfg.get("cutoff", 5.0)),
-                "element_types": elements,
-                "save_cache": False,
-                "root": str(work / "cache"),
-                "stress_unit": str(data_cfg.get("stress_unit", "kbar")),
-            },
-        ),
-    )
-    selected_count = min(len(dataset), contract["max_records"] or len(dataset))
-    selected_dataset = Subset(dataset, list(range(selected_count)))
-    if len(selected_dataset) < 3:
-        raise TrainingError("M3GNet high-level dataset requires at least three records")
+    def load_json(path, cache_name):
+        return from_json(
+            path,
+            **_supported_kwargs(
+                from_json,
+                {
+                    "cutoff": float(data_cfg.get("cutoff", 5.0)),
+                    "element_types": elements,
+                    "save_cache": False,
+                    "root": str(work / cache_name),
+                    "stress_unit": str(data_cfg.get("stress_unit", "kbar")),
+                },
+            ),
+        )
+
+    files = predefined_split_files(data_path, "json")
+    if files is not None:
+        if contract["max_records"] is not None:
+            raise TrainingError("dataset.max_records cannot truncate a predefined split")
+        datasets = {name: load_json(path, f"cache-{name}") for name, path in files.items()}
+        dataset = datasets["train"]
+        train_indices = list(range(len(datasets["train"])))
+        val_indices = list(range(len(datasets["validation"])))
+        test_indices = list(range(len(datasets["test"])))
+        selected_dataset = [None] * sum(map(len, datasets.values()))
+        split = predefined_split_identity(files)
+        splits = {"train": datasets["train"], "valid": datasets["validation"], "test": datasets["test"]}
+    else:
+        dataset = load_json(data_path, "cache")
+        selected_count = min(len(dataset), contract["max_records"] or len(dataset))
+        selected_dataset = Subset(dataset, list(range(selected_count)))
+        train_indices, val_indices, test_indices, split = _split_indices(len(selected_dataset), cfg, args.seed)
+        splits = {
+            "train": Subset(selected_dataset, train_indices),
+            "valid": Subset(selected_dataset, val_indices),
+            "test": Subset(selected_dataset, test_indices),
+        }
+    if len(selected_dataset) < 3 or any(len(splits[name]) < 1 for name in splits):
+        raise TrainingError("M3GNet high-level dataset requires non-empty train/validation/test")
     if model_cfg.get("element_types"):
         configured_elements = tuple(model_cfg.pop("element_types"))
     else:
@@ -459,14 +514,6 @@ def _run_high_level(args, cfg, data_path, matgl, torch):
     elif configured_elements and configured_elements != elements:
         raise TrainingError("M3GNet high-level dataset/model element_types differ")
 
-    train_indices, val_indices, test_indices, split = _split_indices(
-        len(selected_dataset), cfg, args.seed
-    )
-    splits = {
-        "train": Subset(selected_dataset, train_indices),
-        "valid": Subset(selected_dataset, val_indices),
-        "test": Subset(selected_dataset, test_indices),
-    }
     logger = CSVLogger(save_dir=str(work / "logs"), name="M3GNet")
     accelerator = "gpu" if args.device.lower() in {"gpu", "cuda"} else args.device.lower()
     if accelerator == "gpu" and not torch.cuda.is_available():
@@ -579,7 +626,9 @@ def run(args, config, config_path, data_path):
     data_cfg, model_cfg, module_cfg, loader_cfg, trainer_cfg = _config(cfg)
     include_line_graph = data_cfg.get("include_line_graph", True)
     include_stress = data_cfg.get("include_stress", True)
-    records = list(_normalized_records(data_path, contract, include_stress))
+    records, train_indices, val_indices, test_indices, split = _records_and_split(
+        data_path, contract, include_stress, cfg, args.seed
+    )
     if len(records) < 3:
         raise TrainingError("M3GNet dataset requires at least three selected records")
     structures = [Structure.from_dict(item["structure"]) for item in records]
@@ -625,7 +674,6 @@ def run(args, config, config_path, data_path):
         save_cache=False,
         raw_dir=str(work / "cache"),
     )
-    train_indices, val_indices, test_indices, split = _split_indices(len(records), cfg, args.seed)
     collate = partial(
         collate_fn_pes,
         include_line_graph=include_line_graph,

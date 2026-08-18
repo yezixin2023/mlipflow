@@ -11,7 +11,7 @@ Use `plugins/ionic-transport` as the deterministic implementation. This Skill su
 
 The plugin is local-only and has two formal operations:
 
-- `analyze-existing` analyzes existing trajectory or MSD evidence. MLIPFlow packages `ionic_conductivity.py`; a project supplies only `inputs.input_paths`, never an external `analysis_script`.
+- `analyze-existing` analyzes existing trajectory or MSD evidence. When the node depends on completed `ase-md` or `lammps-md` nodes, core supplies their collected artifacts automatically; `inputs.input_paths` remains available for historical standalone files and explicit mixed-source selection. Never request an external `analysis_script`.
 - `md-smoke-and-analyze` is a tightly bounded local integration test. It invokes an explicitly supplied local ASE-MD source, then sends its tiny trajectories through the same packaged analysis runner and checker used by `analyze-existing`.
 
 Do not add `ssh-slurm`, scheduler templates, cluster paths, modules, partitions, accounts, MPI launchers, or HPC lifecycle instructions. Use `$ase-md` or `$lammps-md` separately when a user needs production trajectory generation; then pass the completed local trajectory/MSD artifacts to `analyze-existing`.
@@ -36,14 +36,19 @@ Do not request formal `charge`, `dimensions`, `haven_ratio`, `drift_correction`,
 
 ## Choose and declare the input contract
 
-The packaged runner currently handles:
+The packaged runner handles both MLIPFlow-native and historical inputs:
 
-- ASE directories containing `production.traj`; frame spacing must come from a valid `metadata.json`, a valid `production_log.csv`, or explicit `ase_frame_step_fs`.
-- LAMMPS directories containing an unwrapped `traj.lammpstrj`. Formal conversion requires periodic cells, stable frame/atom order, all species, uniform physical timestep, and frame spacing fine enough to preserve motion through ordered pymatgen Structures. Missing information is an error, never a NumPy fallback.
+- Native ASE-MD `trajectory.traj` plus `trajectory-index.json`/`md-result.json`. Read temperature, integration timestep, trajectory interval, global steps, physical time, ensemble, model identity, and structure identity from the collected artifacts. Never ask the user for `ase_frame_step_fs`, temperature metadata, a copied file, or a handwritten `metadata.json`.
+- Historical ASE `production.traj`. Preserve the existing metadata/log/explicit compatibility path.
+- Native LAMMPS-MD `trajectory.lammpstrj` plus `lammps-execution-result.json`, the prepared input manifest when present, or the approved execution identity. Read temperature, timestep, dump interval, type map, ensemble, model identity, and structure identity automatically. Never ask the user for `lammps_timestep_ps`, `temperature`, `mobile_type`, or `lammps_data_name` when native artifacts supply them.
+- Historical LAMMPS `traj.lammpstrj`. Preserve the existing standalone-file compatibility path.
+- LAMMPS coordinates may be `xu/yu/zu`, `xsu/ysu/zsu`, `x/y/z`, or `xs/ys/zs`. Prefer `ix/iy/iz` image flags when present; otherwise unwrap wrapped coordinates across ordered frames with fractional minimum-image continuity before constructing the common Structure sequence.
 - VASP AIMD `vasprun.xml`; temperature must come from explicit override or VASP temperature metadata, and timestep must come from `POTIM` or explicit `vasp_step_fs`.
 - Precomputed text/CSV/TSV/XVG MSD. Time values are physical lag/elapsed time and are never rebased to the first row. Require explicit `msd_time_unit` and `msd_unit` whenever the selected column names do not encode them. For step-valued time require explicit `msd_step_ps` unless a companion LAMMPS input/log declares it. With `smoothed=max`, zero lag is excluded from the pymatgen call and marked false in `used_for_analysis`.
 
-ASE is mandatory when parsing `production.traj` or running `md-smoke-and-analyze`; a missing import must fail that selected path. Do not make pure MSD or non-ASE analysis import ASE when its actual source contract does not need it.
+ASE is mandatory when parsing `trajectory.traj`, `production.traj`, or running `md-smoke-and-analyze`; a missing import must fail that selected path. Do not make pure MSD or non-ASE analysis import ASE when its actual source contract does not need it.
+
+Collected restart attempts from one MD node form one logical trajectory. Order segments by their global MD step, verify compatible temperature/timestep/species/model/structure identities, and remove a repeated restart-boundary frame. Do not ask the user to concatenate attempts. Multiple completed ASE and LAMMPS nodes, including an explicit mixture, may feed one multi-temperature Arrhenius analysis.
 
 Always require an explicit mobile `specie`, positive temperature, reviewed analysis window, smoothing mode, `min_obs`, `avg_nsteps`, `step_skip`, and physical timestep source. Never infer scientific parameters from typical values.
 

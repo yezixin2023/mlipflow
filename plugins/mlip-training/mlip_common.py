@@ -83,6 +83,55 @@ def records(path):
                 yield item
 
 
+def predefined_split_files(path, suffix):
+    """Return the fixed train/validation/test files for an assembled dataset."""
+    if not path.is_dir():
+        return None
+    files = {
+        "train": path / f"train.{suffix}",
+        "validation": path / f"valid.{suffix}",
+        "test": path / f"test.{suffix}",
+    }
+    missing = [name for name, file in files.items() if not file.is_file()]
+    if missing:
+        raise TrainingError("predefined dataset split lacks: " + ", ".join(missing))
+    return files
+
+
+def predefined_split_identity(files):
+    split_ids, record_ids = set(), {}
+    for name, path in files.items():
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise TrainingError(f"cannot read predefined {name} split: {exc}") from exc
+        split_id = value.get("split_id") if isinstance(value, dict) else None
+        items = value.get("records") if isinstance(value, dict) else None
+        ids = [item.get("record_id") for item in items] if isinstance(items, list) else None
+        if not isinstance(split_id, str) or not split_id or not isinstance(ids, list) or any(
+            not isinstance(item, str) or not item for item in ids
+        ):
+            raise TrainingError(f"predefined {name} split lacks split_id/record_id identity")
+        split_ids.add(split_id)
+        record_ids[name] = ids
+    if len(split_ids) != 1:
+        raise TrainingError("predefined dataset files have different split_id values")
+    flattened = [item for name in ("train", "validation", "test") for item in record_ids[name]]
+    if len(flattened) != len(set(flattened)):
+        raise TrainingError("predefined dataset split contains duplicate record IDs")
+    return {
+        "source": "predefined",
+        "split_id": split_ids.pop(),
+        "train_record_ids_sha256": _ids_sha(record_ids["train"]),
+        "validation_record_ids_sha256": _ids_sha(record_ids["validation"]),
+        "test_record_ids_sha256": _ids_sha(record_ids["test"]),
+    }
+
+
+def _ids_sha(values):
+    return "sha256:" + hashlib.sha256(json.dumps(values, separators=(",", ":")).encode()).hexdigest()
+
+
 def _sha(path):
     digest = hashlib.sha256()
     with path.open("rb") as stream:

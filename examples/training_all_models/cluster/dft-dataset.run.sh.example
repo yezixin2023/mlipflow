@@ -1,0 +1,40 @@
+#!/bin/bash
+# Install as <canonical remote_template_root>/dft-dataset/run.sh and customize
+# only the two site-owned paths below.  The dataset root must be the same root
+# used by every mlip-* training template at this site.
+set -uo pipefail
+
+RUN_DIR="{{RUN_DIR}}"
+INPUT_DIR="{{INPUT_DIR}}"
+OUTPUT_DIR="{{OUTPUT_DIR}}"
+PYTHON_BIN="/ABS/PATH/TO/DPDATA-ASE-ENV/bin/python"
+DATA_ROOT="/ABS/CANONICAL/CLUSTER/DATASETS"
+
+mkdir -p "$OUTPUT_DIR" "{{LOG_DIR}}"
+export OMP_NUM_THREADS="{{CPUS}}"
+
+# The submit template owns partition/GPU/memory/walltime selection. These
+# comments bind all reviewed template variables:
+# project={{PROJECT_ID}} node={{NODE_ID}} attempt={{ATTEMPT}}
+# gpus={{GPUS}} memory={{MEMORY}} walltime={{WALLTIME}}
+
+"$PYTHON_BIN" "$INPUT_DIR/dataset_convert.py" \
+  --canonical "$INPUT_DIR/canonical.json" \
+  --output-dir "$OUTPUT_DIR" \
+  --data-root "$DATA_ROOT" \
+  --frameworks "{{PLUGIN_FRAMEWORKS}}" \
+  --dataset-relative-path "{{PLUGIN_DATASET_ID}}" \
+  --split-strategy "{{PLUGIN_SPLIT_STRATEGY}}" \
+  --split-seed "{{PLUGIN_SPLIT_SEED}}" \
+  --train-fraction "{{PLUGIN_TRAIN_FRACTION}}" \
+  --validation-fraction "{{PLUGIN_VALIDATION_FRACTION}}" \
+  --test-fraction "{{PLUGIN_TEST_FRACTION}}" \
+  --result-name "{{PLUGIN_RESULT_NAME}}" \
+  > "{{LOG_DIR}}/dataset-convert.stdout.log" \
+  2> "{{LOG_DIR}}/dataset-convert.stderr.log"
+code=$?
+if [ "$code" -eq 0 ]; then state="COMPLETED"; else state="FAILED"; fi
+printf '{"schema_version":1,"status":"%s","exit_code":%d,"project_id":"%s","node_id":"%s","attempt":%d}\n' \
+  "$state" "$code" "{{PROJECT_ID}}" "{{NODE_ID}}" "$((10#{{ATTEMPT}}))" \
+  > "$RUN_DIR/completion.json"
+exit "$code"

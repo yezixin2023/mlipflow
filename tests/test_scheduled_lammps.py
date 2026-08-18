@@ -188,7 +188,7 @@ def test_execute_plan_matrix(tmp_path: Path, framework: str, target: str) -> Non
     } <= staged
     salvage = set(plan["failure_salvage"]["fetch_remote_names"])
     assert "cluster-run-report.json" in salvage
-    assert "trajectory.lammpstrj" not in salvage
+    assert "trajectory.lammpstrj" in salvage
 
 
 def test_cpu_rejects_gpu_allocation(tmp_path: Path) -> None:

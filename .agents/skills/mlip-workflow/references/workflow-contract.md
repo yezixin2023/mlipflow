@@ -23,7 +23,7 @@ manifests, inspected plans, Adapter results, and specialist Skills remain author
 |---|---|---|
 | Seeded high-entropy/SQS candidates | `$high-entropy-structure` | Explicit prototype, one alloy sublattice, integer counts; local |
 | PES sampling/selection | `$pes-sampling` | DIRECT local; LASP local or reviewed SSH-SLURM; historical ARC replay |
-| VASP preparation and DFT labels | `$dft-labeling` | Separate prepare/label; local or supported SSH-SLURM contract |
+| VASP preparation, DFT labels, and framework datasets | `$dft-labeling` | Separate prepare/label; canonical dataset; reviewed SSH-SLURM DeepMD/M3GNet/CHGNet/MACE assembly |
 | MLIP training/fine-tuning | `$mlip-training` | DeepMD, M3GNet/MatGL, CHGNet, MACE; local or supported SSH-SLURM |
 | E/F/S benchmark or evidence replay | `$mlip-benchmark` | Fresh inference, metric recomputation, or historical replay; local |
 | ASE MLIP MD | `$ase-md` | Explicit DeepMD, M3GNet/MatGL, CHGNet, or MACE; reviewed SSH-SLURM NVT/NPT |
@@ -44,7 +44,8 @@ relying on this summary for parameters.
 | Existing generated or user-supplied structure candidates | Add labels | `$dft-labeling`; do not regenerate SQS |
 | Structure ensemble needing representative selection | Reduce/select PES coverage | `$pes-sampling`, only if selection is scientifically required |
 | Verified sampled/selected structures | Produce labels | `$dft-labeling` |
-| Labeled dataset, no requested model | Train or fine-tune | `$mlip-training` after model/framework intent is explicit |
+| Verified DFT canonical dataset, no framework view | Train or fine-tune | `$dft-labeling` `dataset-assemble` for only the requested frameworks, then `$mlip-training` |
+| Verified matching DeepMD/M3GNet/CHGNet/MACE dataset reference | Train or fine-tune | `$mlip-training`; do not rerun VASP or reconvert |
 | Explicit labeled dataset plus one or more trained models | Compare predictions | `$mlip-benchmark` |
 | Trained model plus initial structure | Generate a new trajectory | `$ase-md` or `$lammps-md` according to runtime compatibility and goal |
 | Existing ASE/LAMMPS/VASP trajectory or MSD | Compute transport | `$ionic-transport`; do not rerun MD |
@@ -147,8 +148,13 @@ For a new trajectory:
 - do not choose one MD engine merely for workflow uniformity.
 
 If a suitable trajectory or MSD already exists, skip both MD routes and enter
-`$ionic-transport` directly. If a new trajectory is necessary, accept it downstream
-only after the MD Skill's completion checks and collected artifact identity succeed.
+`$ionic-transport` directly. A final `OK` ASE-MD or LAMMPS-MD node supplies its collected
+artifacts natively: do not ask for internal filenames, timestep, temperature, type map,
+manual metadata, rename/copy, or concatenation. Preserve all collected restart attempts;
+ionic-transport orders their frames by global step and removes a repeated boundary.
+Multiple completed ASE and/or LAMMPS temperature nodes may feed one Arrhenius analysis.
+If a new trajectory is necessary, accept it downstream only after the MD Skill's
+completion checks and collected artifact identity succeed.
 
 ## Voltage exception
 
@@ -179,6 +185,15 @@ Before advancing, require:
 
 Re-inventory after every completed stage because newly collected artifacts may make
 planned intermediate stages unnecessary or reveal a new required decision.
+
+For DFT-to-training handoff, keep the canonical `dataset_id`, shared `split_id`, and each
+final framework artifact reference explicit. `dataset-assemble` owns the deterministic
+or group-aware record assignment and all four split-preserving serializations. Its
+collected `*-dataset-reference.json` is the direct `mlip-training.dataset_reference`,
+and its necessary final artifact fingerprint is the training node's
+`dataset_fingerprint`. Reuse a collected reference; do not generate a new semantic
+dataset for a repeated downstream request. Benchmark the four trained models only on
+the shared held-out test record IDs.
 
 ## Failure and retry
 
@@ -231,3 +246,6 @@ otherwise validate/replay it first.
 | 14 | “I have a total-energy sequence; compute voltage.” | Call `electrochemical-voltage` plugin directly; do not seek a voltage Skill. |
 | 15 | “A generation-result.json exists; regenerate it to confirm.” | Prefer `$high-entropy-structure` replay/check; fresh rerun requires explicit intent. |
 | 16 | “The upstream check failed; continue downstream.” | Stop downstream until the upstream stage is repaired and returns final `OK`. |
+| 17 | “把这些 DFT labels 分别用于 DeepMD、M3GNet、CHGNet 和 MACE 训练。” | Verify/reuse the canonical DFT dataset, run one reviewed remote `dataset-assemble` for the requested views if missing, then bind its four references to four `$mlip-training` nodes; no custom converter script. |
+| 18 | “用我完成的 ASE MD 轨迹计算 Li 离子电导率。” | Route the completed `ase-md` node's collected artifacts directly to `$ionic-transport`; auto-read md-result/index and stitch restart segments; do not request files or MD metadata. |
+| 19 | “用我完成的 LAMMPS MD 轨迹计算 Li 离子电导率。” | Route the completed `lammps-md` node's collected artifacts directly to `$ionic-transport`; auto-read result/manifest, type map and timing, accept old/new coordinate columns, and stitch restart segments; do not rerun MD. |

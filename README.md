@@ -143,16 +143,28 @@ MLIPFlow currently ships ten scientific plugins. Plugin manifests are the source
 |---|---|---|
 | `high-entropy-structure` | Seeded high-entropy/SQS structure generation with ASE + icet. | Local |
 | `pes-sampling` | DIRECT representative selection, LASP/SSW execution, and historical archive normalization/replay. | Local; controlled SSH-Slurm for scheduled LASP execution |
-| `dft-labeling` | Prepare VASP static/relax/AIMD inputs and execute/collect labeling through an explicit contract. | Local; controlled SSH-Slurm for supported static labeling |
+| `dft-labeling` | Prepare/execute VASP static/relax/AIMD labels, collect a canonical labeled dataset, and remotely assemble DeepMD/M3GNet/CHGNet/MACE views. | Local preparation; controlled SSH-Slurm labeling and dataset assembly |
 | `mlip-training` | Train or fine-tune DeepMD, M3GNet/MatGL, CHGNet, and MACE models. | Local and controlled SSH-Slurm contracts |
 | `ase-md` | Run single-temperature ASE NVT Langevin or isotropic MTK NPT with explicit models and checkpoint/restart. | Controlled SSH-Slurm |
 | `lammps-md` | Prepare LAMMPS MLIP decks and execute NVT/NPT with restart-aware scheduled runs. | Local prepare; controlled SSH-Slurm execute |
 | `mlip-benchmark` | Normalize/evaluate prediction evidence and produce canonical metrics and rankings. | Local |
-| `ionic-transport` | Analyze existing ASE/LAMMPS/VASP trajectories or MSD data into diffusion, conductivity, and Arrhenius results. | Local |
+| `ionic-transport` | Analyze native collected ASE-MD/LAMMPS-MD artifacts or historical ASE/LAMMPS/VASP/MSD data into diffusion, conductivity, and Arrhenius results; restart segments and upstream metadata are handled automatically. | Local |
 | `candidate-ranking` | Deterministic ranking/top-k selection from existing candidate and metric manifests. | Local |
 | `electrochemical-voltage` | Convert explicit total-energy sequences to voltage or replay reported voltage evidence. | Local |
 
 The software contracts for these plugins are implemented and tested, but scientific validation is deliberately reported separately from software completeness. For the exact current validation level—including which scheduled paths have been exercised on a real cluster—see [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md), [`docs/SCIENTIFIC_VALIDATION.md`](docs/SCIENTIFIC_VALIDATION.md), and [`docs/HPC_VALIDATION.md`](docs/HPC_VALIDATION.md).
+
+Recorded real-HPC evidence includes one bounded DeepMD training run, a real LASP
+3.6.0 NN 14-atom CPU tiny SSW smoke, and CPU LAMMPS five-step functional smokes.
+Each reached bounded fetch and pinned checker/collect `OK`; these validate execution
+lifecycles, not scientific accuracy, LASP numerical parity, or production sampling/MD.
+See the [machine-readable LASP smoke report](reports/lasp_cpu_tiny_hpc_smoke.json).
+
+Local integration evidence also includes a real MAML/DIRECT 4-structure smoke that
+produced two selected structures and passed the `pes-sampling` checker/collect path.
+The [machine-readable DIRECT smoke report](reports/direct_local_integration_smoke.json)
+records that this was not a full MLIPFlow core run lifecycle or historical
+selection-parity result.
 
 ## Bundled Agent Skills
 
@@ -177,6 +189,8 @@ Example requests to a compatible agent:
 $mlip-workflow Turn my structure -> DFT -> training -> benchmark plan into an MLIPFlow DAG.
 
 $mlip-training Plan a MACE fine-tuning node using this dataset reference and show me the dry-run before execution.
+
+$mlip-workflow Use these verified DFT labels to train DeepMD, M3GNet, CHGNet, and MACE without custom conversion scripts.
 
 $ionic-transport Analyze these three temperature trajectories and report the assumptions used for diffusion and conductivity.
 ```
@@ -266,6 +280,24 @@ A project node selects that profile and declares only abstract resources:
 ```
 
 The site-owned template library is responsible for details such as modules/conda activation, executable paths, launchers, and Slurm directives. This keeps projects portable across clusters and keeps private infrastructure details out of version-controlled research manifests.
+
+### DFT labels to all training frameworks
+
+A successful scheduled `dft-labeling.label` attempt collects a reusable
+`canonical-labeled-dataset.json` with stable `record_id` values. A separate reviewed
+`dft-labeling.dataset-assemble` node runs format conversion on the selected cluster and
+first creates one deterministic or source-group-aware train/validation/test split,
+then publishes split-preserving DeepMD, M3GNet/MatGL, CHGNet, and MACE directories
+below the site-owned data root. The four small `*-dataset-reference.json` files are
+direct inputs to `mlip-training`.
+
+The converter preserves stable record/source identities and atom order, records every
+stress/unit transformation, uses dpdata for DeepMD, and refuses silent overwrite.
+Every framework train/validation/test file is selected from the same `split.json`
+record IDs, so the held-out test set is directly comparable. There is no bundle tar,
+verification archive, manifest hash graph, or user-authored data conversion command in this
+path. See [`examples/training_all_models/CLUSTER.md`](examples/training_all_models/CLUSTER.md)
+for the site template and workflow YAML.
 
 The site schema is [`schemas/site.schema.json`](schemas/site.schema.json); concrete template examples are in [`examples/site_templates/`](examples/site_templates/).
 For step-by-step creation, validation, and `PYTHON_BIN` binding of isolated DeepMD,

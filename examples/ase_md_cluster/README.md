@@ -151,7 +151,7 @@ Every attempt is immutable and has its own fresh remote/local workspace. A resta
 
 Segment rows and index entries use **global** MD step/time numbers. For example, a retry from step 430000 starts its new segment at 430000 and continues toward the original step 1000000. This makes later continuity/stitching checks possible without pretending the binary trajectory was safely appended across Slurm jobs.
 
-Version 0.3 does not automatically concatenate segments. Keep all attempt artifacts; a later reviewed stitching or transport stage can combine them while checking checkpoint-boundary continuity.
+The producer does not concatenate segments into a replacement file. Keep all attempt artifacts; `ionic-transport` now consumes the collected attempts directly, orders frames by global step, and removes a repeated checkpoint-boundary frame.
 
 ## Approval and successful output contract
 

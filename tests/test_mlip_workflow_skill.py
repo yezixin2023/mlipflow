@@ -57,7 +57,7 @@ def test_skill_is_control_plane_only_and_lists_current_capabilities() -> None:
     assert not (SKILL_ROOT / "assets").exists()
 
 
-def test_all_sixteen_natural_language_routes_are_explicit_and_safe() -> None:
+def test_all_nineteen_natural_language_routes_are_explicit_and_safe() -> None:
     _, reference = _skill_text()
     rows = {}
     for line in reference.splitlines():
@@ -81,9 +81,12 @@ def test_all_sixteen_natural_language_routes_are_explicit_and_safe() -> None:
         14: ("electrochemical-voltage", "do not seek a voltage Skill"),
         15: ("$high-entropy-structure", "replay/check", "explicit intent"),
         16: ("Stop downstream", "final `OK`"),
+        17: ("dataset-assemble", "no custom converter script"),
+        18: ("$ionic-transport", "auto-read md-result/index", "do not request files"),
+        19: ("$ionic-transport", "old/new coordinate columns", "do not rerun MD"),
     }
 
-    assert set(rows) == set(range(1, 17))
+    assert set(rows) == set(range(1, 20))
     for scenario, fragments in expected_fragments.items():
         for fragment in fragments:
             assert fragment in rows[scenario], (scenario, fragment)

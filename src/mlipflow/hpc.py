@@ -158,6 +158,7 @@ def render_template(
     *,
     template_name: str,
     required: frozenset[str],
+    allowed_variables: frozenset[str] = TEMPLATE_VARIABLES,
 ) -> str:
     encoded = text.encode("utf-8")
     if len(encoded) > MAX_TEMPLATE_BYTES:
@@ -165,7 +166,7 @@ def render_template(
     if "\x00" in text:
         raise ConfigError(f"remote template contains NUL: {template_name}")
     used = set(PLACEHOLDER.findall(text))
-    unknown = sorted(used - TEMPLATE_VARIABLES)
+    unknown = sorted(used - allowed_variables)
     if unknown:
         raise ConfigError(
             f"remote template {template_name} uses unknown variables: {', '.join(unknown)}"
@@ -257,6 +258,11 @@ def resolve_hpc_execution_plan(
         "run.sh": (run_template, RUN_REQUIRED),
     }
     variables = template_variables(profile, project_id, node_id, attempt, resources)
+    plugin_variables = scheduled_execution.get("template_variables", {})
+    if not isinstance(plugin_variables, dict):
+        raise ConfigError("scheduled_execution.template_variables must be a mapping")
+    variables.update({str(name): str(value) for name, value in plugin_variables.items()})
+    allowed_variables = frozenset({*TEMPLATE_VARIABLES, *plugin_variables})
     template_paths: dict[str, str] = {}
     rendered_scripts: dict[str, str] = {}
     used_variables: set[str] = set()
@@ -281,7 +287,11 @@ def resolve_hpc_execution_plan(
                 content, execution_model, template_name=relative
             )
         rendered = render_template(
-            content, variables, template_name=relative, required=required
+            content,
+            variables,
+            template_name=relative,
+            required=required,
+            allowed_variables=allowed_variables,
         )
         used_variables.update(PLACEHOLDER.findall(content))
         template_paths[destination] = relative

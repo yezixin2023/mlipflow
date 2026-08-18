@@ -346,7 +346,7 @@ def _deck(
         f"thermo          {config['thermo_interval']}",
         "thermo_style    custom step time temp pe ke etotal press vol lx ly lz",
         f"velocity        all create {config['temperature_k']:.16g} {config['seed']} mom yes rot yes dist gaussian",
-        f"dump            mlipflow all custom {config['dump_interval']} trajectory.lammpstrj id type element x y z vx vy vz",
+        f"dump            mlipflow all custom {config['dump_interval']} trajectory.lammpstrj id type element x y z ix iy iz vx vy vz",
         "dump_modify     mlipflow element " + " ".join(type_map) + " sort id",
     ]
     if config["ensemble"] == "nvt":

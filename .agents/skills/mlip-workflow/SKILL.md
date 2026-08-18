@@ -29,8 +29,25 @@ Skill and plugin manifest; keep their scientific and safety boundaries authorita
 7. Expand only the current stage. After it returns final plugin `OK`, bind its verified
    collected artifacts as downstream inputs and reconsider the next stage.
 
+For DFT-to-training requests, treat `dft-labeling` canonical collection and remote
+`dataset-assemble` as distinct artifact gates. Reuse exact framework references when
+present; otherwise assemble only the requested DeepMD/M3GNet/CHGNet/MACE views, then
+hand their collected reference manifests to `$mlip-training`. Never ask the user for a
+custom conversion script. Review one framework-independent split before serialization;
+all requested framework views must preserve that exact split.
+
 Never continue downstream from `FAIL`, `BLOCKED`, `STOPPED`, a scheduler-only
 `COMPLETED`, or process exit zero without scientific completion checks.
+
+For an ionic-transport objective, treat a final `OK` `ase-md` or `lammps-md` node as
+the trajectory handoff. Pass its collected dependency artifacts to `$ionic-transport`
+directly; core includes preserved restart attempts and the transport loader joins them
+by global step. Do not ask the user to identify filenames, rename/copy trajectories,
+concatenate attempts, write metadata, or repeat timestep, temperature, or atom-type
+information already recorded upstream. When several completed temperature nodes are
+selected, hand all of them to one analysis for D(T), conductivity, Arrhenius Ea, and
+the requested extrapolated temperature. Do not rerun MD merely to change a dump name
+or coordinate convention.
 
 ## Apply approval and execution boundaries
 

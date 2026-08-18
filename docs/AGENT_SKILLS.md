@@ -23,7 +23,9 @@ Skills 是监督说明，不是计算实现。更新 Skill 时，应以当前 CL
 
 ## Ionic transport
 
-`$ionic-transport` 是 local-only 分析 Skill，不提供 `ssh-slurm`。正式 `analyze-existing` 使用 MLIPFlow 打包的 `ionic_conductivity.py` 与 `pymatgen-analysis-diffusion` public API；项目只绑定已有 trajectory/MSD，不提供或覆盖 `analysis_script`。当前输入为 ASE `production.traj`、信息完整的 LAMMPS unwrapped dump、VASP AIMD `vasprun.xml` 或显式 MSD 表。
+`$ionic-transport` 是 local-only 分析 Skill，不提供 `ssh-slurm`。正式 `analyze-existing` 使用 MLIPFlow 打包的 `ionic_conductivity.py` 与 `pymatgen-analysis-diffusion` public API；项目只绑定已有 trajectory/MSD，不提供或覆盖 `analysis_script`。它原生消费 `ase-md` 的 `trajectory.traj`/index/result 与 `lammps-md` 的 `trajectory.lammpstrj`/result/manifest，自动取得 temperature、timestep、interval、type map、model/structure identity，并按 global step 拼接同一节点的 restart attempts。历史 `production.traj`、`traj.lammpstrj`、VASP AIMD `vasprun.xml` 和显式 MSD 表仍兼容。
+
+LAMMPS ingestion 同时支持 `xu/yu/zu`、`xsu/ysu/zsu`、wrapped `x/y/z` 与 `xs/ys/zs`；有 `ix/iy/iz` 时优先精确展开，否则用相邻 fractional displacement 的 minimum-image continuity 展开。用户不需要 rename、copy、concatenate、写 metadata 或重填上游已经记录的 timestep/temperature/type map。
 
 正式 trajectory 直接使用 `DiffusionAnalyzer` 的 dt/MSD/D/σ/charge transport/Haven ratio；MSD-only 使用 physical lag/elapsed time 和 `get_diffusivity_from_msd`，不把第一行擅自归零，`smoothed=max` 时明确排除 zero lag。只有真实 Structure 才通过 `get_conversion_factor` 产生 conductivity；Arrhenius 使用 `fit_arrhenius(..., mode="linear")`。缺少 `[transport]` 依赖或可靠 Structure/cell/species/timestep 时明确失败或将 MSD-only conductivity 标为 unavailable，不回退到 MLIPFlow 自定义公式。
 
@@ -57,7 +59,7 @@ NPT 只能用于 full-rank 3D 周期 cell，`fix_com` 必须为 false，且不�
 
 当 Slurm 因 `TIMEOUT`、`PREEMPTED` 等终止时，core 不会直接把远端 checkpoint 当可信输入。普通 `advance` 只对该 run 中 adapter 声明的 `failure_salvage` 子集做 bounded fetch 与 transport 验证；原 attempt 保持 `FAIL/STOPPED`。随后 `retry` 创建 fresh attempt；新 run 只能 stage 立即上一 attempt 已经本地 salvage 的 checkpoint，并显示来源 attempt、segment start/remaining steps。Scheduler `COMPLETED` 的普通科学 FAIL 不自动 resume。
 
-每个 retry attempt 都生成独立 trajectory/thermo segment，使用连续的 global step/time 编号；0.3 暂不自动拼接 segment。成功完成后普通 `advance` 会核对 total completed steps、segment schedule、模型/结构/restart identity，以及 NVT/NPT 对应热力学约束。多温度和 transport 仍不自动串接。
+每个 retry attempt 都生成独立 trajectory/thermo segment，使用连续的 global step/time 编号；producer 不生成单体拼接文件，但 `$ionic-transport` 会直接消费 collected attempts、按 global step 拼接并去除重复边界帧。成功完成后普通 `advance` 会核对 total completed steps、segment schedule、模型/结构/restart identity，以及 NVT/NPT 对应热力学约束。多个温度节点可一起交给 transport 做 Arrhenius。
 
 ## LAMMPS molecular dynamics
 
@@ -73,7 +75,7 @@ Prepared deck 永远只引用 `${MODEL_FILE}`，并在 `final.data` 与 `final.r
 
 成功 completion 由普通 `advance` fetch/check。Checker 继续核对 result/report、trajectory、`final.data`、`final.restart`、logs、LAMMPS version、completion marker 和内容 identity；resume 另外核对 selected checkpoint 来自当前 attempt 的 restart inputs、segment start 合法、source attempt/runtime identity 一致。正常成功后临时 periodic checkpoint 与 runtime sidecar 被移除，只保留 `final.restart`；失败时它们才作为 recovery artifacts salvage。
 
-LAMMPS binary restart 不被描述为跨平台 portable checkpoint。即使 executable/platform/launcher/resources 都一致，MPI decomposition 和浮点顺序仍可能导致恢复轨迹与 uninterrupted run 数值分叉，所以 0.3 显式记录 `bitwise_exact_guaranteed: false`。能力定义是 **pinned compatible runtime 下的 state-continuous restart**。当前仍不自动 stitching 多 attempt trajectory/log segment，也不自动进入 transport 分析。
+LAMMPS binary restart 不被描述为跨平台 portable checkpoint。即使 executable/platform/launcher/resources 都一致，MPI decomposition 和浮点顺序仍可能导致恢复轨迹与 uninterrupted run 数值分叉，所以 0.3 显式记录 `bitwise_exact_guaranteed: false`。能力定义是 **pinned compatible runtime 下的 state-continuous restart**。producer 仍保持多 attempt 文件分离；`$ionic-transport` 负责原生 trajectory stitching 和后续科学分析。新 dump 带 `x/y/z + ix/iy/iz`，旧 wrapped/unwrapped dump 均继续可读。
 
 ## Skill validation
 

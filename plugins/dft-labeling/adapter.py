@@ -9,6 +9,7 @@ operation and therefore requires a separate approval.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import math
 import re
@@ -20,9 +21,16 @@ from typing import Any, Mapping
 PLUGIN_ID = "dft-labeling"
 PREPARE_OPERATION = "vasp-prepare"
 LABEL_OPERATION = "label"
-OPERATIONS = frozenset({PREPARE_OPERATION, LABEL_OPERATION})
+DATASET_OPERATION = "dataset-assemble"
+OPERATIONS = frozenset({PREPARE_OPERATION, LABEL_OPERATION, DATASET_OPERATION})
 BUNDLED_PREPARE_WRAPPER = (
     Path(globals().get("__file__", "adapter.py")).absolute().with_name("vasp_prepare.py")
+)
+DATASET_CONTRACT_PATH = (
+    Path(globals().get("__file__", "adapter.py")).absolute().with_name("dataset_contract.py")
+)
+DATASET_CONVERTER_PATH = (
+    Path(globals().get("__file__", "adapter.py")).absolute().with_name("dataset_convert.py")
 )
 SHELL_EXECUTABLES = frozenset(
     {"bash", "csh", "cmd", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "tcsh", "zsh"}
@@ -31,7 +39,9 @@ SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SAFE_POTCAR_SYMBOL = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 MAX_INPUT_BYTES = 16 * 1024 * 1024
+MAX_DATASET_INPUT_BYTES = 512 * 1024 * 1024
 MAX_STRUCTURES = 10000
+DATASET_FRAMEWORKS = ("deepmd", "m3gnet", "chgnet", "mace")
 MANUSCRIPT_STATIC_PRESET = "manuscript-static-v1"
 MANUSCRIPT_STATIC_INCAR: dict[str, Any] = {
     "ISTART": 0,
@@ -63,6 +73,20 @@ HISTORICAL_KPOINTS_SHA256 = (
     "sha256:3eda09df03e3fa250fd362b3f1f97b8a89cd9612eaebbaea5dbac1e2cf7a73a6"
 )
 EXPECTED_FILE_NAMES = frozenset({"POSCAR", "INCAR", "KPOINTS", "POTCAR"})
+
+
+def _load_dataset_contract():
+    spec = importlib.util.spec_from_file_location(
+        "mlipflow_dft_dataset_contract", DATASET_CONTRACT_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load bundled DFT dataset contract")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+DATASETS = _load_dataset_contract()
 
 
 def _diagnostic(level: str, code: str, message: str) -> dict[str, str]:
@@ -153,8 +177,10 @@ def _sha256(path: Path) -> str:
     return "sha256:" + digest.hexdigest()
 
 
-def _read_json(path: Path) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
-    if not _ordinary_file(path, MAX_INPUT_BYTES):
+def _read_json(
+    path: Path, max_bytes: int = MAX_INPUT_BYTES
+) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+    if not _ordinary_file(path, max_bytes):
         return None, _diagnostic("warning", "artifact.missing", f"清单不存在或不是普通文件：{path}")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -212,7 +238,9 @@ def _base_diagnostics(
     if operation not in OPERATIONS:
         diagnostics.append(
             _diagnostic(
-                "error", "parameters.operation", "operation 必须是 vasp-prepare 或 label。"
+                "error",
+                "parameters.operation",
+                "operation 必须是 vasp-prepare、label 或 dataset-assemble。",
             )
         )
     return diagnostics
@@ -550,6 +578,114 @@ def _validate_label(context: Mapping[str, Any]) -> list[dict[str, str]]:
     return diagnostics
 
 
+def _dataset_frameworks(parameters: Mapping[str, Any]) -> list[str]:
+    value = parameters.get("frameworks", list(DATASET_FRAMEWORKS))
+    if not isinstance(value, list):
+        return []
+    requested = [str(item).lower() for item in value if isinstance(item, str)]
+    return [name for name in DATASET_FRAMEWORKS if name in requested]
+
+
+def _validate_dataset_assemble(context: Mapping[str, Any]) -> list[dict[str, str]]:
+    diagnostics = _base_diagnostics(context, frozenset({"ssh-slurm"}))
+    inputs = _mapping(context.get("inputs"))
+    parameters = _mapping(context.get("parameters"))
+    _validate_input_path(diagnostics, context, "canonical_dataset")
+    allowed_parameters = {
+        "operation",
+        "frameworks",
+        "dataset_relative_path",
+        "result_manifest",
+        "split_strategy",
+        "split_seed",
+        "split_fractions",
+    }
+    unknown = sorted(set(parameters) - allowed_parameters)
+    if unknown:
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "parameters.unknown",
+                "dataset-assemble 不支持参数：" + ", ".join(unknown),
+            )
+        )
+    raw_frameworks = parameters.get("frameworks", list(DATASET_FRAMEWORKS))
+    frameworks = _dataset_frameworks(parameters)
+    if (
+        not isinstance(raw_frameworks, list)
+        or not raw_frameworks
+        or len(raw_frameworks) != len(set(str(item) for item in raw_frameworks))
+        or any(not isinstance(item, str) or item not in DATASET_FRAMEWORKS for item in raw_frameworks)
+        or len(frameworks) != len(raw_frameworks)
+    ):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "parameters.frameworks",
+                "frameworks 必须是 deepmd/m3gnet/chgnet/mace 的非空、无重复列表。",
+            )
+        )
+    relative = parameters.get("dataset_relative_path")
+    if relative is not None and not DATASETS.safe_relative(relative):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "parameters.dataset_relative_path",
+                "dataset_relative_path 必须是站点 data root 下的安全相对路径。",
+            )
+        )
+    strategy = parameters.get("split_strategy", "deterministic")
+    if strategy not in {"deterministic", "group-aware"}:
+        diagnostics.append(_diagnostic("error", "parameters.split_strategy", "split_strategy 必须是 deterministic 或 group-aware。"))
+    seed = parameters.get("split_seed", 0)
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        diagnostics.append(_diagnostic("error", "parameters.split_seed", "split_seed 必须是非负整数。"))
+    fractions = _mapping(parameters.get("split_fractions", {"train": 0.8, "validation": 0.1, "test": 0.1}))
+    if set(fractions) != {"train", "validation", "test"} or any(
+        isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0
+        for value in fractions.values()
+    ) or not math.isclose(sum(float(value) for value in fractions.values()), 1.0, rel_tol=0, abs_tol=1e-12):
+        diagnostics.append(_diagnostic("error", "parameters.split_fractions", "split_fractions 必须包含正数 train/validation/test 且总和为 1。"))
+    result_name = parameters.get("result_manifest", "dataset-assembly-result.json")
+    if not _safe_relative(result_name) or len(Path(str(result_name)).parts) != 1:
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "parameters.result_manifest",
+                "dataset-assemble result_manifest 必须是安全 basename。",
+            )
+        )
+    project_root = Path(str(context.get("project_root", ""))).expanduser().absolute()
+    path = _path(project_root, inputs["canonical_dataset"]) if _safe_relative(inputs.get("canonical_dataset")) else None
+    if path is not None and not _ordinary_project_file(path, project_root, MAX_DATASET_INPUT_BYTES):
+        diagnostics.append(_diagnostic("error", "inputs.canonical_dataset", "canonical_dataset 必须是 project_root 内的普通有界文件。"))
+    if _errors(diagnostics) or path is None:
+        return diagnostics
+    canonical, canonical_error = _read_json(path, MAX_DATASET_INPUT_BYTES)
+    if canonical is None:
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "inputs.canonical_dataset",
+                str(canonical_error["message"] if canonical_error else "canonical dataset 无效"),
+            )
+        )
+        return diagnostics
+    contract_errors = DATASETS.validate_canonical_dataset(canonical)
+    diagnostics.extend(
+        _diagnostic("error", "inputs.canonical_dataset.contract", message)
+        for message in contract_errors
+    )
+    if canonical is not None:
+        if relative is not None and relative != canonical.get("dataset_id"):
+            diagnostics.append(_diagnostic("error", "parameters.dataset_relative_path", "dataset_relative_path 必须等于 canonical dataset_id。"))
+        try:
+            DATASETS.build_split_manifest(canonical, strategy=strategy, seed=seed, fractions=fractions)
+        except ValueError as exc:
+            diagnostics.append(_diagnostic("error", "parameters.split", str(exc)))
+    return diagnostics
+
+
 def _file_fingerprints(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
     return {
         name: {"path": str(path), "sha256": _sha256(path), "size_bytes": path.stat().st_size}
@@ -681,6 +817,101 @@ def _staged_record(source: Path, remote_name: str, *, sensitive: bool = False) -
         "size_bytes": source.stat().st_size,
         "sensitive": sensitive,
         "fetch_allowed": False,
+    }
+
+
+def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
+    diagnostics = _validate_dataset_assemble(context)
+    if _errors(diagnostics):
+        return {
+            "plugin_id": PLUGIN_ID,
+            "status": "BLOCKED",
+            "executable": False,
+            "diagnostics": diagnostics,
+        }
+    inputs = _mapping(context["inputs"])
+    parameters = _mapping(context["parameters"])
+    project_root = Path(str(context["project_root"])).expanduser().absolute().resolve()
+    canonical_path = _path(project_root, inputs["canonical_dataset"])
+    canonical, _ = _read_json(canonical_path, MAX_DATASET_INPUT_BYTES)
+    assert canonical is not None
+    frameworks = _dataset_frameworks(parameters)
+    relative = str(parameters.get("dataset_relative_path", canonical["dataset_id"]))
+    result_name = str(parameters.get("result_manifest", "dataset-assembly-result.json"))
+    staged = [
+        _staged_record(canonical_path, "canonical.json"),
+        _staged_record(DATASET_CONVERTER_PATH, "dataset_convert.py"),
+        _staged_record(DATASET_CONTRACT_PATH, "dataset_contract.py"),
+    ]
+    fetch_outputs = [{
+            "remote_name": result_name,
+            "remote_path": f"output/{result_name}",
+            "local_name": result_name,
+            "required": True,
+            "max_bytes": MAX_INPUT_BYTES,
+            "role": "dataset-assembly-result",
+        }, {
+            "remote_name": "split.json", "remote_path": "output/split.json",
+            "local_name": "split.json", "required": True, "max_bytes": MAX_INPUT_BYTES,
+            "role": "split-manifest",
+        }]
+    fetch_outputs.extend({
+        "remote_name": f"{name}-dataset-reference.json",
+        "remote_path": f"output/{name}-dataset-reference.json",
+        "local_name": f"{name}-dataset-reference.json", "required": True,
+        "max_bytes": MAX_INPUT_BYTES, "role": f"{name}-dataset-reference",
+    } for name in frameworks)
+    strategy = str(parameters.get("split_strategy", "deterministic"))
+    seed = int(parameters.get("split_seed", 0))
+    fractions = _mapping(parameters.get("split_fractions", {"train": 0.8, "validation": 0.1, "test": 0.1}))
+    return {
+        "plugin_id": PLUGIN_ID,
+        "status": "READY",
+        "executable": True,
+        "operation": DATASET_OPERATION,
+        "argv": ["template-family:dft-dataset"],
+        "cwd": "remote-attempt-workspace",
+        "expected_outputs": [item["remote_name"] for item in fetch_outputs],
+        "input_fingerprints": {
+            "canonical_dataset": _sha256(canonical_path),
+            "dataset_converter": _sha256(DATASET_CONVERTER_PATH),
+            "dataset_contract": _sha256(DATASET_CONTRACT_PATH),
+        },
+        "approval_summary": {
+            "expensive": False,
+            "submits_jobs": True,
+            "execution_model": "single-python",
+            "cpus_meaning": "threads-per-process",
+            "operation": DATASET_OPERATION,
+            "dataset_id": canonical["dataset_id"],
+            "record_count": canonical["record_count"],
+            "frameworks": frameworks,
+            "split_strategy": strategy,
+            "split_seed": seed,
+            "split_fractions": dict(fractions),
+            "site_data_relative_path": relative,
+            "remote_publish": True,
+            "silent_overwrite": False,
+            "fetch_allowlist": [item["remote_name"] for item in fetch_outputs],
+        },
+        "scheduled_execution": {
+            "schema_version": 3,
+            "execution_model": "single-python",
+            "template_family": "dft-dataset",
+            "template_variables": {
+                "PLUGIN_FRAMEWORKS": ",".join(frameworks),
+                "PLUGIN_DATASET_ID": relative,
+                "PLUGIN_SPLIT_STRATEGY": strategy,
+                "PLUGIN_SPLIT_SEED": str(seed),
+                "PLUGIN_TRAIN_FRACTION": str(fractions["train"]),
+                "PLUGIN_VALIDATION_FRACTION": str(fractions["validation"]),
+                "PLUGIN_TEST_FRACTION": str(fractions["test"]),
+                "PLUGIN_RESULT_NAME": result_name,
+            },
+            "staged_files": staged,
+            "fetch_outputs": fetch_outputs,
+        },
+        "diagnostics": diagnostics,
     }
 
 
@@ -1881,12 +2112,6 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
                     "stress_kbar_vasp_3x3": frame["stress_kbar_vasp_3x3"],
                 }
             )
-    labels_path = attempt / "labels.json"
-    _write_fresh_json(
-        labels_path,
-        {"schema_version": 2, "records": records, "units": parameters["units"]},
-    )
-
     raw_outputs: dict[str, Any] = {}
     required, optional, _ = _scheduled_output_spec(calculation_type)
     for analysis in analyses:
@@ -1900,6 +2125,11 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
                 "fingerprint": _sha256(path),
                 "size_bytes": path.stat().st_size,
             }
+    labels_path = attempt / "labels.json"
+    _write_fresh_json(
+        labels_path,
+        {"schema_version": 2, "records": records, "units": parameters["units"]},
+    )
     first = analyses[0]
     version = re.search(r"\bvasp\.([0-9][A-Za-z0-9._-]*)", first["outcar_text_head"], re.I)
     ionic_required = calculation_type == RELAX_TYPE
@@ -1908,16 +2138,84 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
     )
     execution_context = _mapping(context.get("execution"))
     hpc_execution = _mapping(execution_context.get("hpc_execution"))
+    input_fingerprints = {
+        name: _sha256(_path(context["project_root"], inputs[name]))
+        for name in ("structures_manifest", "labeling_config", "dft_input_manifest")
+    }
+    completion_path = attempt / "completion.json"
+    completion_identity, completion_error = _read_json(completion_path)
+    if completion_identity is None:
+        return {
+            "plugin_id": PLUGIN_ID,
+            "status": "FAIL",
+            "diagnostics": [
+                completion_error
+                or _diagnostic("error", "completion.identity", "缺少 scheduler completion identity。")
+            ],
+        }
+    source_attempt_identity = {
+        "project_id": completion_identity.get("project_id"),
+        "node_id": completion_identity.get("node_id"),
+        "attempt": completion_identity.get("attempt"),
+    }
+    execution = {
+        "template_family": "vasp",
+        "templates": hpc_execution.get("template_paths"),
+        "vasp_version": version.group(1) if version else "UNKNOWN",
+        "calculations": [
+            {
+                "id": item["calc_id"], "structure_id": item.get("structure_id"),
+                "nelm": item["nelm"], "ionic_steps": len(item["frames"]),
+                "ionic_converged": item["ionic_converged"],
+                "relaxed_structure": ({
+                    "lattice_angstrom": item["final_lattice_angstrom"],
+                    "fractional_coordinates": item["final_fractional_coordinates"],
+                } if calculation_type == RELAX_TYPE else None),
+            }
+            for item in analyses
+        ],
+    }
+    structures_path = _path(context["project_root"], inputs["structures_manifest"])
+    structures_manifest, structure_error = _read_json(structures_path)
+    if structures_manifest is None:
+        return {
+            "plugin_id": PLUGIN_ID,
+            "status": "FAIL",
+            "diagnostics": [
+                structure_error
+                or _diagnostic("error", "dataset.structures", "无法读取 structures manifest。")
+            ],
+        }
+    try:
+        canonical = DATASETS.build_canonical_dataset(
+            label_records=records,
+            units=parameters["units"],
+            calculation_type=calculation_type,
+            source_attempt_identity=source_attempt_identity,
+            structures_manifest=structures_manifest,
+            raw_outputs=raw_outputs,
+        )
+    except ValueError as exc:
+        return {
+            "plugin_id": PLUGIN_ID,
+            "status": "FAIL",
+            "diagnostics": [
+                _diagnostic("error", "dataset.canonical", f"canonical dataset 组装失败：{exc}")
+            ],
+        }
+    canonical_path = attempt / "canonical-labeled-dataset.json"
+    _write_fresh_json(canonical_path, canonical)
+    artifact_paths = {
+        "labels-json": labels_path,
+        "canonical-labeled-dataset": canonical_path,
+    }
     manifest = {
-        "schema_version": 2,
+        "schema_version": 3,
         "plugin_id": PLUGIN_ID,
         "status": "OK",
         "engine": "vasp",
         "calculation_type": calculation_type,
-        "input_fingerprints": {
-            name: _sha256(_path(context["project_root"], inputs[name]))
-            for name in ("structures_manifest", "labeling_config", "dft_input_manifest")
-        },
+        "input_fingerprints": input_fingerprints,
         "completion": {
             "scheduler_success": True,
             "electronic_converged": True,
@@ -1931,40 +2229,17 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
         "frame_count": frame_count,
         "label_count": len(records),
         "labels": "labels.json",
-        "execution": {
-            "template_family": "vasp",
-            "templates": hpc_execution.get("template_paths"),
-            "vasp_version": version.group(1) if version else "UNKNOWN",
-            "calculations": [
-                {
-                    "id": item["calc_id"],
-                    "structure_id": item.get("structure_id"),
-                    "nelm": item["nelm"],
-                    "ionic_steps": len(item["frames"]),
-                    "ionic_converged": item["ionic_converged"],
-                    # For relax, the labelled frame is the last force evaluation
-                    # while the relaxed geometry is the subsequent finalpos; both
-                    # identities are recorded so a row stays traceable.
-                    "relaxed_structure": (
-                        {
-                            "lattice_angstrom": item["final_lattice_angstrom"],
-                            "fractional_coordinates": item["final_fractional_coordinates"],
-                        }
-                        if calculation_type == RELAX_TYPE
-                        else None
-                    ),
-                }
-                for item in analyses
-            ],
-        },
+        "execution": execution,
         "raw_outputs": raw_outputs,
+        "dataset_id": canonical["dataset_id"],
+        "canonical_dataset": canonical_path.name,
         "artifacts": [
             {
-                "name": "labels-json",
-                "path": "labels.json",
+                "name": name,
+                "path": path.name,
                 "media_type": "application/json",
-                "fingerprint": _sha256(labels_path),
             }
+            for name, path in artifact_paths.items()
         ],
     }
     result_path = attempt / str(parameters.get("result_manifest", "dft-labeling-result.json"))
@@ -1972,26 +2247,7 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
     diagnostics.extend(_verify_scheduled_label_result(context, manifest))
     if _errors(diagnostics):
         return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
-    return {
-        "plugin_id": PLUGIN_ID,
-        "status": "OK",
-        "diagnostics": diagnostics,
-        "result_manifest": str(result_path),
-        "metrics": {
-            "source_count": float(len(analyses)),
-            "calculation_count": float(len(analyses)),
-            "frame_count": float(frame_count),
-            "label_count": float(len(records)),
-        },
-        "artifacts": [
-            {"path": "labels.json", "role": "labels", "media_type": "application/json"},
-            {
-                "path": str(result_path.name),
-                "role": "dft-label-result",
-                "media_type": "application/json",
-            },
-        ],
-    }
+    return _collected_scheduled_label(context, manifest, diagnostics)
 
 
 def _verify_scheduled_label_result(
@@ -2070,9 +2326,205 @@ def _verify_scheduled_label_result(
             or _sha256(path) != record.get("fingerprint")
         ):
             diagnostics.append(_diagnostic("error", f"result.raw_outputs.{name}", "原始 VASP 输出记录无效。"))
+    if manifest.get("schema_version") == 3:
+        diagnostics.extend(_verify_canonical_label_bundle(context, manifest, records))
+    elif manifest.get("schema_version") != 2:
+        diagnostics.append(
+            _diagnostic("error", "result.schema_version", "scheduled label 结果 schema 必须是 2 或 3。")
+        )
     return diagnostics
 
 
+def _verify_canonical_label_bundle(
+    context: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    label_records: list[Any],
+) -> list[dict[str, str]]:
+    diagnostics: list[dict[str, str]] = []
+    attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        return [_diagnostic("error", "dataset.artifacts", "canonical dataset artifacts 必须是列表。")]
+    by_name = {
+        item.get("name"): item
+        for item in artifacts
+        if isinstance(item, Mapping) and _plain_string(item.get("name"))
+    }
+    if set(by_name) != {"labels-json", "canonical-labeled-dataset"}:
+        return [_diagnostic("error", "dataset.artifacts.roles", "只应收集 labels 与 canonical dataset。")]
+    for name, item in by_name.items():
+        path = attempt / str(item.get("path"))
+        if not _safe_relative(item.get("path")) or not _ordinary_file(path, MAX_DATASET_INPUT_BYTES):
+            diagnostics.append(_diagnostic("error", f"dataset.artifacts.{name}", "artifact 路径无效。"))
+    canonical_path = attempt / str(by_name["canonical-labeled-dataset"]["path"])
+    canonical, _ = _read_json(canonical_path, MAX_DATASET_INPUT_BYTES)
+    completion, _ = _read_json(attempt / "completion.json")
+    structures_path = _path(context["project_root"], _mapping(context["inputs"])["structures_manifest"])
+    structures, _ = _read_json(structures_path, MAX_DATASET_INPUT_BYTES)
+    if canonical is None or completion is None or structures is None:
+        return diagnostics + [_diagnostic("error", "dataset.json", "canonical 重建输入不可读。")]
+    try:
+        expected = DATASETS.build_canonical_dataset(
+            label_records=label_records,
+            units=_mapping(context["parameters"])["units"],
+            calculation_type=str(manifest["calculation_type"]),
+            source_attempt_identity={
+                "project_id": completion.get("project_id"),
+                "node_id": completion.get("node_id"),
+                "attempt": completion.get("attempt"),
+            },
+            structures_manifest=structures,
+            raw_outputs=_mapping(manifest.get("raw_outputs")),
+        )
+    except (ValueError, KeyError) as exc:
+        return diagnostics + [_diagnostic("error", "dataset.rebuild", f"canonical dataset 无法重建：{exc}")]
+    if canonical != expected:
+        diagnostics.append(_diagnostic("error", "dataset.canonical_identity", "canonical dataset 不是当前标签的确定性序列化。"))
+    diagnostics.extend(
+        _diagnostic("error", "dataset.canonical_contract", message)
+        for message in DATASETS.validate_canonical_dataset(canonical)
+    )
+    if manifest.get("dataset_id") != expected["dataset_id"] or manifest.get("canonical_dataset") != canonical_path.name:
+        diagnostics.append(_diagnostic("error", "dataset.result", "结果未绑定 canonical dataset identity。"))
+    return diagnostics
+def _collected_scheduled_label(
+    context: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    diagnostics: list[dict[str, str]],
+) -> dict[str, Any]:
+    parameters = _mapping(context["parameters"])
+    result_name = str(parameters.get("result_manifest", "dft-labeling-result.json"))
+    if manifest.get("schema_version") == 2:
+        return {
+            "plugin_id": PLUGIN_ID,
+            "status": "OK",
+            "diagnostics": diagnostics,
+            "artifacts": [
+                {"path": "labels.json", "role": "labels", "media_type": "application/json"},
+                {"path": result_name, "role": "dft-label-result", "media_type": "application/json"},
+            ],
+            "metrics": {
+                "source_count": float(manifest["source_count"]),
+                "calculation_count": float(manifest["calculation_count"]),
+                "frame_count": float(manifest["frame_count"]),
+                "label_count": float(manifest["label_count"]),
+            },
+        }
+    artifacts = [
+        {
+            "name": "dft-labeling-result",
+            "role": "dft-label-result",
+            "path": result_name,
+            "media_type": "application/json",
+        },
+        *[{**dict(item), "role": item["name"]} for item in manifest["artifacts"]],
+    ]
+    return {
+        "plugin_id": PLUGIN_ID,
+        "status": "OK",
+        "diagnostics": diagnostics,
+        "artifacts": artifacts,
+        "metrics": {
+            "source_structure_count": manifest["source_count"],
+            "label_count": manifest["label_count"],
+            "dataset_id": manifest["dataset_id"],
+            "electronic_converged": True,
+            "ionic_converged": manifest["completion"].get("ionic_converged"),
+        },
+    }
+
+
+def _verify_dataset_assembly(
+    context: Mapping[str, Any], manifest: Mapping[str, Any]
+) -> list[dict[str, str]]:
+    diagnostics: list[dict[str, str]] = []
+    attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
+    inputs, parameters = _mapping(context["inputs"]), _mapping(context["parameters"])
+    canonical, _ = _read_json(
+        _path(context["project_root"], inputs["canonical_dataset"]),
+        MAX_DATASET_INPUT_BYTES,
+    )
+    split, _ = _read_json(attempt / "split.json", MAX_INPUT_BYTES)
+    if canonical is None or split is None:
+        return [_diagnostic("error", "dataset.inputs", "canonical 或 split.json 不可读。")]
+    frameworks = _dataset_frameworks(parameters)
+    strategy = str(parameters.get("split_strategy", "deterministic"))
+    seed = int(parameters.get("split_seed", 0))
+    fractions = _mapping(parameters.get(
+        "split_fractions", {"train": 0.8, "validation": 0.1, "test": 0.1}
+    ))
+    try:
+        expected_split = DATASETS.build_split_manifest(
+            canonical, strategy=strategy, seed=seed, fractions=fractions
+        )
+    except ValueError as exc:
+        return [_diagnostic("error", "dataset.split", str(exc))]
+    if split != expected_split:
+        diagnostics.append(_diagnostic("error", "dataset.split", "split.json 与批准的确定性 split 不一致。"))
+    relative = str(parameters.get("dataset_relative_path", canonical["dataset_id"]))
+    if manifest.get("dataset_id") != canonical["dataset_id"]:
+        diagnostics.append(_diagnostic("error", "dataset.dataset_id", "assembly dataset_id 不一致。"))
+    if manifest.get("split_id") != expected_split["split_id"]:
+        diagnostics.append(_diagnostic("error", "dataset.split_id", "assembly split_id 不一致。"))
+    if manifest.get("counts") != expected_split["counts"]:
+        diagnostics.append(_diagnostic("error", "dataset.counts", "assembly split counts 不一致。"))
+    expected_paths = {name: f"{relative}/{name}" for name in frameworks}
+    if manifest.get("framework_output_paths") != expected_paths:
+        diagnostics.append(_diagnostic("error", "dataset.paths", "framework output paths 不一致。"))
+    if set(_mapping(manifest.get("formats"))) != set(frameworks):
+        diagnostics.append(_diagnostic("error", "dataset.formats", "framework format table 不完整。"))
+    conventions = _mapping(manifest.get("units_and_conventions"))
+    if conventions.get("energy") != "total eV per configuration, unchanged" or conventions.get("forces") != "eV/angstrom, unchanged":
+        diagnostics.append(_diagnostic("error", "dataset.units", "energy/force convention 不完整。"))
+    for framework in frameworks:
+        reference, _ = _read_json(attempt / f"{framework}-dataset-reference.json", MAX_INPUT_BYTES)
+        if (
+            reference is None
+            or reference.get("schema_version") != 1
+            or reference.get("relative_path") != expected_paths[framework]
+            or reference.get("kind") != "directory"
+            or reference.get("split_id") != expected_split["split_id"]
+            or not _fingerprint(reference.get("fingerprint"))
+        ):
+            diagnostics.append(_diagnostic("error", f"dataset.reference.{framework}", "mlip-training dataset reference 无效。"))
+    return diagnostics
+
+
+def _collect_dataset_assembly(
+    context: Mapping[str, Any], manifest: Mapping[str, Any], diagnostics: list[dict[str, str]]
+) -> dict[str, Any]:
+    attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
+    parameters = _mapping(context["parameters"])
+    frameworks = _dataset_frameworks(parameters)
+    result_name = str(parameters.get("result_manifest", "dataset-assembly-result.json"))
+    artifacts: list[dict[str, Any]] = [
+        {"name": "dataset-assembly-result", "role": "dataset-assembly-result", "path": result_name, "media_type": "application/json"},
+        {"name": "split-manifest", "role": "split-manifest", "path": "split.json", "media_type": "application/json"},
+    ]
+    for framework in frameworks:
+        reference_name = f"{framework}-dataset-reference.json"
+        reference, _ = _read_json(attempt / reference_name, MAX_INPUT_BYTES)
+        assert reference is not None
+        artifacts.extend([
+            {"name": f"{framework}-dataset-reference", "role": f"{framework}-dataset-reference", "path": reference_name, "media_type": "application/json"},
+            {
+                "name": f"{framework}-dataset", "role": f"{framework}-dataset",
+                "uri": f"mlipflow-data:///{reference['relative_path']}",
+                "fingerprint": reference["fingerprint"],
+                "metadata": {
+                    "kind": "directory", "dataset_id": reference["dataset_id"],
+                    "split_id": manifest["split_id"],
+                },
+            },
+        ])
+    return {
+        "plugin_id": PLUGIN_ID, "status": "OK", "diagnostics": diagnostics,
+        "artifacts": artifacts,
+        "metrics": {
+            "dataset_id": manifest["dataset_id"], "split_id": manifest["split_id"],
+            **manifest["counts"], "frameworks": frameworks,
+        },
+    }
 class Adapter:
     """Plan one reviewed operation and verify its standardized result."""
 
@@ -2083,6 +2535,8 @@ class Adapter:
             return _validate_prepare(context)
         if _operation(context) == LABEL_OPERATION:
             return _validate_label(context)
+        if _operation(context) == DATASET_OPERATION:
+            return _validate_dataset_assemble(context)
         return _base_diagnostics(context)
 
     def plan(self, context: Any) -> dict[str, Any]:
@@ -2092,6 +2546,8 @@ class Adapter:
             return _plan_prepare(context)
         if _operation(context) == LABEL_OPERATION:
             return _plan_label(context)
+        if _operation(context) == DATASET_OPERATION:
+            return _plan_dataset_assemble(context)
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": self.validate(context)}
 
     def prepare(self, context: Any, plan: Any) -> dict[str, Any]:
@@ -2104,7 +2560,11 @@ class Adapter:
 
     def _result_path(self, context: Mapping[str, Any]) -> Path:
         parameters = _mapping(context["parameters"])
-        default = "dft-input-manifest.json" if _operation(context) == PREPARE_OPERATION else "dft-labeling-result.json"
+        default = {
+            PREPARE_OPERATION: "dft-input-manifest.json",
+            LABEL_OPERATION: "dft-labeling-result.json",
+            DATASET_OPERATION: "dataset-assembly-result.json",
+        }.get(_operation(context), "result.json")
         return _path(context["attempt_dir"], parameters.get("result_manifest", default))
 
     def _verify_result(
@@ -2112,6 +2572,8 @@ class Adapter:
     ) -> list[dict[str, str]]:
         if _operation(context) == PREPARE_OPERATION:
             return _verify_prepare_result(context, manifest, verify_files)
+        if _operation(context) == DATASET_OPERATION:
+            return _verify_dataset_assembly(context, manifest) if verify_files else []
         return _verify_label_result(context, manifest, verify_files)
 
     def check(self, context: Any) -> dict[str, Any]:
@@ -2126,10 +2588,19 @@ class Adapter:
         if context.get("backend") == "ssh-slurm" and _operation(context) == LABEL_OPERATION:
             raw_diagnostics, _ = _scheduled_calculations_check(context)
             diagnostics.extend(raw_diagnostics)
+            result_path = self._result_path(context)
+            if result_path.exists() and not _errors(diagnostics):
+                manifest, read_diagnostic = _read_json(result_path, MAX_DATASET_INPUT_BYTES)
+                if manifest is None:
+                    assert read_diagnostic is not None
+                    diagnostics.append(read_diagnostic)
+                else:
+                    diagnostics.extend(_verify_scheduled_label_result(context, manifest))
             return {
                 "plugin_id": PLUGIN_ID,
                 "status": "FAIL" if _errors(diagnostics) else "OK",
                 "diagnostics": diagnostics,
+                **({"result_manifest": str(result_path)} if result_path.exists() else {}),
             }
         result_path = self._result_path(context)
         manifest, read_diagnostic = _read_json(result_path)
@@ -2151,11 +2622,18 @@ class Adapter:
             return checked
         assert isinstance(context, Mapping)
         if context.get("backend") == "ssh-slurm" and _operation(context) == LABEL_OPERATION:
+            result_path = self._result_path(context)
+            if result_path.exists():
+                manifest, _ = _read_json(result_path, MAX_DATASET_INPUT_BYTES)
+                assert manifest is not None
+                return _collected_scheduled_label(context, manifest, checked.get("diagnostics", []))
             return _collect_scheduled_result(context)
         result_path = self._result_path(context)
         manifest, _ = _read_json(result_path)
         assert manifest is not None
         parameters = _mapping(context["parameters"])
+        if _operation(context) == DATASET_OPERATION:
+            return _collect_dataset_assembly(context, manifest, checked.get("diagnostics", []))
         if _operation(context) == PREPARE_OPERATION:
             artifacts: list[dict[str, Any]] = [
                 {

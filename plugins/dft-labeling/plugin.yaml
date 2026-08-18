@@ -4,9 +4,9 @@
   "id": "dft-labeling",
   "name": "DFT input preparation, labeling, and dataset assembly",
   "display_name": "DFT input preparation, labeling, and dataset assembly",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "api_version": 1,
-  "description": "Deterministic pymatgen VASP input preparation plus separately approved local or controlled SSH-SLURM VASP labeling with bounded staging, fetch, and pinned scientific checks.",
+  "description": "Deterministic VASP preparation and labeling, canonical label provenance, and reviewed SSH-SLURM conversion to DeepMD, M3GNet, CHGNet, and MACE training datasets.",
   "category": "labeling",
   "contract": {
     "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
@@ -27,9 +27,11 @@
     "limitations": [
       "vasp-prepare generates POSCAR, INCAR, KPOINTS, and runtime-only POTCAR files in a fresh local attempt but never launches VASP or submits a scheduler job.",
       "POTCAR is assembled only from the user's licensed PMG_VASP_PSP_DIR, is fingerprinted, and is explicitly excluded from portable collection, reports, packages, and repository content.",
-      "The first scheduled contract is intentionally limited to one fresh static VASP calculation per node; relax, AIMD, continuation, arrays, and multi-structure batching remain pending.",
+      "Scheduled labeling supports bounded multi-structure static, relax, and AIMD batches; array jobs and in-place continuation remain unsupported.",
       "SSH-SLURM staging accepts only an input allowlist, verifies every staged SHA-256, never fetches POTCAR, and performs bounded output fetch and scientific checks as continuation of the approved run.",
       "Cluster-specific modules, executable paths, launchers, partitions, and environment initialization belong only to the selected remote vasp/run.sh and slurm templates, not plugin or project parameters.",
+      "dataset-assemble converts only already verified canonical labels on the selected cluster, publishes below the site's canonical data root, and never launches VASP or training.",
+      "DeepMD conversion requires dpdata/NumPy and MACE conversion requires ASE in the reviewed remote conversion environment; missing dependencies fail the conversion node without invalidating the canonical label artifacts.",
       "Real historical VASP numerical parity remains pending even when a local integration smoke succeeds.",
       "The manuscript static preset preserves EDIFF=5e-6 numerically while recording that the SI labels it eV/atom although VASP EDIFF is an absolute electronic threshold."
     ]
@@ -38,7 +40,7 @@
     "mode": "external-command",
     "backends": ["local", "ssh-slurm"],
     "entrypoint": {"path": "adapter.py", "object": "Adapter"},
-    "operations": ["vasp-prepare", "label"],
+    "operations": ["vasp-prepare", "label", "dataset-assemble"],
     "shell": false,
     "executes_external_programs": true,
     "writes_files": true,
@@ -54,10 +56,11 @@
     {"name": "structures-manifest", "kind": "manifest", "required": true, "media_type": "application/json"},
     {"name": "labeling-config", "kind": "manifest", "required": true, "media_type": "application/json"},
     {"name": "pseudopotential-reference", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "Required by vasp-prepare: portable symbol/hash policy only; contains no POTCAR data or filesystem path."},
-    {"name": "dft-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Optional prepared-input binding consumed by the separate label operation."}
+    {"name": "dft-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Optional prepared-input binding consumed by the separate label operation."},
+    {"name": "canonical-dataset", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "Required by dataset-assemble: canonical labels emitted by a verified scheduled label attempt."}
   ],
   "parameters": [
-    {"name": "operation", "type": "string", "required": true, "description": "vasp-prepare generates inputs; label runs either a separately approved local user command or a site-template-backed scheduled calculation."},
+    {"name": "operation", "type": "string", "required": true, "description": "vasp-prepare generates inputs; label runs a reviewed DFT calculation; dataset-assemble converts verified canonical labels on SSH-SLURM."},
     {"name": "interpreter-argv", "type": "array", "required": false, "description": "Local-only interpreter argv; vasp-prepare requires an absolute executable non-symlink Python file that can import pymatgen, and local label requires one non-shell executable."},
     {"name": "engine", "type": "string", "required": true, "description": "Must be vasp for vasp-prepare; explicit engine identifier for label."},
     {"name": "output-subdir", "type": "string", "required": false, "description": "Fresh attempt-relative input directory for vasp-prepare.", "default": "vasp-inputs"},
@@ -65,20 +68,30 @@
     {"name": "label-script", "type": "string", "required": false, "description": "Project-relative command required for local label only; it must not call sbatch and is forbidden for ssh-slurm."},
     {"name": "completion-policy", "type": "object", "required": false, "description": "Required only by label: reviewed electronic/ionic completion criteria."},
     {"name": "units", "type": "object", "required": false, "description": "Required only by label: explicit energy, force, stress, and length units."},
-    {"name": "result-manifest", "type": "string", "required": false, "description": "Safe attempt-relative result path; defaults by operation."}
+    {"name": "result-manifest", "type": "string", "required": false, "description": "Safe attempt-relative result path; defaults by operation."},
+    {"name": "frameworks", "type": "array", "required": false, "description": "dataset-assemble views; defaults to deepmd, m3gnet, chgnet, and mace."},
+    {"name": "dataset-relative-path", "type": "string", "required": false, "description": "Optional path below the site-owned dataset root; when supplied it must equal dataset_id."},
+    {"name": "split-strategy", "type": "string", "required": false, "description": "deterministic or group-aware; group-aware requires source_group_id on every canonical record.", "default": "deterministic"},
+    {"name": "split-seed", "type": "integer", "required": false, "description": "Non-negative seed for stable record/group ordering.", "default": 0},
+    {"name": "split-fractions", "type": "object", "required": false, "description": "Positive train/validation/test fractions summing to one.", "default": {"train": 0.8, "validation": 0.1, "test": 0.1}}
   ],
   "outputs": [
     {"name": "dft-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json"},
     {"name": "vasp-input-set", "kind": "artifact-reference", "required": false, "description": "Collectable POSCAR/INCAR/KPOINTS only; POTCAR is intentionally excluded."},
-    {"name": "labeled-dataset", "kind": "artifact-reference", "required": false},
-    {"name": "dataset-manifest", "kind": "manifest", "required": false, "media_type": "application/json"}
+    {"name": "canonical-labeled-dataset", "kind": "artifact-reference", "required": false, "media_type": "application/json"},
+    {"name": "split-manifest", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "dataset-assembly-result", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "deepmd-dataset", "kind": "artifact-reference", "required": false},
+    {"name": "m3gnet-dataset", "kind": "artifact-reference", "required": false},
+    {"name": "chgnet-dataset", "kind": "artifact-reference", "required": false},
+    {"name": "mace-dataset", "kind": "artifact-reference", "required": false}
   ],
   "dependencies": {
     "upstream_plugins": ["pes-sampling"],
     "python_packages": [
       {"name": "pymatgen", "required": true, "bundled": false, "purpose": "Required at runtime by vasp-prepare for VASP input generation and licensed POTCAR assembly."},
-      {"name": "dpdata", "required": false, "bundled": false, "purpose": "Optional DeepMD-format conversion for label."},
-      {"name": "ase", "required": false, "bundled": false, "purpose": "Optional extxyz conversion for label."}
+      {"name": "dpdata", "required": false, "bundled": false, "purpose": "Required in the reviewed remote dataset-assemble environment for DeepMD/Numpy conversion and reread verification."},
+      {"name": "ase", "required": false, "bundled": false, "purpose": "Required in the reviewed remote dataset-assemble environment for MACE extxyz conversion."}
     ],
     "external_programs": [
       {"name": "VASP", "required": false, "bundled": false, "purpose": "User-licensed DFT engine used only by the separate approved label operation; vasp-prepare never invokes it."}
@@ -92,7 +105,7 @@
     "notes": [
       "vasp-prepare approval summarizes calculation type, structure count, pseudopotential reference, and runtime-only POTCAR policy.",
       "label submission approval binds the DFT resources, completion policy, units, prepared inputs, and rendered scripts."
-      ,"SSH-SLURM label additionally requires fresh remote staging approval; completed output fetch/check is a separately approved advance action."
+      ,"SSH-SLURM label and dataset-assemble require reviewed remote staging; scheduler observation, bounded fetch, and scientific check remain controlled continuations."
     ]
   },
   "completion": {
@@ -101,7 +114,9 @@
       {"id": "vasp-input-integrity", "implemented": true, "description": "Bind structure/config/pseudopotential fingerprints; verify calculation type, INCAR semantics, KPOINTS rule, POTCAR symbols/hashes, and fresh per-structure files."},
       {"id": "potcar-non-portability", "implemented": true, "description": "Require POTCAR collectable=false and omit every POTCAR from collect output while retaining symbols and hashes in dft-input-manifest.json."},
       {"id": "dft-convergence", "implemented": true, "description": "For label, require scheduler/process success, electronic convergence, applicable ionic convergence, and explicit non-truncation."},
-      {"id": "dataset-shape-and-units", "implemented": true, "description": "For label, require one label per source structure, approved units, non-empty artifacts, and matching sha256 fingerprints."}
+      {"id": "dataset-shape-and-units", "implemented": true, "description": "Bind every label to a stable record ID and preserve atom order, species mapping, energy, force, and stress conventions."},
+      {"id": "shared-split", "implemented": true, "description": "Create one deterministic or source-group-aware train/validation/test split and use its exact record IDs for all requested views."},
+      {"id": "framework-dataset-views", "implemented": true, "description": "Remote conversion creates split-preserving DeepMD, M3GNet, CHGNet, and MACE directories plus the dataset references required by mlip-training."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"

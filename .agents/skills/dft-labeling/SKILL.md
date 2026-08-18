@@ -11,6 +11,8 @@ Use the `dft-labeling` plugin as the deterministic implementation. Do not genera
 
 - Use `vasp-prepare` to generate a fresh VASP input set and `dft-input-manifest.json`. It does not run VASP or submit a job.
 - Use `label` only after preparation has been reviewed. It is a separate expensive operation requiring explicit approval.
+- After a scheduled `label` reaches final `OK`, require `canonical-labeled-dataset.json` with stable record IDs; do not treat a loose `labels.json` as the reusable training contract.
+- Use `dataset-assemble` on `backend: ssh-slurm` to convert those verified artifacts into any non-empty subset of `deepmd`, `m3gnet`, `chgnet`, and `mace`. This operation does not run VASP or training, but it is still a state-changing scheduled publish and follows dry-run/approval.
 - Never combine preparation and DFT execution into one implied action.
 - Reject legacy `prepare_script` hooks in `label`; prepared inputs must arrive through the reviewed `dft-input-manifest.json` binding.
 
@@ -40,10 +42,41 @@ Before preparation, use MLIPFlow dry-run and show calculation type, structure co
 
 After preparation, accept `OK` only when the checker verifies source/config/reference identity, INCAR semantics, KPOINTS content, structure lineage, POTCAR policy, and every declared file. A missing result is `WAIT`; a mismatch is `FAIL`. Retry into a new attempt.
 
-Before `label`, bind the reviewed `dft-input-manifest.json`, show DFT resources, units, convergence policy, and backend, then request explicit approval for the expensive execution. Scheduler completion alone is insufficient: require electronic convergence, applicable ionic convergence, non-truncation, one label per source structure, exact units, and dataset identity.
+Before `label`, bind the reviewed `dft-input-manifest.json`, show DFT resources, units, convergence policy, and backend, then request explicit approval for the expensive execution. Scheduler completion alone is insufficient: require electronic convergence, applicable ionic convergence, non-truncation, the calculation-type-specific label cardinality, exact units, and dataset identity.
 
-For `backend: ssh-slurm`, require one static structure, a named `backend_profile`, and exact abstract resources: `cpus`, `gpus`, `memory`, and `walltime`. Never guess or place an SSH host, partition, account, QoS, module, executable, launcher, template path, work root, full submit script, or `remote_cwd` in the workflow node. The user-local `~/.mlipflow/site.yaml` selects the cluster and separates `remote_template_root` from `work_root`; persistent remote `slurm/mpi/cpu.sbatch` or `slurm/mpi/gpu.sbatch` plus `vasp/run.sh` provide site execution knowledge. Show the selected profile, rendered scripts, resource contract, important staged inputs, and exact `attempt-XXXX` workspace in the dry-run. The run creates only that fresh workspace, stages the declared inputs and scripts, and submits one job. Never fetch POTCAR.
+For `backend: ssh-slurm`, require a bounded reviewed static/relax/AIMD batch, a named `backend_profile`, and exact abstract resources: `cpus`, `gpus`, `memory`, and `walltime`. Never guess or place an SSH host, partition, account, QoS, module, executable, launcher, template path, work root, data root, full submit script, or `remote_cwd` in the workflow node. The user-local `~/.mlipflow/site.yaml` selects the cluster and separates `remote_template_root` from `work_root`; persistent remote scheduler templates plus `vasp/run.sh` provide site execution knowledge. Show the selected profile, rendered scripts, resource contract, important staged inputs, and exact `attempt-XXXX` workspace in the dry-run. The run creates only that fresh workspace, stages the declared inputs and scripts, and submits one job. Never fetch POTCAR.
 
 After the scheduler reports `COMPLETED`, run ordinary `advance`. Core bounded-fetches only the run's output allowlist, verifies transport integrity, and runs the pinned `check/collect`. Treat changed or missing output, malformed/truncated XML, OUTCAR without a normal footer, electronic steps reaching `NELM`, or label/raw-output mismatch as `FAIL`.
+
+## Canonical dataset and remote framework views
+
+The canonical record preserves stable `record_id`, source structure/calculation/ionic-step identity, species and atom order, cell and fractional coordinates, total energy, forces, optional raw VASP stress, units, raw-output fingerprints, and producing DFT attempt. Its energy, force, stress, atom-order, and cell transformations are identity operations. A checker must deterministically rebuild it from verified labels and reject any drift.
+
+`dataset-assemble` creates the framework-independent split before serialization. Use
+`deterministic` for stable seeded record-level assignment. Use `group-aware` when every
+canonical record has `source_group_id`; no group may cross train/validation/test. The
+minimal `split.json` contains only dataset/split identity, strategy, optional seed,
+partition record IDs, and counts.
+
+For `dataset-assemble`, bind the collected canonical dataset and explicitly review the
+split strategy, seed, and fractions. The selected site's `dft-dataset/run.sh` owns the
+reviewed dpdata/ASE Python and canonical data root. The remote converter:
+
+- uses dpdata and rereads the generated DeepMD directory;
+- emits the exact JSON record fields consumed by the M3GNet/MatGL and CHGNet runners;
+- emits ASE extxyz for MACE;
+- selects every framework partition from the exact same canonical record-ID list;
+- records the necessary unit/sign/virial conventions in one assembly result;
+- publishes only a fresh dataset-id path and refuses an existing target;
+- returns `split.json`, one assembly result, and only the small dataset references needed by training.
+
+All four assembled references have `kind: directory`: DeepMD contains train/valid/test
+dpdata systems, M3GNet and CHGNet contain train/valid/test JSON, and MACE contains
+train/valid/test extxyz. A missing dpdata dependency is an explicit dependency block
+for a DeepMD conversion request; it does not invalidate canonical labels. Never replace
+dpdata with an approximate writer.
+
+If a collected framework reference already exists for the requested dataset and split,
+hand it directly to `$mlip-training`; do not rerun VASP or reconvert.
 
 Never describe contract tests, generated inputs, scheduler completion, or one smoke calculation as historical numerical parity. Successful local pymatgen preparation validates neither VASP execution nor any scheduler/HPC path.

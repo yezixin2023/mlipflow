@@ -27,7 +27,7 @@ CONTRACT_METHODS = {"validate", "plan", "prepare", "check", "collect", "replay"}
 EXACT_EXECUTION_OPERATIONS = {
     "ase-md": ["run"],
     "candidate-ranking": ["rank-candidates"],
-    "dft-labeling": ["vasp-prepare", "label"],
+    "dft-labeling": ["vasp-prepare", "label", "dataset-assemble"],
     "electrochemical-voltage": ["compute-from-energies", "replay-si-table-s11"],
     "high-entropy-structure": ["generate-sqs"],
     "ionic-transport": ["analyze-existing", "md-smoke-and-analyze"],

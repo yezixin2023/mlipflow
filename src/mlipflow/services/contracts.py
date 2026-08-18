@@ -165,6 +165,18 @@ def _scheduled_contract(
         r"[a-z0-9][a-z0-9._-]*", template_family
     ):
         raise PluginError("scheduled_execution.template_family is unsafe")
+    template_variables = scheduled.get("template_variables", {})
+    if not isinstance(template_variables, dict) or any(
+        not isinstance(name, str)
+        or not re.fullmatch(r"PLUGIN_[A-Z0-9_]+", name)
+        or not isinstance(value, str)
+        or not value
+        or not re.fullmatch(r"[A-Za-z0-9._,+-]+", value)
+        for name, value in template_variables.items()
+    ):
+        raise PluginError(
+            "scheduled_execution.template_variables must be safe PLUGIN_* string values"
+        )
     staged = scheduled.get("staged_files")
     if not isinstance(staged, list) or not staged:
         raise PluginError("scheduled_execution.staged_files must be a non-empty list")
@@ -273,6 +285,7 @@ def _scheduled_contract(
         "schema_version": schema_version,
         "execution_model": execution_model,
         "template_family": template_family,
+        "template_variables": dict(template_variables),
         "staged_files": normalized_stage,
         "fetch_outputs": normalized_outputs,
     }
@@ -294,13 +307,63 @@ def _planned_attempt(project: Project, node_id: str) -> int:
 
 
 def _adapter_context(project: Project, node: dict[str, Any], attempt: int) -> dict[str, Any]:
+    upstream_artifacts: list[dict[str, Any]] = []
+    database = state_path(project)
+    if database.is_file():
+        with StateStore(database, readonly=True) as store:
+            for dependency_id in node.get("needs", []):
+                for dependency in store.steps_for_node(
+                    project.project_id, str(dependency_id)
+                ):
+                    artifacts = [
+                        {"role": item["role"], "path": item["uri"]}
+                        for item in store.artifacts(dependency.run_id)
+                    ]
+                    if artifacts:
+                        upstream_artifacts.append(
+                            {
+                                "node_id": dependency.node_id,
+                                "plugin_id": dependency.plugin_id.split("@", 1)[0],
+                                "attempt": dependency.attempt,
+                                "state": dependency.state,
+                                "attempt_dir": str(
+                                    attempt_directory(
+                                        project,
+                                        dependency.node_id,
+                                        dependency.attempt,
+                                    )
+                                ),
+                                "artifacts": artifacts,
+                            }
+                        )
+    raw_inputs = node.get("inputs", {})
+    inputs = dict(raw_inputs) if isinstance(raw_inputs, dict) else raw_inputs
+    if (
+        isinstance(inputs, dict)
+        and str(node.get("uses", "")).split("@", 1)[0] == "ionic-transport"
+    ):
+        explicit = inputs.get("input_paths", [])
+        input_paths = list(explicit) if isinstance(explicit, list) else explicit
+        if isinstance(input_paths, list):
+            input_paths.extend(
+                str(record["attempt_dir"])
+                for record in upstream_artifacts
+                if record["plugin_id"] in {"ase-md", "lammps-md"}
+                and any(
+                    item.get("role") == "trajectory"
+                    for item in record["artifacts"]
+                    if isinstance(item, dict)
+                )
+            )
+            inputs["input_paths"] = list(dict.fromkeys(input_paths))
     return {
         "project_root": str(project.root),
         "attempt_dir": str(attempt_directory(project, str(node["id"]), attempt)),
-        "inputs": node.get("inputs", {}),
+        "inputs": inputs,
         "parameters": node.get("parameters", {}),
         "backend": node.get("backend", "local"),
         "resources": node.get("resources", {}),
+        "upstream_artifacts": upstream_artifacts,
     }
 
 

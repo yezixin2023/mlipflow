@@ -157,6 +157,12 @@ def _framework_dataset_kind(framework: str) -> str:
     return "directory" if framework == "deepmd" else "file"
 
 
+def _framework_dataset_kinds(framework: str) -> set[str]:
+    # DFT assembly emits split-preserving directories for every framework.
+    # Legacy user-supplied M3GNet/CHGNet/MACE single files remain supported.
+    return {"directory"} if framework == "deepmd" else {"file", "directory"}
+
+
 def _framework_foundation_kind(framework: str) -> str:
     return "directory" if framework == "m3gnet" else "file"
 
@@ -321,12 +327,13 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
                 _diag("error", "training.dataset_contract", error or "invalid dataset reference")
             )
         else:
-            if dataset["kind"] != _framework_dataset_kind(str(framework)):
+            if dataset["kind"] not in _framework_dataset_kinds(str(framework)):
                 diagnostics.append(
                     _diag(
                         "error",
                         "training.dataset_kind",
-                        f"{framework} scheduled data must be a {_framework_dataset_kind(str(framework))}",
+                        f"{framework} scheduled data kind must be one of "
+                        + ", ".join(sorted(_framework_dataset_kinds(str(framework)))),
                     )
                 )
             if dataset["fingerprint"] != parameters.get("dataset_fingerprint"):
@@ -724,12 +731,21 @@ def _chgnet_completion_diagnostics(
             )
         )
     split = provenance.get("split") if isinstance(provenance, Mapping) else None
-    if (
-        not isinstance(split, Mapping)
-        or split.get("seed") != result.get("seed")
-        or not _is_fingerprint(split.get("train_indices_sha256"))
-        or not _is_fingerprint(split.get("val_indices_sha256"))
-    ):
+    generated_split = (
+        isinstance(split, Mapping)
+        and split.get("seed") == result.get("seed")
+        and _is_fingerprint(split.get("train_indices_sha256"))
+        and _is_fingerprint(split.get("val_indices_sha256"))
+    )
+    predefined_split = (
+        isinstance(split, Mapping)
+        and split.get("source") == "predefined"
+        and _plain(split.get("split_id"))
+        and all(_is_fingerprint(split.get(key)) for key in (
+            "train_record_ids_sha256", "validation_record_ids_sha256", "test_record_ids_sha256"
+        ))
+    )
+    if not generated_split and not predefined_split:
         diagnostics.append(
             _diag(
                 "error",
@@ -827,16 +843,22 @@ def _m3gnet_completion_diagnostics(
                 )
             )
     split = provenance.get("split") if isinstance(provenance, Mapping) else None
-    if (
-        not isinstance(split, Mapping)
-        or split.get("seed") != result.get("seed")
-        or not _is_fingerprint(split.get("train_indices_sha256"))
-        or not _is_fingerprint(split.get("val_indices_sha256"))
-        or (
-            split.get("include_test") is True
-            and not _is_fingerprint(split.get("test_indices_sha256"))
-        )
-    ):
+    generated_split = (
+        isinstance(split, Mapping)
+        and split.get("seed") == result.get("seed")
+        and _is_fingerprint(split.get("train_indices_sha256"))
+        and _is_fingerprint(split.get("val_indices_sha256"))
+        and (split.get("include_test") is not True or _is_fingerprint(split.get("test_indices_sha256")))
+    )
+    predefined_split = (
+        isinstance(split, Mapping)
+        and split.get("source") == "predefined"
+        and _plain(split.get("split_id"))
+        and all(_is_fingerprint(split.get(key)) for key in (
+            "train_record_ids_sha256", "validation_record_ids_sha256", "test_record_ids_sha256"
+        ))
+    )
+    if not generated_split and not predefined_split:
         diagnostics.append(
             _diag(
                 "error",

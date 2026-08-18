@@ -2,8 +2,9 @@
 """Post-process Li diffusion, ionic conductivity, and Arrhenius Ea.
 It does not run MD. It can read either:
 
-* ASE folders containing production.traj and metadata.json
-* LAMMPS folders containing traj.lammpstrj/data.LYC
+* MLIPFlow ASE-MD artifacts containing trajectory.traj plus md-result/index
+* MLIPFlow LAMMPS-MD artifacts containing trajectory.lammpstrj plus result/manifest
+* Historical ASE production.traj and LAMMPS traj.lammpstrj folders
 * VASP AIMD folders containing vasprun.xml
 * Precomputed MSD tables such as msd.dat, msd.csv, and msd_after_discard.csv
 
@@ -24,7 +25,7 @@ import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -38,7 +39,9 @@ FORMAL_DEPENDENCY_ERROR = (
 
 
 KNOWN_RUN_FILES = {
+    "trajectory.traj",
     "production.traj",
+    "trajectory.lammpstrj",
     "traj.lammpstrj",
     "vasprun.xml",
     "msd.dat",
@@ -72,6 +75,8 @@ class RunData:
     time_step_fs: float | None = None
     step_skip: int = 1
     uses_ase: bool = False
+    source_paths: tuple[Path, ...] = ()
+    handoff: dict[str, Any] | None = None
 
 
 def require_formal_diffusion_api():
@@ -246,13 +251,83 @@ def is_msd_filename(name: str) -> bool:
     return "msd" in lower and Path(lower).suffix in {".dat", ".csv", ".txt", ".tsv", ".xvg"}
 
 
-def discover_run_dirs(input_paths: list[Path]) -> list[tuple[str, Path]]:
+def _native_node_root(path: Path) -> Path:
+    """Collapse one MLIPFlow attempt path to its logical workflow-node root."""
+
+    directory = path.parent if path.is_file() else path
+    if re.fullmatch(r"attempt-[0-9]+", directory.name):
+        return directory.parent
+    return directory
+
+
+def _native_segment_dirs(run_dir: Path, trajectory_name: str) -> list[Path]:
+    if (run_dir / trajectory_name).is_file():
+        return [run_dir]
+    attempts = [
+        path
+        for path in run_dir.glob("attempt-*")
+        if path.is_dir() and (path / trajectory_name).is_file()
+    ]
+
+    def attempt_number(path: Path) -> tuple[int, str]:
+        match = re.fullmatch(r"attempt-([0-9]+)", path.name)
+        return (int(match.group(1)) if match else 0, path.name)
+
+    return sorted(attempts, key=attempt_number)
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _nested_mapping(value: Any, *keys: str) -> dict[str, Any]:
+    current = value
+    for key in keys:
+        if not isinstance(current, dict):
+            return {}
+        current = current.get(key)
+    return current if isinstance(current, dict) else {}
+
+
+def _approved_identity(segment_dir: Path, key: str) -> dict[str, Any]:
+    approved = _read_json_object(segment_dir / "approved-plan.json")
+    return _nested_mapping(approved, "adapter_plan", key)
+
+
+def _model_identity(value: Any, fallback: dict[str, Any]) -> dict[str, Any] | None:
+    model = value if isinstance(value, dict) else {}
+    identity = {
+        "id": model.get("id", model.get("model_id", fallback.get("model_id"))),
+        "fingerprint": model.get("fingerprint", fallback.get("model_fingerprint")),
+    }
+    return identity if any(item is not None for item in identity.values()) else None
+
+
+def discover_run_dirs(
+    input_paths: list[Path],
+) -> list[tuple[str, Path, tuple[Path, ...] | None]]:
     run_dirs: dict[Path, str] = {}
+    native_segments: dict[Path, set[Path]] = {}
     for input_path in input_paths:
         root = input_path.expanduser().resolve()
         if root.is_file():
-            dataset = root.parent.name if root.name in KNOWN_RUN_FILES or is_msd_filename(root.name) else root.name
-            run_dirs[root.parent.resolve()] = dataset
+            dataset = (
+                root.parent.name
+                if root.name in KNOWN_RUN_FILES or is_msd_filename(root.name)
+                else root.name
+            )
+            logical = (
+                _native_node_root(root)
+                if root.name in {"trajectory.traj", "trajectory.lammpstrj"}
+                else root.parent.resolve()
+            )
+            run_dirs[logical] = logical.name if logical != root.parent else dataset
+            if logical != root.parent:
+                native_segments.setdefault(logical, set()).add(root.parent.resolve())
             continue
         dataset = root.name if root.name else root.parent.name
         if not root.exists():
@@ -260,8 +335,23 @@ def discover_run_dirs(input_paths: list[Path]) -> list[tuple[str, Path]]:
         for dirpath, _, filenames in os.walk(root):
             names = set(filenames)
             if names & KNOWN_RUN_FILES or any(is_msd_filename(name) for name in names):
-                run_dirs[Path(dirpath).resolve()] = dataset
-    return sorted(((dataset, path) for path, dataset in run_dirs.items()), key=lambda x: str(x[1]))
+                directory = Path(dirpath).resolve()
+                native = names & {"trajectory.traj", "trajectory.lammpstrj"}
+                logical = _native_node_root(directory) if native else directory
+                run_dirs[logical] = logical.name if native else dataset
+                if native:
+                    native_segments.setdefault(logical, set()).add(directory)
+    return sorted(
+        (
+            (
+                dataset,
+                path,
+                tuple(sorted(native_segments[path])) if path in native_segments else None,
+            )
+            for path, dataset in run_dirs.items()
+        ),
+        key=lambda item: str(item[1]),
+    )
 
 
 def infer_ase_dt_fs(run_dir: Path, override_fs: float | None) -> float:
@@ -312,7 +402,13 @@ def diffusion_analyzer_smoothed_arg(args):
 
 
 def diffusion_analyzer_from_structures(
-    structures, specie: str, temperature_K: float, time_step_fs: float, args
+    structures,
+    specie: str,
+    temperature_K: float,
+    time_step_fs: float,
+    args,
+    *,
+    continuous_frac: np.ndarray | None = None,
 ):
     """Run pymatgen DiffusionAnalyzer and return analyzer plus its MSD/time arrays."""
     DiffusionAnalyzer = require_formal_diffusion_api()["DiffusionAnalyzer"]
@@ -321,20 +417,44 @@ def diffusion_analyzer_from_structures(
     if step_skip < 1:
         raise ValueError("--diffusion-analyzer-step-skip must be >= 1")
     structures = list(structures)[::step_skip]
+    if continuous_frac is not None:
+        continuous_frac = np.asarray(continuous_frac, dtype=float)[::step_skip]
     if len(structures) < 2:
         raise ValueError("DiffusionAnalyzer needs at least two structures after step skipping")
 
     smoothed = diffusion_analyzer_smoothed_arg(args)
-    analyzer = DiffusionAnalyzer.from_structures(
-        structures,
-        specie=specie,
-        temperature=float(temperature_K),
-        time_step=float(time_step_fs),
-        step_skip=step_skip,
-        smoothed=smoothed,
-        min_obs=int(args.diffusion_analyzer_min_obs),
-        avg_nsteps=int(args.diffusion_analyzer_avg_nsteps),
-    )
+    analyzer_kwargs = {
+        "specie": specie,
+        "temperature": float(temperature_K),
+        "time_step": float(time_step_fs),
+        "step_skip": step_skip,
+        "smoothed": smoothed,
+        "min_obs": int(args.diffusion_analyzer_min_obs),
+        "avg_nsteps": int(args.diffusion_analyzer_avg_nsteps),
+    }
+    if continuous_frac is None:
+        analyzer = DiffusionAnalyzer.from_structures(structures, **analyzer_kwargs)
+    else:
+        lattices = np.asarray(
+            [np.asarray(structure.lattice.matrix, dtype=float) for structure in structures],
+            dtype=float,
+        )
+        fractional_displacements = continuous_frac - continuous_frac[0]
+        cartesian_displacements = np.asarray(
+            [
+                [fractional_displacements[frame, atom] @ lattices[frame] for frame in range(len(structures))]
+                for atom in range(fractional_displacements.shape[1])
+            ],
+            dtype=float,
+        )
+        analyzer_lattices = lattices[:1] if np.array_equal(lattices[0], lattices[-1]) else lattices
+        analyzer = DiffusionAnalyzer(
+            structures[0],
+            cartesian_displacements,
+            lattices=analyzer_lattices,
+            structures=structures,
+            **analyzer_kwargs,
+        )
     msd = np.asarray(analyzer.msd, dtype=float)
     if msd.ndim != 1 or msd.size < 2:
         raise ValueError("DiffusionAnalyzer returned an invalid or too-short MSD array")
@@ -357,73 +477,216 @@ def pymatgen_structures_from_frames(symbols, basis_frames: np.ndarray, frac_fram
             species=list(symbols),
             coords=np.asarray(frac, dtype=float),
             coords_are_cartesian=False,
-            to_unit_cell=True,
+            to_unit_cell=False,
         )
         for basis, frac in zip(basis_frames, frac_frames)
     ]
 
 
-def load_ase_trajectory(run_dir: Path, dataset: str, args) -> RunData:
+def unwrap_fractional_continuity(wrapped_frames: np.ndarray) -> np.ndarray:
+    """Restore a continuous fractional trajectory using minimum-image steps."""
+
+    wrapped = np.asarray(wrapped_frames, dtype=float)
+    if wrapped.ndim != 3 or wrapped.shape[0] == 0 or wrapped.shape[2] != 3:
+        raise ValueError("fractional trajectory must have shape (frames, atoms, 3)")
+    continuous = np.empty_like(wrapped)
+    continuous[0] = wrapped[0]
+    for index in range(1, len(wrapped)):
+        delta = wrapped[index] - wrapped[index - 1]
+        continuous[index] = continuous[index - 1] + delta - np.round(delta)
+    return continuous
+
+
+def _ase_segment_metadata(segment_dir: Path) -> dict[str, Any]:
+    result = _read_json_object(segment_dir / "md-result.json")
+    index = _read_json_object(segment_dir / "trajectory-index.json")
+    identity = _approved_identity(segment_dir, "md_identity")
+    return {
+        "temperature_K": result.get("temperature_K", identity.get("temperature_k")),
+        "timestep_fs": result.get("timestep_fs", identity.get("timestep_fs")),
+        "trajectory_interval": result.get(
+            "trajectory_interval", identity.get("trajectory_interval")
+        ),
+        "ensemble": result.get("ensemble", identity.get("ensemble")),
+        "model": _model_identity(result.get("model"), identity),
+        "structure_identity": result.get(
+            "structure_fingerprint", identity.get("structure_fingerprint")
+        ),
+        "steps": index.get("steps"),
+        "time_fs": index.get("time_fs"),
+        "index_path": segment_dir / "trajectory-index.json",
+        "result_path": segment_dir / "md-result.json",
+    }
+
+
+def _same_native_identity(records: list[dict[str, Any]], keys: tuple[str, ...], label: str) -> None:
+    for key in keys:
+        values = [record.get(key) for record in records if record.get(key) is not None]
+        if values and any(value != values[0] for value in values[1:]):
+            raise ValueError(f"{label} restart segments disagree on {key}")
+
+
+def _first_metadata(records: list[dict[str, Any]], key: str) -> Any:
+    return next((record[key] for record in records if record.get(key) is not None), None)
+
+
+def load_ase_trajectory(
+    run_dir: Path,
+    dataset: str,
+    args,
+    native_segment_dirs: tuple[Path, ...] | None = None,
+) -> RunData:
     require_formal_diffusion_api()
     try:
         from ase.io import read
     except ImportError as exc:
         raise ImportError(
-            "ASE is required to read production.traj; install ASE in the selected Python runtime"
+            "ASE is required to read trajectory.traj/production.traj; install ASE"
         ) from exc
 
-    traj_path = run_dir / "production.traj"
-    frames = read(str(traj_path), index=":")
-    if not isinstance(frames, list):
-        frames = [frames]
+    native_segments = list(native_segment_dirs or _native_segment_dirs(run_dir, "trajectory.traj"))
+    is_native = bool(native_segments)
+    segment_dirs = native_segments or [run_dir]
+    trajectory_name = "trajectory.traj" if is_native else "production.traj"
+    metadata_records = [_ase_segment_metadata(path) for path in segment_dirs] if is_native else []
+    if is_native:
+        _same_native_identity(
+            metadata_records,
+            ("temperature_K", "timestep_fs", "trajectory_interval", "ensemble", "model", "structure_identity"),
+            "ASE-MD",
+        )
+
+    merged: dict[int, tuple[Any, float]] = {}
+    source_paths: list[Path] = []
+    for segment_index, segment_dir in enumerate(segment_dirs):
+        traj_path = segment_dir / trajectory_name
+        frames = read(str(traj_path), index=":")
+        if not isinstance(frames, list):
+            frames = [frames]
+        source_paths.append(traj_path)
+        if is_native:
+            metadata = metadata_records[segment_index]
+            steps = metadata.get("steps")
+            times_fs = metadata.get("time_fs")
+            if not isinstance(steps, list) or not isinstance(times_fs, list):
+                raise ValueError(f"Missing trajectory-index step/time data beside {traj_path}")
+            if len(steps) != len(frames) or len(times_fs) != len(frames):
+                raise ValueError(f"ASE trajectory/index frame count mismatch: {traj_path}")
+            source_paths.append(Path(metadata["index_path"]))
+            if Path(metadata["result_path"]).is_file():
+                source_paths.append(Path(metadata["result_path"]))
+        else:
+            dt_fs = infer_ase_dt_fs(run_dir, args.ase_frame_step_fs)
+            steps = list(range(len(frames)))
+            times_fs = [index * dt_fs for index in range(len(frames))]
+
+        for step, time_fs, atoms in zip(steps, times_fs, frames):
+            step = int(step)
+            if step in merged:
+                previous = merged[step][0]
+                if (
+                    previous.get_chemical_symbols() != atoms.get_chemical_symbols()
+                    or not np.allclose(previous.get_cell().array, atoms.get_cell().array)
+                    or not np.allclose(previous.get_positions(), atoms.get_positions())
+                ):
+                    raise ValueError(f"ASE restart boundary step {step} contains different frames")
+                continue
+            merged[step] = (atoms, float(time_fs))
+
+    ordered = sorted(merged.items())
+    frames = [item[1][0] for item in ordered]
+    global_steps = np.asarray([item[0] for item in ordered], dtype=int)
+    physical_times_fs = np.asarray([item[1][1] for item in ordered], dtype=float)
+    traj_path = source_paths[0]
+    if is_native:
+        integration_timestep = _first_metadata(metadata_records, "timestep_fs")
+        trajectory_interval = _first_metadata(metadata_records, "trajectory_interval")
+        if integration_timestep is None or trajectory_interval is None:
+            raise ValueError("ASE-MD artifact lacks timestep/trajectory interval metadata")
+        expected_times = global_steps.astype(float) * float(integration_timestep)
+        if not np.allclose(physical_times_fs, expected_times, rtol=0.0, atol=1e-9):
+            raise ValueError("ASE trajectory-index physical times disagree with timestep_fs")
+        interval = int(trajectory_interval)
+        cadence = np.flatnonzero(global_steps % interval == 0)
+        if cadence.size >= 2 and cadence.size != len(global_steps):
+            frames = [frames[index] for index in cadence]
+            global_steps = global_steps[cadence]
+            physical_times_fs = physical_times_fs[cadence]
     if len(frames) < 2:
         raise ValueError(f"Need at least two frames in {traj_path}")
     if any(not bool(np.all(atoms.get_pbc())) for atoms in frames):
         raise ValueError("ASE formal transport requires a periodic cell in every frame")
     if any(float(atoms.get_volume()) <= 0.0 for atoms in frames):
         raise ValueError("ASE formal transport requires a finite non-zero cell in every frame")
-
-    dt_fs = infer_ase_dt_fs(run_dir, args.ase_frame_step_fs)
-    raw_times_ps = np.arange(len(frames), dtype=float) * dt_fs / 1000.0
+    time_deltas = np.diff(physical_times_fs)
+    if np.any(time_deltas <= 0) or not np.allclose(time_deltas, time_deltas[0]):
+        raise ValueError("ASE restart segments must form a strictly ordered uniform frame schedule")
+    dt_fs = float(time_deltas[0])
+    raw_times_ps = (physical_times_fs - physical_times_fs[0]) / 1000.0
     idx = slice_by_time_indices(raw_times_ps, args.trajectory_start_ps, args.trajectory_end_ps)
     if idx.size < 2:
         raise ValueError(f"Trajectory segment leaves fewer than two frames: {traj_path}")
+    frames = [frames[index] for index in idx]
+    global_steps = global_steps[idx]
+    physical_times_fs = physical_times_fs[idx]
 
-    frames = [frames[i] for i in idx]
     symbols = np.asarray(frames[0].get_chemical_symbols())
+    if any(atoms.get_chemical_symbols() != list(symbols) for atoms in frames[1:]):
+        raise ValueError("ASE atom ordering/species changed across trajectory segments")
     mobile_mask = symbols == args.specie
     if not mobile_mask.any():
         raise ValueError(f"No {args.specie} atoms found in {traj_path}")
 
-    temperature_K = require_temperature(run_dir, "ASE trajectory", args)
+    native_temperature = _first_metadata(metadata_records, "temperature_K")
+    temperature_K = (
+        float(native_temperature)
+        if is_native and native_temperature is not None
+        else require_temperature(run_dir, "ASE trajectory", args)
+    )
     basis_frames = np.asarray(
         [np.asarray(atoms.get_cell().array, dtype=float) for atoms in frames], dtype=float
     )
-    frac_frames = np.asarray(
-        [np.asarray(atoms.get_scaled_positions(wrap=True), dtype=float) for atoms in frames],
+    raw_frac = np.asarray(
+        [np.asarray(atoms.get_scaled_positions(wrap=not is_native), dtype=float) for atoms in frames],
         dtype=float,
     )
-    structures = pymatgen_structures_from_frames(symbols, basis_frames, frac_frames)
+    continuous_frac = raw_frac if is_native else unwrap_fractional_continuity(raw_frac)
+    structures = pymatgen_structures_from_frames(symbols, basis_frames, continuous_frac)
     analyzer, time_ps, msd, used_structures = diffusion_analyzer_from_structures(
         structures=structures,
         specie=args.specie,
         temperature_K=temperature_K,
         time_step_fs=dt_fs,
         args=args,
+        continuous_frac=continuous_frac,
     )
-
+    handoff = {
+        "producer": "ase-md" if is_native else "historical-ase",
+        "segments": len(segment_dirs),
+        "global_steps": global_steps.tolist(),
+        "physical_time_fs": physical_times_fs.tolist(),
+        "temperature_K": temperature_K,
+        "frame_step_fs": dt_fs,
+        "timestep_fs": _first_metadata(metadata_records, "timestep_fs") if is_native else None,
+        "trajectory_interval": _first_metadata(metadata_records, "trajectory_interval") if is_native else None,
+        "ensemble": _first_metadata(metadata_records, "ensemble") if is_native else None,
+        "model": _first_metadata(metadata_records, "model") if is_native else None,
+        "structure_identity": _first_metadata(metadata_records, "structure_identity") if is_native else None,
+    }
     return RunData(
         dataset=dataset,
         run_dir=run_dir,
         temperature_K=temperature_K,
-        source_kind="ase_trajectory",
+        source_kind="ase_md_artifact" if is_native else "ase_trajectory",
         source_path=traj_path,
+        source_paths=tuple(dict.fromkeys(path for path in source_paths if path.is_file())),
+        handoff=handoff,
         time_ps=time_ps,
         msd_A2=np.asarray(msd, dtype=float),
         n_mobile=int(mobile_mask.sum()),
         volume_A3=float(frames[0].get_volume()),
         drift_correction="pymatgen-framework-drift",
-        notes="DiffusionAnalyzer.from_structures over ASE frames",
+        notes=f"DiffusionAnalyzer over {len(segment_dirs)} ASE trajectory segment(s)",
         analyzer=analyzer,
         structure=used_structures[0],
         time_step_fs=dt_fs,
@@ -543,6 +806,78 @@ def infer_lammps_timestep_ps(run_dir: Path, override_ps: float | None) -> float:
     )
 
 
+def _project_root_from_attempt(segment_dir: Path) -> Path | None:
+    for parent in (segment_dir, *segment_dir.parents):
+        if parent.name == ".mlipflow":
+            return parent.parent
+    return None
+
+
+def _lammps_input_manifest(segment_dir: Path) -> tuple[dict[str, Any], Path | None]:
+    direct = segment_dir / "lammps-input-manifest.json"
+    if direct.is_file():
+        return _read_json_object(direct), direct
+    project_root = _project_root_from_attempt(segment_dir)
+    if project_root is None:
+        return {}, None
+    for name in ("run-manifest.final.json", "run-manifest.json"):
+        run_manifest_path = segment_dir / name
+        run_manifest = _read_json_object(run_manifest_path)
+        inputs = run_manifest.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        raw = inputs.get("lammps_input_manifest") or inputs.get("lammps-input-manifest")
+        if not isinstance(raw, str) or not raw:
+            continue
+        candidate = Path(raw).expanduser()
+        candidate = candidate if candidate.is_absolute() else project_root / candidate
+        if candidate.is_file():
+            return _read_json_object(candidate), candidate.resolve()
+    return {}, None
+
+
+def _lammps_segment_metadata(segment_dir: Path) -> dict[str, Any]:
+    result_path = segment_dir / "lammps-execution-result.json"
+    result = _read_json_object(result_path)
+    identity = _approved_identity(segment_dir, "lammps_execution_identity")
+    manifest, manifest_path = _lammps_input_manifest(segment_dir)
+    md = manifest.get("md") if isinstance(manifest.get("md"), dict) else {}
+    manifest_model = manifest.get("model") if isinstance(manifest.get("model"), dict) else {}
+    input_fingerprints = (
+        manifest.get("input_fingerprints")
+        if isinstance(manifest.get("input_fingerprints"), dict)
+        else {}
+    )
+    return {
+        "temperature_K": result.get(
+            "temperature_K", identity.get("temperature_k", md.get("temperature_k"))
+        ),
+        "timestep_fs": result.get(
+            "timestep_fs", identity.get("timestep_fs", md.get("timestep_fs"))
+        ),
+        "dump_interval": result.get(
+            "dump_interval", identity.get("dump_interval", md.get("dump_interval"))
+        ),
+        "type_map": result.get(
+            "type_map", identity.get("type_map", md.get("type_map"))
+        ),
+        "ensemble": result.get("ensemble", identity.get("ensemble", md.get("ensemble"))),
+        "model": _model_identity(result.get("model") or manifest_model, identity),
+        "structure_identity": result.get(
+            "structure_identity", input_fingerprints.get("structure")
+        ),
+        "result_path": result_path,
+        "manifest_path": manifest_path,
+    }
+
+
+def _lammps_data_path(segment_dir: Path, requested_name: str | None) -> Path | None:
+    for name in ("final.data", "structure.data", requested_name, "data.LYC"):
+        if isinstance(name, str) and name and (segment_dir / name).is_file():
+            return segment_dir / name
+    return None
+
+
 def read_lammps_dump_frames(dump_path: Path):
     with dump_path.open(errors="replace") as handle:
         while True:
@@ -605,135 +940,259 @@ def lammps_scaled_to_cartesian(scaled: np.ndarray, origin: np.ndarray, cell: np.
     return origin + scaled @ cell
 
 
-def load_lammps_trajectory(run_dir: Path, dataset: str, args) -> RunData:
+def load_lammps_trajectory(
+    run_dir: Path,
+    dataset: str,
+    args,
+    native_segment_dirs: tuple[Path, ...] | None = None,
+) -> RunData:
     require_formal_diffusion_api()
-    dump_path = run_dir / "traj.lammpstrj"
-    timestep_ps = infer_lammps_timestep_ps(run_dir, args.lammps_timestep_ps)
-    data_path = run_dir / args.lammps_data_name
-    _, _, type_to_element = parse_lammps_data(data_path, args.specie, args.mobile_type)
-    frac_frames = []
-    basis_frames = []
-    timesteps = []
+    native_segments = list(
+        native_segment_dirs or _native_segment_dirs(run_dir, "trajectory.lammpstrj")
+    )
+    is_native = bool(native_segments)
+    segment_dirs = native_segments or [run_dir]
+    trajectory_name = "trajectory.lammpstrj" if is_native else "traj.lammpstrj"
+    metadata_records = (
+        [_lammps_segment_metadata(path) for path in segment_dirs] if is_native else []
+    )
+    if is_native:
+        _same_native_identity(
+            metadata_records,
+            ("temperature_K", "timestep_fs", "dump_interval", "type_map", "ensemble", "model", "structure_identity"),
+            "LAMMPS-MD",
+        )
+
+    merged: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, str, bool]] = {}
     ids_ref = None
     symbols_ref = None
-    coordinate_mode = None
+    coordinate_modes: list[str] = []
+    source_paths: list[Path] = []
+    requested_data_name = getattr(args, "lammps_data_name", None)
 
-    for timestep, columns, rows, box_header, box_lines in read_lammps_dump_frames(dump_path):
-        col = {name: i for i, name in enumerate(columns)}
-        if "id" not in col:
-            raise ValueError(f"LAMMPS dump lacks an id column: {dump_path}")
-        if all(name in col for name in ("xu", "yu", "zu")):
-            this_mode = "unwrapped_cartesian"
-            coord_names = ("xu", "yu", "zu")
-        elif all(name in col for name in ("xsu", "ysu", "zsu")):
-            this_mode = "unwrapped_scaled"
-            coord_names = ("xsu", "ysu", "zsu")
-        elif all(name in col for name in ("x", "y", "z")) or all(name in col for name in ("xs", "ys", "zs")):
-            raise ValueError(
-                "LAMMPS dump contains wrapped coordinates (x/y/z or xs/ys/zs). "
-                "These are not safe for MSD. Dump unwrapped Cartesian xu/yu/zu, "
-                "or unwrapped scaled xsu/ysu/zsu."
+    for segment_index, segment_dir in enumerate(segment_dirs):
+        dump_path = segment_dir / trajectory_name
+        source_paths.append(dump_path)
+        metadata = metadata_records[segment_index] if is_native else {}
+        type_map = metadata.get("type_map")
+        type_to_element = (
+            {index + 1: str(element) for index, element in enumerate(type_map)}
+            if isinstance(type_map, list)
+            else {}
+        )
+        data_path = _lammps_data_path(segment_dir, requested_data_name)
+        if data_path is not None:
+            _, _, data_type_map = parse_lammps_data(
+                data_path, args.specie, getattr(args, "mobile_type", None)
             )
-        else:
-            raise ValueError(
-                f"LAMMPS dump lacks supported unwrapped coordinate columns in {dump_path}. "
-                "Expected xu/yu/zu or xsu/ysu/zsu."
-            )
-        if coordinate_mode is None:
-            coordinate_mode = this_mode
-        elif coordinate_mode != this_mode:
-            raise ValueError(f"LAMMPS coordinate column mode changed within {dump_path}")
+            type_to_element = {**data_type_map, **type_to_element}
+            source_paths.append(data_path)
+        for key in ("result_path", "manifest_path"):
+            path = metadata.get(key)
+            if isinstance(path, Path) and path.is_file():
+                source_paths.append(path)
 
-        origin, cell = parse_lammps_dump_box(box_header, box_lines)
-
-        parsed = []
-        for row in rows:
-            atom_id = int(row[col["id"]])
-            values = np.asarray([float(row[col[name]]) for name in coord_names], dtype=float)
-            if this_mode == "unwrapped_scaled":
-                unwrapped_frac = values
-            else:
-                unwrapped_frac = (values - origin) @ np.linalg.inv(cell)
-            element = row[col["element"]] if "element" in col else None
-            atom_type = int(row[col["type"]]) if "type" in col else None
-            if element is None and atom_type is not None:
-                element = type_to_element.get(atom_type)
-            if element is None:
-                raise ValueError(
-                    "LAMMPS formal transport needs every atom species from the dump element "
-                    "column or reviewed Masses comments in the data file"
+        for timestep, columns, rows, box_header, box_lines in read_lammps_dump_frames(dump_path):
+            col = {name: i for i, name in enumerate(columns)}
+            if "id" not in col:
+                raise ValueError(f"LAMMPS dump lacks an id column: {dump_path}")
+            has_images = all(name in col for name in ("ix", "iy", "iz"))
+            if has_images and all(name in col for name in ("xs", "ys", "zs")):
+                this_mode, coord_names, scaled, exact = (
+                    "scaled_with_image_flags",
+                    ("xs", "ys", "zs"),
+                    True,
+                    True,
                 )
-            parsed.append((atom_id, unwrapped_frac, element))
-        parsed.sort(key=lambda item: item[0])
+            elif has_images and all(name in col for name in ("x", "y", "z")):
+                this_mode, coord_names, scaled, exact = (
+                    "cartesian_with_image_flags",
+                    ("x", "y", "z"),
+                    False,
+                    True,
+                )
+            elif all(name in col for name in ("xu", "yu", "zu")):
+                this_mode, coord_names, scaled, exact = (
+                    "unwrapped_cartesian",
+                    ("xu", "yu", "zu"),
+                    False,
+                    True,
+                )
+            elif all(name in col for name in ("xsu", "ysu", "zsu")):
+                this_mode, coord_names, scaled, exact = (
+                    "unwrapped_scaled",
+                    ("xsu", "ysu", "zsu"),
+                    True,
+                    True,
+                )
+            elif all(name in col for name in ("x", "y", "z")):
+                this_mode, coord_names, scaled, exact = (
+                    "wrapped_cartesian_continuity",
+                    ("x", "y", "z"),
+                    False,
+                    False,
+                )
+            elif all(name in col for name in ("xs", "ys", "zs")):
+                this_mode, coord_names, scaled, exact = (
+                    "wrapped_scaled_continuity",
+                    ("xs", "ys", "zs"),
+                    True,
+                    False,
+                )
+            else:
+                raise ValueError(
+                    f"LAMMPS dump lacks x/y/z, xs/ys/zs, xu/yu/zu, or xsu/ysu/zsu: {dump_path}"
+                )
+            coordinate_modes.append(this_mode)
+            origin, cell = parse_lammps_dump_box(box_header, box_lines)
+            inverse_cell = np.linalg.inv(cell)
 
-        ids = np.asarray([item[0] for item in parsed], dtype=int)
-        unwrapped_frac = np.asarray([item[1] for item in parsed], dtype=float)
-        elements = np.asarray([item[2] for item in parsed], dtype=object)
+            parsed = []
+            for row in rows:
+                atom_id = int(row[col["id"]])
+                values = np.asarray(
+                    [float(row[col[name]]) for name in coord_names], dtype=float
+                )
+                fractional = values if scaled else (values - origin) @ inverse_cell
+                if this_mode in {"scaled_with_image_flags", "cartesian_with_image_flags"}:
+                    fractional = fractional + np.asarray(
+                        [int(row[col[name]]) for name in ("ix", "iy", "iz")],
+                        dtype=float,
+                    )
+                element = row[col["element"]] if "element" in col else None
+                atom_type = int(row[col["type"]]) if "type" in col else None
+                if element is None and atom_type is not None:
+                    element = type_to_element.get(atom_type)
+                if element is None:
+                    raise ValueError(
+                        "LAMMPS atom species are absent from both dump element and upstream type_map"
+                    )
+                parsed.append((atom_id, fractional, element))
+            parsed.sort(key=lambda item: item[0])
+            ids = np.asarray([item[0] for item in parsed], dtype=int)
+            fractional = np.asarray([item[1] for item in parsed], dtype=float)
+            elements = np.asarray([item[2] for item in parsed], dtype=object)
+            if ids_ref is None:
+                ids_ref, symbols_ref = ids, elements
+            elif not np.array_equal(ids, ids_ref):
+                raise ValueError(f"Atom ids changed order/content in {dump_path}")
+            elif not np.array_equal(elements, symbols_ref):
+                raise ValueError(f"Atom species changed order/content in {dump_path}")
+            if timestep in merged:
+                previous = merged[timestep]
+                if (
+                    not np.allclose(previous[0], cell)
+                    or not np.allclose(np.mod(previous[1], 1.0), np.mod(fractional, 1.0))
+                    or not np.array_equal(previous[2], elements)
+                ):
+                    raise ValueError(
+                        f"LAMMPS restart boundary timestep {timestep} contains different frames"
+                    )
+                continue
+            merged[int(timestep)] = (cell, fractional, elements, ids, this_mode, exact)
 
-        if ids_ref is None:
-            ids_ref = ids
-            symbols_ref = elements
-        elif not np.array_equal(ids, ids_ref):
-            raise ValueError(f"Atom ids changed order/content in {dump_path}")
-        elif not np.array_equal(elements, symbols_ref):
-            raise ValueError(f"Atom species changed order/content in {dump_path}")
-
-        timesteps.append(timestep)
-        basis_frames.append(cell)
-        frac_frames.append(unwrapped_frac)
-
-    if len(frac_frames) < 2:
-        raise ValueError(f"Need at least two frames in {dump_path}")
+    ordered = sorted(merged.items())
+    timesteps = np.asarray([item[0] for item in ordered], dtype=int)
+    if len(timesteps) < 2:
+        raise ValueError(f"Need at least two LAMMPS frames in {run_dir}")
     assert symbols_ref is not None
     mobile_mask = symbols_ref == args.specie
     if not np.any(mobile_mask):
-        raise ValueError(f"No {args.specie} atoms found in {dump_path}")
-    timestep_deltas = np.diff(np.asarray(timesteps, dtype=float))
+        raise ValueError(f"No {args.specie} atoms found in {run_dir}")
+    timestep_deltas = np.diff(timesteps.astype(float))
     if np.any(timestep_deltas <= 0) or not np.allclose(
         timestep_deltas, timestep_deltas[0], rtol=0.0, atol=1e-12
     ):
         raise ValueError("LAMMPS formal transport requires strictly ordered, uniform frame timesteps")
 
-    raw_times_ps = (np.asarray(timesteps, dtype=float) - float(timesteps[0])) * timestep_ps
+    if is_native:
+        timestep_values = [
+            float(record["timestep_fs"])
+            for record in metadata_records
+            if record.get("timestep_fs") is not None
+        ]
+        if not timestep_values:
+            raise ValueError("LAMMPS-MD artifact lacks timestep_fs in result/manifest/approved plan")
+        timestep_ps = timestep_values[0] / 1000.0
+        dump_interval = _first_metadata(metadata_records, "dump_interval")
+        if dump_interval is not None and not np.allclose(
+            timestep_deltas, float(dump_interval), rtol=0.0, atol=1e-12
+        ):
+            raise ValueError("LAMMPS dump timesteps disagree with upstream dump_interval")
+    else:
+        timestep_ps = infer_lammps_timestep_ps(
+            run_dir, getattr(args, "lammps_timestep_ps", None)
+        )
+    raw_times_ps = (timesteps.astype(float) - float(timesteps[0])) * timestep_ps
     idx = slice_by_time_indices(raw_times_ps, args.trajectory_start_ps, args.trajectory_end_ps)
     if idx.size < 2:
-        raise ValueError(f"Trajectory segment leaves fewer than two frames: {dump_path}")
+        raise ValueError(f"Trajectory segment leaves fewer than two frames: {run_dir}")
 
-    selected_unwrapped = np.asarray(frac_frames, dtype=float)[idx]
-    if np.any(np.abs(np.diff(selected_unwrapped, axis=0)) >= 0.5):
-        raise ValueError(
-            "LAMMPS frame spacing is too coarse to preserve unwrapped motion through ordered "
-            "pymatgen Structures; write frames frequently enough that fractional displacement "
-            "between adjacent frames is below half a cell"
-        )
+    continuous: list[np.ndarray] = []
+    basis_frames: list[np.ndarray] = []
+    for _, (cell, fractional, _, _, _, exact) in ordered:
+        if not continuous or exact:
+            unwrapped = fractional
+        else:
+            previous = continuous[-1]
+            delta = fractional - np.mod(previous, 1.0)
+            unwrapped = previous + delta - np.round(delta)
+        continuous.append(np.asarray(unwrapped, dtype=float))
+        basis_frames.append(np.asarray(cell, dtype=float))
+    selected_unwrapped = np.asarray(continuous, dtype=float)[idx]
     selected_basis = np.asarray(basis_frames, dtype=float)[idx]
     structures = pymatgen_structures_from_frames(
-        symbols_ref, selected_basis, np.mod(selected_unwrapped, 1.0)
+        symbols_ref, selected_basis, selected_unwrapped
     )
     frame_step_fs = float(timestep_deltas[0]) * timestep_ps * 1000.0
-    temperature_K = require_temperature(run_dir, "LAMMPS trajectory", args)
+    temperature_values = [
+        float(record["temperature_K"])
+        for record in metadata_records
+        if record.get("temperature_K") is not None
+    ]
+    temperature_K = (
+        temperature_values[0]
+        if temperature_values
+        else require_temperature(run_dir, "LAMMPS trajectory", args)
+    )
     analyzer, time_ps, msd, used_structures = diffusion_analyzer_from_structures(
         structures=structures,
         specie=args.specie,
         temperature_K=temperature_K,
         time_step_fs=frame_step_fs,
         args=args,
+        continuous_frac=selected_unwrapped,
     )
-
+    handoff = {
+        "producer": "lammps-md" if is_native else "historical-lammps",
+        "segments": len(segment_dirs),
+        "global_steps": timesteps[idx].tolist(),
+        "physical_time_ps": (timesteps[idx].astype(float) * timestep_ps).tolist(),
+        "temperature_K": temperature_K,
+        "timestep_fs": timestep_ps * 1000.0,
+        "dump_interval": _first_metadata(metadata_records, "dump_interval") if is_native else int(timestep_deltas[0]),
+        "type_map": _first_metadata(metadata_records, "type_map") if is_native else None,
+        "ensemble": _first_metadata(metadata_records, "ensemble") if is_native else None,
+        "model": _first_metadata(metadata_records, "model") if is_native else None,
+        "structure_identity": _first_metadata(metadata_records, "structure_identity") if is_native else None,
+        "coordinate_modes": list(dict.fromkeys(coordinate_modes)),
+    }
     return RunData(
         dataset=dataset,
         run_dir=run_dir,
         temperature_K=temperature_K,
-        source_kind="lammps_trajectory",
-        source_path=dump_path,
+        source_kind="lammps_md_artifact" if is_native else "lammps_trajectory",
+        source_path=source_paths[0],
+        source_paths=tuple(dict.fromkeys(path for path in source_paths if path.is_file())),
+        handoff=handoff,
         time_ps=time_ps,
         msd_A2=np.asarray(msd, dtype=float),
         n_mobile=int(np.sum(mobile_mask)),
         volume_A3=float(used_structures[0].volume),
         drift_correction="pymatgen-framework-drift",
         notes=(
-            f"DiffusionAnalyzer.from_structures over LAMMPS frames; "
-            f"lammps_timestep_ps={timestep_ps:g}; coordinate_mode={coordinate_mode}"
+            f"DiffusionAnalyzer over {len(segment_dirs)} LAMMPS segment(s); "
+            f"lammps_timestep_ps={timestep_ps:g}; coordinate_modes={','.join(dict.fromkeys(coordinate_modes))}"
         ),
         analyzer=analyzer,
         structure=used_structures[0],
@@ -1271,7 +1730,12 @@ def load_msd_file(run_dir: Path, dataset: str, args) -> RunData:
     )
 
 
-def load_run_data(dataset: str, run_dir: Path, args) -> RunData:
+def load_run_data(
+    dataset: str,
+    run_dir: Path,
+    args,
+    native_segment_dirs: tuple[Path, ...] | None = None,
+) -> RunData:
     if args.source == "msd":
         return load_msd_file(run_dir, dataset, args)
 
@@ -1280,16 +1744,16 @@ def load_run_data(dataset: str, run_dir: Path, args) -> RunData:
             return load_vasp_aimd(run_dir, dataset, args)
         if args.source == "vasp":
             raise FileNotFoundError(f"No {args.vasp_file_name} in {run_dir}")
-        if (run_dir / "production.traj").exists():
-            return load_ase_trajectory(run_dir, dataset, args)
-        if (run_dir / "traj.lammpstrj").exists():
-            return load_lammps_trajectory(run_dir, dataset, args)
+        if _native_segment_dirs(run_dir, "trajectory.traj") or (run_dir / "production.traj").exists():
+            return load_ase_trajectory(run_dir, dataset, args, native_segment_dirs)
+        if _native_segment_dirs(run_dir, "trajectory.lammpstrj") or (run_dir / "traj.lammpstrj").exists():
+            return load_lammps_trajectory(run_dir, dataset, args, native_segment_dirs)
         raise FileNotFoundError(f"No trajectory file in {run_dir}")
 
-    if (run_dir / "production.traj").exists():
-        return load_ase_trajectory(run_dir, dataset, args)
-    if (run_dir / "traj.lammpstrj").exists():
-        return load_lammps_trajectory(run_dir, dataset, args)
+    if _native_segment_dirs(run_dir, "trajectory.traj") or (run_dir / "production.traj").exists():
+        return load_ase_trajectory(run_dir, dataset, args, native_segment_dirs)
+    if _native_segment_dirs(run_dir, "trajectory.lammpstrj") or (run_dir / "traj.lammpstrj").exists():
+        return load_lammps_trajectory(run_dir, dataset, args, native_segment_dirs)
     if (run_dir / args.vasp_file_name).exists():
         return load_vasp_aimd(run_dir, dataset, args)
     msd_path = find_msd_file(run_dir, args)
@@ -1633,7 +2097,7 @@ def artifact_record(path: Path, role: str) -> dict:
 
 
 def analysis_source_paths(run: RunData, args) -> list[Path]:
-    candidates = [run.source_path]
+    candidates = list(run.source_paths) if run.source_paths else [run.source_path]
     if run.structure_path is not None:
         candidates.append(run.structure_path)
     for name in (
@@ -1802,9 +2266,9 @@ def main(argv: list[str] | None = None) -> int:
     runs = []
     rows = []
     failures = []
-    for dataset, run_dir in run_dirs:
+    for dataset, run_dir, native_segment_dirs in run_dirs:
         try:
-            run = load_run_data(dataset, run_dir, args)
+            run = load_run_data(dataset, run_dir, args, native_segment_dirs)
             row = analyze_run(run, args, output_dir)
             runs.append(run)
             rows.append(row)
@@ -1872,6 +2336,7 @@ def main(argv: list[str] | None = None) -> int:
         },
         "parameters": json_ready(vars(args)),
         "runtime_provenance": runtime_provenance(uses_ase=any(run.uses_ase for run in runs)),
+        "upstream_handoffs": [json_ready(run.handoff) for run in runs if run.handoff],
         "implementation_artifacts": [
             artifact_record(Path(__file__), "packaged-analysis-runner"),
         ],

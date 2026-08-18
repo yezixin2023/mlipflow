@@ -483,6 +483,7 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
         "failure_salvage": {
             "schema_version": 1,
             "fetch_remote_names": [
+                "trajectory.lammpstrj",
                 "cluster-run-report.json",
                 "lammps.log",
                 "lammps.screen.log",

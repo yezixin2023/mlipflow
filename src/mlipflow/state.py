@@ -311,6 +311,16 @@ class StateStore:
             raise StateError(f"no state for workflow node: {node_id}")
         return _row_to_step(row)
 
+    def steps_for_node(self, project_id: str, node_id: str) -> list[StepRun]:
+        """Return every preserved attempt for one workflow node in order."""
+
+        rows = self.connection.execute(
+            """SELECT * FROM step_runs WHERE project_id = ? AND node_id = ?
+               ORDER BY attempt""",
+            (project_id, node_id),
+        ).fetchall()
+        return [_row_to_step(row) for row in rows]
+
     def previous_step(
         self, project_id: str, node_id: str, before_attempt: int
     ) -> StepRun | None:

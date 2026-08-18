@@ -9,12 +9,53 @@ binding, see [`docs/CLUSTER_ENVIRONMENTS.md`](../../docs/CLUSTER_ENVIRONMENTS.md
 
 Install one `run.sh` below the selected cluster profile's `remote_template_root` for every framework you enable:
 
+- `dft-dataset/run.sh` for canonical-to-framework data conversion
 - `mlip-deepmd/run.sh`
 - `mlip-m3gnet/run.sh`
 - `mlip-chgnet/run.sh`
 - `mlip-mace/run.sh`
 
-Start from `cluster/run.sh.example`. Each family may activate a different conda/module environment. The environment needs PyYAML plus the selected framework package. The generic runner itself is staged by MLIPFlow.
+Start training templates from `cluster/run.sh.example`, and the dataset template from
+`cluster/dft-dataset.run.sh.example`. The conversion environment needs
+dpdata/NumPy for DeepMD and ASE for MACE; M3GNet and CHGNet JSON serialization adds
+no framework import. The repository's `dft` extra declares these conversion packages.
+All five templates must resolve the same canonical cluster data
+root. Each training family may activate a different framework environment. The generic
+runners themselves are staged by MLIPFlow.
+
+## DFT dataset assembly
+
+After a scheduled DFT label attempt is final `OK`, point `dataset-assemble` at its
+collected canonical artifact and declare the shared split:
+
+```yaml
+- id: assemble-datasets
+  uses: dft-labeling@0
+  needs: [label-dft]
+  backend: ssh-slurm
+  backend_profile: cluster-a
+  inputs:
+    canonical_dataset: .mlipflow/runs/label-dft/attempt-1/canonical-labeled-dataset.json
+  parameters:
+    operation: dataset-assemble
+    frameworks: [deepmd, m3gnet, chgnet, mace]
+    split_strategy: deterministic
+    split_seed: 23
+    split_fractions: {train: 0.8, validation: 0.1, test: 0.1}
+  resources:
+    cpus: 4
+    gpus: 0
+    memory: 8G
+    walltime: "00:30:00"
+```
+
+The remote publish target is `<dataset_id>`. It contains `canonical.json`, `split.json`,
+four framework directories, and `assembly-result.json`. A pre-existing target is not
+rescanned or reused by the converter; use the already collected references instead.
+`collect` returns the split, assembly result, and four small reference manifests while
+the large datasets stay under the site data root. The Agent reads each reference fingerprint into its matching
+training node, so users do not run or author a converter. See
+[`dft-to-all-training.yaml`](dft-to-all-training.yaml) for the full minimal DAG shape.
 
 ## Cluster artifact references
 
@@ -24,10 +65,9 @@ Use `plugins/mlip-training/training_cluster.py fingerprint /ABS/CLUSTER/PATH` on
 
 Framework data shapes are intentionally explicit:
 
-- DeepMD dataset: `kind: directory`.
-- M3GNet/MatGL dataset: `kind: file` (JSON/JSONL expected by the bundled runner).
-- CHGNet dataset: `kind: file` (JSON/JSONL records expected by the bundled runner).
-- MACE dataset: `kind: file` (for example extxyz/HDF5 accepted by MACE).
+- DFT-assembled DeepMD, M3GNet/MatGL, CHGNet, and MACE datasets: `kind: directory`;
+  each directory contains the fixed train/validation/test partitions.
+- Legacy user-supplied M3GNet/CHGNet/MACE single-file datasets remain accepted.
 - M3GNet foundation model: `kind: directory`.
 - DeepMD, CHGNet, and MACE foundation model: `kind: file` for the currently bundled fine-tuning paths.
 

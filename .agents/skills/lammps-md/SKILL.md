@@ -196,8 +196,12 @@ Normal successful execute still requires:
 - `steps_completed == requested global steps`;
 - exact completion marker in fetched `lammps.log`.
 
+New prepared decks write wrapped `x y z` together with `ix iy iz`, allowing exact downstream unwrapping. This does not invalidate older outputs: `$ionic-transport` also accepts legacy wrapped `x/y/z` or `xs/ys/zs` without image flags by applying fractional minimum-image continuity, and accepts `xu/yu/zu` or `xsu/ysu/zsu` directly.
+
+For scheduler-terminal restart attempts, `trajectory.lammpstrj` is part of the bounded salvage allowlist. The failed attempt remains `FAIL`/`STOPPED`; retaining the segment only enables `$ionic-transport` to combine it later with the successful retry by global timestep and deduplicate the boundary.
+
 For a resumed attempt, additionally require the selected checkpoint to be one of the staged salvaged candidates, a valid periodic start step, the expected source attempt, runtime compatibility confirmation, and cluster/result restart identities that agree.
 
 ## Scientific interpretation
 
-`lammps-md` produces trajectories. It does not prove equilibration, diffusion, ionic conductivity, phase stability, or model validity. Version 0.3 also does not stitch trajectory/log segments automatically; keep stitching, multi-temperature orchestration, and transport analysis separate until explicitly implemented.
+`lammps-md` produces per-attempt trajectories. It does not prove equilibration, diffusion, ionic conductivity, phase stability, or model validity. `$ionic-transport` is the separate scientific stage that now consumes the native collected artifacts, automatically stitches compatible restart trajectory segments, and performs multi-temperature transport analysis without user-side file manipulation.
