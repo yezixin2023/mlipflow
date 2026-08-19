@@ -4,9 +4,9 @@
   "id": "mlip-benchmark",
   "name": "MLIP benchmark",
   "display_name": "MLIP benchmark",
-  "version": "0.5.0",
+  "version": "0.6.3",
   "api_version": 1,
-  "description": "Fresh first-party MLIP inference plus strict metric-only and replay normalization with canonical prediction evidence, ranking, and provenance.",
+  "description": "Local or reviewed SSH-SLURM fresh first-party MLIP inference plus strict multi-model metric normalization with canonical prediction evidence, ranking, and provenance.",
   "category": "benchmarking",
   "contract": {
     "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
@@ -28,20 +28,27 @@
       "Replay imports historical metrics and never labels them as fresh numerical calculations.",
       "Historical DeepMD and CHGNet outputs do not reliably declare physical units; absent explicit overrides, normalized records use source-unit-unspecified rather than guessing.",
       "The audited M3GNet source has no corresponding historical benchmark output, and DPA-2 has no family-specific raw pairs/output; those historical parity levels remain MISSING_SOURCE.",
-      "Fresh evaluation accepts the versioned canonical JSON labeled-dataset contract; framework dependencies are lazy and optional.",
-      "Scheduler execution and direct execution of path-hard-coded research scripts are not claimed.",
+      "Fresh evaluation accepts the versioned canonical JSON labeled-dataset contract; framework dependencies are lazy and optional locally or supplied by a reviewed site-owned scheduler template.",
+      "SSH-SLURM fresh evaluation resolves immutable logical model/dataset references below the site's canonical roots, recomputes both fingerprints remotely, and bounded-fetches the fixed five-artifact suite plus a cluster report.",
+      "Upstream artifact bindings may supply project-scoped resolved reference paths and authoritative fingerprints directly; optional redundant model/dataset fingerprint parameters remain exact assertions when supplied.",
+      "Scheduled fresh inference uses benchmark-<framework>-canonical templates so site model/data roots point to canonical MLIPFlow publications rather than historical read-only research directories.",
+      "The shared directory fingerprint helper uses the same tree-sha256-v1 record framing as training publication, ASE-MD, and LAMMPS handoff, so immutable directory models retain one identity across stages.",
+      "MAE and RMSE remain required for every selected target; a mathematically undefined Pearson correlation is omitted from numeric rankings and recorded explicitly with its reason rather than emitted as NaN or invented.",
+      "Multi-model normalization accepts same-basename prediction evidence only when every input has a distinct explicit portable locator.",
+      "A between-model selection may use only ranking groups whose comparable-model count covers the complete requested model set; model-only metrics remain diagnostic evidence.",
+      "Direct execution of path-hard-coded research scripts is not claimed.",
       "No model family is treated as globally preferred; routing must consume benchmark artifacts."
     ]
   },
   "execution": {
     "mode": "external-command",
-    "backends": ["local"],
+    "backends": ["local", "ssh-slurm"],
     "entrypoint": {"path": "adapter.py", "object": "Adapter"},
     "operations": ["evaluate-fresh", "evaluate-static", "normalize-replay", "normalize-execute"],
     "shell": false,
     "executes_external_programs": true,
     "writes_files": true,
-    "submits_jobs": false
+    "submits_jobs": true
   },
   "replay": {
     "supported": true,
@@ -54,6 +61,8 @@
     {"name": "script", "kind": "file", "required": false, "description": "User-owned CLI wrapper required only by legacy evaluate-static."},
     {"name": "model", "kind": "artifact-reference", "required": false, "description": "Pinned model file/directory used by evaluate-fresh or legacy evaluate-static."},
     {"name": "benchmark-dataset", "kind": "artifact-reference", "required": false, "description": "Pinned canonical labeled JSON dataset used by evaluate-fresh or legacy evaluate-static."},
+    {"name": "model-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled evaluate-fresh: logical model_id, safe relative path below the site model root, kind, framework, and approved fingerprint."},
+    {"name": "benchmark-dataset-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled evaluate-fresh: logical dataset_id, safe benchmark JSON path below the site data root, file kind, and approved fingerprint."},
     {"name": "benchmark-config", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Configuration required only by legacy evaluate-static."},
     {"name": "result-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Legacy evaluate-static output or collect-existing input."},
     {"name": "evidence-inputs", "kind": "artifact-reference", "required": false, "description": "One or more explicit JSON/CSV/XLSX files for normalize-replay or normalize-execute; runtime context key is evidence_inputs."},
@@ -76,8 +85,8 @@
     {"name": "metrics", "type": "array", "required": false, "description": "Legacy evaluate-static metric declarations."},
     {"name": "energy-normalization", "type": "string", "required": false, "description": "Explicit total or per-atom energy convention required by fresh and legacy evaluation."},
     {"name": "stress-convention", "type": "string", "required": false, "description": "Explicit sign, Voigt tensor order, and unit convention required when stress is evaluated."},
-    {"name": "dataset-fingerprint", "type": "string", "required": false, "description": "Approved dataset SHA-256 required by fresh and legacy evaluation."},
-    {"name": "model-fingerprint", "type": "string", "required": false, "description": "Approved model SHA-256 required by fresh and legacy evaluation."}
+    {"name": "dataset-fingerprint", "type": "string", "required": false, "description": "Required for local/legacy evaluation; optional redundant assertion for scheduled upstream references, whose bound fingerprint is authoritative."},
+    {"name": "model-fingerprint", "type": "string", "required": false, "description": "Required for local/legacy evaluation; optional redundant assertion for scheduled upstream references, whose bound fingerprint is authoritative."}
   ],
   "outputs": [
     {"name": "metrics", "kind": "artifact-reference", "required": true, "media_type": "application/json"},
@@ -85,6 +94,7 @@
     {"name": "model-ranking", "kind": "artifact-reference", "required": true, "media_type": "application/json"},
     {"name": "provenance", "kind": "manifest", "required": true, "media_type": "application/json"},
     {"name": "prediction-evidence", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "Versioned canonical reference/prediction evidence emitted only by evaluate-fresh."},
+    {"name": "cluster-benchmark-report", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled fresh execution evidence binding site-resolved model/dataset and all fetched output fingerprints."},
     {"name": "benchmark-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Legacy evaluate-static/collect-existing result contract only; normalized execute/replay emits exactly the four artifacts above."}
   ],
   "dependencies": {
@@ -100,16 +110,22 @@
     "destructive": false,
     "network_access": false,
     "requires_approval_before_execution": true,
-    "notes": ["Plans must disclose model count, structure count, device, metrics, units, and expected prediction volume."]
+    "notes": [
+      "Plans must disclose model count, structure count, device, metrics, units, and expected prediction volume.",
+      "SSH-SLURM fresh inference requires dry-run approval; scheduler observation, bounded fetch, and pinned scientific checking continue the approved run.",
+      "Site model/data roots, framework environments, partitions, modules, and executables stay in the selected site profile and canonical remote templates."
+    ]
   },
   "completion": {
     "status": "implemented",
     "checks": [
-      {"id": "metric-schema-and-finiteness", "implemented": true, "description": "Validate metric names, finite values, units, directions, and sample counts."},
+      {"id": "metric-schema-and-finiteness", "implemented": true, "description": "Validate metric names, finite available values, units, directions, sample counts, and explicit unavailable-Pearson reasons."},
       {"id": "benchmark-evidence", "implemented": true, "description": "Require dataset/model fingerprints and a versioned metrics artifact before routing can consume results."},
       {"id": "manuscript-normalization", "implemented": true, "description": "Write metrics.json, benchmark_summary.csv, model_ranking.json, and provenance.json with full source SHA, explicit units/directions/sample counts, and execute/replay labels."},
       {"id": "adapter-normalization-roundtrip", "implemented": true, "description": "Adapter plan invokes the bundled wrapper with shell=false; check/collect strictly parse all four artifacts and match approved mode, model/task/scenario identities, portable source locators, and source SHA-256 fingerprints."},
       {"id": "fresh-model-inference", "implemented": true, "description": "Load one exact model family, infer canonical labeled structures, emit versioned prediction evidence, reuse normalized metrics/ranking, and verify model/dataset/evidence/output fingerprints."}
+      ,{"id": "scheduled-fresh-identity", "implemented": true, "description": "Require the cluster report to bind the approved exact family, logical model/dataset IDs, remotely observed fingerprints, and all five fetched artifact fingerprints."}
+      ,{"id": "same-test-multi-model-ranking", "implemented": true, "description": "Normalize multiple fresh prediction-evidence files with explicit per-input locators and require the approved exact model set in every comparable ranking."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"

@@ -44,9 +44,15 @@ After preparation, accept `OK` only when the checker verifies source/config/refe
 
 Before `label`, bind the reviewed `dft-input-manifest.json`, show DFT resources, units, convergence policy, and backend, then request explicit approval for the expensive execution. Scheduler completion alone is insufficient: require electronic convergence, applicable ionic convergence, non-truncation, the calculation-type-specific label cardinality, exact units, and dataset identity.
 
-For `backend: ssh-slurm`, require a bounded reviewed static/relax/AIMD batch, a named `backend_profile`, and exact abstract resources: `cpus`, `gpus`, `memory`, and `walltime`. Never guess or place an SSH host, partition, account, QoS, module, executable, launcher, template path, work root, data root, full submit script, or `remote_cwd` in the workflow node. The user-local `~/.mlipflow/site.yaml` selects the cluster and separates `remote_template_root` from `work_root`; persistent remote scheduler templates plus `vasp/run.sh` provide site execution knowledge. Show the selected profile, rendered scripts, resource contract, important staged inputs, and exact `attempt-XXXX` workspace in the dry-run. The run creates only that fresh workspace, stages the declared inputs and scripts, and submits one job. Never fetch POTCAR.
+For `backend: ssh-slurm`, require a bounded reviewed static/relax/AIMD batch, a named `backend_profile`, and exact abstract resources: `cpus`, `gpus`, `memory`, and `walltime`. Never guess or place an SSH host, partition, account, QoS, module, executable, launcher, template path, work root, data root, full submit script, or `remote_cwd` in the workflow node. The user-local `~/.mlipflow/site.yaml` selects the cluster and separates `remote_template_root` from `work_root`; persistent remote scheduler templates provide site execution knowledge. `resources.cpus` is the MPI rank count **for each calculation/job**, never a budget divided across calculations. With `calculation_concurrency=1`, use one sequential scheduler allocation. When the user approves independent batch submission, set `calculation_concurrency` at least as large as the submitted calculation count: core creates one fresh sub-workspace and one Slurm job per calculation, submits them in one MLIPFlow action, alternates the site-owned partition candidate preference, and then lets Slurm run or queue each job independently. Show job count, full resources per job, maximum simultaneous ranks, selected profile, rendered scripts, and every exact sub-workspace in the dry-run. Track and aggregate all job IDs; never fetch POTCAR.
 
 After the scheduler reports `COMPLETED`, run ordinary `advance`. Core bounded-fetches only the run's output allowlist, verifies transport integrity, and runs the pinned `check/collect`. Treat changed or missing output, malformed/truncated XML, OUTCAR without a normal footer, electronic steps reaching `NELM`, or label/raw-output mismatch as `FAIL`.
+
+For a failed multi-structure label, inspect the calculation-level diagnostics before
+retry. A normal `retry` creates a fresh attempt and never overwrites the failed attempt
+or its remote workspaces. Each canonical record must retain its actual producing DFT
+attempt. Never copy outputs manually or treat scheduler `COMPLETED` as scientific
+success.
 
 ## Canonical dataset and remote framework views
 
@@ -69,6 +75,23 @@ reviewed dpdata/ASE Python and canonical data root. The remote converter:
 - records the necessary unit/sign/virial conventions in one assembly result;
 - publishes only a fresh dataset-id path and refuses an existing target;
 - returns `split.json`, one assembly result, and only the small dataset references needed by training.
+- exports `benchmark/test.json` from the exact held-out test record IDs and returns a
+  small `benchmark-dataset-reference.json` for scheduled fresh benchmarking. Energy is
+  total eV, force is eV/angstrom, and stress uses ASE Voigt
+  `xx,yy,zz,yz,xz,xy` in eV/angstrom^3 after the explicit sign/unit conversion from
+  VASP-native kbar.
+
+If a completed conversion published the immutable dataset but local collection/check
+failed, diagnose the mismatch before retry. A fresh `dataset-assemble` retry may use the
+site's reviewed `dft-dataset-reuse/run.sh` only when MLIPFlow can first reverify the
+prior completion and collected scientific result. The reuse runner must compare the
+canonical dataset and split exactly, regenerate and compare the held-out benchmark
+with a tight numeric tolerance for cross-platform floating roundoff in derived
+Cartesian coordinates, and freshly fingerprint every requested framework tree and
+benchmark file against the prior approved references. It writes only the new attempt's
+small collected outputs and never rewrites, removes, or republishes the existing
+dataset directory. Any identity, content, or fingerprint mismatch is `FAIL`, not a
+reason to overwrite the publication.
 
 All four assembled references have `kind: directory`: DeepMD contains train/valid/test
 dpdata systems, M3GNet and CHGNet contain train/valid/test JSON, and MACE contains
@@ -78,5 +101,8 @@ dpdata with an approximate writer.
 
 If a collected framework reference already exists for the requested dataset and split,
 hand it directly to `$mlip-training`; do not rerun VASP or reconvert.
+
+Hand the collected benchmark reference directly to `$mlip-benchmark`; do not generate a
+separate random test split or manually transform the framework-specific datasets.
 
 Never describe contract tests, generated inputs, scheduler completion, or one smoke calculation as historical numerical parity. Successful local pymatgen preparation validates neither VASP execution nor any scheduler/HPC path.

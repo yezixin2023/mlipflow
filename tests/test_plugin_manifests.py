@@ -41,6 +41,8 @@ EXACT_EXECUTION_OPERATIONS = {
     "mlip-training": ["train", "finetune"],
     "pes-sampling": [
         "direct-select",
+        "lasp-input-prepare",
+        "merge-structures",
         "lasp-ssw-execute",
         "lasp-ssw-normalize-replay",
     ],
@@ -53,11 +55,18 @@ EXPECTED_EXECUTION_BACKENDS = {
     "high-entropy-structure": ["local"],
     "ionic-transport": ["local"],
     "lammps-md": ["local", "ssh-slurm"],
-    "mlip-benchmark": ["local"],
+    "mlip-benchmark": ["local", "ssh-slurm"],
     "mlip-training": ["local", "ssh-slurm"],
     "pes-sampling": ["local", "ssh-slurm"],
 }
-JOB_SUBMITTING_PLUGINS = {"ase-md", "lammps-md", "mlip-training", "pes-sampling"}
+JOB_SUBMITTING_PLUGINS = {
+    "ase-md",
+    "dft-labeling",
+    "lammps-md",
+    "mlip-benchmark",
+    "mlip-training",
+    "pes-sampling",
+}
 
 
 def load_json(path: Path) -> dict:

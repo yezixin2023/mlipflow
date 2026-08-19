@@ -302,6 +302,35 @@ def _will_run(plan: dict[str, Any], adapter: dict[str, Any]) -> dict[str, Any]:
         return {"kind": "replay", "summary": "read existing results; no numerical program"}
     scheduled = adapter.get("scheduled_execution")
     if isinstance(scheduled, dict):
+        hpc_submissions = plan.get("hpc_executions")
+        if isinstance(hpc_submissions, list):
+            scripts = sorted(
+                {
+                    str(path)
+                    for item in hpc_submissions
+                    if isinstance(item, dict)
+                    for execution in [item.get("hpc_execution")]
+                    if isinstance(execution, dict)
+                    for path in (
+                        execution.get("template_paths", {}).values()
+                        if isinstance(execution.get("template_paths"), dict)
+                        else []
+                    )
+                }
+            )
+            return {
+                "kind": "scheduler-jobs",
+                "submission_strategy": scheduled.get("submission_strategy"),
+                "job_count": len(hpc_submissions),
+                "resources_per_job": (
+                    hpc_submissions[0].get("hpc_execution", {}).get("resources")
+                    if hpc_submissions
+                    and isinstance(hpc_submissions[0], dict)
+                    and isinstance(hpc_submissions[0].get("hpc_execution"), dict)
+                    else None
+                ),
+                "scripts": scripts,
+            }
         hpc = plan.get("hpc_execution") if isinstance(plan.get("hpc_execution"), dict) else {}
         scripts = hpc.get("template_paths") if isinstance(hpc.get("template_paths"), dict) else {}
         return {

@@ -12,7 +12,10 @@ import contextlib
 import hashlib
 import json
 import os
+import re
+import shutil
 import sys
+import tarfile
 import traceback
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -20,6 +23,7 @@ from typing import Any
 FRAMEWORKS = {"deepmd", "m3gnet", "chgnet", "mace"}
 OPERATIONS = {"train", "finetune"}
 FINGERPRINT_PREFIX = "sha256:"
+SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:
@@ -149,6 +153,91 @@ def _write_report(output_dir: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def _publish_model(
+    source: Path,
+    model_root: Path,
+    framework: str,
+    model_id: str,
+    relative_path: str,
+) -> dict[str, str]:
+    """Publish one verified model without overwriting an existing registry entry."""
+
+    if not SAFE_ID.fullmatch(model_id):
+        raise ValueError("publish_model_id must be a safe logical id")
+    relative = _safe_relative(relative_path)
+    root = model_root.expanduser().resolve()
+    if not root.is_dir():
+        raise ValueError(f"site model root does not exist: {root}")
+    destination = root / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        destination.parent.resolve().relative_to(root)
+    except ValueError as exc:
+        raise ValueError("published model path escapes site model root") from exc
+    if destination.exists() or destination.is_symlink():
+        raise ValueError(f"published model destination already exists: {relative}")
+
+    created = False
+    try:
+        if framework == "m3gnet":
+            destination.mkdir()
+            created = True
+            file_count = 0
+            with tarfile.open(source, "r:gz") as archive:
+                for member in archive.getmembers():
+                    member_path = PurePosixPath(member.name)
+                    if (
+                        member_path.is_absolute()
+                        or not member_path.parts
+                        or member_path.parts[0] != "model"
+                        or any(part in {"", ".", ".."} for part in member_path.parts)
+                        or member.issym()
+                        or member.islnk()
+                        or not (member.isdir() or member.isfile())
+                    ):
+                        raise ValueError("M3GNet model archive contains an unsafe member")
+                    stripped = member_path.parts[1:]
+                    if not stripped:
+                        continue
+                    target = destination.joinpath(*stripped)
+                    if member.isdir():
+                        target.mkdir(parents=True, exist_ok=True)
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    stream = archive.extractfile(member)
+                    if stream is None:
+                        raise ValueError("M3GNet model archive member is unreadable")
+                    with target.open("xb") as output:
+                        shutil.copyfileobj(stream, output)
+                    file_count += 1
+            if file_count == 0:
+                raise ValueError("M3GNet model archive contains no files")
+            kind = "directory"
+        else:
+            if not source.is_file() or source.is_symlink():
+                raise ValueError("trained model artifact must be an ordinary file")
+            with source.open("rb") as input_stream, destination.open("xb") as output:
+                created = True
+                shutil.copyfileobj(input_stream, output)
+            kind = "file"
+        observed = fingerprint(destination)
+    except Exception:
+        if created:
+            if destination.is_dir() and not destination.is_symlink():
+                shutil.rmtree(destination)
+            elif destination.is_file() and not destination.is_symlink():
+                destination.unlink()
+        raise
+    return {
+        "schema_version": 1,
+        "model_id": model_id,
+        "framework": framework,
+        "relative_path": relative,
+        "kind": kind,
+        "fingerprint": observed,
+    }
+
+
 def run(args: argparse.Namespace) -> int:
     input_dir = Path(args.input_dir).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
@@ -183,7 +272,11 @@ def run(args: argparse.Namespace) -> int:
             id_key="dataset_id",
             default_kind=_framework_default_dataset_kind(str(framework)),
         )
-        if dataset_ref["fingerprint"] != parameters.get("dataset_fingerprint"):
+        declared_dataset_fingerprint = parameters.get("dataset_fingerprint")
+        if (
+            declared_dataset_fingerprint is not None
+            and dataset_ref["fingerprint"] != declared_dataset_fingerprint
+        ):
             raise ValueError("dataset reference fingerprint differs from approved parameters")
         data_root = _site_root(args.data_root, "MLIPFLOW_DATA_ROOT")
         data_path = _resolve_under(
@@ -232,9 +325,17 @@ def run(args: argparse.Namespace) -> int:
             approved_foundation = parameters.get("foundation_model_fingerprint")
             if foundation_ref["fingerprint"] != approved_foundation:
                 raise ValueError("foundation reference fingerprint differs from approved parameters")
-            model_root = _site_root(args.model_root, "MLIPFLOW_MODEL_ROOT")
+            foundation_root_value = (
+                args.foundation_model_root
+                or os.environ.get("MLIPFLOW_FOUNDATION_MODEL_ROOT")
+                or args.model_root
+                or os.environ.get("MLIPFLOW_MODEL_ROOT")
+            )
+            foundation_root = _site_root(
+                foundation_root_value, "MLIPFLOW_FOUNDATION_MODEL_ROOT"
+            )
             foundation_path = _resolve_under(
-                model_root,
+                foundation_root,
                 foundation_ref["relative_path"],
                 foundation_ref["kind"],
             )
@@ -267,6 +368,26 @@ def run(args: argparse.Namespace) -> int:
                 return_code = int(training_wrapper.main(wrapper_args))
         result_path = output_dir / "training-result.json"
         result = _load_mapping(result_path) if result_path.is_file() else None
+        published_model: dict[str, str] | None = None
+        publish_id = parameters.get("publish_model_id")
+        publish_relative = parameters.get("publish_model_relative_path")
+        if publish_id is not None or publish_relative is not None:
+            if not isinstance(publish_id, str) or not isinstance(publish_relative, str):
+                raise ValueError(
+                    "publish_model_id and publish_model_relative_path must be supplied together"
+                )
+            model_root = _site_root(args.model_root, "MLIPFLOW_MODEL_ROOT")
+            published_model = _publish_model(
+                output_dir / "model-artifact",
+                model_root,
+                str(framework),
+                publish_id,
+                publish_relative,
+            )
+            (output_dir / "model-reference.json").write_text(
+                json.dumps(published_model, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         report.update(
             {
                 "status": "OK" if return_code == 0 else "FAIL",
@@ -276,6 +397,7 @@ def run(args: argparse.Namespace) -> int:
                 "dataset": {**dataset_ref, "observed_fingerprint": observed_dataset},
                 "config_fingerprint": config_fingerprint,
                 "foundation_model": foundation_report,
+                "published_model": published_model,
                 "framework_version": result.get("framework_version")
                 if isinstance(result, dict)
                 else None,
@@ -302,6 +424,7 @@ def build_parser() -> argparse.ArgumentParser:
     execute.add_argument("--output-dir", required=True)
     execute.add_argument("--data-root")
     execute.add_argument("--model-root")
+    execute.add_argument("--foundation-model-root")
     fingerprint_parser = sub.add_parser("fingerprint")
     fingerprint_parser.add_argument("path")
     return parser

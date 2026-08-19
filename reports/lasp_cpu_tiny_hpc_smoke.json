@@ -75,14 +75,14 @@
   },
   "retry_lineage": {
     "attempt_0001": {
-      "job_id": "27442983",
+      "job_id": "redacted",
       "scheduler_state": "FAILED",
       "mlipflow_state": "FAIL",
       "classification": "MLIPFLOW_BUG",
       "reason": "Post-processing selected a large native allstr.arc instead of the 14-frame SSW walk emitted as all.arc."
     },
     "attempt_0002": {
-      "job_id": "27443025",
+      "job_id": "redacted",
       "scheduler_state": "COMPLETED",
       "mlipflow_state": "OK",
       "plan_digest": "sha256:ad5ae0cec78958594e9cc2e7d2e06c9382323ffb1e70183245fd53ed5c16a0bd",

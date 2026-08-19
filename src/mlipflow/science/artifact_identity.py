@@ -26,23 +26,24 @@ def sha256_file(path: Path) -> str:
 
 
 def fingerprint_path(path: Path) -> str:
-    """Hash a file or directory with stable relative-path and size framing."""
+    """Hash a file or directory with the shared tree-sha256-v1 framing."""
 
     path = Path(path).resolve()
     if path.is_file():
         return sha256_file(path)
     if not path.is_dir():
         raise ArtifactIdentityError(f"artifact is not a regular file or directory: {path}")
-    files = sorted(item for item in path.rglob("*") if item.is_file())
+    files = sorted(
+        (item for item in path.rglob("*") if item.is_file()),
+        key=lambda item: item.relative_to(path).as_posix(),
+    )
     if not files:
         raise ArtifactIdentityError(f"artifact directory contains no files: {path}")
     digest = hashlib.sha256()
     for item in files:
-        relative = item.relative_to(path).as_posix().encode()
-        digest.update(len(relative).to_bytes(8, "big"))
-        digest.update(relative)
-        digest.update(item.stat().st_size.to_bytes(8, "big"))
-        with item.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
+        if item.is_symlink():
+            raise ArtifactIdentityError(f"artifact tree contains a symlinked file: {item}")
+        relative = item.relative_to(path).as_posix()
+        record = f"{relative}\0{item.stat().st_size}\0{sha256_file(item)}\n"
+        digest.update(record.encode("utf-8"))
     return "sha256:" + digest.hexdigest()

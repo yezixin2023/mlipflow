@@ -191,31 +191,49 @@ def execution_identity(plan: dict[str, Any]) -> dict[str, Any]:
     }
     if isinstance(adapter_plan, dict):
         if isinstance(scheduled, dict):
+            scheduled_units = (
+                scheduled.get("submissions", [])
+                if scheduled.get("schema_version") == 4
+                else [scheduled]
+            )
+            normalized_units = [
+                {
+                    "id": unit.get("id"),
+                    "template_variables": unit.get("template_variables", {}),
+                    "staged_files": [
+                        {
+                            "remote_name": item.get("remote_name"),
+                            "sha256": item.get("sha256"),
+                            "size_bytes": item.get("size_bytes"),
+                        }
+                        for item in unit.get("staged_files", [])
+                        if isinstance(item, dict)
+                    ],
+                    "fetch_outputs": [
+                        {
+                            key: item.get(key)
+                            for key in (
+                                "remote_name",
+                                "remote_path",
+                                "local_name",
+                                "required",
+                                "max_bytes",
+                            )
+                            if key in item
+                        }
+                        for item in unit.get("fetch_outputs", [])
+                        if isinstance(item, dict)
+                    ],
+                }
+                for unit in scheduled_units
+                if isinstance(unit, dict)
+            ]
             identity["execution"] = {
-                "staged_files": [
-                    {
-                        "remote_name": item.get("remote_name"),
-                        "sha256": item.get("sha256"),
-                        "size_bytes": item.get("size_bytes"),
-                    }
-                    for item in scheduled.get("staged_files", [])
-                    if isinstance(item, dict)
-                ],
-                "fetch_outputs": [
-                    {
-                        key: item.get(key)
-                        for key in (
-                            "remote_name",
-                            "remote_path",
-                            "local_name",
-                            "required",
-                            "max_bytes",
-                        )
-                        if key in item
-                    }
-                    for item in scheduled.get("fetch_outputs", [])
-                    if isinstance(item, dict)
-                ],
+                "schema_version": scheduled.get("schema_version"),
+                "submission_strategy": scheduled.get("submission_strategy"),
+                "execution_model": scheduled.get("execution_model"),
+                "template_family": scheduled.get("template_family"),
+                "submissions": normalized_units,
             }
             if isinstance(adapter_plan.get("failure_salvage"), dict):
                 identity["execution"]["failure_salvage"] = adapter_plan[
@@ -259,6 +277,43 @@ def execution_identity(plan: dict[str, Any]) -> dict[str, Any]:
             "fresh_workspace_required": hpc.get("fresh_workspace_required"),
             "overwrite": hpc.get("overwrite"),
         }
+    hpc_executions = plan.get("hpc_executions")
+    if isinstance(hpc_executions, list):
+        identity.pop("resources", None)
+        identity.pop("backend_profile", None)
+        projected: list[dict[str, Any]] = []
+        for item in hpc_executions:
+            execution = item.get("hpc_execution") if isinstance(item, dict) else None
+            if not isinstance(item, dict) or not isinstance(execution, dict):
+                continue
+            cluster = execution.get("cluster_profile")
+            if not isinstance(cluster, dict):
+                cluster = {}
+            projected.append(
+                {
+                    "submission_id": item.get("submission_id"),
+                    "cluster": {
+                        key: cluster.get(key)
+                        for key in (
+                            "name",
+                            "backend",
+                            "ssh_profile",
+                            "work_root",
+                            "scheduler",
+                        )
+                        if key in cluster
+                    },
+                    "execution_model": execution.get("execution_model"),
+                    "resources": execution.get("resources"),
+                    "rendered_scripts": execution.get("rendered_scripts"),
+                    "workspace": execution.get("workspace"),
+                    "fresh_workspace_required": execution.get(
+                        "fresh_workspace_required"
+                    ),
+                    "overwrite": execution.get("overwrite"),
+                }
+            )
+        identity["hpc_submissions"] = projected
     return identity
 
 

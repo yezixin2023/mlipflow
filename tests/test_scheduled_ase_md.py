@@ -109,7 +109,12 @@ def test_scheduler_matrix_is_ready(tmp_path: Path, calculator: str) -> None:
     scheduled = plan["scheduled_execution"]
     assert scheduled["schema_version"] == 3
     assert scheduled["execution_model"] == "single-python"
-    assert scheduled["template_family"] == f"ase-md-{calculator}"
+    expected_family = (
+        f"ase-md-{calculator}-canonical"
+        if calculator in {"m3gnet", "chgnet"}
+        else f"ase-md-{calculator}"
+    )
+    assert scheduled["template_family"] == expected_family
     staged = {item["remote_name"] for item in scheduled["staged_files"]}
     assert {"project.yaml", "model-reference.json", "ase_md.py", "ase_md_cluster.py", "structure/start.extxyz"} <= staged
     outputs = {item["remote_name"]: item for item in scheduled["fetch_outputs"]}
@@ -133,6 +138,20 @@ def test_chgnet_requires_float32(tmp_path: Path) -> None:
     plan = module.Adapter().plan(context)
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "ase_md.chgnet_dtype" for item in plan["diagnostics"])
+
+
+def test_upstream_model_reference_fingerprint_is_authoritative(tmp_path: Path) -> None:
+    module = _load("ase_md_adapter_upstream_binding", PLUGIN / "adapter_restart.py")
+    context = _context(tmp_path, "m3gnet")
+    reference = tmp_path / "inputs" / "m3gnet-model.json"
+    context["inputs"]["model_reference"] = str(reference)
+    context["parameters"].pop("model_fingerprint")
+
+    plan = module.Adapter().plan(context)
+
+    assert plan["status"] == "READY", plan.get("diagnostics")
+    assert plan["md_identity"]["model_fingerprint"] == "sha256:" + "2" * 64
+    assert plan["scheduled_execution"]["template_family"] == "ase-md-m3gnet-canonical"
 
 
 def test_runner_accepts_scheduler_precreated_empty_output_root(tmp_path: Path) -> None:
@@ -228,6 +247,48 @@ def test_callback_step_zero_is_recorded_once() -> None:
     assert runner._is_new_callback_step([0], 1) is True
 
 
+def test_explicit_sampling_supercell_enforces_strict_cell_bound(tmp_path: Path) -> None:
+    runner = _load("ase_md_runner_supercell", PLUGIN / "ase_md.py")
+    atoms = Atoms(
+        "Li",
+        positions=[[0.0, 0.0, 0.0]],
+        cell=[8.94053, 11.3388017, 11.18310136],
+        pbc=True,
+    )
+
+    expanded, repeat, source_count, lengths, minimum = runner._prepare_structure(
+        atoms, [2, 1, 1], 10.0
+    )
+
+    assert repeat == (2, 1, 1)
+    assert source_count == 1
+    assert len(expanded) == 2
+    assert lengths == pytest.approx([17.88106, 11.3388017, 11.18310136])
+    assert minimum == 10.0
+
+    with pytest.raises(runner.AseMDError, match="strict minimum"):
+        runner._prepare_structure(atoms, [1, 1, 1], 10.0)
+
+
+def test_plan_binds_explicit_supercell_and_cell_bound(tmp_path: Path) -> None:
+    module = _load("ase_md_adapter_supercell", PLUGIN / "adapter.py")
+    context = _context(tmp_path, "mace")
+    context["parameters"].update(
+        {
+            "supercell_repeat": [2, 1, 1],
+            "minimum_initial_cell_length_angstrom": 10.0,
+        }
+    )
+
+    plan = module.Adapter().plan(context)
+
+    assert plan["status"] == "READY", plan.get("diagnostics")
+    assert plan["md_identity"]["supercell_repeat"] == [2, 1, 1]
+    assert plan["md_identity"]["minimum_initial_cell_length_angstrom"] == 10.0
+    assert plan["approval_summary"]["supercell_repeat"] == [2, 1, 1]
+    assert plan["approval_summary"]["minimum_initial_cell_length_A"] == 10.0
+
+
 def test_mace_calculator_uses_supported_model_paths_keyword(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -306,6 +367,8 @@ def test_checker_verifies_schedule_and_hashes(tmp_path: Path) -> None:
         "fix_com": True,
         "input_format": None,
         "input_index": "-1",
+        "supercell_repeat": [2, 1, 1],
+        "minimum_initial_cell_length_angstrom": 10.0,
     }
     trajectory = attempt / "trajectory.traj"
     trajectory.write_bytes(b"fake-ase-trajectory")
@@ -338,6 +401,11 @@ def test_checker_verifies_schedule_and_hashes(tmp_path: Path) -> None:
         "ensemble": "nvt-langevin",
         "model": {"id": identity["model_id"], "fingerprint": identity["model_fingerprint"]},
         "structure_fingerprint": identity["structure_fingerprint"],
+        "supercell_repeat": [2, 1, 1],
+        "source_atom_count": 2,
+        "atom_count": 4,
+        "initial_cell_lengths_A": [20.0, 11.0, 12.0],
+        "minimum_initial_cell_length_A": 10.0,
         "temperature_K": 900.0,
         "timestep_fs": 1.0,
         "steps_requested": 5,
@@ -351,6 +419,18 @@ def test_checker_verifies_schedule_and_hashes(tmp_path: Path) -> None:
         "default_dtype": "float64",
         "friction_per_fs": 0.01,
         "fix_com": True,
+        "observed_stability": {
+            "all_recorded_values_finite": True,
+            "minimum_pair_distance_A": 1.8,
+            "minimum_pair_distance_step": 2,
+            "sampled_trajectory_frames": 4,
+            "thermodynamics": {
+                "temperature_K": {"minimum": 850.0, "maximum": 950.0, "mean": 900.0},
+                "potential_energy_eV_per_atom": {"minimum": -2.6, "maximum": -2.4, "mean": -2.5},
+                "total_energy_eV_per_atom": {"minimum": -2.4, "maximum": -2.1, "mean": -2.25},
+                "volume_A3": {"minimum": 2640.0, "maximum": 2640.0, "mean": 2640.0},
+            },
+        },
         "artifacts": artifact_rows,
     }
     _write_json(attempt / "md-result.json", result)
@@ -363,6 +443,14 @@ def test_checker_verifies_schedule_and_hashes(tmp_path: Path) -> None:
             "ensemble": "nvt-langevin",
             "model": {"id": identity["model_id"], "observed_fingerprint": identity["model_fingerprint"]},
             "structure_fingerprint": identity["structure_fingerprint"],
+            "supercell_repeat": result["supercell_repeat"],
+            "source_atom_count": result["source_atom_count"],
+            "atom_count": result["atom_count"],
+            "initial_cell_lengths_A": result["initial_cell_lengths_A"],
+            "minimum_initial_cell_length_A": result[
+                "minimum_initial_cell_length_A"
+            ],
+            "observed_stability": result["observed_stability"],
             "result_sha256": _sha(attempt / "md-result.json"),
         },
     )

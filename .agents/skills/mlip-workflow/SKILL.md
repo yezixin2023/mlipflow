@@ -36,6 +36,11 @@ hand their collected reference manifests to `$mlip-training`. Never ask the user
 custom conversion script. Review one framework-independent split before serialization;
 all requested framework views must preserve that exact split.
 
+For a same-test-set model comparison, also route the collected
+`benchmark-dataset-reference.json` from that assembly to scheduled `$mlip-benchmark`
+nodes, then normalize their prediction evidence into one joint ranking. Do not create a
+second split or derive benchmark labels from framework-specific training views.
+
 Never continue downstream from `FAIL`, `BLOCKED`, `STOPPED`, a scheduler-only
 `COMPLETED`, or process exit zero without scientific completion checks.
 

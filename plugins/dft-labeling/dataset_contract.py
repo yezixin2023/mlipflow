@@ -18,6 +18,7 @@ STRESS_CONVENTION = {
     "sign": "VASP-native",
     "order": "3x3-row-major",
 }
+VASP_KBAR_PER_EV_PER_ANGSTROM3 = 1602.176621
 FRAMEWORKS = ("deepmd", "m3gnet", "chgnet", "mace")
 SPLIT_NAMES = ("train", "validation", "test")
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
@@ -91,6 +92,49 @@ def _sources(manifest: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             if not isinstance(group, str) or not SAFE_ID.fullmatch(group):
                 raise DatasetContractError(f"structures[{index}].source_group_id is invalid")
             source["source_group_id"] = group
+        method = item.get("source_sampling_method")
+        methods = item.get("source_sampling_methods")
+        source_records = item.get("source_records")
+        if method is not None:
+            if not isinstance(method, str) or not SAFE_ID.fullmatch(method):
+                raise DatasetContractError(
+                    f"structures[{index}].source_sampling_method is invalid"
+                )
+            source["source_sampling_method"] = method
+        if methods is not None:
+            if (
+                not isinstance(methods, list)
+                or not methods
+                or len(methods) != len(set(methods))
+                or any(not isinstance(value, str) or not SAFE_ID.fullmatch(value) for value in methods)
+                or (method is not None and method not in methods)
+            ):
+                raise DatasetContractError(
+                    f"structures[{index}].source_sampling_methods is invalid"
+                )
+            source["source_sampling_methods"] = list(methods)
+        if source_records is not None:
+            normalized_records = []
+            if not isinstance(source_records, list) or not source_records:
+                raise DatasetContractError(f"structures[{index}].source_records is invalid")
+            for record in source_records:
+                if (
+                    not isinstance(record, Mapping)
+                    or not isinstance(record.get("sampling_method"), str)
+                    or not SAFE_ID.fullmatch(record["sampling_method"])
+                    or not isinstance(record.get("source_group_id"), str)
+                    or not SAFE_ID.fullmatch(record["source_group_id"])
+                    or not isinstance(record.get("source_id"), str)
+                    or not SAFE_ID.fullmatch(record["source_id"])
+                    or isinstance(record.get("source_order"), bool)
+                    or not isinstance(record.get("source_order"), int)
+                    or record["source_order"] < 1
+                    or not safe_relative(record.get("source_path"))
+                    or not is_fingerprint(record.get("source_sha256"))
+                ):
+                    raise DatasetContractError(f"structures[{index}].source_records is invalid")
+                normalized_records.append(dict(record))
+            source["source_records"] = normalized_records
         result[structure_id] = source
     return result
 
@@ -141,7 +185,12 @@ def build_canonical_dataset(
             raise DatasetContractError(f"label record {index} has invalid stress")
         stress_presence.add(stress is not None)
         source = sources[str(structure_id)]
-        record_id = _record_id(attempt, source, calculation_id, ionic_step)
+        record_attempt = (
+            _attempt(raw["source_dft_attempt"])
+            if isinstance(raw.get("source_dft_attempt"), Mapping)
+            else attempt
+        )
+        record_id = _record_id(record_attempt, source, calculation_id, ionic_step)
         if record_id in seen:
             raise DatasetContractError("canonical record identity collision")
         seen.add(record_id)
@@ -153,7 +202,7 @@ def build_canonical_dataset(
             "coordinates": {"kind": "fractional", "values": [list(row) for row in coordinates]},
             "total_energy": energy, "atomic_forces": [list(row) for row in forces],
             "stress": None if stress is None else [list(row) for row in stress],
-            "source_structure": dict(source), "source_dft_attempt": dict(attempt),
+            "source_structure": dict(source), "source_dft_attempt": dict(record_attempt),
             "source_dft_outputs": {
                 name: dict(value) for name, value in sorted(raw_outputs.items())
                 if isinstance(name, str) and name.startswith(calculation_id + "/") and isinstance(value, Mapping)
@@ -187,9 +236,8 @@ def validate_canonical_dataset(value: Any) -> list[str]:
     if value.get("schema_version") != 1:
         errors.append("canonical schema_version must be 1")
     try:
-        attempt = _attempt(value.get("source_attempt_identity", {}))
+        _attempt(value.get("source_attempt_identity", {}))
     except DatasetContractError:
-        attempt = {}
         errors.append("canonical source attempt identity is invalid")
     if not isinstance(records, list) or not records:
         return errors + ["canonical records must be a non-empty list"]
@@ -210,10 +258,30 @@ def validate_canonical_dataset(value: Any) -> list[str]:
         species, source = record.get("species"), record.get("source_structure")
         n = len(species) if isinstance(species, list) else 0
         record_id = record.get("record_id")
+        record_attempt = record.get("source_dft_attempt")
+        try:
+            normalized_record_attempt = (
+                _attempt(record_attempt) if isinstance(record_attempt, Mapping) else {}
+            )
+            if not normalized_record_attempt:
+                raise DatasetContractError("missing record attempt")
+        except DatasetContractError:
+            normalized_record_attempt = {}
+            errors.append(f"canonical record {index} source DFT attempt is invalid")
         if not isinstance(source, Mapping) or not is_fingerprint(source.get("fingerprint")):
             errors.append(f"canonical record {index} source structure is invalid")
-        elif attempt and record_id != _record_id(attempt, source, record.get("calculation_id"), record.get("ionic_step")):
-            errors.append(f"canonical record {index} stable record_id mismatch")
+        else:
+            try:
+                _sources({"structures": [source]})
+            except DatasetContractError:
+                errors.append(f"canonical record {index} source provenance is invalid")
+            if normalized_record_attempt and record_id != _record_id(
+                normalized_record_attempt,
+                source,
+                record.get("calculation_id"),
+                record.get("ionic_step"),
+            ):
+                errors.append(f"canonical record {index} stable record_id mismatch")
         if not isinstance(record_id, str) or not SAFE_ID.fullmatch(record_id) or record_id in seen:
             errors.append(f"canonical record {index} identity is invalid")
         else:
@@ -354,6 +422,53 @@ def records_for_split(canonical: Mapping[str, Any], split: Mapping[str, Any], na
 def cartesian_coordinates(record: Mapping[str, Any]) -> list[list[float]]:
     lattice = record["lattice"]
     return [[sum(float(frac[k]) * float(lattice[k][j]) for k in range(3)) for j in range(3)] for frac in record["coordinates"]["values"]]
+
+
+def benchmark_dataset(
+    canonical: Mapping[str, Any], split: Mapping[str, Any]
+) -> dict[str, Any]:
+    samples = []
+    include_stress = "stress" in canonical["targets"]
+    for record in records_for_split(canonical, split, "test"):
+        references: dict[str, Any] = {
+            "energy": record["total_energy"],
+            "force": record["atomic_forces"],
+        }
+        if include_stress:
+            stress = record["stress"]
+            references["stress"] = [
+                -float(stress[0][0]) / VASP_KBAR_PER_EV_PER_ANGSTROM3,
+                -float(stress[1][1]) / VASP_KBAR_PER_EV_PER_ANGSTROM3,
+                -float(stress[2][2]) / VASP_KBAR_PER_EV_PER_ANGSTROM3,
+                -float(stress[1][2]) / VASP_KBAR_PER_EV_PER_ANGSTROM3,
+                -float(stress[0][2]) / VASP_KBAR_PER_EV_PER_ANGSTROM3,
+                -float(stress[0][1]) / VASP_KBAR_PER_EV_PER_ANGSTROM3,
+            ]
+        samples.append(
+            {
+                "id": record["record_id"],
+                "species": record["species"],
+                "positions": cartesian_coordinates(record),
+                "cell": record["lattice"],
+                "pbc": True,
+                "references": references,
+            }
+        )
+    units = {"energy": "eV", "force": "eV/angstrom"}
+    if include_stress:
+        units["stress"] = "eV/angstrom^3"
+    return {
+        "schema_version": 1,
+        "dataset_id": canonical["dataset_id"],
+        "split_id": split["split_id"],
+        "split": "test",
+        "units": units,
+        "energy_convention": "total",
+        "stress_convention": (
+            "ase-voigt-xx-yy-zz-yz-xz-xy" if include_stress else None
+        ),
+        "samples": samples,
+    }
 
 
 def pymatgen_structure(record: Mapping[str, Any]) -> dict[str, Any]:

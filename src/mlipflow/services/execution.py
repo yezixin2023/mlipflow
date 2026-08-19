@@ -36,7 +36,9 @@ from .contracts import (
 from .paths import attempt_directory
 from .scheduled import (
     _HPC_RUN_SCRIPT,
+    _HPC_SUBMISSIONS,
     _HPC_SUBMIT_SCRIPT,
+    _stage_and_submit_independent_jobs,
     _stage_and_submit_scheduled_adapter,
 )
 
@@ -214,6 +216,119 @@ def _execute_ready(
             raise BackendError(
                 "scheduled adapters currently require the site/template ssh-slurm contract"
             )
+        scheduled_plan = (
+            plan.get("adapter_plan", {}).get("scheduled_execution")
+            if isinstance(plan.get("adapter_plan"), dict)
+            else None
+        )
+        if (
+            isinstance(scheduled_plan, dict)
+            and scheduled_plan.get("schema_version") == 4
+        ):
+            submissions = _stage_and_submit_independent_jobs(
+                project, node, plugin, plan, directory, factory=factory
+            )
+            if not submissions:
+                raise BackendError("independent submission produced no scheduler jobs")
+            write_json_atomic(
+                directory / _HPC_SUBMISSIONS,
+                {
+                    "schema_version": 1,
+                    "submission_strategy": "independent-jobs",
+                    "submissions": submissions,
+                },
+            )
+            job_ids = [str(item["job_id"]) for item in submissions]
+            persisted_job_ids = ",".join(job_ids)
+            remote_dirs = [str(item["remote_run_dir"]) for item in submissions]
+            remote_dir = remote_dirs[0].split("/submissions/", 1)[0]
+            store.transition(
+                run_id,
+                RunState.SUBMITTED,
+                job_id=persisted_job_ids,
+                remote_dir=remote_dir,
+            )
+            updated = store.transition(
+                run_id,
+                RunState.PENDING,
+                job_id=persisted_job_ids,
+                remote_dir=remote_dir,
+            )
+            control_artifacts = [
+                fingerprint(directory / "approved-plan.json")
+                | {"role": "approved-plan"},
+                fingerprint(directory / _HPC_SUBMISSIONS)
+                | {"role": "scheduler-submissions"},
+            ]
+            for submission in submissions:
+                control_dir = (
+                    directory / "submissions" / str(submission["submission_id"])
+                )
+                control_artifacts.extend(
+                    [
+                        fingerprint(control_dir / _HPC_SUBMIT_SCRIPT)
+                        | {"role": "scheduler-script"},
+                        fingerprint(control_dir / _HPC_RUN_SCRIPT)
+                        | {"role": "application-script"},
+                    ]
+                )
+            manifest = run_manifest(
+                project_id=project.project_id,
+                node_id=node_id,
+                run_id=run_id,
+                attempt=attempt,
+                plugin_id=plugin.plugin_id,
+                plugin_version=str(plugin.raw["version"]),
+                mode=mode,
+                backend=backend,
+                plan_digest=plan["plan_digest"],
+                inputs=node.get("inputs", {}),
+                parameters=node.get("parameters", {}),
+                artifacts=control_artifacts,
+                state=RunState.PENDING.value,
+                state_reason=(
+                    f"submitted {len(submissions)} independent scheduler jobs"
+                ),
+                job={
+                    "job_id": persisted_job_ids,
+                    "scheduler_state": RunState.PENDING.value,
+                    "scheduler_info": (
+                        f"{len(submissions)} independently queued Slurm jobs"
+                    ),
+                },
+                remote_dir=remote_dir,
+                command=[
+                    "template",
+                    str(scheduled_plan.get("template_family")),
+                    "independent-jobs",
+                ],
+                resources=node.get("resources", {}),
+                **_manifest_context(
+                    project, node, plugin, store, run_id, finished=False
+                ),
+            )
+            write_json_atomic(manifest_path, manifest)
+            for artifact in control_artifacts:
+                store.add_artifact(
+                    run_id,
+                    str(artifact["role"]),
+                    str(artifact["uri"]),
+                    artifact.get("fingerprint"),
+                    artifact.get("size_bytes"),
+                    artifact.get("metadata", {}),
+                )
+            updated = store.transition(
+                run_id,
+                RunState.PENDING,
+                job_id=persisted_job_ids,
+                remote_dir=remote_dir,
+                manifest_path=str(manifest_path),
+            )
+            return {
+                "plan_digest": plan["plan_digest"],
+                "step": updated.to_dict(),
+                "submissions": submissions,
+            }
         hpc_execution = plan.get("hpc_execution")
         workspace = hpc_execution.get("workspace")
         if not isinstance(workspace, dict) or not isinstance(workspace.get("run_dir"), str):

@@ -1,7 +1,8 @@
 """End-to-end contract tests for scheduled static / relax / AIMD / batch runs.
 
-One node drives one attempt, one scheduler job and 1..N VASP calculations run
-sequentially in that job.  These tests exercise READY plans all the way to a
+One node drives one attempt. Its 1..N VASP calculations run sequentially by
+default or as explicitly approved independent scheduler jobs.
+These tests exercise READY plans all the way to a
 final MLIPFlow state, because a BLOCKED plan proves nothing about staging,
 fetching, or the scientific checks that decide whether a node may reach OK.
 
@@ -63,7 +64,10 @@ def calc_id(index: int) -> str:
 
 
 def build_project(
-    root: Path, calculation_type: str = "static", count: int = 1
+    root: Path,
+    calculation_type: str = "static",
+    count: int = 1,
+    concurrency: int = 1,
 ) -> tuple[Path, list[str]]:
     """Create a project whose prepare manifest declares ``count`` calculations."""
 
@@ -162,8 +166,14 @@ def build_project(
                 "stress": "kbar-vasp-3x3",
             },
             "result_manifest": "dft-labeling-result.json",
+            "calculation_concurrency": concurrency,
         },
-        "resources": {"cpus": 4, "gpus": 0, "memory": "4G", "walltime": "00:05:00"},
+        "resources": {
+            "cpus": 2 if concurrency > 1 else 4,
+            "gpus": 0,
+            "memory": "2G" if concurrency > 1 else "4G",
+            "walltime": "00:05:00",
+        },
     }
     write_json(root / "project.yaml", project_config([node]))
     return write_site(root), structure_ids
@@ -172,11 +182,20 @@ def build_project(
 class ScheduledLifecycle:
     """Drive one node from plan to final state against a simulated cluster."""
 
-    def __init__(self, root: Path, calculation_type: str = "static", count: int = 1):
+    def __init__(
+        self,
+        root: Path,
+        calculation_type: str = "static",
+        count: int = 1,
+        concurrency: int = 1,
+    ):
         self.root = root
         self.calculation_type = calculation_type
         self.count = count
-        self.site, self.structure_ids = build_project(root, calculation_type, count)
+        self.concurrency = concurrency
+        self.site, self.structure_ids = build_project(
+            root, calculation_type, count, concurrency
+        )
         self.remote = root / "fake-remote"
         self.staged: set[str] = set()
         initialize(root)
@@ -195,11 +214,15 @@ class ScheduledLifecycle:
                 self.staged.add(relative)
             return remote_dir
 
+        submitted = iter(
+            ExecutionResult(0, f"Submitted batch job {91 + index}\n", "", str(91 + index))
+            for index in range(max(1, self.count if self.concurrency > 1 else 1))
+        )
         with patch(
             "mlipflow.services.SshSlurmBackend.stage_workspace", side_effect=stage
         ), patch(
             "mlipflow.services.SshSlurmBackend.submit",
-            return_value=ExecutionResult(0, "Submitted batch job 91\n", "", "91"),
+            side_effect=lambda *_args, **_kwargs: next(submitted),
         ):
             run_node(
                 self.project, "label-li", PLUGINS, plan["plan_digest"], self.site,
@@ -220,26 +243,48 @@ class ScheduledLifecycle:
             identifier = calc_id(index)
             if identifier in skip:
                 continue
+            remote = (
+                self.remote / identifier if self.concurrency > 1 else self.remote
+            )
             write_calculation_outputs(
-                self.remote,
+                remote,
                 identifier,
                 calculation_type=self.calculation_type,
                 converged=identifier not in unconverged,
                 frames=frames,
                 **overrides,
             )
-        write_completion(
-            self.remote,
-            self.project.project_id,
-            "label-li",
-            1,
-            tuple(calc_id(index) for index in range(self.count)),
-            exit_codes,
-        )
+        if self.concurrency > 1:
+            for index in range(self.count):
+                identifier = calc_id(index)
+                code = None if exit_codes is None else (exit_codes[index],)
+                write_completion(
+                    self.remote / identifier,
+                    self.project.project_id,
+                    "label-li",
+                    1,
+                    (identifier,),
+                    code,
+                )
+        else:
+            write_completion(
+                self.remote,
+                self.project.project_id,
+                "label-li",
+                1,
+                tuple(calc_id(index) for index in range(self.count)),
+                exit_codes,
+            )
 
     def _hooks(self):
         def inspect(_self, _cwd, remote_path):
-            path = self.remote / remote_path
+            submission_id = str(_cwd).rsplit("/", 1)[-1]
+            remote = (
+                self.remote / submission_id
+                if self.concurrency > 1
+                else self.remote
+            )
+            path = remote / remote_path
             if not path.is_file():
                 return {"path": remote_path, "exists": False}
             return {
@@ -250,8 +295,14 @@ class ScheduledLifecycle:
             }
 
         def fetch(_self, _cwd, remote_path, destination):
+            submission_id = str(_cwd).rsplit("/", 1)[-1]
+            remote = (
+                self.remote / submission_id
+                if self.concurrency > 1
+                else self.remote
+            )
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(self.remote / remote_path, destination)
+            shutil.copy2(remote / remote_path, destination)
             return destination
 
         return inspect, fetch
@@ -305,8 +356,13 @@ class TemporaryProjectTest(unittest.TestCase):
     def tearDown(self) -> None:
         self._temporary.cleanup()
 
-    def lifecycle(self, calculation_type: str = "static", count: int = 1):
-        return ScheduledLifecycle(self.root, calculation_type, count)
+    def lifecycle(
+        self,
+        calculation_type: str = "static",
+        count: int = 1,
+        concurrency: int = 1,
+    ):
+        return ScheduledLifecycle(self.root, calculation_type, count, concurrency)
 
 
 class ReadyPlanTests(TemporaryProjectTest):
@@ -339,6 +395,39 @@ class ReadyPlanTests(TemporaryProjectTest):
             ["calc-0001", "calc-0002", "calc-0003"],
             [item["id"] for item in adapter["calculations"]],
         )
+
+    def test_four_structure_batch_plans_four_independent_resource_bound_jobs(self) -> None:
+        plan = self.lifecycle("static", 4, concurrency=4).plan()
+        adapter = plan["adapter_plan"]
+        scheduled = adapter["scheduled_execution"]
+        summary = adapter["approval_summary"]
+
+        self.assertEqual(4, scheduled["schema_version"])
+        self.assertEqual("independent-jobs", scheduled["submission_strategy"])
+        self.assertEqual("vasp-batch", scheduled["template_family"])
+        self.assertEqual(
+            ["calc-0001", "calc-0002", "calc-0003", "calc-0004"],
+            [item["id"] for item in scheduled["submissions"]],
+        )
+        for submission in scheduled["submissions"]:
+            self.assertEqual(
+                submission["id"],
+                submission["template_variables"]["PLUGIN_CALCULATION_IDS"],
+            )
+            self.assertEqual(
+                "2",
+                submission["template_variables"][
+                    "PLUGIN_MPI_RANKS_PER_CALCULATION"
+                ],
+            )
+        self.assertEqual(4, summary["submitted_job_count"])
+        self.assertEqual(2, summary["mpi_ranks_per_calculation"])
+        self.assertEqual(8, summary["maximum_concurrent_mpi_ranks"])
+        self.assertEqual(4, len(plan["hpc_executions"]))
+        for item in plan["hpc_executions"]:
+            execution = item["hpc_execution"]
+            self.assertEqual(2, execution["resources"]["cpus"])
+            self.assertIn("#SBATCH --ntasks=2", execution["rendered_scripts"]["submit.sbatch"])
 
 
 class NestedPathTests(TemporaryProjectTest):
@@ -471,6 +560,19 @@ class StaticLifecycleTests(TemporaryProjectTest):
             lifecycle.structure_ids, [record["structure_id"] for record in records]
         )
 
+    def test_four_independent_jobs_are_fetched_and_collected_together(self) -> None:
+        lifecycle = self.lifecycle("static", 4, concurrency=4)
+        changed = lifecycle.run()
+        self.assertEqual("OK", changed["changed"][0]["state"])
+        self.assertEqual(4, lifecycle.result()["label_count"])
+        submissions = json.loads(
+            (lifecycle.attempt / "scheduler-submissions.json").read_text(
+                encoding="utf-8"
+            )
+        )["submissions"]
+        self.assertEqual(["91", "92", "93", "94"], [item["job_id"] for item in submissions])
+        self.assertTrue((lifecycle.attempt / "completion.json").is_file())
+
     def test_potcar_is_never_fetched_or_collected(self) -> None:
         lifecycle = self.lifecycle("static", 2)
         lifecycle.run()
@@ -515,7 +617,6 @@ class BatchFailureTests(TemporaryProjectTest):
         changed = lifecycle.run(exit_codes=(0, 3))
         self.assertEqual("FAIL", changed["changed"][0]["state"])
         self.assertIn("calc-0002", str(changed["changed"][0]["diagnostic"]))
-
 
 class RelaxTests(TemporaryProjectTest):
     def test_relax_converged_with_contcar_reaches_ok(self) -> None:

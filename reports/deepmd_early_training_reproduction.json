@@ -6,7 +6,7 @@
   "historical_run": {
     "path": "<MLP_ARCHIVE>/DeepMD/dpdata/split_train/se_e2_a/para0",
     "access": "read-only",
-    "slurm_job_id": "9859029",
+    "slurm_job_id": "redacted",
     "submitted": "2024-08-22",
     "fresh_training": true,
     "restart_or_init_model": false,
@@ -247,7 +247,7 @@
     "node_id": "deepmd-train",
     "attempt": 1,
     "backend": "ssh-slurm",
-    "slurm_job_id": "27356151",
+    "slurm_job_id": "redacted",
     "scheduler_terminal_state": "COMPLETED",
     "mlipflow_final_state": "OK",
     "remote_run_dir": "<SITE_WORK_ROOT>/deepmd-early-repro-v2/deepmd-train/attempt-0001",

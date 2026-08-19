@@ -11,12 +11,20 @@ import gzip
 import hashlib
 import importlib.util
 import json
+import re
 import shutil
 import tarfile
+import sys
 from pathlib import Path
 from typing import Any
 
 UNKNOWN = "HISTORICAL_PARAMETER_UNKNOWN"
+MAX_POTCAR_BYTES = 64 * 1024 * 1024
+FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
+SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lasp_input_arc import canonicalize_prepared_arc  # noqa: E402
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:
@@ -37,6 +45,105 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return "sha256:" + digest.hexdigest()
+
+
+def _lasp_potential(path: Path) -> str:
+    values: list[str] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        tokens = raw_line.split("#", 1)[0].split()
+        if tokens[:1] == ["potential"]:
+            if len(tokens) != 2:
+                raise ValueError("lasp.in potential declaration is invalid")
+            values.append(tokens[1].lower())
+    if len(values) != 1:
+        raise ValueError("lasp.in must declare exactly one explicit potential")
+    return values[0]
+
+
+def _pseudopotential_identity(input_dir: Path) -> dict[str, Any]:
+    manifest_path = input_dir / "lasp-input-manifest.json"
+    potcar_path = input_dir / "POTCAR"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError("staged lasp-input-manifest.json is missing")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schema_version") != 1
+        or manifest.get("plugin_id") != "pes-sampling"
+        or manifest.get("operation") != "lasp-input-prepare"
+    ):
+        raise ValueError("staged LASP input manifest identity is invalid")
+    structure = manifest.get("output")
+    if (
+        not isinstance(structure, dict)
+        or structure.get("path") != "input.arc"
+        or structure.get("sha256") != _sha256(input_dir / "input.arc")
+        or structure.get("size_bytes") != (input_dir / "input.arc").stat().st_size
+    ):
+        raise ValueError("staged LASP input manifest does not bind input.arc")
+    reference_sha256 = manifest.get("pseudopotential_reference_sha256")
+    potcar = manifest.get("potcar")
+    if (
+        not isinstance(reference_sha256, str)
+        or FINGERPRINT.fullmatch(reference_sha256) is None
+        or not isinstance(potcar, dict)
+    ):
+        raise ValueError("staged LASP input manifest lacks pseudopotential identity")
+    elements = potcar.get("elements")
+    symbols = potcar.get("symbols")
+    components = potcar.get("components")
+    output = potcar.get("output")
+    if (
+        not isinstance(potcar.get("reference_id"), str)
+        or not potcar.get("reference_id")
+        or potcar.get("source_env") != "PMG_VASP_PSP_DIR"
+        or potcar.get("configuration_source") not in {"environment", "pymatgen-settings"}
+        or not isinstance(potcar.get("functional"), str)
+        or not potcar.get("functional")
+        or potcar.get("portable_artifact") is not False
+        or not isinstance(elements, list)
+        or not elements
+        or any(not isinstance(element, str) or re.fullmatch(r"[A-Z][a-z]?", element) is None for element in elements)
+        or not isinstance(symbols, list)
+        or len(symbols) != len(elements)
+        or any(not isinstance(symbol, str) or SAFE_NAME.fullmatch(symbol) is None for symbol in symbols)
+        or not isinstance(components, list)
+        or len(components) != len(symbols)
+        or any(
+            not isinstance(component, dict)
+            or component.get("symbol") != symbol
+            or not isinstance(component.get("sha256"), str)
+            or FINGERPRINT.fullmatch(component["sha256"]) is None
+            for component, symbol in zip(components, symbols)
+        )
+        or not isinstance(output, dict)
+        or output.get("path") != "POTCAR"
+        or output.get("collectable") is not False
+        or output.get("sha256") != potcar.get("combined_sha256")
+        or not isinstance(output.get("sha256"), str)
+        or FINGERPRINT.fullmatch(output["sha256"]) is None
+        or isinstance(output.get("size_bytes"), bool)
+        or not isinstance(output.get("size_bytes"), int)
+        or output.get("size_bytes") < 1
+        or potcar_path.is_symlink()
+        or not potcar_path.is_file()
+        or potcar_path.stat().st_size > MAX_POTCAR_BYTES
+        or potcar_path.stat().st_size != output.get("size_bytes")
+        or _sha256(potcar_path) != output.get("sha256")
+    ):
+        raise ValueError("staged runtime-only POTCAR identity is invalid")
+    return {
+        "reference_id": potcar.get("reference_id"),
+        "reference_sha256": reference_sha256,
+        "functional": potcar.get("functional"),
+        "elements": elements,
+        "symbols": symbols,
+        "components": components,
+        "combined_sha256": output.get("sha256"),
+        "configuration_source": potcar.get("configuration_source"),
+        "manifest_sha256": _sha256(manifest_path),
+        "portable_or_collectable": False,
+    }
 
 
 def _node(project: dict[str, Any], node_id: str) -> dict[str, Any]:
@@ -98,14 +205,27 @@ def run(args: argparse.Namespace) -> int:
     inputs = node.get("inputs", {})
     if not isinstance(inputs, dict):
         raise ValueError("node inputs must be a mapping")
+    potential = _lasp_potential(input_dir / "lasp.in")
+    pseudopotential = None
+    if potential == "vasp":
+        if "lasp_input_manifest" not in inputs:
+            raise ValueError("potential vasp requires lasp_input_manifest")
+        pseudopotential = _pseudopotential_identity(input_dir)
+    elif "lasp_input_manifest" in inputs:
+        raise ValueError("lasp_input_manifest is accepted only for potential vasp")
 
     wrapper_path = input_dir / "lasp_ssw.py"
     wrapper = _load_wrapper(wrapper_path)
+    output_root.mkdir(parents=True, exist_ok=True)
+    source_input = input_dir / "input.arc"
+    canonical_payload, arc_conversion = canonicalize_prepared_arc(source_input.read_bytes())
+    canonical_input = output_root / "input.canonical.arc"
+    canonical_input.write_bytes(canonical_payload)
     target = output_root / "lasp-ssw"
     argv = [
         "execute",
         "--lasp-executable", str(Path(args.lasp_executable).resolve()),
-        "--input-structure", str(input_dir / "input.arc"),
+        "--input-structure", str(canonical_input),
         "--lasp-input", str(input_dir / "lasp.in"),
         "--output-dir", str(target),
         "--historical-source-id", str(parameters["historical_source_id"]),
@@ -126,12 +246,15 @@ def run(args: argparse.Namespace) -> int:
             raise ValueError("lasp_auxiliary_files must be a mapping")
         for name in sorted(auxiliary):
             argv += ["--auxiliary", str(name), str(input_dir / str(name))]
+    if potential == "vasp":
+        if isinstance(auxiliary, dict) and "POTCAR" in auxiliary:
+            raise ValueError("POTCAR must come from the verified LASP input manifest")
+        argv += ["--auxiliary", "POTCAR", str(input_dir / "POTCAR")]
     if args.mpi_launcher:
         if args.mpi_processes is None or args.mpi_processes < 1:
             raise ValueError("--mpi-launcher requires positive --mpi-processes")
         argv += ["--mpi-launcher", str(Path(args.mpi_launcher).resolve()), "--mpi-processes", str(args.mpi_processes)]
 
-    output_root.mkdir(parents=True, exist_ok=True)
     returncode = int(wrapper.main(argv))
     if returncode != 0:
         return returncode
@@ -146,6 +269,14 @@ def run(args: argparse.Namespace) -> int:
         "status": "OK",
         "node_id": args.node_id,
         "lasp_version": str(parameters["lasp_version"]),
+        "potential": potential,
+        "pseudopotential": pseudopotential,
+        "input_structure": {
+            "source_sha256": _sha256(source_input),
+            "canonical_sha256": _sha256(canonical_input),
+            "conversion": arc_conversion,
+            "canonical_collected": False,
+        },
         "selection_policy": {
             "selection_stride": parameters["selection_stride"],
             "energy_max_ev": parameters.get("energy_max_ev"),

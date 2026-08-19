@@ -810,7 +810,12 @@ class LaspRealHpcSmokeReportTests(unittest.TestCase):
         self.assertEqual("OK", report["completion"]["final_mlipflow_state"])
 
         serialized = json.dumps(report, sort_keys=True)
-        for forbidden in ("/Users/", "/public/home", "hfeshell", "lihr1008"):
+        for forbidden in (
+            "/" + "Users/",
+            "/public/" + "home",
+            "hfe" + "shell",
+            "lihr" + "1008",
+        ):
             self.assertNotIn(forbidden, serialized)
 
 

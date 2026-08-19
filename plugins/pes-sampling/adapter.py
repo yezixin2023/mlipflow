@@ -21,8 +21,13 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 PLUGIN_ID = "pes-sampling"
 DIRECT_OPERATION = "direct-select"
+MERGE_OPERATION = "merge-structures"
+LASP_INPUT_OPERATION = "lasp-input-prepare"
 LASP_OPERATIONS = frozenset({"lasp-ssw-execute", "lasp-ssw-normalize-replay"})
-OPERATIONS = frozenset({DIRECT_OPERATION}) | LASP_OPERATIONS
+OPERATIONS = (
+    frozenset({DIRECT_OPERATION, MERGE_OPERATION, LASP_INPUT_OPERATION})
+    | LASP_OPERATIONS
+)
 UNKNOWN = "HISTORICAL_PARAMETER_UNKNOWN"
 BUNDLED_DIRECT_WRAPPER = (
     Path(globals().get("__file__", "adapter.py")).absolute().with_name("direct_select.py")
@@ -30,13 +35,24 @@ BUNDLED_DIRECT_WRAPPER = (
 BUNDLED_LASP_WRAPPER = (
     Path(globals().get("__file__", "adapter.py")).absolute().with_name("lasp_ssw.py")
 )
+BUNDLED_MERGE_WRAPPER = (
+    Path(globals().get("__file__", "adapter.py")).absolute().with_name("structure_merge.py")
+)
+BUNDLED_LASP_INPUT_WRAPPER = (
+    Path(globals().get("__file__", "adapter.py"))
+    .absolute()
+    .with_name("structure_to_lasp.py")
+)
 MAX_JSON_BYTES = 16 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 MAX_ARC_BYTES = 512 * 1024 * 1024
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_LASP_INPUT_BYTES = 1024 * 1024
+MAX_POTCAR_BYTES = 64 * 1024 * 1024
 MAX_LASP_FRAMES = 10000
 ARC_HEADER = b"!BIOSYM archive 2\nPBC=ON\n"
+SAFE_POTCAR_SYMBOL = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 LASP_ARTIFACT_ROLES = frozenset(
     {
         "ssw-generated-structure",
@@ -99,6 +115,24 @@ _LASP_PARAMETERS = {
     "preserve_historical_order",
     "lasp_version",
     "mpi_processes",
+}
+_MERGE_PARAMETERS = {
+    "operation",
+    "output_subdir",
+    "direct_source_group_id",
+    "lasp_source_group_id",
+    "matcher_ltol",
+    "matcher_stol",
+    "matcher_angle_tol_deg",
+    "minimum_distance_angstrom",
+    "max_structures",
+}
+_LASP_INPUT_PARAMETERS = {
+    "operation",
+    "output_subdir",
+    "input_format",
+    "input_index",
+    "minimum_cell_length_angstrom",
 }
 
 
@@ -212,6 +246,76 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return "sha256:" + digest.hexdigest()
+
+
+def _pseudopotential_reference(path: Path) -> Dict[str, Any]:
+    if not _ordinary_file(path) or path.stat().st_size > MAX_JSON_BYTES:
+        raise ValueError("pseudopotential reference must be an ordinary JSON file")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, Mapping):
+        raise ValueError("pseudopotential reference must contain an object")
+    allowed = {
+        "schema_version",
+        "reference_id",
+        "source_env",
+        "license_acknowledged",
+        "functional",
+        "symbols",
+        "expected_component_sha256",
+        "expected_combined_sha256",
+    }
+    if set(value) - allowed:
+        raise ValueError("pseudopotential reference contains unsupported fields")
+    if value.get("schema_version") != 1 or value.get("source_env") != "PMG_VASP_PSP_DIR":
+        raise ValueError(
+            "pseudopotential reference requires schema_version=1 and PMG_VASP_PSP_DIR"
+        )
+    if value.get("license_acknowledged") is not True:
+        raise ValueError("pseudopotential license acknowledgement is required")
+    reference_id = value.get("reference_id")
+    if not _portable_source_id(reference_id):
+        raise ValueError("pseudopotential reference_id must be portable")
+    functional = value.get("functional")
+    if not _plain_string(functional):
+        raise ValueError("pseudopotential functional must be explicit")
+    raw_symbols = value.get("symbols")
+    if not isinstance(raw_symbols, Mapping) or not raw_symbols:
+        raise ValueError("pseudopotential symbols must be an explicit mapping")
+    symbols: Dict[str, str] = {}
+    for element, symbol in raw_symbols.items():
+        if (
+            not isinstance(element, str)
+            or re.fullmatch(r"[A-Z][a-z]?", element) is None
+            or not isinstance(symbol, str)
+            or SAFE_POTCAR_SYMBOL.fullmatch(symbol) is None
+        ):
+            raise ValueError("pseudopotential symbols mapping is invalid")
+        symbols[element] = symbol
+    raw_components = value.get("expected_component_sha256")
+    if not isinstance(raw_components, Mapping) or set(raw_components) != set(symbols.values()):
+        raise ValueError(
+            "expected_component_sha256 must cover every selected POTCAR symbol exactly"
+        )
+    components: Dict[str, str] = {}
+    for symbol, digest in raw_components.items():
+        if (
+            not isinstance(symbol, str)
+            or SAFE_POTCAR_SYMBOL.fullmatch(symbol) is None
+            or not isinstance(digest, str)
+            or FINGERPRINT.fullmatch(digest) is None
+        ):
+            raise ValueError("expected POTCAR component fingerprints are invalid")
+        components[symbol] = digest
+    combined = value.get("expected_combined_sha256")
+    if not isinstance(combined, str) or FINGERPRINT.fullmatch(combined) is None:
+        raise ValueError("expected_combined_sha256 must be a complete fingerprint")
+    return {
+        "reference_id": reference_id,
+        "functional": functional,
+        "symbols": symbols,
+        "expected_component_sha256": components,
+        "expected_combined_sha256": combined,
+    }
 
 
 def _lasp_structure_id(source_id: str, role: str, frame_index: int, digest: str) -> str:
@@ -329,6 +433,10 @@ class Adapter:
         operation = _operation(context)
         if operation == DIRECT_OPERATION:
             return self._validate_direct(context)
+        if operation == MERGE_OPERATION:
+            return self._validate_merge(context)
+        if operation == LASP_INPUT_OPERATION:
+            return self._validate_lasp_input(context)
         if operation in LASP_OPERATIONS:
             return self._validate_lasp(context)
         return [
@@ -343,6 +451,10 @@ class Adapter:
         operation = _operation(context)
         if operation == DIRECT_OPERATION:
             return self._plan_direct(context)
+        if operation == MERGE_OPERATION:
+            return self._plan_merge(context)
+        if operation == LASP_INPUT_OPERATION:
+            return self._plan_lasp_input(context)
         if operation in LASP_OPERATIONS:
             return self._plan_lasp(context)
         return _blocked(self.validate(context))
@@ -672,6 +784,639 @@ class Adapter:
                 "seed_control": "not-exposed-by-bundled-maml-interface",
                 "selection_implementation": "maml.sampling.direct.DIRECTSampler",
                 "fresh_output_directory_required": True,
+            },
+            "diagnostics": diagnostics,
+        }
+
+    def _validate_lasp_input(self, context: Any) -> List[Dict[str, str]]:
+        diagnostics: List[Dict[str, str]] = []
+        if not isinstance(context, Mapping):
+            return [
+                _diagnostic("ERROR", "context.mapping_required", "context must be a mapping")
+            ]
+        project_root = _resolve(context.get("project_root"), Path.cwd())
+        if project_root is None or not project_root.is_dir():
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR", "path.project_root", "project_root must name an existing directory"
+                )
+            )
+            project_root = Path.cwd().resolve()
+        attempt_dir = _resolve(context.get("attempt_dir"), project_root)
+        if attempt_dir is None or not _is_within(attempt_dir, project_root):
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR", "path.attempt_dir", "attempt_dir must stay inside project_root"
+                )
+            )
+            attempt_dir = project_root / ".mlipflow-invalid-attempt"
+        if context.get("backend", "local") != "local":
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR", "backend.local_only", "lasp-input-prepare is local-only"
+                )
+            )
+
+        inputs = _mapping(context.get("inputs"))
+        parameters = _mapping(context.get("parameters"))
+        resources = _mapping(context.get("resources"))
+        unknown_inputs = sorted(
+            set(inputs)
+            - {
+                "input_structure",
+                "pseudopotential_reference",
+                "result_manifest",
+            }
+        )
+        unknown_parameters = sorted(set(parameters) - _LASP_INPUT_PARAMETERS)
+        unknown_resources = sorted(set(resources) - {"python_executable"})
+        for code, values in (
+            ("input.unknown", unknown_inputs),
+            ("parameter.unknown", unknown_parameters),
+            ("resource.unknown", unknown_resources),
+        ):
+            if values:
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR", code, "unsupported value(s): %s" % ", ".join(values)
+                    )
+                )
+
+        source = _resolve_nonsymlink(inputs.get("input_structure"), project_root)
+        if (
+            not _ordinary_file(source)
+            or source is None
+            or not _is_within(source, project_root)
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "path.input_structure",
+                    "input_structure must be an ordinary file inside project_root",
+                )
+            )
+        pseudopotential = inputs.get("pseudopotential_reference")
+        if pseudopotential is not None:
+            reference_path = _resolve_nonsymlink(pseudopotential, project_root)
+            if (
+                not _ordinary_file(reference_path)
+                or reference_path is None
+                or not _is_within(reference_path, project_root)
+            ):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "path.pseudopotential_reference",
+                        "pseudopotential_reference must be an ordinary project file",
+                    )
+                )
+            else:
+                try:
+                    _pseudopotential_reference(reference_path)
+                except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+                    diagnostics.append(
+                        _diagnostic(
+                            "ERROR",
+                            "input.pseudopotential_reference",
+                            str(exc),
+                        )
+                    )
+        if not _ordinary_file(BUNDLED_LASP_INPUT_WRAPPER):
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "path.lasp_input_wrapper",
+                    "bundled LASP input converter is missing",
+                )
+            )
+        python_executable = _explicit_executable(
+            resources.get("python_executable"), project_root
+        )
+        if python_executable is None:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "resource.python_executable",
+                    "python_executable must be an explicit ordinary executable",
+                )
+            )
+        output_subdir = parameters.get("output_subdir", "lasp-input")
+        if not _safe_subdirectory(output_subdir):
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR", "path.output_subdir", "output_subdir must be a safe relative path"
+                )
+            )
+            output_dir = attempt_dir / "lasp-input"
+        else:
+            output_dir = (attempt_dir / str(output_subdir)).resolve()
+        if not _is_within(output_dir, attempt_dir) or output_dir.exists() or output_dir.is_symlink():
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR", "path.output_exists", "LASP input conversion requires a fresh output"
+                )
+            )
+        for name in ("input_format", "input_index"):
+            value = parameters.get(name)
+            if value is not None and not _plain_string(str(value)):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR", f"parameter.{name}", f"{name} must be a plain string"
+                    )
+                )
+        minimum = parameters.get("minimum_cell_length_angstrom")
+        if minimum is not None and not _positive_number(minimum):
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "parameter.minimum_cell_length_angstrom",
+                    "minimum_cell_length_angstrom must be finite and positive",
+                )
+            )
+        return diagnostics
+
+    def _plan_lasp_input(self, context: Any) -> Dict[str, Any]:
+        diagnostics = self._validate_lasp_input(context)
+        if _has_errors(diagnostics):
+            return _blocked(diagnostics)
+        project_root = _resolve(context["project_root"], Path.cwd())
+        attempt_dir = _resolve(context["attempt_dir"], project_root)
+        inputs = _mapping(context["inputs"])
+        parameters = _mapping(context["parameters"])
+        resources = _mapping(context["resources"])
+        assert project_root is not None and attempt_dir is not None
+        source = _resolve_nonsymlink(inputs["input_structure"], project_root)
+        python_executable = _explicit_executable(
+            resources["python_executable"], project_root
+        )
+        assert source is not None and python_executable is not None
+        output_dir = (
+            attempt_dir / str(parameters.get("output_subdir", "lasp-input"))
+        ).resolve()
+        wrapper = BUNDLED_LASP_INPUT_WRAPPER.resolve()
+        argv = [
+            str(python_executable),
+            str(wrapper),
+            "--input-structure",
+            str(source),
+            "--output-dir",
+            str(output_dir),
+            "--input-index",
+            str(parameters.get("input_index", "-1")),
+        ]
+        if parameters.get("input_format") is not None:
+            argv.extend(["--input-format", str(parameters["input_format"])])
+        if parameters.get("minimum_cell_length_angstrom") is not None:
+            argv.extend(
+                [
+                    "--minimum-cell-length-angstrom",
+                    str(parameters["minimum_cell_length_angstrom"]),
+                ]
+            )
+        reference_path = _resolve_nonsymlink(
+            inputs.get("pseudopotential_reference"), project_root
+        )
+        reference = None
+        if reference_path is not None:
+            reference = _pseudopotential_reference(reference_path)
+            argv.extend(["--pseudopotential-reference", str(reference_path)])
+        identity = {
+            "source_sha256": _sha256(source),
+            "source_basename": source.name,
+            "input_format": parameters.get("input_format"),
+            "input_index": str(parameters.get("input_index", "-1")),
+            "minimum_cell_length_angstrom": parameters.get(
+                "minimum_cell_length_angstrom"
+            ),
+            "pseudopotential_reference_sha256": (
+                _sha256(reference_path) if reference_path is not None else None
+            ),
+            "pseudopotential": reference,
+        }
+        return {
+            "plugin_id": PLUGIN_ID,
+            "operation": LASP_INPUT_OPERATION,
+            "status": "READY",
+            "executable": True,
+            "argv": argv,
+            "cwd": str(attempt_dir),
+            "shell": False,
+            "expected_outputs": [str(output_dir / "lasp-input-manifest.json")],
+            "output_dir": str(output_dir),
+            "conversion_identity": identity,
+            "approval_summary": {
+                "expensive": False,
+                "submits_jobs": False,
+                "materializes_licensed_potcar": reference is not None,
+                "potcar_collectable": False if reference is not None else None,
+                **identity,
+            },
+            "input_fingerprints": {
+                "source_structure": identity["source_sha256"],
+                "conversion_wrapper": _sha256(wrapper),
+                "python_executable": _sha256(python_executable),
+                **(
+                    {"pseudopotential_reference": _sha256(reference_path)}
+                    if reference_path is not None
+                    else {}
+                ),
+            },
+            "diagnostics": diagnostics,
+        }
+
+    def _check_lasp_input(self, context: Any) -> Dict[str, Any]:
+        execution = _mapping(context.get("execution")) if isinstance(context, Mapping) else {}
+        if execution.get("returncode") not in (None, 0):
+            return {
+                "plugin_id": PLUGIN_ID,
+                "operation": LASP_INPUT_OPERATION,
+                "status": "FAIL",
+                "diagnostics": [
+                    _diagnostic(
+                        "ERROR", "execution.nonzero", "LASP input conversion returned nonzero"
+                    )
+                ],
+            }
+        project_root = _resolve(context.get("project_root"), Path.cwd()) or Path.cwd()
+        plan = _mapping(execution.get("plan"))
+        expected = plan.get("expected_outputs")
+        path = (
+            _unresolved(expected[0], project_root)
+            if isinstance(expected, list) and len(expected) == 1
+            else _unresolved(_mapping(context.get("inputs")).get("result_manifest"), project_root)
+        )
+        diagnostics: List[Dict[str, str]] = []
+        if not _ordinary_file(path) or path is None or path.stat().st_size > MAX_JSON_BYTES:
+            diagnostics.append(
+                _diagnostic("ERROR", "result.manifest", "LASP input manifest is missing")
+            )
+            value: Dict[str, Any] = {}
+        else:
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                value = dict(loaded) if isinstance(loaded, Mapping) else {}
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                value = {}
+            if not value:
+                diagnostics.append(
+                    _diagnostic("ERROR", "result.manifest", "LASP input manifest is invalid")
+                )
+        identity = _mapping(plan.get("conversion_identity"))
+        if value:
+            source = _mapping(value.get("source"))
+            for key, expected_value in (
+                ("basename", identity.get("source_basename")),
+                ("sha256", identity.get("source_sha256")),
+                ("input_format", identity.get("input_format")),
+                ("input_index", identity.get("input_index")),
+            ):
+                if source.get(key) != expected_value:
+                    diagnostics.append(
+                        _diagnostic("ERROR", f"result.source_{key}", f"source {key} differs")
+                    )
+            structure = _mapping(value.get("structure"))
+            lengths = structure.get("cell_lengths_A")
+            minimum = identity.get("minimum_cell_length_angstrom")
+            if (
+                value.get("schema_version") != 1
+                or value.get("plugin_id") != PLUGIN_ID
+                or value.get("operation") != LASP_INPUT_OPERATION
+                or not _positive_int(structure.get("atom_count"))
+                or not isinstance(lengths, list)
+                or len(lengths) != 3
+                or any(not _positive_number(item) for item in lengths)
+                or (
+                    minimum is not None
+                    and any(float(item) <= float(minimum) for item in lengths)
+                )
+            ):
+                diagnostics.append(
+                    _diagnostic("ERROR", "result.structure", "converted structure metadata is invalid")
+                )
+            output = _mapping(value.get("output"))
+            arc = path.parent / str(output.get("path", "")) if path is not None else None
+            if (
+                output.get("path") != "input.arc"
+                or not _ordinary_file(arc)
+                or arc is None
+                or output.get("sha256") != _sha256(arc)
+                or output.get("size_bytes") != arc.stat().st_size
+            ):
+                diagnostics.append(
+                    _diagnostic("ERROR", "result.arc", "converted ARC identity is invalid")
+                )
+            reference = _mapping(identity.get("pseudopotential"))
+            if reference:
+                potcar = _mapping(value.get("potcar"))
+                potcar_output = _mapping(potcar.get("output"))
+                potcar_path = (
+                    path.parent / str(potcar_output.get("path", ""))
+                    if path is not None
+                    else None
+                )
+                elements = potcar.get("elements")
+                symbols = potcar.get("symbols")
+                expected_symbols = reference.get("symbols")
+                expected_components = reference.get("expected_component_sha256")
+                components = potcar.get("components")
+                valid_components = (
+                    isinstance(symbols, list)
+                    and isinstance(components, list)
+                    and isinstance(expected_components, Mapping)
+                    and len(components) == len(symbols)
+                    and all(
+                        isinstance(component, Mapping)
+                        and component.get("symbol") == symbol
+                        and component.get("sha256") == expected_components.get(symbol)
+                        for component, symbol in zip(components, symbols)
+                    )
+                )
+                valid_symbols = (
+                    isinstance(elements, list)
+                    and bool(elements)
+                    and isinstance(symbols, list)
+                    and isinstance(expected_symbols, Mapping)
+                    and symbols == [expected_symbols.get(element) for element in elements]
+                )
+                if (
+                    value.get("pseudopotential_reference_sha256")
+                    != identity.get("pseudopotential_reference_sha256")
+                    or potcar.get("reference_id") != reference.get("reference_id")
+                    or potcar.get("source_env") != "PMG_VASP_PSP_DIR"
+                    or potcar.get("configuration_source")
+                    not in {"environment", "pymatgen-settings"}
+                    or potcar.get("functional") != reference.get("functional")
+                    or potcar.get("portable_artifact") is not False
+                    or not valid_symbols
+                    or not valid_components
+                    or potcar.get("combined_sha256")
+                    != reference.get("expected_combined_sha256")
+                    or potcar_output.get("path") != "POTCAR"
+                    or potcar_output.get("collectable") is not False
+                    or potcar_output.get("sha256") != potcar.get("combined_sha256")
+                    or not _positive_int(potcar_output.get("size_bytes"))
+                    or not _ordinary_file(potcar_path)
+                    or potcar_path is None
+                    or potcar_path.stat().st_size > MAX_POTCAR_BYTES
+                    or potcar_path.stat().st_size != potcar_output.get("size_bytes")
+                    or _sha256(potcar_path) != potcar_output.get("sha256")
+                ):
+                    diagnostics.append(
+                        _diagnostic(
+                            "ERROR",
+                            "result.potcar",
+                            "runtime-only POTCAR identity differs from the approved reference",
+                        )
+                    )
+            elif (
+                value.get("pseudopotential_reference_sha256") is not None
+                or value.get("potcar") is not None
+            ):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "result.potcar_unapproved",
+                        "manifest contains an unapproved POTCAR record",
+                    )
+                )
+        return {
+            "plugin_id": PLUGIN_ID,
+            "operation": LASP_INPUT_OPERATION,
+            "status": "FAIL" if diagnostics else "OK",
+            "result_file": str(path) if path is not None else None,
+            "diagnostics": diagnostics,
+        }
+
+    def _collect_lasp_input(self, context: Any) -> Dict[str, Any]:
+        checked = self._check_lasp_input(context)
+        if checked["status"] != "OK":
+            return {**checked, "artifacts": [], "metrics": {}}
+        manifest = Path(str(checked["result_file"]))
+        value = json.loads(manifest.read_text(encoding="utf-8"))
+        return {
+            **checked,
+            "artifacts": [
+                {
+                    "role": "lasp-input-manifest",
+                    "path": str(manifest),
+                    "media_type": "application/json",
+                },
+                {
+                    "role": "lasp-input-structure",
+                    "path": str(manifest.parent / "input.arc"),
+                    "media_type": "chemical/x-biosym-archive",
+                },
+            ],
+            "metrics": {
+                "atom_count": _mapping(value.get("structure")).get("atom_count", 0)
+            },
+        }
+
+    def _validate_merge(self, context: Any) -> List[Dict[str, str]]:
+        diagnostics: List[Dict[str, str]] = []
+        if not isinstance(context, Mapping):
+            return [_diagnostic("ERROR", "context.mapping_required", "context must be a mapping")]
+        project_root = _resolve(context.get("project_root"), Path.cwd())
+        if project_root is None or not project_root.is_dir():
+            diagnostics.append(
+                _diagnostic("ERROR", "path.project_root", "project_root must name an existing directory")
+            )
+            project_root = Path.cwd().resolve()
+        attempt_dir = _resolve(context.get("attempt_dir"), project_root)
+        if attempt_dir is None or not _is_within(attempt_dir, project_root):
+            diagnostics.append(
+                _diagnostic("ERROR", "path.attempt_dir", "attempt_dir must stay inside project_root")
+            )
+            attempt_dir = project_root / ".mlipflow-invalid-attempt"
+        if context.get("backend", "local") != "local":
+            diagnostics.append(
+                _diagnostic("ERROR", "backend.local_only", "merge-structures is local-only")
+            )
+
+        inputs = _mapping(context.get("inputs"))
+        parameters = _mapping(context.get("parameters"))
+        resources = _mapping(context.get("resources"))
+        if not isinstance(context.get("inputs", {}), Mapping):
+            diagnostics.append(_diagnostic("ERROR", "inputs.mapping_required", "inputs must be a mapping"))
+        if not isinstance(context.get("parameters", {}), Mapping):
+            diagnostics.append(
+                _diagnostic("ERROR", "parameters.mapping_required", "parameters must be a mapping")
+            )
+        if not isinstance(context.get("resources", {}), Mapping):
+            diagnostics.append(
+                _diagnostic("ERROR", "resources.mapping_required", "resources must be a mapping")
+            )
+        unknown_inputs = sorted(
+            set(inputs)
+            - {
+                "direct_manifest",
+                "lasp_selected_manifest",
+                "lasp_selected_archive",
+                "result_manifest",
+            }
+        )
+        if unknown_inputs:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR", "input.unknown", "unsupported merge input(s): " + ", ".join(unknown_inputs)
+                )
+            )
+        for name in ("direct_manifest", "lasp_selected_manifest", "lasp_selected_archive"):
+            path = _resolve_nonsymlink(inputs.get(name), project_root)
+            if not _ordinary_file(path) or path is None or not _is_within(path, project_root):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR", f"path.{name}", f"{name} must be an ordinary project file"
+                    )
+                )
+        unknown_parameters = sorted(set(parameters) - _MERGE_PARAMETERS)
+        if unknown_parameters:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "parameter.unknown",
+                    "unsupported merge parameter(s): " + ", ".join(unknown_parameters),
+                )
+            )
+        output_subdir = parameters.get("output_subdir", "merged-structures")
+        if not _safe_subdirectory(output_subdir):
+            diagnostics.append(
+                _diagnostic("ERROR", "path.output_subdir", "output_subdir must be a safe relative path")
+            )
+        else:
+            output_dir = (attempt_dir / str(output_subdir)).resolve()
+            if not _is_within(output_dir, attempt_dir):
+                diagnostics.append(
+                    _diagnostic("ERROR", "path.output_escape", "merge output must stay inside attempt_dir")
+                )
+            elif output_dir.exists():
+                diagnostics.append(
+                    _diagnostic("ERROR", "path.output_exists", "merge-structures requires fresh output")
+                )
+        for name in ("direct_source_group_id", "lasp_source_group_id"):
+            value = parameters.get(name)
+            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value):
+                diagnostics.append(
+                    _diagnostic("ERROR", f"parameter.{name}", f"{name} must be a portable ID")
+                )
+        numeric_ranges = {
+            "matcher_ltol": (0.0, 1.0),
+            "matcher_stol": (0.0, 1.0),
+            "matcher_angle_tol_deg": (0.0, 30.0),
+            "minimum_distance_angstrom": (0.0, 5.0),
+        }
+        for name, (lower, upper) in numeric_ranges.items():
+            value = parameters.get(name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not lower < float(value) <= upper
+            ):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR", f"parameter.{name}", f"{name} must be in ({lower}, {upper}]"
+                    )
+                )
+        max_structures = parameters.get("max_structures")
+        if not _positive_int(max_structures) or int(max_structures) > 10000:
+            diagnostics.append(
+                _diagnostic("ERROR", "parameter.max_structures", "max_structures must be 1..10000")
+            )
+        if set(resources) != {"python_executable"}:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "resource.python_executable",
+                    "merge resources must contain only an explicit python_executable",
+                )
+            )
+        elif _explicit_executable(resources.get("python_executable"), project_root) is None:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "resource.python_executable",
+                    "python_executable must be an absolute non-symlink executable file",
+                )
+            )
+        if not _ordinary_file(BUNDLED_MERGE_WRAPPER) or BUNDLED_MERGE_WRAPPER.is_symlink():
+            diagnostics.append(
+                _diagnostic("ERROR", "path.bundled_merge_wrapper", "structure_merge.py is missing")
+            )
+        return diagnostics
+
+    def _plan_merge(self, context: Any) -> Dict[str, Any]:
+        diagnostics = self._validate_merge(context)
+        if _has_errors(diagnostics):
+            return _blocked(diagnostics)
+        project_root = _resolve(context["project_root"], Path.cwd())
+        attempt_dir = _resolve(context["attempt_dir"], project_root)
+        inputs = _mapping(context["inputs"])
+        parameters = _mapping(context["parameters"])
+        resources = _mapping(context["resources"])
+        assert project_root is not None and attempt_dir is not None
+        direct = _resolve_nonsymlink(inputs["direct_manifest"], project_root)
+        lasp_manifest = _resolve_nonsymlink(inputs["lasp_selected_manifest"], project_root)
+        lasp_archive = _resolve_nonsymlink(inputs["lasp_selected_archive"], project_root)
+        python_executable = _explicit_executable(resources["python_executable"], project_root)
+        assert direct is not None and lasp_manifest is not None and lasp_archive is not None
+        assert python_executable is not None
+        output_dir = (attempt_dir / str(parameters.get("output_subdir", "merged-structures"))).resolve()
+        script = BUNDLED_MERGE_WRAPPER.resolve()
+        argv = [
+            str(python_executable),
+            str(script),
+            "--direct-manifest",
+            str(direct),
+            "--lasp-selected-manifest",
+            str(lasp_manifest),
+            "--lasp-selected-archive",
+            str(lasp_archive),
+            "--output-dir",
+            str(output_dir),
+            "--direct-source-group-id",
+            str(parameters["direct_source_group_id"]),
+            "--lasp-source-group-id",
+            str(parameters["lasp_source_group_id"]),
+            "--matcher-ltol",
+            str(parameters["matcher_ltol"]),
+            "--matcher-stol",
+            str(parameters["matcher_stol"]),
+            "--matcher-angle-tol-deg",
+            str(parameters["matcher_angle_tol_deg"]),
+            "--minimum-distance-angstrom",
+            str(parameters["minimum_distance_angstrom"]),
+            "--max-structures",
+            str(parameters["max_structures"]),
+        ]
+        return {
+            "plugin_id": PLUGIN_ID,
+            "operation": MERGE_OPERATION,
+            "status": "READY",
+            "executable": True,
+            "argv": argv,
+            "cwd": str(attempt_dir),
+            "shell": False,
+            "expected_outputs": [str(output_dir / "structures.json")],
+            "output_dir": str(output_dir),
+            "approval_summary": {
+                "expensive": False,
+                "submits_jobs": False,
+                "input_structure_bound": parameters["max_structures"],
+                "near_duplicate_matcher": {
+                    "ltol": parameters["matcher_ltol"],
+                    "stol": parameters["matcher_stol"],
+                    "angle_tol_deg": parameters["matcher_angle_tol_deg"],
+                    "scale": False,
+                },
+                "minimum_distance_angstrom": parameters["minimum_distance_angstrom"],
+            },
+            "input_fingerprints": {
+                "direct_manifest": _sha256(direct),
+                "lasp_selected_manifest": _sha256(lasp_manifest),
+                "lasp_selected_archive": _sha256(lasp_archive),
+                "merge_wrapper": _sha256(script),
+                "python_executable": _sha256(python_executable),
             },
             "diagnostics": diagnostics,
         }
@@ -1417,6 +2162,213 @@ class Adapter:
                 "selected_structure_count": len(rows),
                 "unique_formula_count": len(formulas),
                 "source_file_count": len(sources),
+            },
+            "diagnostics": diagnostics,
+        }
+
+    def _read_merge_manifest(
+        self, context: Any
+    ) -> Tuple[Optional[Path], Dict[str, Any], List[Dict[str, str]], List[Dict[str, Any]]]:
+        path = self._manifest_path(context)
+        diagnostics: List[Dict[str, str]] = []
+        if path is None:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "result.manifest_explicit_required",
+                    "merge result manifest must come from the execution plan or result_manifest",
+                )
+            )
+            return None, {}, diagnostics, []
+        if path.is_symlink():
+            diagnostics.append(
+                _diagnostic("ERROR", "result.manifest_symlink", "merge manifest must not be a symlink")
+            )
+            return path, {}, diagnostics, []
+        if not path.is_file():
+            diagnostics.append(
+                _diagnostic("INFO", "result.manifest_missing", "merge structures.json does not exist yet")
+            )
+            return path, {}, diagnostics, []
+        manifest = self._read_json_object(path, "merge_manifest", diagnostics)
+        if manifest is None:
+            return path, {}, diagnostics, []
+        if (
+            manifest.get("schema_version") != 1
+            or manifest.get("operation") != MERGE_OPERATION
+            or manifest.get("status") != "OK"
+        ):
+            diagnostics.append(
+                _diagnostic("ERROR", "result.merge_contract", "merge manifest identity/status is invalid")
+            )
+        set_id = manifest.get("structure_set_id")
+        if not isinstance(set_id, str) or not re.fullmatch(r"structure-set-[0-9a-f]{32}", set_id):
+            diagnostics.append(
+                _diagnostic("ERROR", "result.structure_set_id", "structure_set_id is invalid")
+            )
+        records = manifest.get("structures")
+        if not isinstance(records, list) or not records:
+            diagnostics.append(
+                _diagnostic("ERROR", "result.structures", "merge manifest must contain structures")
+            )
+            records = []
+        counts = _mapping(manifest.get("counts"))
+        duplicates = manifest.get("duplicates")
+        rejected = manifest.get("rejected")
+        if not isinstance(duplicates, list) or not isinstance(rejected, list):
+            diagnostics.append(
+                _diagnostic("ERROR", "result.lineage_lists", "duplicates/rejected must be lists")
+            )
+            duplicates = []
+            rejected = []
+        expected_input = len(records) + len(duplicates) + len(rejected)
+        if (
+            counts.get("input") != expected_input
+            or counts.get("unique") != len(records)
+            or counts.get("rejected_bad") != len(rejected)
+            or counts.get("exact_duplicates")
+            != sum(isinstance(item, Mapping) and item.get("duplicate_kind") == "exact" for item in duplicates)
+            or counts.get("near_duplicates")
+            != sum(isinstance(item, Mapping) and item.get("duplicate_kind") == "near" for item in duplicates)
+        ):
+            diagnostics.append(
+                _diagnostic("ERROR", "result.counts", "merge counts do not match manifest records")
+            )
+        input_artifacts = _mapping(manifest.get("input_artifacts"))
+        inputs = _mapping(context.get("inputs")) if isinstance(context, Mapping) else {}
+        project_root = _resolve(context.get("project_root"), Path.cwd()) if isinstance(context, Mapping) else None
+        if project_root is not None:
+            for key in ("direct_manifest", "lasp_selected_manifest", "lasp_selected_archive"):
+                source = _resolve_nonsymlink(inputs.get(key), project_root)
+                if source is None or not _ordinary_file(source) or input_artifacts.get(key) != _sha256(source):
+                    diagnostics.append(
+                        _diagnostic("ERROR", f"result.input_{key}", f"merge input {key} changed")
+                    )
+        seen_ids: set[str] = set()
+        seen_paths: set[str] = set()
+        for index, record in enumerate(records, 1):
+            prefix = f"structure {index}"
+            if not isinstance(record, Mapping):
+                diagnostics.append(_diagnostic("ERROR", "result.structure_record", f"{prefix} is invalid"))
+                continue
+            structure_id = record.get("id")
+            relative = record.get("path")
+            fingerprint = record.get("fingerprint")
+            methods = record.get("source_sampling_methods")
+            sources = record.get("source_records")
+            if (
+                not isinstance(structure_id, str)
+                or not re.fullmatch(r"structure-[0-9a-f]{24}", structure_id)
+                or structure_id in seen_ids
+            ):
+                diagnostics.append(_diagnostic("ERROR", "result.structure_id", f"{prefix} id is invalid"))
+            else:
+                seen_ids.add(structure_id)
+            if (
+                not isinstance(relative, str)
+                or Path(relative).is_absolute()
+                or ".." in Path(relative).parts
+                or relative in seen_paths
+            ):
+                diagnostics.append(_diagnostic("ERROR", "result.structure_path", f"{prefix} path is invalid"))
+                continue
+            seen_paths.add(relative)
+            output = (path.parent / relative).absolute()
+            if (
+                not _is_within(output, path.parent.resolve())
+                or output.is_symlink()
+                or not output.is_file()
+                or output.stat().st_size < 1
+                or output.stat().st_size > MAX_ARTIFACT_BYTES
+                or not isinstance(fingerprint, str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint)
+                or _sha256(output) != fingerprint
+            ):
+                diagnostics.append(
+                    _diagnostic("ERROR", "result.structure_fingerprint", f"{prefix} file changed")
+                )
+            if (
+                not isinstance(methods, list)
+                or not methods
+                or any(method not in {"DIRECT", "LASP_SSW"} for method in methods)
+                or not isinstance(sources, list)
+                or not sources
+                or sorted({item.get("sampling_method") for item in sources if isinstance(item, Mapping)})
+                != methods
+            ):
+                diagnostics.append(
+                    _diagnostic("ERROR", "result.source_provenance", f"{prefix} source provenance is invalid")
+                )
+        if (path.parent / "INCOMPLETE.json").exists():
+            diagnostics.append(
+                _diagnostic("ERROR", "result.incomplete_marker", "merge output remains incomplete")
+            )
+        return path, manifest, diagnostics, [dict(item) for item in records if isinstance(item, Mapping)]
+
+    def _check_merge(self, context: Any) -> Dict[str, Any]:
+        execution = _mapping(context.get("execution")) if isinstance(context, Mapping) else {}
+        returncode = execution.get("returncode")
+        if returncode is not None and returncode != 0:
+            return {
+                "plugin_id": PLUGIN_ID,
+                "operation": MERGE_OPERATION,
+                "status": "FAIL",
+                "diagnostics": [
+                    _diagnostic("ERROR", "execution.nonzero", f"merge-structures returned {returncode}")
+                ],
+            }
+        path, manifest, diagnostics, records = self._read_merge_manifest(context)
+        if path is not None and not path.exists() and not _has_errors(diagnostics):
+            return {"plugin_id": PLUGIN_ID, "operation": MERGE_OPERATION, "status": "WAIT", "diagnostics": diagnostics}
+        if _has_errors(diagnostics):
+            return {"plugin_id": PLUGIN_ID, "operation": MERGE_OPERATION, "status": "FAIL", "diagnostics": diagnostics}
+        return {
+            "plugin_id": PLUGIN_ID,
+            "operation": MERGE_OPERATION,
+            "status": "OK",
+            "result_file": str(path),
+            "structure_set_id": manifest.get("structure_set_id"),
+            "counts": manifest.get("counts", {}),
+            "structure_count": len(records),
+            "diagnostics": diagnostics,
+        }
+
+    def _collect_merge(self, context: Any) -> Dict[str, Any]:
+        checked = self._check_merge(context)
+        if checked.get("status") != "OK":
+            return {
+                "plugin_id": PLUGIN_ID,
+                "operation": MERGE_OPERATION,
+                "status": checked.get("status", "FAIL"),
+                "artifacts": [],
+                "metrics": {},
+                "diagnostics": checked.get("diagnostics", []),
+            }
+        manifest, value, diagnostics, records = self._read_merge_manifest(context)
+        assert manifest is not None
+        artifacts: List[Dict[str, str]] = [
+            {"role": "structures-manifest", "path": str(manifest), "media_type": "application/json"}
+        ]
+        for record in records:
+            artifacts.append(
+                {
+                    "role": "merged-structure",
+                    "path": str((manifest.parent / record["path"]).resolve()),
+                    "media_type": "chemical/x-vasp-poscar",
+                }
+            )
+        counts = _mapping(value.get("counts"))
+        return {
+            "plugin_id": PLUGIN_ID,
+            "operation": MERGE_OPERATION,
+            "status": "OK",
+            "artifacts": artifacts,
+            "metrics": {
+                "input_structure_count": counts.get("input", 0),
+                "unique_structure_count": counts.get("unique", 0),
+                "exact_duplicate_count": counts.get("exact_duplicates", 0),
+                "near_duplicate_count": counts.get("near_duplicates", 0),
+                "rejected_bad_structure_count": counts.get("rejected_bad", 0),
             },
             "diagnostics": diagnostics,
         }
@@ -2618,6 +3570,10 @@ class Adapter:
         operation = _operation(context)
         if operation == DIRECT_OPERATION:
             return self._check_direct(context)
+        if operation == MERGE_OPERATION:
+            return self._check_merge(context)
+        if operation == LASP_INPUT_OPERATION:
+            return self._check_lasp_input(context)
         if operation not in LASP_OPERATIONS:
             return {
                 "plugin_id": PLUGIN_ID,
@@ -2665,6 +3621,10 @@ class Adapter:
         operation = _operation(context)
         if operation == DIRECT_OPERATION:
             return self._collect_direct(context)
+        if operation == MERGE_OPERATION:
+            return self._collect_merge(context)
+        if operation == LASP_INPUT_OPERATION:
+            return self._collect_lasp_input(context)
         checked = self.check(context)
         if checked.get("status") != "OK":
             return {

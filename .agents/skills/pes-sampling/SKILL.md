@@ -1,6 +1,6 @@
 ---
 name: pes-sampling
-description: Supervise MLIPFlow potential-energy-surface sampling with local MAML/DIRECT representative-structure selection, local LASP/SSW execution or historical ARC normalization, and reviewed SSH-SLURM LASP execution. Use when planning, running, retrying, or verifying the pes-sampling plugin's direct-select, lasp-ssw-execute, or lasp-ssw-normalize-replay operation.
+description: Supervise MLIPFlow potential-energy-surface sampling with local MAML/DIRECT representative-structure selection, deterministic ASE-to-LASP input conversion and DIRECT+LASP structure merge, local LASP/SSW execution or historical ARC normalization, and reviewed SSH-SLURM LASP execution. Use when planning, running, retrying, or verifying the pes-sampling plugin's direct-select, lasp-input-prepare, merge-structures, lasp-ssw-execute, or lasp-ssw-normalize-replay operation.
 ---
 
 # Potential-energy-surface sampling
@@ -12,6 +12,10 @@ SSW, or infer undocumented LASP inputs in this Skill.
 ## Choose exactly one operation
 
 - Use `direct-select` for local MAML/DIRECT representative-structure selection.
+- Use `lasp-input-prepare` locally to convert one explicit ASE-readable periodic frame
+  into a fingerprinted single-frame LASP `input.arc`.
+- Use `merge-structures` locally to normalize and deduplicate verified DIRECT and
+  scheduled-LASP selected outputs into one DFT-ready `structures.json`.
 - Use `lasp-ssw-execute` to run a user- or site-supplied LASP executable, locally or
   through MLIPFlow's `ssh-slurm` lifecycle.
 - Use `lasp-ssw-normalize-replay` to normalize and verify an existing LASP archive
@@ -63,6 +67,42 @@ diagnostics only.
 Use only the current manifest parameter names. Do not invent aliases for cluster count,
 threshold, input limits, or output directory.
 
+## `lasp-input-prepare`
+
+Use `backend: local`. Bind one existing project-scoped ASE-readable structure file and
+an explicit Python executable with ASE. Optionally declare the exact ASE reader format,
+but always select exactly one frame with `input_index`; use `-1` for the final MD frame.
+For sampling-cell handoff, set the reviewed strict
+`minimum_cell_length_angstrom` bound rather than assuming that an MD input remained the
+right size. The converter requires a full-rank 3D periodic cell and writes a fresh
+`input.arc` plus `lasp-input-manifest.json` with source/frame, geometry, and SHA-256
+identity. Pass that verified ARC artifact directly to `lasp-ssw-execute`; do not ask the
+user to copy, rename, or hand-write an ARC. This operation does not run LASP, MD, or DFT.
+
+For a reviewed `potential vasp` run, also bind the same portable licensed
+`pseudopotential_reference` contract used by `$dft-labeling`: explicit
+`PMG_VASP_PSP_DIR`, functional, element-to-symbol map, component hashes, combined hash,
+and license acknowledgement. The converter may materialize `POTCAR` only inside its
+fresh attempt and records `collectable: false`. Its checker verifies the approved
+component and combined hashes. Collection returns the manifest and `input.arc` but
+never `POTCAR`.
+
+## `merge-structures`
+
+Use `backend: local`. Bind the verified DIRECT `manifest.csv`, LASP
+`selected-structures.json`, and its exact `selected-structures.tar.gz`. Require explicit
+portable source-group IDs, `matcher_ltol`, `matcher_stol`,
+`matcher_angle_tol_deg`, `minimum_distance_angstrom`, and `max_structures`, plus an
+explicit Python executable with pymatgen and ASE. Do not guess scientific tolerances.
+
+The operation verifies archive membership and hashes, parses LASP ARC frames, rejects
+non-finite/non-positive-volume/too-close structures, preserves source lineage, writes
+normalized POSCARs, removes exact duplicates, then applies the explicitly reviewed
+pymatgen `StructureMatcher` tolerances with cell scaling disabled. It neither evaluates
+energies nor chooses which sampling source is scientifically better. Pass its verified
+`structures.json` directly to `$dft-labeling`; do not manually copy, rename, or rebuild
+the selected structures.
+
 ## Common LASP/SSW contract
 
 Require an explicit `lasp.in` that parses to `explore_type ssw` and integer
@@ -98,7 +138,10 @@ potential; this Skill is not LASP-NN-specific.
 - If `potential vasp` or the runtime would invoke VASP/DFT, disclose the explicit LASP
   settings, required auxiliary-file names, MPI/resources, and DFT call bound derivable
   from declared inputs. Obtain the separate DFT authorization required by repository
-  policy before submission. Do not infer a call count from undocumented behavior.
+  policy before submission. Do not infer a call count from undocumented behavior. In
+  scheduled mode, bind the verified upstream `lasp-input-manifest`; the adapter derives
+  its sibling runtime-only POTCAR, rechecks the exact hash, and stages it as sensitive.
+  Do not put POTCAR in `lasp_auxiliary_files` or ask the user for its attempt path.
 - Never read, display, package, or commit POTCAR content. Keep licensed material outside
   the repository and pass it only through the core input/staging contract.
 
@@ -132,7 +175,9 @@ with `shell: false`, and keeps an `INCOMPLETE.json` marker until normalization f
 ## Scheduled `lasp-ssw-execute`
 
 Use `backend: ssh-slurm`, a named `backend_profile`, project-scoped `input_structure`,
-`lasp_input`, and declared `lasp_auxiliary_files`. Resources must contain exactly the
+`lasp_input`, and declared `lasp_auxiliary_files`. For `potential vasp`, also require
+the exact verified upstream `lasp_input_manifest`; POTCAR is automatically staged from
+that manifest's attempt and remains absent from fetch and collect. Resources must contain exactly the
 abstract fields `cpus`, `gpus`, `memory`, and `walltime`. Scheduled LASP uses MPI
 execution semantics: `resources.cpus` is the MPI task/rank count. Do not set
 `mpi_processes` in the project, and keep `output_subdir: lasp-ssw` as required by the

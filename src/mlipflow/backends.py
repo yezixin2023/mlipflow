@@ -409,8 +409,18 @@ class SshSlurmBackend:
 
         _validate_absolute_remote_directory(remote_run_dir)
         run_path = PurePosixPath(remote_run_dir)
-        if not re.fullmatch(r"attempt-[0-9]{4,}", run_path.name):
-            raise BackendError("remote run directory must end in attempt-XXXX")
+        attempt_workspace = bool(
+            re.fullmatch(r"attempt-[0-9]{4,}", run_path.name)
+        )
+        independent_workspace = bool(
+            SAFE_REMOTE_NAME.fullmatch(run_path.name)
+            and run_path.parent.name == "submissions"
+            and re.fullmatch(r"attempt-[0-9]{4,}", run_path.parent.parent.name)
+        )
+        if not attempt_workspace and not independent_workspace:
+            raise BackendError(
+                "remote run directory must be attempt-XXXX or its submissions/<id> child"
+            )
         if not files:
             raise BackendError("remote workspace staging requires at least one file")
         parent = str(run_path.parent)

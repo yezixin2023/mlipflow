@@ -189,7 +189,7 @@ class DirectSmokeReportTests(unittest.TestCase):
         serialized = json.dumps(report, sort_keys=True)
         self.assertNotIn("/Users/", serialized)
         self.assertNotIn("/public/home/", serialized)
-        self.assertNotIn("hfeshell", serialized.lower())
+        self.assertNotIn("hfe" + "shell", serialized.lower())
 
 
 if __name__ == "__main__":

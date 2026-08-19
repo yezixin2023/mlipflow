@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
 import shutil
@@ -16,6 +17,7 @@ from typing import Any
 
 from dataset_contract import (
     FRAMEWORKS,
+    benchmark_dataset,
     build_split_manifest,
     canonical_json_bytes,
     cartesian_coordinates,
@@ -157,6 +159,10 @@ def _mace(root: Path, canonical: Mapping[str, Any], split: Mapping[str, Any]) ->
     return {"format": "ASE extxyz", "ase_version": importlib.metadata.version("ase")}
 
 
+def _file_fingerprint(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _reference(dataset_id: str, split_id: str, framework: str, relative_path: str, path: Path) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -166,6 +172,150 @@ def _reference(dataset_id: str, split_id: str, framework: str, relative_path: st
         "fingerprint": training_tree_fingerprint(path),
         "split_id": split_id,
     }
+
+
+def _same_numeric_tree(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+        return (
+            isinstance(actual, (int, float))
+            and not isinstance(actual, bool)
+            and abs(float(actual) - float(expected))
+            <= 1e-10 * max(1.0, abs(float(expected)))
+        )
+    if isinstance(expected, list):
+        return isinstance(actual, list) and len(actual) == len(expected) and all(
+            _same_numeric_tree(a, e) for a, e in zip(actual, expected)
+        )
+    if isinstance(expected, Mapping):
+        return (
+            isinstance(actual, Mapping)
+            and set(actual) == set(expected)
+            and all(
+                _same_numeric_tree(actual[key], value)
+                for key, value in expected.items()
+            )
+        )
+    return actual == expected
+
+
+def _write_collected_references(
+    *,
+    output: Path,
+    target: Path,
+    canonical: Mapping[str, Any],
+    split: Mapping[str, Any],
+    frameworks: list[str],
+    relative_path: str,
+    result_name: str,
+    result: Mapping[str, Any],
+    benchmark: Mapping[str, Any],
+) -> None:
+    _write_json(output / "split.json", split)
+    _write_json(output / result_name, result)
+    _write_json(output / "benchmark-test.json", benchmark)
+    benchmark_path = target / "benchmark" / "test.json"
+    _write_json(
+        output / "benchmark-dataset-reference.json",
+        {
+            "schema_version": 1,
+            "dataset_id": (
+                f"{canonical['dataset_id']}-benchmark-{split['split_id']}"
+            ),
+            "relative_path": f"{relative_path}/benchmark/test.json",
+            "kind": "file",
+            "fingerprint": _file_fingerprint(benchmark_path),
+            "split_id": split["split_id"],
+            "split": "test",
+        },
+    )
+    for framework in frameworks:
+        _write_json(
+            output / f"{framework}-dataset-reference.json",
+            _reference(
+                str(canonical["dataset_id"]),
+                str(split["split_id"]),
+                framework,
+                relative_path,
+                target / framework,
+            ),
+        )
+
+
+def _reuse_existing(
+    *,
+    target: Path,
+    output: Path,
+    canonical: Mapping[str, Any],
+    split: Mapping[str, Any],
+    frameworks: list[str],
+    relative_path: str,
+    result_name: str,
+    reference_dir: Path,
+) -> dict[str, Any]:
+    if target.is_symlink() or not target.is_dir():
+        raise ConversionError("reused dataset path must be an ordinary directory")
+    if _read_json(target / "canonical.json") != dict(canonical):
+        raise ConversionError("reused dataset canonical identity differs")
+    if _read_json(target / "split.json") != dict(split):
+        raise ConversionError("reused dataset split identity differs")
+    result = _read_json(target / "assembly-result.json")
+    expected_paths = {
+        framework: f"{relative_path}/{framework}" for framework in frameworks
+    }
+    if (
+        result.get("dataset_id") != canonical["dataset_id"]
+        or result.get("split_id") != split["split_id"]
+        or result.get("counts") != split["counts"]
+        or result.get("framework_output_paths") != expected_paths
+        or set(result.get("formats", {})) != set(frameworks)
+        or result.get("benchmark_record_ids") != split["test_record_ids"]
+    ):
+        raise ConversionError("reused dataset assembly result differs")
+    benchmark = _read_json(target / "benchmark" / "test.json")
+    if not _same_numeric_tree(benchmark, benchmark_dataset(canonical, split)):
+        raise ConversionError("reused benchmark differs from the approved test split")
+    for framework in frameworks:
+        expected_reference = _read_json(
+            reference_dir / f"{framework}-dataset-reference.json"
+        )
+        actual_reference = _reference(
+            str(canonical["dataset_id"]),
+            str(split["split_id"]),
+            framework,
+            relative_path,
+            target / framework,
+        )
+        if expected_reference != actual_reference:
+            raise ConversionError(
+                f"reused {framework} dataset fingerprint differs"
+            )
+    expected_benchmark_reference = _read_json(
+        reference_dir / "benchmark-dataset-reference.json"
+    )
+    actual_benchmark_reference = {
+        "schema_version": 1,
+        "dataset_id": f"{canonical['dataset_id']}-benchmark-{split['split_id']}",
+        "relative_path": f"{relative_path}/benchmark/test.json",
+        "kind": "file",
+        "fingerprint": _file_fingerprint(target / "benchmark" / "test.json"),
+        "split_id": split["split_id"],
+        "split": "test",
+    }
+    if expected_benchmark_reference != actual_benchmark_reference:
+        raise ConversionError("reused benchmark fingerprint differs")
+    output.mkdir(parents=True, exist_ok=True)
+    _write_collected_references(
+        output=output,
+        target=target,
+        canonical=canonical,
+        split=split,
+        frameworks=frameworks,
+        relative_path=relative_path,
+        result_name=result_name,
+        result=result,
+        benchmark=benchmark,
+    )
+    return result
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -185,7 +335,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ConversionError("dataset_relative_path must equal dataset_id")
     target = data_root / relative_path
     if target.exists() or target.is_symlink():
-        raise ConversionError(f"dataset path already exists; reuse its collected references: {target}")
+        if not getattr(args, "reuse_existing", False):
+            raise ConversionError(
+                f"dataset path already exists; reuse its collected references: {target}"
+            )
+        reference_value = getattr(args, "reuse_reference_dir", None)
+        if not isinstance(reference_value, str) or not reference_value:
+            raise ConversionError("reuse-existing requires approved reference files")
+        return _reuse_existing(
+            target=target,
+            output=output,
+            canonical=canonical,
+            split=split,
+            frameworks=frameworks,
+            relative_path=relative_path,
+            result_name=args.result_name,
+            reference_dir=Path(reference_value).resolve(),
+        )
+    if getattr(args, "reuse_existing", False):
+        raise ConversionError("approved reused dataset path does not exist")
     output.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{canonical['dataset_id']}.", dir=data_root))
     try:
@@ -199,6 +367,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 format_info[framework] = _json_view(temporary, canonical, split, framework)
             else:
                 format_info[framework] = _mace(temporary, canonical, split)
+        benchmark = benchmark_dataset(canonical, split)
+        _write_json(temporary / "benchmark" / "test.json", benchmark)
         conventions = {
             "atom_order": "canonical order unchanged in every view",
             "species_mapping": "element symbols preserved; DeepMD type_map records first canonical occurrence",
@@ -215,14 +385,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         result = {
             "dataset_id": canonical["dataset_id"], "split_id": split["split_id"],
             "counts": dict(split["counts"]), "framework_output_paths": paths,
+            "benchmark_output_path": f"{relative_path}/benchmark/test.json",
+            "benchmark_record_ids": list(split["test_record_ids"]),
             "formats": format_info, "units_and_conventions": conventions,
         }
         _write_json(temporary / "assembly-result.json", result)
         temporary.rename(target)
-        _write_json(output / "split.json", split)
-        _write_json(output / args.result_name, result)
-        for framework in frameworks:
-            _write_json(output / f"{framework}-dataset-reference.json", _reference(canonical["dataset_id"], split["split_id"], framework, relative_path, target / framework))
+        _write_collected_references(
+            output=output,
+            target=target,
+            canonical=canonical,
+            split=split,
+            frameworks=frameworks,
+            relative_path=relative_path,
+            result_name=args.result_name,
+            result=result,
+            benchmark=benchmark,
+        )
         return result
     except Exception:
         if temporary.exists():
@@ -243,6 +422,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--validation-fraction", type=float, default=.1)
     parser.add_argument("--test-fraction", type=float, default=.1)
     parser.add_argument("--result-name", default="dataset-assembly-result.json")
+    parser.add_argument("--reuse-existing", action="store_true")
+    parser.add_argument("--reuse-reference-dir")
     return parser
 
 

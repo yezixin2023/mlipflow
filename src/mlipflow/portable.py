@@ -35,8 +35,9 @@ from typing import Any, Iterable
 PROJECT_ROOT_TOKEN = "{PROJECT_ROOT}"
 ATTEMPT_DIR_TOKEN = "{ATTEMPT_DIR}"
 PLUGIN_DIR_TOKEN = "{PLUGIN_DIR}"
+PACKAGE_DIR_TOKEN = "{PACKAGE_DIR}"
 
-TOKENS = (PROJECT_ROOT_TOKEN, ATTEMPT_DIR_TOKEN, PLUGIN_DIR_TOKEN)
+TOKENS = (PROJECT_ROOT_TOKEN, ATTEMPT_DIR_TOKEN, PLUGIN_DIR_TOKEN, PACKAGE_DIR_TOKEN)
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class PortableRoots:
     project_root: Path | None = None
     attempt_dir: Path | None = None
     plugin_dir: Path | None = None
+    package_dir: Path | None = None
 
     def substitutions(self) -> list[tuple[str, str]]:
         """Return ``(absolute, token)`` pairs, longest absolute form first.
@@ -64,6 +66,7 @@ class PortableRoots:
         for root, token in (
             (self.attempt_dir, ATTEMPT_DIR_TOKEN),
             (self.plugin_dir, PLUGIN_DIR_TOKEN),
+            (self.package_dir, PACKAGE_DIR_TOKEN),
             (self.project_root, PROJECT_ROOT_TOKEN),
         ):
             for spelling in _spellings(root):

@@ -181,6 +181,7 @@ class RepositoryHygieneTests(unittest.TestCase):
                 }
                 or any(
                     part in {".mlipflow", ".pytest_cache", "__pycache__"}
+                    or part.endswith(".egg-info")
                     for part in path.parts
                 )
             ):

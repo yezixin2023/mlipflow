@@ -7,13 +7,14 @@ description: Supervise scheduled ASE molecular dynamics with explicit DeepMD, M3
 
 Use the `ase-md` plugin as the deterministic implementation. The Skill decides and explains scientific workflow inputs; it does not implement an integrator or calculator itself.
 
-## Version 0.3 boundary
+## Version 0.4 boundary
 
-Version 0.3 supports one single-temperature trajectory per workflow node on `ssh-slurm`:
+Version 0.4 supports one single-temperature trajectory per workflow node on `ssh-slurm`:
 
 - `nvt-langevin`: fixed-cell Langevin NVT.
 - `npt-isotropic-mtk`: isotropic Martyna-Tobias-Klein NPT using ASE `IsotropicMTKNPT`.
 - optional periodic checkpointing and exact restart across fresh scheduler attempts.
+- an optional explicit three-axis supercell repeat, strict initial-cell lower bound, and finite diagnostic stability summary.
 
 ASE is a hard compute-runtime dependency for every `ase-md` run. A missing ASE import must fail the run; never substitute another MD implementation.
 
@@ -42,6 +43,11 @@ Require `inputs.model_reference` to point to a small project JSON manifest conta
 - `kind: file` for DeepMD/CHGNet/MACE or `kind: directory` for M3GNet/MatGL
 - verifiable content identity
 
+For an upstream artifact binding, accept the project-scoped resolved reference path
+produced by core and take its immutable fingerprint as authoritative. An optional
+redundant `model_fingerprint` parameter must match when supplied, but a predeclared DAG
+does not need to know the future training output fingerprint.
+
 The portable project must never contain the cluster's absolute model path. The site-owned `ase-md-<calculator>/run.sh` supplies `MODEL_ROOT`. The compute-node resolver verifies the model before and after inference.
 
 ## Require explicit common MD physics
@@ -65,6 +71,25 @@ For either ensemble, require the user/workflow to declare:
 
 DeepMD's ASE calculator uses model-native precision; `default_dtype` is recorded for cross-framework workflow identity but must not be described as recasting a DeepMD model.
 
+## Size the structure explicitly
+
+When the source cell is intentionally smaller than the MD cell, use
+`supercell_repeat: [a, b, c]` with three explicit positive integers. Do not
+manually rewrite or rename an intermediate structure outside MLIPFlow. The
+runner repeats the staged source before calculator construction and records the
+source atom count, expanded atom count, repeat, and initial cell lengths.
+
+Use `minimum_initial_cell_length_angstrom` only when the workflow has an
+explicit cell-size requirement. It is a strict lower bound: every expanded
+initial 3D periodic cell length must be greater than the declared value. Do not
+invent the bound or silently increase the repeat; a failed bound is a failed
+run that requires a reviewed parameter change.
+
+The repeat and lower bound are part of checkpoint identity, so a retry cannot
+change the effective cell. A sampling cell and a larger production cell should
+therefore be separate reviewed nodes even when both originate from the same
+structure.
+
 ## NVT contract
 
 For `ensemble: nvt-langevin` also require an explicit positive `friction_per_fs`.
@@ -85,7 +110,7 @@ For `ensemble: npt-isotropic-mtk` require all of:
 
 Do not infer damping times from the timestep. They are scientific inputs and must be explicit in MLIPFlow.
 
-The NPT implementation is deliberately isotropic: only volume changes, preserving the initial cell shape. Version 0.3 pins thermostat/barostat chain lengths to 3/3 and chain integration substeps to 1/1; report them as fixed implementation choices rather than pretending they are user-selected.
+The NPT implementation is deliberately isotropic: only volume changes, preserving the initial cell shape. Version 0.4 pins thermostat/barostat chain lengths to 3/3 and chain integration substeps to 1/1; report them as fixed implementation choices rather than pretending they are user-selected.
 
 NPT requires a full-rank 3D periodic cell and no ASE constraints. Reject a molecular/nonperiodic or constrained structure rather than silently converting it. A fresh NPT seed controls initial Maxwell-Boltzmann velocities only.
 
@@ -143,6 +168,10 @@ The selected template family is one of:
 - `ase-md-chgnet`
 - `ase-md-mace`
 
+Site-published CHGNet and M3GNet artifacts use the corresponding
+`ase-md-<calculator>-canonical` family so the model resolves below the site's canonical
+MLIPFlow model root rather than a historical research directory.
+
 Each site template may activate a separate framework environment while keeping the same MLIPFlow scheduler/restart contract.
 
 ASE MD has `execution_model: single-python`. `resources.cpus` is the CPU/thread
@@ -154,19 +183,21 @@ their separate rank-count semantics.
 
 ## Execution and completion
 
-Before submission, show calculator/model identity, structure identity, ensemble, temperature, timestep, total target duration, current segment start/remaining steps, frame/thermo record counts, checkpoint policy, device, resources, template family, and expected outputs. For NVT also show friction. For NPT also show target pressure, both damping times, stress requirement, isotropic cell mode, no-constraints requirement, and pinned MTK chain configuration.
+Before submission, show calculator/model identity, source-structure identity, any supercell repeat and strict initial-cell bound, ensemble, temperature, timestep, total target duration, current segment start/remaining steps, frame/thermo record counts, checkpoint policy, device, resources, template family, and expected outputs. For NVT also show friction. For NPT also show target pressure, both damping times, stress requirement, isotropic cell mode, no-constraints requirement, and pinned MTK chain configuration.
 
 A Slurm `COMPLETED` state is not scientific success. After completion, ordinary `advance` performs bounded verified fetch and invokes the pinned checker. The checker must verify:
 
 - completed global steps equal the original requested total;
 - model, structure, and any restart checkpoint match the attempt inputs;
+- any explicit repeat yields the recorded expanded atom count and all initial cell lengths strictly exceed the approved lower bound;
 - trajectory-index and thermo schedules start at the attempt's segment start and reach the original final step;
 - thermodynamic values are finite and NPT pressure/cell metrics satisfy the NPT contract;
 - trajectory, index, thermo table, final extxyz, checkpoint when enabled, and reports are complete and internally consistent;
 - calculator and ASE versions are recorded.
+- stored-frame minimum pair distance and temperature, energy-per-atom, and volume summaries contain only finite values.
 
 Treat missing, oversized, changed, non-finite, stress-incompatible, checkpoint-incompatible, or identity-mismatched output as `FAIL`, not a warning.
 
 ## Scientific interpretation
 
-The `ase-md` plugin produces trajectory segments; it does not by itself establish equilibration, diffusion, ionic conductivity, phase stability, or model validity. A successful restart proves continuity of the declared integrator state under the pinned implementation contract, not physical convergence. Do not report transport or convergence conclusions unless a separate reviewed analysis stage supports them.
+The `ase-md` plugin produces trajectory segments; it does not by itself establish equilibration, diffusion, ionic conductivity, phase stability, or model validity. The stability summary is diagnostic evidence, not an automatic pass/fail threshold or a substitute for the shared held-out benchmark. A successful restart proves continuity of the declared integrator state under the pinned implementation contract, not physical convergence. Do not report transport or convergence conclusions unless a separate reviewed analysis stage supports them.

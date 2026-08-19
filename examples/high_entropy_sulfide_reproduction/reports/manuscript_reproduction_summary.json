@@ -30,7 +30,7 @@
       },
       {
         "locator": "plugins/mlip-benchmark/benchmark_normalization.py",
-        "sha256": "sha256:cb4e07307bdd1c3d77316c7c18846234daa3de479e4d0da84bd7d76fe8338fc9"
+        "sha256": "sha256:d29459b7e3b0ecbccf91f5fbfae0ea40aa1cd4ea27c185bdcd63f28fe14ae5eb"
       },
       {
         "locator": "src/mlipflow/science/model_runtime.py",
@@ -38,7 +38,7 @@
       },
       {
         "locator": "plugins/mlip-benchmark/plugin.yaml",
-        "sha256": "sha256:147e2e0180b4c5629dcc9acdce8d3564301fd9f2c0de52adb55d3a212c11bbf2"
+        "sha256": "sha256:ec00b11bd0a0b852a00394c94d525401b3ffb0b0268733ddeb16d4d5bfa5b264"
       }
     ],
     "implementation_sha256": "sha256:b6e0baf816288e29a8def026b9756caa032ad05f47596d7841bd212b2c5e2681",

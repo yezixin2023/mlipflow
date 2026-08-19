@@ -115,11 +115,19 @@ def validate_hpc_resources(value: Any) -> HpcResources:
 
 
 def remote_attempt_workspace(
-    profile: ClusterProfile, project_id: str, node_id: str, attempt: int
+    profile: ClusterProfile,
+    project_id: str,
+    node_id: str,
+    attempt: int,
+    submission_id: str | None = None,
 ) -> dict[str, str]:
     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
         raise ConfigError("HPC attempt must be a positive integer")
     run_dir = PurePosixPath(profile.work_root) / project_id / node_id / f"attempt-{attempt:04d}"
+    if submission_id is not None:
+        if not TEMPLATE_FAMILY.fullmatch(submission_id):
+            raise ConfigError("HPC submission id must be a safe identifier")
+        run_dir = run_dir / "submissions" / submission_id
     return {
         "run_dir": str(run_dir),
         "input_dir": str(run_dir / "input"),
@@ -135,8 +143,11 @@ def template_variables(
     node_id: str,
     attempt: int,
     resources: HpcResources,
+    submission_id: str | None = None,
 ) -> dict[str, str]:
-    workspace = remote_attempt_workspace(profile, project_id, node_id, attempt)
+    workspace = remote_attempt_workspace(
+        profile, project_id, node_id, attempt, submission_id
+    )
     return {
         "PROJECT_ID": project_id,
         "NODE_ID": node_id,
@@ -239,6 +250,7 @@ def resolve_hpc_execution_plan(
     resources_value: Any,
     scheduled_execution: dict[str, Any],
     library: TemplateLibrary,
+    submission_id: str | None = None,
 ) -> dict[str, Any]:
     resources = validate_hpc_resources(resources_value)
     family = scheduled_execution.get("template_family")
@@ -257,7 +269,9 @@ def resolve_hpc_execution_plan(
         "submit.sbatch": (submit_template, SUBMIT_REQUIRED),
         "run.sh": (run_template, RUN_REQUIRED),
     }
-    variables = template_variables(profile, project_id, node_id, attempt, resources)
+    variables = template_variables(
+        profile, project_id, node_id, attempt, resources, submission_id
+    )
     plugin_variables = scheduled_execution.get("template_variables", {})
     if not isinstance(plugin_variables, dict):
         raise ConfigError("scheduled_execution.template_variables must be a mapping")
@@ -311,7 +325,9 @@ def resolve_hpc_execution_plan(
         "template_variables": variables,
         "template_paths": template_paths,
         "rendered_scripts": rendered_scripts,
-        "workspace": remote_attempt_workspace(profile, project_id, node_id, attempt),
+        "workspace": remote_attempt_workspace(
+            profile, project_id, node_id, attempt, submission_id
+        ),
         "fresh_workspace_required": True,
         "overwrite": False,
     }

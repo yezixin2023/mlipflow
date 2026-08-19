@@ -246,6 +246,18 @@ class VaspPrepareTests(unittest.TestCase):
             None,
         )
 
+    def test_prepare_accepts_absolute_project_scoped_artifact_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            context, _ = self.fixture(Path(directory))
+            project_root = Path(context["project_root"])
+            context["inputs"] = {
+                name: str((project_root / value).resolve())
+                for name, value in context["inputs"].items()
+            }
+            adapter = self.adapter_module.Adapter()
+            self.assertEqual([], adapter.validate(context))
+            self.assertEqual("READY", adapter.plan(context)["status"])
+
     def test_static_preset_plan_generate_check_and_collect_excludes_potcar(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             context, fixture = self.fixture(Path(directory))

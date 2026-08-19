@@ -29,7 +29,7 @@ run. Resolve the mode from the supplied scientific inputs, not the adjective.
 ## Establish the contract
 
 Use read-only MLIPFlow commands to inspect persistent state and the node before
-execution. Confirm the exact operation, local backend, inputs, task, scenario,
+execution. Confirm the exact operation, backend, inputs, task, scenario,
 split, target set, units, conventions, and expected fresh output directory.
 
 Read the supported exact model families and framework mapping from
@@ -39,9 +39,14 @@ Skill, accept an under-specified DeepMD family, or choose a model by brand.
 
 Require the inputs appropriate to the selected mode:
 
-- Fresh: model, canonical labeled dataset, exact family, model and dataset
+- Fresh local: model, canonical labeled dataset, exact family, model and dataset
   fingerprints, task/scenario/split, targets, target units, total/per-atom
   energy convention, and an explicit stress convention when stress is selected.
+- Fresh SSH-SLURM: collected `model-reference.json` and
+  `benchmark-dataset-reference.json` pointing below the selected site's canonical roots,
+  with the same exact family, fingerprints, task/scenario/split, targets, units, and
+  conventions. The reviewed `benchmark-<framework>/run.sh` owns the environment and
+  root paths.
 - Metric-only: reference/prediction evidence plus explicit or evidence-backed
   model/task/scenario/split/unit identities.
 - Replay: historical evidence, portable evidence locator, exact identities, and
@@ -51,6 +56,14 @@ Do not guess units, total/per-atom normalization, stress ordering/sign, split,
 or scalar-count semantics. Ask for the missing value when execution requires it;
 otherwise preserve the contract's unknown or `source-unit-unspecified` value.
 
+For scheduled upstream artifact bindings, accept the project-scoped resolved reference
+paths produced by core and take their immutable fingerprints as authoritative in the
+approved fresh identity. Optional redundant model/dataset fingerprint parameters must
+match when supplied, but a predeclared DAG need not know those future values. Use the
+site's `benchmark-<framework>-canonical/run.sh` family so inference resolves the
+published model and held-out dataset below canonical MLIPFlow roots, not historical
+research directories.
+
 ## Execute through MLIPFlow
 
 Never call the bundled runner, wrapper, framework, or historical script as a
@@ -59,10 +72,31 @@ approval flow. Confirm `shell=false`, argv-based execution, pinned input
 identities, and a fresh empty output directory. Do not overwrite or delete an
 existing result; retry must create a new attempt.
 
+For SSH-SLURM, declare only a named backend profile and abstract `cpus`, `gpus`,
+`memory`, and `walltime`. Never put a partition, module, conda path, executable, model
+root, data root, template root, or work root in the project. Require bounded fetch of
+the five fresh artifacts and `cluster-benchmark-report.json`; scheduler completion is
+not scientific success.
+
+To compare multiple fresh runs, feed their `prediction_evidence.json` artifacts to one
+local `normalize-execute` node with `expected_models`. Because every fresh run uses the
+same basename, assign a distinct portable `evidence_locator` to each input. Require the
+same task, scenario, split, metric, unit, direction, and scientific dimensions before
+interpreting the joint ranking. A ranking group is eligible for a between-model
+selection claim only when `comparable_model_count` equals the number of
+`expected_models`. Preserve a metric available for only one model as diagnostic
+evidence, but never use it to declare that model the winner over a model lacking that
+metric.
+
 After execution, require Adapter `check` and `collect` to return `OK`. Treat
 partial output, model/dataset/evidence drift, unsupported identity, non-finite
 metrics, or provenance mismatch as `FAIL`. Scheduler or process completion alone
 is not scientific success.
+
+MAE and RMSE are required for every selected target. Pearson correlation is only
+numeric when at least two scalar pairs exist and neither side is constant. When it is
+mathematically undefined, require an explicit unavailable record and reason; never
+invent a value, emit NaN as a ranking value, or discard the valid MAE/RMSE evidence.
 
 ## Report the result
 

@@ -40,7 +40,17 @@ The generic template families are:
 - `mlip-chgnet/run.sh`
 - `mlip-mace/run.sh`
 
-Each site template may activate a different framework environment. It supplies the cluster data/model roots and calls the staged `training_cluster.py`; MLIPFlow core alone owns SSH, staging, `sbatch`, polling, bounded fetch, retry, and cancellation.
+When canonical publication is requested, core selects the corresponding
+`mlip-<framework>-publish/run.sh` family. This lets the site bind a read-only
+foundation-model root and a separate canonical model-publication root. Do not route a
+publish request through a historical model directory or modify the scientific node to
+carry those site paths.
+
+Each site template may activate a different framework environment. It supplies the cluster data/model roots and, when needed, a separate read-only foundation-model root, then calls the staged `training_cluster.py`; MLIPFlow core alone owns SSH, staging, `sbatch`, polling, bounded fetch, retry, and cancellation.
+
+The scheduler stages the small shared `model_runtime.py` needed for framework-version
+identity together with the bundled trainer. Do not install MLIPFlow into an otherwise
+validated framework environment merely to satisfy that import.
 
 The bundled training contract has `execution_model: single-python`. It launches
 one Python process, so `resources.cpus` means the CPU/thread budget for that one
@@ -61,20 +71,23 @@ A dataset reference declares:
 - `kind: file` or `directory`
 - a verifiable content identity
 
-A fine-tune node additionally needs a foundation-model reference with `model_id`, `relative_path`, `kind`, and verifiable content identity.
+A fine-tune node additionally needs a foundation-model reference with `model_id`, `relative_path`, `kind`, and verifiable content identity. A site template may resolve that reference below `MLIPFLOW_FOUNDATION_MODEL_ROOT` while reserving `MLIPFLOW_MODEL_ROOT` for canonical publication. If no separate foundation root is configured, the model root remains the fallback.
 
 All DFT-assembled datasets are directories so their predefined split remains intact.
 Legacy M3GNet/CHGNet/MACE single-file datasets remain supported. M3GNet foundation
 models are directories; the currently bundled DeepMD/CHGNet/MACE foundation paths are files.
 
-The remote runner verifies the referenced content before training. A mismatch is `FAIL`, never a warning.
+The remote runner verifies the referenced content before training. A mismatch is `FAIL`, never a warning. Do not manually copy an installed or historical foundation into the canonical publication root merely to connect the stages.
 
 Prefer a matching `*-dataset-reference.json` collected from
-`dft-labeling.dataset-assemble`. Bind its necessary final artifact `fingerprint`
-unchanged as `parameters.dataset_fingerprint`. The four references from one assembly
-share one `split_id`; their train/validation/test partitions contain the same canonical
-record IDs. The framework runners must consume these predefined partitions and must not
-randomly split the combined data again.
+`dft-labeling.dataset-assemble`. When the input uses an upstream artifact binding, the
+collected reference itself supplies the authoritative dataset fingerprint; MLIPFlow
+pins it in the approved training identity, so the predeclared workflow does not need to
+copy an as-yet-unknown value into `parameters.dataset_fingerprint`. If that optional
+redundant parameter is explicitly supplied, require an exact match. The four references
+from one assembly share one `split_id`; their train/validation/test partitions contain
+the same canonical record IDs. The framework runners must consume these predefined
+partitions and must not randomly split the combined data again.
 
 ## Build a scheduled node
 
@@ -94,6 +107,11 @@ Require these parameters:
 
 `result_manifest` may set the fetched result filename. Configs must be JSON on the generic scheduler path. Bind actual dataset/config/foundation-model references; do not invent their identity or substitute similarly named files.
 
+When a downstream benchmark or MD node needs a stable site-owned model, set both
+`publish_model_id` and `publish_model_relative_path`. Treat that canonical destination
+as part of the approved training identity. Publication refuses an existing destination;
+never overwrite, delete, or manually copy a model to make the handoff work.
+
 ## Execution
 
 Before submission, show the user the framework, operation, config/dataset/foundation-model identity, seed, device, precision, abstract resources, selected backend profile, template family, important staged inputs, expected outputs, and fresh attempt workspace.
@@ -105,6 +123,11 @@ For the generic path, required remote outputs are:
 - `cluster-run-report.json`
 - `training-result.json`
 - `model-artifact`
+
+When canonical publication was requested, also require `model-reference.json`. M3GNet
+is published as its extracted model directory; the other supported framework outputs
+are published as files. The reference must bind logical ID, framework, kind, safe
+site-root-relative path, and the observed content fingerprint.
 
 Optional training stdout/stderr logs are bounded and may also be fetched.
 
@@ -119,6 +142,8 @@ Accept `OK` only when the pinned checker confirms:
 - the cluster runner reports return code 0;
 - all reported numeric metrics are finite;
 - the fetched model content matches `training-result.json`.
+- requested canonical publication succeeded without overwrite and the fetched
+  `model-reference.json` matches the published model content.
 
 Retry always creates a fresh attempt. Do not infer resume behavior from a failed attempt.
 

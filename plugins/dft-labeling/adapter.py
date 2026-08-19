@@ -159,6 +159,17 @@ def _ordinary_project_file(path: Path, project_root: Path, max_bytes: int | None
     return _within(candidate.resolve(), root.resolve()) and _ordinary_file(candidate, max_bytes)
 
 
+def _project_input_path(project_root: Any, value: Any) -> Path | None:
+    if not _plain_string(value):
+        return None
+    raw = Path(str(value)).expanduser()
+    if raw.is_absolute():
+        return raw.absolute()
+    if not _safe_relative(value):
+        return None
+    return _path(project_root, value)
+
+
 def _explicit_executable(value: Any) -> Path | None:
     if not _plain_string(value):
         return None
@@ -248,15 +259,21 @@ def _base_diagnostics(
 
 def _validate_input_path(
     diagnostics: list[dict[str, str]], context: Mapping[str, Any], name: str, required: bool = True
-) -> None:
+) -> Path | None:
     inputs = _mapping(context.get("inputs"))
     value = inputs.get(name)
     if value is None and not required:
-        return
-    if not _safe_relative(value):
+        return None
+    path = _project_input_path(context.get("project_root"), value)
+    if path is None:
         diagnostics.append(
-            _diagnostic("error", f"inputs.{name}", f"{name} 必须是 project_root 下的安全相对路径。")
+            _diagnostic(
+                "error",
+                f"inputs.{name}",
+                f"{name} 必须是 project_root 下的安全相对或绝对路径。",
+            )
         )
+    return path
 
 
 def _parse_labeling_contract(path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -408,9 +425,8 @@ def _validate_prepare(
     inputs = _mapping(context.get("inputs"))
     parameters = _mapping(context.get("parameters"))
     for key in ("structures_manifest", "labeling_config", "pseudopotential_reference"):
-        _validate_input_path(diagnostics, context, key)
-        if _safe_relative(inputs.get(key)):
-            path = _path(context.get("project_root"), inputs[key])
+        path = _validate_input_path(diagnostics, context, key)
+        if path is not None:
             project_root = Path(str(context.get("project_root"))).expanduser().absolute()
             if not _ordinary_project_file(path, project_root, MAX_INPUT_BYTES):
                 diagnostics.append(_diagnostic("error", f"inputs.{key}.missing", f"{key} 必须是现有普通文件。"))
@@ -462,14 +478,16 @@ def _validate_prepare(
         and (attempt / str(output_subdir)).exists()
     ):
         diagnostics.append(_diagnostic("error", "path.output_exists", "vasp-prepare 要求新的 output_subdir。"))
-    if _safe_relative(inputs.get("labeling_config")):
-        config, message = _parse_labeling_contract(_path(context.get("project_root"), inputs["labeling_config"]))
+    labeling_path = _project_input_path(context.get("project_root"), inputs.get("labeling_config"))
+    if labeling_path is not None:
+        config, message = _parse_labeling_contract(labeling_path)
         if config is None:
             diagnostics.append(_diagnostic("error", "inputs.labeling_config.contract", str(message)))
-    if _safe_relative(inputs.get("pseudopotential_reference")):
-        reference, message = _parse_pseudopotential_reference(
-            _path(context.get("project_root"), inputs["pseudopotential_reference"])
-        )
+    reference_path = _project_input_path(
+        context.get("project_root"), inputs.get("pseudopotential_reference")
+    )
+    if reference_path is not None:
+        reference, message = _parse_pseudopotential_reference(reference_path)
         if reference is None:
             diagnostics.append(_diagnostic("error", "inputs.pseudopotential_reference.contract", str(message)))
     return diagnostics
@@ -486,7 +504,7 @@ def _validate_label(context: Mapping[str, Any]) -> list[dict[str, str]]:
     _validate_input_path(diagnostics, context, "dft_input_manifest", required=False)
     allowed_parameters = {
         "operation", "label_script", "interpreter_argv", "engine",
-        "completion_policy", "units", "result_manifest",
+        "completion_policy", "units", "result_manifest", "calculation_concurrency",
     }
     unknown = sorted(set(parameters) - allowed_parameters)
     if "extra_args" in parameters:
@@ -522,6 +540,23 @@ def _validate_label(context: Mapping[str, Any]) -> list[dict[str, str]]:
             )
         if _mapping(context.get("inputs")).get("dft_input_manifest") is None:
             diagnostics.append(_diagnostic("error", "inputs.dft_input_manifest", "ssh-slurm label 必须绑定已审核的 dft_input_manifest。"))
+    concurrency = parameters.get("calculation_concurrency", 1)
+    if not _positive_int(concurrency) or int(concurrency) > MAX_SCHEDULED_CALCULATIONS:
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "parameters.calculation_concurrency",
+                f"calculation_concurrency 必须在 1..{MAX_SCHEDULED_CALCULATIONS}。",
+            )
+        )
+    elif backend != "ssh-slurm" and "calculation_concurrency" in parameters:
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "parameters.calculation_concurrency",
+                "calculation_concurrency 只适用于 ssh-slurm label。",
+            )
+        )
     if not _plain_string(parameters.get("engine")):
         diagnostics.append(_diagnostic("error", "parameters.engine", "engine 必须显式声明。"))
     elif backend == "ssh-slurm" and parameters.get("engine") != "vasp":
@@ -549,10 +584,9 @@ def _validate_label(context: Mapping[str, Any]) -> list[dict[str, str]]:
     if backend == "ssh-slurm":
         config_path = _mapping(context.get("inputs")).get("labeling_config")
         config: Mapping[str, Any] | None = None
-        if _safe_relative(config_path):
-            config, _ = _parse_labeling_contract(
-                _path(context.get("project_root"), config_path)
-            )
+        resolved_config = _project_input_path(context.get("project_root"), config_path)
+        if resolved_config is not None:
+            config, _ = _parse_labeling_contract(resolved_config)
         calculation_type = (
             config.get("calculation_type") if isinstance(config, Mapping) else None
         )
@@ -656,7 +690,7 @@ def _validate_dataset_assemble(context: Mapping[str, Any]) -> list[dict[str, str
             )
         )
     project_root = Path(str(context.get("project_root", ""))).expanduser().absolute()
-    path = _path(project_root, inputs["canonical_dataset"]) if _safe_relative(inputs.get("canonical_dataset")) else None
+    path = _project_input_path(project_root, inputs.get("canonical_dataset"))
     if path is not None and not _ordinary_project_file(path, project_root, MAX_DATASET_INPUT_BYTES):
         diagnostics.append(_diagnostic("error", "inputs.canonical_dataset", "canonical_dataset 必须是 project_root 内的普通有界文件。"))
     if _errors(diagnostics) or path is None:
@@ -820,6 +854,11 @@ def _staged_record(source: Path, remote_name: str, *, sensitive: bool = False) -
     }
 
 
+def _attempt_index(path: Path) -> int | None:
+    match = re.fullmatch(r"attempt-([1-9][0-9]*)", path.name)
+    return int(match.group(1)) if match else None
+
+
 def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
     diagnostics = _validate_dataset_assemble(context)
     if _errors(diagnostics):
@@ -861,15 +900,72 @@ def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
         "local_name": f"{name}-dataset-reference.json", "required": True,
         "max_bytes": MAX_INPUT_BYTES, "role": f"{name}-dataset-reference",
     } for name in frameworks)
+    fetch_outputs.extend(
+        [
+            {
+                "remote_name": "benchmark-test.json",
+                "remote_path": "output/benchmark-test.json",
+                "local_name": "benchmark-test.json",
+                "required": True,
+                "max_bytes": MAX_DATASET_INPUT_BYTES,
+                "role": "benchmark-dataset",
+            },
+            {
+                "remote_name": "benchmark-dataset-reference.json",
+                "remote_path": "output/benchmark-dataset-reference.json",
+                "local_name": "benchmark-dataset-reference.json",
+                "required": True,
+                "max_bytes": MAX_INPUT_BYTES,
+                "role": "benchmark-dataset-reference",
+            },
+        ]
+    )
     strategy = str(parameters.get("split_strategy", "deterministic"))
     seed = int(parameters.get("split_seed", 0))
     fractions = _mapping(parameters.get("split_fractions", {"train": 0.8, "validation": 0.1, "test": 0.1}))
+    attempt_dir = Path(str(context["attempt_dir"])).expanduser().absolute()
+    attempt_index = _attempt_index(attempt_dir)
+    reuse_existing = False
+    reused_attempt: int | None = None
+    if attempt_index is not None and attempt_index > 1:
+        previous = attempt_dir.parent / f"attempt-{attempt_index - 1}"
+        previous_result, _ = _read_json(
+            previous / result_name, MAX_DATASET_INPUT_BYTES
+        )
+        previous_completion, _ = _read_json(
+            previous / "completion.json", MAX_INPUT_BYTES
+        )
+        previous_context = {**dict(context), "attempt_dir": str(previous)}
+        if (
+            previous_result is not None
+            and previous_completion is not None
+            and previous_completion.get("status") == "COMPLETED"
+            and previous_completion.get("exit_code") == 0
+            and previous_completion.get("attempt") == attempt_index - 1
+            and not _errors(
+                _verify_dataset_assembly(previous_context, previous_result)
+            )
+        ):
+            reuse_existing = True
+            reused_attempt = attempt_index - 1
+    template_family = "dft-dataset-reuse" if reuse_existing else "dft-dataset"
+    if reuse_existing and reused_attempt is not None:
+        previous = attempt_dir.parent / f"attempt-{reused_attempt}"
+        for name in [*frameworks, "benchmark"]:
+            filename = (
+                "benchmark-dataset-reference.json"
+                if name == "benchmark"
+                else f"{name}-dataset-reference.json"
+            )
+            staged.append(
+                _staged_record(previous / filename, f"reuse/{filename}")
+            )
     return {
         "plugin_id": PLUGIN_ID,
         "status": "READY",
         "executable": True,
         "operation": DATASET_OPERATION,
-        "argv": ["template-family:dft-dataset"],
+        "argv": [f"template-family:{template_family}"],
         "cwd": "remote-attempt-workspace",
         "expected_outputs": [item["remote_name"] for item in fetch_outputs],
         "input_fingerprints": {
@@ -890,14 +986,16 @@ def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
             "split_seed": seed,
             "split_fractions": dict(fractions),
             "site_data_relative_path": relative,
-            "remote_publish": True,
+            "remote_publish": not reuse_existing,
+            "reuse_existing_verified_dataset": reuse_existing,
+            "reused_dataset_attempt": reused_attempt,
             "silent_overwrite": False,
             "fetch_allowlist": [item["remote_name"] for item in fetch_outputs],
         },
         "scheduled_execution": {
             "schema_version": 3,
             "execution_model": "single-python",
-            "template_family": "dft-dataset",
+            "template_family": template_family,
             "template_variables": {
                 "PLUGIN_FRAMEWORKS": ",".join(frameworks),
                 "PLUGIN_DATASET_ID": relative,
@@ -918,7 +1016,7 @@ def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
 def _plan_scheduled_label(
     context: Mapping[str, Any], diagnostics: list[dict[str, str]]
 ) -> dict[str, Any]:
-    """Plan one scheduler job covering 1..N VASP calculations.
+    """Plan one sequential job or independently scheduled VASP calculations.
 
     Calculation order is taken from the prepare manifest and frozen into
     calc-0001..calc-N, so the remote layout is deterministic and never depends
@@ -1011,8 +1109,7 @@ def _plan_scheduled_label(
                     _diagnostic("error", f"inputs.dft_input_manifest.{calc_id}.{name}", f"{calc_id} 的 {name} 缺失或指纹与 prepare manifest 不一致。")
                 )
                 continue
-            # Nested remote name: calc-0001/POSCAR.  POTCAR is licensed, so it is
-            # staged but marked non-fetchable here and never appears in outputs.
+            # Nested remote name: calc-0001/POSCAR. POTCAR remains staged-only.
             staged.append(
                 _staged_record(source, f"{calc_id}/{name}", sensitive=name == "POTCAR")
             )
@@ -1025,6 +1122,30 @@ def _plan_scheduled_label(
         )
     if _errors(diagnostics):
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": diagnostics}
+
+    active_ids = [str(item["id"]) for item in planned]
+
+    parameters = _mapping(context["parameters"])
+    resources = _mapping(context["resources"])
+    requested_concurrency = int(parameters.get("calculation_concurrency", 1))
+    independent_jobs = requested_concurrency > 1
+    if independent_jobs and requested_concurrency < len(active_ids):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "parameters.calculation_concurrency",
+                "独立作业模式要求 calculation_concurrency 不小于本次要提交的 calculation 数量。",
+            )
+        )
+        return {
+            "plugin_id": PLUGIN_ID,
+            "status": "BLOCKED",
+            "executable": False,
+            "diagnostics": diagnostics,
+        }
+    mpi_ranks_per_calculation = int(resources["cpus"])
+    submitted_job_count = len(active_ids) if independent_jobs else 1
+    template_family = "vasp-batch" if independent_jobs else "vasp"
 
     required, optional, limits = _scheduled_output_spec(calculation_type)
     fetch_outputs: list[dict[str, Any]] = []
@@ -1061,37 +1182,103 @@ def _plan_scheduled_label(
                     "role": "scheduler-log",
                 }
             )
+    if independent_jobs:
+        shared_staged = [
+            item for item in staged if "/" not in str(item["remote_name"])
+        ]
+        submissions = []
+        for calc_id in active_ids:
+            submissions.append(
+                {
+                    "id": calc_id,
+                    "template_variables": {
+                        "PLUGIN_CALCULATION_IDS": calc_id,
+                        "PLUGIN_CALCULATION_CONCURRENCY": "1",
+                        "PLUGIN_MPI_RANKS_PER_CALCULATION": str(
+                            mpi_ranks_per_calculation
+                        ),
+                    },
+                    "staged_files": [
+                        *shared_staged,
+                        *[
+                            item
+                            for item in staged
+                            if str(item["remote_name"]).startswith(f"{calc_id}/")
+                        ],
+                    ],
+                    "fetch_outputs": [
+                        item
+                        for item in fetch_outputs
+                        if str(item["remote_name"]).startswith(calc_id)
+                    ],
+                }
+            )
+        scheduled_execution = {
+            "schema_version": 4,
+            "submission_strategy": "independent-jobs",
+            "execution_model": "mpi",
+            "template_family": template_family,
+            "submissions": submissions,
+        }
+    else:
+        scheduled_execution = {
+            "schema_version": 3,
+            "execution_model": "mpi",
+            "template_family": template_family,
+            "template_variables": {
+                "PLUGIN_CALCULATION_IDS": ",".join(active_ids),
+                "PLUGIN_CALCULATION_CONCURRENCY": "1",
+                "PLUGIN_MPI_RANKS_PER_CALCULATION": str(
+                    mpi_ranks_per_calculation
+                ),
+            },
+            "staged_files": staged,
+            "fetch_outputs": fetch_outputs,
+        }
     return {
         "plugin_id": PLUGIN_ID,
         "status": "READY",
         "executable": True,
-        "argv": ["template-family:vasp"],
+        "argv": [f"template-family:{template_family}"],
         "cwd": "remote-attempt-workspace",
         "expected_outputs": [item["remote_name"] for item in fetch_outputs if item["required"]],
         "diagnostics": diagnostics,
         "operation": LABEL_OPERATION,
         "calculation_type": calculation_type,
         "calculations": planned,
+        "failure_salvage": {
+            "schema_version": 1,
+            "fetch_remote_names": [
+                *[str(item["remote_name"]) for item in fetch_outputs],
+                "completion.json",
+            ],
+        },
         "approval_summary": {
             "calculation_type": calculation_type,
             "calculation_count": len(planned),
+            "submitted_calculation_count": len(active_ids),
+            "submitted_calculation_ids": active_ids,
             "runs_vasp": True,
             "submits_jobs": True,
             "execution_model": "mpi",
             "cpus_meaning": "mpi-task-count",
+            "requested_calculation_concurrency": requested_concurrency,
+            "submission_strategy": (
+                "independent-jobs" if independent_jobs else "single-job-sequential"
+            ),
+            "submitted_job_count": submitted_job_count,
+            "jobs_may_run_or_queue_independently": independent_jobs,
+            "mpi_ranks_per_calculation": mpi_ranks_per_calculation,
+            "maximum_concurrent_mpi_ranks": (
+                submitted_job_count * mpi_ranks_per_calculation
+            ),
             # POTCAR is staged but licensed, so it never appears here and never
             # becomes a fetched or collected artifact.
             "fetch_allowlist": sorted({*required, *optional}),
             "staged_file_count": len(staged),
         },
         "input_fingerprints": _file_fingerprints(paths),
-        "scheduled_execution": {
-            "schema_version": 3,
-            "execution_model": "mpi",
-            "template_family": "vasp",
-            "staged_files": staged,
-            "fetch_outputs": fetch_outputs,
-        },
+        "scheduled_execution": scheduled_execution,
     }
 
 
@@ -1465,6 +1652,15 @@ def _same_numeric_tree(actual: Any, expected: Any) -> bool:
     if isinstance(expected, list):
         return isinstance(actual, list) and len(actual) == len(expected) and all(
             _same_numeric_tree(a, e) for a, e in zip(actual, expected)
+        )
+    if isinstance(expected, Mapping):
+        return (
+            isinstance(actual, Mapping)
+            and set(actual) == set(expected)
+            and all(
+                _same_numeric_tree(actual[key], value)
+                for key, value in expected.items()
+            )
         )
     return actual == expected
 
@@ -1984,7 +2180,7 @@ def _contcar_lattice(path: Path) -> list[list[float]] | None:
 def _scheduled_calculations_check(
     context: Mapping[str, Any]
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]] | None]:
-    """Check every calculation in the batch; all must pass for the node to pass."""
+    """Check every calculation in the current attempt as one complete batch."""
 
     diagnostics: list[dict[str, str]] = []
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
@@ -1997,8 +2193,30 @@ def _scheduled_calculations_check(
     if not isinstance(calculations, list) or not calculations:
         diagnostics.append(_diagnostic("error", "result.calculations", "准备清单缺少 calculations。"))
         return diagnostics, None
-    completion_diagnostics = _verify_completion_calculations(context, calculations)
-    diagnostics.extend(completion_diagnostics)
+    expected_ids = [_calculation_id(index) for index in range(len(calculations))]
+    diagnostics.extend(_verify_completion_calculations(context, expected_ids))
+    completion, _ = _read_json(attempt / "completion.json")
+    source_identity = {
+        "project_id": completion.get("project_id"),
+        "node_id": completion.get("node_id"),
+        "attempt": completion.get("attempt"),
+    } if isinstance(completion, Mapping) else None
+    if (
+        not isinstance(source_identity, Mapping)
+        or not isinstance(source_identity.get("project_id"), str)
+        or not SAFE_ID.fullmatch(str(source_identity["project_id"]))
+        or not isinstance(source_identity.get("node_id"), str)
+        or not SAFE_ID.fullmatch(str(source_identity["node_id"]))
+        or source_identity.get("attempt") != _attempt_index(attempt)
+    ):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "completion.identity",
+                "completion.json 未绑定当前 project/node/attempt。",
+            )
+        )
+        return diagnostics, None
     analyses: list[dict[str, Any]] = []
     for index, calculation in enumerate(calculations):
         calc_id = _calculation_id(index)
@@ -2013,6 +2231,7 @@ def _scheduled_calculations_check(
             analysis["structure_id"] = (
                 calculation.get("structure_id") if isinstance(calculation, Mapping) else None
             )
+            analysis["source_dft_attempt"] = source_identity
             analyses.append(analysis)
     if _errors(diagnostics):
         return diagnostics, None
@@ -2020,7 +2239,7 @@ def _scheduled_calculations_check(
 
 
 def _verify_completion_calculations(
-    context: Mapping[str, Any], calculations: list[Any]
+    context: Mapping[str, Any], expected_ids: list[str]
 ) -> list[dict[str, str]]:
     """Cross-check the remote completion record against the approved batch.
 
@@ -2037,7 +2256,6 @@ def _verify_completion_calculations(
     reported = completion.get("calculations")
     if reported is None:
         return diagnostics
-    expected_ids = [_calculation_id(index) for index in range(len(calculations))]
     if not isinstance(reported, list) or [
         item.get("id") if isinstance(item, Mapping) else None for item in reported
     ] != expected_ids:
@@ -2103,6 +2321,7 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
                     "structure_id": analysis.get("structure_id"),
                     "calculation_id": analysis["calc_id"],
                     "calculation_type": calculation_type,
+                    "source_dft_attempt": analysis["source_dft_attempt"],
                     "ionic_step": ionic_step,
                     "species": analysis["species"],
                     "energy_ev": frame["energy_ev"],
@@ -2124,6 +2343,7 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
                 "path": f"{calc_id}/{name}",
                 "fingerprint": _sha256(path),
                 "size_bytes": path.stat().st_size,
+                "source_dft_attempt": analysis["source_dft_attempt"],
             }
     labels_path = attempt / "labels.json"
     _write_fresh_json(
@@ -2138,6 +2358,9 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
     )
     execution_context = _mapping(context.get("execution"))
     hpc_execution = _mapping(execution_context.get("hpc_execution"))
+    scheduled_plan = _mapping(
+        _mapping(execution_context.get("plan")).get("scheduled_execution")
+    )
     input_fingerprints = {
         name: _sha256(_path(context["project_root"], inputs[name]))
         for name in ("structures_manifest", "labeling_config", "dft_input_manifest")
@@ -2159,12 +2382,13 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
         "attempt": completion_identity.get("attempt"),
     }
     execution = {
-        "template_family": "vasp",
+        "template_family": scheduled_plan.get("template_family"),
         "templates": hpc_execution.get("template_paths"),
         "vasp_version": version.group(1) if version else "UNKNOWN",
         "calculations": [
             {
                 "id": item["calc_id"], "structure_id": item.get("structure_id"),
+                "source_dft_attempt": item["source_dft_attempt"],
                 "nelm": item["nelm"], "ionic_steps": len(item["frames"]),
                 "ionic_converged": item["ionic_converged"],
                 "relaxed_structure": ({
@@ -2295,6 +2519,12 @@ def _verify_scheduled_label_result(
     if not isinstance(records, list) or len(records) != label_count:
         diagnostics.append(_diagnostic("error", "result.labels", "labels.json 记录数与 label_count 不一致。"))
         return diagnostics
+    completion, _ = _read_json(attempt / "completion.json")
+    expected_source_attempt = {
+        "project_id": completion.get("project_id"),
+        "node_id": completion.get("node_id"),
+        "attempt": completion.get("attempt"),
+    } if isinstance(completion, Mapping) else None
     for index, record in enumerate(records):
         if not isinstance(record, Mapping):
             diagnostics.append(_diagnostic("error", f"labels[{index}]", "标签必须是对象。"))
@@ -2309,6 +2539,18 @@ def _verify_scheduled_label_result(
             diagnostics.append(_diagnostic("error", f"labels[{index}].ionic_step", "标签必须记录 ionic step。"))
         if not _finite_number(record.get("energy_ev")):
             diagnostics.append(_diagnostic("error", f"labels[{index}].energy", "标签能量必须是有限数。"))
+        source_attempt = record.get("source_dft_attempt")
+        if (
+            manifest.get("schema_version") == 3
+            and source_attempt != expected_source_attempt
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    f"labels[{index}].source_dft_attempt",
+                    "canonical 标签必须记录当前 DFT attempt。",
+                )
+            )
     raw = manifest.get("raw_outputs")
     if not isinstance(raw, Mapping) or not raw:
         diagnostics.append(_diagnostic("error", "result.raw_outputs", "必须声明 raw VASP 输出。"))
@@ -2317,10 +2559,12 @@ def _verify_scheduled_label_result(
         if "POTCAR" in str(name):
             diagnostics.append(_diagnostic("error", "result.raw_outputs.potcar", "POTCAR 不得出现在结果产物中。"))
             continue
+        source_attempt = record.get("source_dft_attempt") if isinstance(record, Mapping) else None
         path = attempt / str(name)
         if (
             not isinstance(record, Mapping)
             or record.get("path") != name
+            or source_attempt != expected_source_attempt
             or not _fingerprint(record.get("fingerprint"))
             or not _ordinary_file(path)
             or _sha256(path) != record.get("fingerprint")
@@ -2473,6 +2717,10 @@ def _verify_dataset_assembly(
         diagnostics.append(_diagnostic("error", "dataset.paths", "framework output paths 不一致。"))
     if set(_mapping(manifest.get("formats"))) != set(frameworks):
         diagnostics.append(_diagnostic("error", "dataset.formats", "framework format table 不完整。"))
+    if manifest.get("benchmark_output_path") != f"{relative}/benchmark/test.json":
+        diagnostics.append(_diagnostic("error", "dataset.benchmark_path", "benchmark test path 不一致。"))
+    if manifest.get("benchmark_record_ids") != expected_split["test_record_ids"]:
+        diagnostics.append(_diagnostic("error", "dataset.benchmark_ids", "benchmark 未使用同一 test split。"))
     conventions = _mapping(manifest.get("units_and_conventions"))
     if conventions.get("energy") != "total eV per configuration, unchanged" or conventions.get("forces") != "eV/angstrom, unchanged":
         diagnostics.append(_diagnostic("error", "dataset.units", "energy/force convention 不完整。"))
@@ -2487,6 +2735,24 @@ def _verify_dataset_assembly(
             or not _fingerprint(reference.get("fingerprint"))
         ):
             diagnostics.append(_diagnostic("error", f"dataset.reference.{framework}", "mlip-training dataset reference 无效。"))
+    benchmark, _ = _read_json(attempt / "benchmark-test.json", MAX_DATASET_INPUT_BYTES)
+    expected_benchmark = DATASETS.benchmark_dataset(canonical, expected_split)
+    if not _same_numeric_tree(benchmark, expected_benchmark):
+        diagnostics.append(_diagnostic("error", "dataset.benchmark", "benchmark test dataset 与 canonical test split 不一致。"))
+    benchmark_reference, _ = _read_json(
+        attempt / "benchmark-dataset-reference.json", MAX_INPUT_BYTES
+    )
+    if (
+        benchmark_reference is None
+        or benchmark_reference.get("schema_version") != 1
+        or benchmark_reference.get("relative_path") != f"{relative}/benchmark/test.json"
+        or benchmark_reference.get("kind") != "file"
+        or benchmark_reference.get("split_id") != expected_split["split_id"]
+        or benchmark_reference.get("split") != "test"
+        or benchmark is None
+        or benchmark_reference.get("fingerprint") != _sha256(attempt / "benchmark-test.json")
+    ):
+        diagnostics.append(_diagnostic("error", "dataset.benchmark_reference", "benchmark dataset reference 无效。"))
     return diagnostics
 
 
@@ -2500,6 +2766,8 @@ def _collect_dataset_assembly(
     artifacts: list[dict[str, Any]] = [
         {"name": "dataset-assembly-result", "role": "dataset-assembly-result", "path": result_name, "media_type": "application/json"},
         {"name": "split-manifest", "role": "split-manifest", "path": "split.json", "media_type": "application/json"},
+        {"name": "benchmark-dataset", "role": "benchmark-dataset", "path": "benchmark-test.json", "media_type": "application/json"},
+        {"name": "benchmark-dataset-reference", "role": "benchmark-dataset-reference", "path": "benchmark-dataset-reference.json", "media_type": "application/json"},
     ]
     for framework in frameworks:
         reference_name = f"{framework}-dataset-reference.json"
@@ -2517,6 +2785,24 @@ def _collect_dataset_assembly(
                 },
             },
         ])
+    benchmark_reference, _ = _read_json(
+        attempt / "benchmark-dataset-reference.json", MAX_INPUT_BYTES
+    )
+    assert benchmark_reference is not None
+    artifacts.append(
+        {
+            "name": "published-benchmark-dataset",
+            "role": "published-benchmark-dataset",
+            "uri": f"mlipflow-data:///{benchmark_reference['relative_path']}",
+            "fingerprint": benchmark_reference["fingerprint"],
+            "metadata": {
+                "kind": "file",
+                "dataset_id": benchmark_reference["dataset_id"],
+                "split_id": manifest["split_id"],
+                "split": "test",
+            },
+        }
+    )
     return {
         "plugin_id": PLUGIN_ID, "status": "OK", "diagnostics": diagnostics,
         "artifacts": artifacts,
@@ -2638,6 +2924,7 @@ class Adapter:
             artifacts: list[dict[str, Any]] = [
                 {
                     "name": "dft-input-manifest",
+                    "role": "dft-input-manifest",
                     "path": parameters.get("result_manifest", "dft-input-manifest.json"),
                     "media_type": "application/json",
                 }
@@ -2646,6 +2933,7 @@ class Adapter:
                 for name in ("POSCAR", "INCAR", "KPOINTS"):
                     record = dict(calculation["files"][name])
                     record["name"] = f"{calculation['structure_id']}-{name.lower()}"
+                    record["role"] = record["name"]
                     artifacts.append(record)
             return {
                 "plugin_id": PLUGIN_ID,

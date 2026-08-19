@@ -15,9 +15,12 @@ import math
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
+from mlipflow.science import model_runtime
+
 HERE = Path(__file__).resolve().parent
 LEGACY_PATH = HERE / "adapter.py"
 CLUSTER_RUNNER = HERE / "training_cluster.py"
+SHARED_MODEL_RUNTIME = Path(model_runtime.__file__).resolve()
 BUNDLED_FILES = (
     "training_wrapper.py",
     "mlip_common.py",
@@ -29,12 +32,16 @@ BUNDLED_FILES = (
 PLUGIN_ID = "mlip-training"
 FRAMEWORKS = {"deepmd", "m3gnet", "chgnet", "mace"}
 OPERATIONS = {"train", "finetune"}
-TEMPLATE_FAMILIES = {name: f"mlip-{name}" for name in FRAMEWORKS}
 MAX_JSON_BYTES = 16 * 1024 * 1024
 MAX_MODEL_BYTES = 8 * 1024 * 1024 * 1024
 MAX_LOG_BYTES = 128 * 1024 * 1024
 HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
 GENERIC_CONTRACT = "bundled-mlip-v1"
+
+
+def _template_family(framework: str, *, publishes_model: bool) -> str:
+    suffix = "-publish" if publishes_model else ""
+    return f"mlip-{framework}{suffix}"
 
 
 def _load_legacy():
@@ -275,11 +282,25 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
                 "error", "training.chgnet_precision", "CHGNet scheduled training requires float32"
             )
         )
-    for key in ("dataset_fingerprint", "config_fingerprint"):
-        if not _is_fingerprint(parameters.get(key)):
-            diagnostics.append(
-                _diag("error", f"training.{key}", f"parameters.{key} must be sha256:<64 hex>")
+    if not _is_fingerprint(parameters.get("config_fingerprint")):
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.config_fingerprint",
+                "parameters.config_fingerprint must be sha256:<64 hex>",
             )
+        )
+    declared_dataset_fingerprint = parameters.get("dataset_fingerprint")
+    if declared_dataset_fingerprint is not None and not _is_fingerprint(
+        declared_dataset_fingerprint
+    ):
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.dataset_fingerprint",
+                "parameters.dataset_fingerprint must be sha256:<64 hex> when supplied",
+            )
+        )
 
     allowed_inputs = {"training_config", "dataset_reference", "foundation_model_reference"}
     unknown = sorted(set(inputs) - allowed_inputs)
@@ -336,7 +357,10 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
                         + ", ".join(sorted(_framework_dataset_kinds(str(framework)))),
                     )
                 )
-            if dataset["fingerprint"] != parameters.get("dataset_fingerprint"):
+            if (
+                declared_dataset_fingerprint is not None
+                and dataset["fingerprint"] != declared_dataset_fingerprint
+            ):
                 diagnostics.append(
                     _diag(
                         "error",
@@ -403,6 +427,34 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
             )
         )
 
+    publish_id = parameters.get("publish_model_id")
+    publish_relative = parameters.get("publish_model_relative_path")
+    if (publish_id is None) != (publish_relative is None):
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.publish_pair",
+                "publish_model_id and publish_model_relative_path must be supplied together",
+            )
+        )
+    elif publish_id is not None:
+        if (
+            not _plain(publish_id)
+            or "/" in str(publish_id)
+            or "\\" in str(publish_id)
+        ):
+            diagnostics.append(
+                _diag("error", "training.publish_model_id", "publish_model_id is invalid")
+            )
+        if not _safe_relative(publish_relative):
+            diagnostics.append(
+                _diag(
+                    "error",
+                    "training.publish_model_relative_path",
+                    "publish_model_relative_path must stay below the site model root",
+                )
+            )
+
     result_name = parameters.get("result_manifest", "mlip-training-result.json")
     if not _safe_relative(result_name, plain_name=True):
         diagnostics.append(
@@ -425,6 +477,14 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
             diagnostics.append(
                 _diag("error", "training.bundled_file", f"missing bundled cluster file: {name}")
             )
+    if not SHARED_MODEL_RUNTIME.is_file():
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.bundled_file",
+                "missing shared model runtime: model_runtime.py",
+            )
+        )
     return diagnostics
 
 
@@ -454,6 +514,7 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
     ]
     for name in BUNDLED_FILES:
         staged.append(_staged(HERE / name, name))
+    staged.append(_staged(SHARED_MODEL_RUNTIME, "model_runtime.py"))
     foundation: dict[str, Any] | None = None
     if operation == "finetune":
         source = _resolve_project_file(root, inputs["foundation_model_reference"])
@@ -507,6 +568,24 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             "training-log",
         ),
     ]
+    publish_model: dict[str, Any] | None = None
+    if parameters.get("publish_model_id") is not None:
+        publish_model = {
+            "model_id": str(parameters["publish_model_id"]),
+            "framework": framework,
+            "relative_path": str(parameters["publish_model_relative_path"]),
+            "kind": _framework_foundation_kind(framework),
+        }
+        fetch_outputs.append(
+            _fetch(
+                "model-reference.json",
+                "output/model-reference.json",
+                "model-reference.json",
+                True,
+                MAX_JSON_BYTES,
+                "model-reference",
+            )
+        )
     identity = {
         "framework": framework,
         "operation": operation,
@@ -516,7 +595,11 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
         "config_fingerprint": parameters["config_fingerprint"],
         "dataset": dataset,
         "foundation_model": foundation,
+        "publish_model": publish_model,
     }
+    template_family = _template_family(
+        framework, publishes_model=publish_model is not None
+    )
     return {
         "plugin_id": PLUGIN_ID,
         "status": "READY",
@@ -524,7 +607,7 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
         "scheduler_contract": GENERIC_CONTRACT,
         "framework": framework,
         "operation": operation,
-        "argv": [f"template-family:{TEMPLATE_FAMILIES[framework]}"],
+        "argv": [f"template-family:{template_family}"],
         "cwd": "remote-attempt-workspace",
         "expected_outputs": [item["remote_name"] for item in fetch_outputs if item["required"]],
         "training_identity": identity,
@@ -537,7 +620,9 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             "operation": operation,
             "fine_tune": operation == "finetune",
             "dataset_id": dataset["id"],
+            "dataset_fingerprint": dataset["fingerprint"],
             "foundation_model_id": foundation["id"] if foundation else None,
+            "publish_model": publish_model,
             "seed": parameters["seed"],
             "device": parameters["device"],
             "precision": parameters["precision"],
@@ -551,7 +636,7 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
         "scheduled_execution": {
             "schema_version": 3,
             "execution_model": "single-python",
-            "template_family": TEMPLATE_FAMILIES[framework],
+            "template_family": template_family,
             "staged_files": staged,
             "fetch_outputs": fetch_outputs,
         },
@@ -982,6 +1067,44 @@ def _check_generic(
                     "foundation model fingerprint differs from the approved plan",
                 )
             )
+    published_reference: dict[str, Any] | None = None
+    approved_publish = identity.get("publish_model")
+    if isinstance(approved_publish, Mapping):
+        reference, reference_error = _read_json(attempt / "model-reference.json")
+        expected_reference = {
+            "schema_version": 1,
+            **dict(approved_publish),
+        }
+        if reference_error is not None or reference is None:
+            diagnostics.append(
+                _diag(
+                    "error",
+                    "training.model_reference",
+                    reference_error or "published model reference is missing",
+                )
+            )
+        elif (
+            any(reference.get(key) != value for key, value in expected_reference.items())
+            or not _is_fingerprint(reference.get("fingerprint"))
+            or report.get("published_model") != reference
+        ):
+            diagnostics.append(
+                _diag(
+                    "error",
+                    "training.model_publication",
+                    "published model reference differs from the approved destination or cluster report",
+                )
+            )
+        else:
+            published_reference = reference
+    elif report.get("published_model") is not None:
+        diagnostics.append(
+            _diag(
+                "error",
+                "training.unapproved_publication",
+                "cluster report contains an unapproved model publication",
+            )
+        )
     model = result.get("model_artifact")
     model_path = attempt / "model-artifact"
     if not isinstance(model, Mapping) or model.get("path") != "model-artifact":
@@ -1088,7 +1211,13 @@ def _check_generic(
         diagnostics.extend(_m3gnet_completion_diagnostics(context, result))
     if diagnostics:
         return diagnostics, None
-    return [], {"result": result, "report": report, "model": model_path, "metrics": dict(metrics)}
+    return [], {
+        "result": result,
+        "report": report,
+        "model": model_path,
+        "model_reference": published_reference,
+        "metrics": dict(metrics),
+    }
 
 
 def _collect_generic(context: Mapping[str, Any]) -> dict[str, Any]:
@@ -1127,6 +1256,14 @@ def _collect_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             "media_type": "application/json",
         },
     ]
+    if analysis.get("model_reference") is not None:
+        artifacts.append(
+            {
+                "path": str(attempt / "model-reference.json"),
+                "role": "model-reference",
+                "media_type": "application/json",
+            }
+        )
     for name in ("training.stdout.log", "training.stderr.log"):
         path = attempt / name
         if path.is_file() and not path.is_symlink():

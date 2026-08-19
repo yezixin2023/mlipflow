@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "report_id": "lammps-hfeshell-cpu-functional-smokes",
+  "report_id": "lammps-cluster-cpu-functional-smokes",
   "status": "REAL_HPC_FUNCTIONAL_SMOKE_OK",
   "generated_for": "MLIPFlow lammps-md real SSH-SLURM functional validation on one site",
   "run_date": "2026-08-16",
   "site": {
-    "profile": "hfeshell",
+    "profile": "cluster-a",
     "backend": "ssh-slurm",
     "template_layout": "one canonical remote_template_root with per-interface family subdirectories",
     "work_layout": "one canonical work_root with fresh project/node/attempt workspaces"
@@ -45,10 +45,10 @@
   "runs": [
     {
       "framework": "deepmd",
-      "project_id": "lammps-deepmd-hfeshell-cpu-smoke-execute",
+      "project_id": "lammps-deepmd-cluster-cpu-smoke-execute",
       "node_id": "execute-deepmd-cpu-5",
       "attempt": 1,
-      "slurm_job_id": "27442624",
+      "slurm_job_id": "redacted",
       "scheduler_terminal_state": "COMPLETED",
       "mlipflow_final_state": "OK",
       "pair_style": "deepmd",
@@ -78,15 +78,15 @@
         "lammps_log": "sha256:fe6a8cd1ccf83326e63f78402cb59422e9414b68c7a33fedeed038e518e18725",
         "cluster_report": "sha256:dd79cc23123e5ba4df3247d9267f4eae3bbe07413584a72a2848fe604e84a802"
       },
-      "local_state_locator": ".mlipflow/lammps-deepmd-hfeshell-cpu-smoke-execute/.mlipflow/runs/execute-deepmd-cpu-5/attempt-1"
+      "local_state_locator": "not-published"
     },
     {
       "framework": "m3gnet",
       "lammps_interface": "gnnp",
-      "project_id": "lammps-m3gnet-hfeshell-gnnp-cpu-smoke-execute",
+      "project_id": "lammps-m3gnet-cluster-gnnp-cpu-smoke-execute",
       "node_id": "execute-m3gnet-gnnp-cpu-5",
       "attempt": 2,
-      "slurm_job_id": "27442885",
+      "slurm_job_id": "redacted",
       "scheduler_terminal_state": "COMPLETED",
       "mlipflow_final_state": "OK",
       "pair_style": "gnnp ${INTERFACE_PATH}",
@@ -120,13 +120,13 @@
       },
       "failed_attempt_before_success": {
         "attempt": 1,
-        "slurm_job_id": "27442851",
+        "slurm_job_id": "redacted",
         "classification": "ENVIRONMENT/SITE",
         "cause": "the GNNP embedded Python environment could not import MatGL",
         "resolution": "the canonical lammps-m3gnet-gnnp-cpu site template was given its matching Python 3.11 prefix and site-packages; the retry used a fresh attempt workspace"
       },
       "known_interface_limitation": "this GNNP model does not provide virial pressure; NVT functional execution is valid, but reported pressure is not a scientific result",
-      "local_state_locator": ".mlipflow/lammps-m3gnet-hfeshell-gnnp-cpu-smoke-execute/.mlipflow/runs/execute-m3gnet-gnnp-cpu-5/attempt-2"
+      "local_state_locator": "not-published"
     }
   ],
   "verified_claim": "MLIPFlow completed prepare -> scheduled execute -> scheduler terminal -> bounded fetch -> pinned check/collect for real DeepMD and MatGL/GNNP LAMMPS CPU five-step jobs on one site.",
@@ -138,6 +138,6 @@
     "LAMMPS binary restart recovery",
     "native matgl/matgl-kokkos execution",
     "MACE or CHGNet LAMMPS execution",
-    "any site other than hfeshell"
+    "any site other than the validated private cluster"
   ]
 }

@@ -44,7 +44,7 @@ from mlipflow.science.artifact_identity import sha256_file as _sha256
 
 
 PLUGIN_ID = "mlip-benchmark"
-WRAPPER_VERSION = "1.0.0"
+WRAPPER_VERSION = "1.0.1"
 MAX_SOURCE_BYTES = 256 * 1024 * 1024
 MAX_XLSX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 OUTPUT_NAMES = (
@@ -892,17 +892,19 @@ def _paired_rows(path: Path) -> tuple[list[dict[str, Any]], str, list[str]]:
     raise BenchmarkNormalizationError("execute evidence must be JSON, CSV, or XLSX")
 
 
-def _pearson(reference: Sequence[float], prediction: Sequence[float]) -> float:
+def _pearson(
+    reference: Sequence[float], prediction: Sequence[float]
+) -> tuple[float | None, str | None]:
     if len(reference) < 2:
-        raise BenchmarkNormalizationError("Pearson correlation requires at least two scalar pairs")
+        return None, "insufficient-scalar-pairs"
     ref_mean = sum(reference) / len(reference)
     pred_mean = sum(prediction) / len(prediction)
     numerator = sum((a - ref_mean) * (b - pred_mean) for a, b in zip(reference, prediction))
     ref_norm = math.sqrt(sum((a - ref_mean) ** 2 for a in reference))
     pred_norm = math.sqrt(sum((b - pred_mean) ** 2 for b in prediction))
     if ref_norm == 0.0 or pred_norm == 0.0:
-        raise BenchmarkNormalizationError("Pearson correlation is undefined for constant values")
-    return numerator / (ref_norm * pred_norm)
+        return None, "constant-reference-or-prediction"
+    return numerator / (ref_norm * pred_norm), None
 
 
 def _execute_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -936,17 +938,41 @@ def _execute_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[st
         group["prediction"].extend(pred_values)
         group["locators"].append(f"{row.get('__sheet__', parser)}!row-{row.get('__row__', '?')}")
     records: list[dict[str, Any]] = []
+    unavailable_metrics: list[dict[str, Any]] = []
     for key, values in sorted(groups.items()):
         model, task, scenario, split, target, unit = key
         reference = values["reference"]
         prediction = values["prediction"]
         errors = [pred - ref for ref, pred in zip(reference, prediction)]
+        pearson, pearson_reason = _pearson(reference, prediction)
         calculated = {
             "mae": sum(abs(item) for item in errors) / len(errors),
             "rmse": math.sqrt(sum(item * item for item in errors) / len(errors)),
-            "pearson_r": _pearson(reference, prediction),
+            "pearson_r": pearson,
         }
         for statistic in ("mae", "rmse", "pearson_r"):
+            if calculated[statistic] is None:
+                unavailable_metrics.append(
+                    {
+                        "model": model,
+                        "task": task,
+                        "scenario": scenario,
+                        "split": split,
+                        "metric": f"{target}_{statistic}",
+                        "unit": "dimensionless",
+                        "direction": "maximize",
+                        "sample_count": len(reference),
+                        "mode": "execute",
+                        "evidence_sha256": digest,
+                        "source_path": source_locator,
+                        "source_format": parser,
+                        "evidence_locator": f"{len(values['locators'])} prepared row(s)",
+                        "unit_provenance": "defined-by-metric",
+                        "dimensions": {"scope": "overall", "target": target},
+                        "reason": pearson_reason,
+                    }
+                )
+                continue
             records.append(
                 _record(
                     model=model,
@@ -976,6 +1002,8 @@ def _execute_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[st
         "parser": parser,
         "sheets": sheets,
         "normalized_record_count": len(records),
+        "unavailable_metric_count": len(unavailable_metrics),
+        "unavailable_metrics": unavailable_metrics,
         "read_only_import": True,
     }
     return records, provenance
@@ -1182,6 +1210,21 @@ def normalize_benchmark(
         records.extend(source_records)
         provenance_sources.append(source_provenance)
     records = _validate_records(records)
+    unavailable_metrics = sorted(
+        [
+            item
+            for source in provenance_sources
+            for item in source.get("unavailable_metrics", [])
+        ],
+        key=lambda item: (
+            item["model"],
+            item["task"],
+            item["scenario"],
+            item["split"],
+            item["metric"],
+            item["source_path"],
+        ),
+    )
 
     metrics_payload = {
         "schema_version": 1,
@@ -1196,6 +1239,8 @@ def normalize_benchmark(
         "record_count": len(records),
         "records": records,
     }
+    if mode == "execute":
+        metrics_payload["unavailable_metrics"] = unavailable_metrics
     ranking_payload = _ranking(records)
     payloads = {
         "metrics.json": _json_bytes(metrics_payload),
@@ -1205,7 +1250,7 @@ def normalize_benchmark(
     provenance_payload = {
         "schema_version": 1,
         "plugin_id": PLUGIN_ID,
-        "wrapper_version": WRAPPER_VERSION,
+        "wrapper_version": WRAPPER_VERSION if mode == "execute" else "1.0.0",
         "mode": mode,
         "model_execution": False,
         "network_access": False,
@@ -1228,6 +1273,12 @@ def normalize_benchmark(
             "it is not a physical unit inference.",
         ],
     }
+    if mode == "execute":
+        provenance_payload["unavailable_metrics"] = unavailable_metrics
+        provenance_payload["limitations"].append(
+            "Undefined Pearson correlations are recorded explicitly as unavailable and are not "
+            "replaced with synthetic or non-finite values."
+        )
     payloads["provenance.json"] = _json_bytes(provenance_payload)
     for name in OUTPUT_NAMES:
         _write_atomic(output_paths[name], payloads[name])
@@ -1249,6 +1300,11 @@ def _cli_parser() -> argparse.ArgumentParser:
         "--evidence-locator",
         help="portable public locator for one input (defaults to its basename)",
     )
+    parser.add_argument(
+        "--input-locator",
+        action="append",
+        help="portable locator paired by order with each --input",
+    )
     parser.add_argument("--model", choices=MODEL_NAMES)
     parser.add_argument("--task")
     parser.add_argument("--scenario")
@@ -1267,8 +1323,17 @@ def _cli_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _cli_parser()
     arguments = parser.parse_args(argv)
+    if arguments.evidence_locator is not None and arguments.input_locator is not None:
+        parser.error("--evidence-locator and --input-locator are mutually exclusive")
     if arguments.evidence_locator is not None and len(arguments.input) != 1:
         parser.error("--evidence-locator can be used only with one --input")
+    if arguments.input_locator is not None and len(arguments.input_locator) != len(arguments.input):
+        parser.error("--input-locator must be repeated exactly once for each --input")
+    locators = (
+        arguments.input_locator
+        if arguments.input_locator is not None
+        else [arguments.evidence_locator] * len(arguments.input)
+    )
     units = {
         key: value
         for key, value in {
@@ -1281,7 +1346,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     sources = [
         {
             "path": value,
-            "evidence_locator": arguments.evidence_locator,
+            "evidence_locator": locator,
             "model": arguments.model,
             "task": arguments.task,
             "scenario": arguments.scenario,
@@ -1290,7 +1355,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "source_script": arguments.source_script,
             "source_script_locator": arguments.source_script_locator,
         }
-        for value in arguments.input
+        for value, locator in zip(arguments.input, locators)
     ]
     try:
         outputs = normalize_benchmark(

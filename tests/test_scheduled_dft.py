@@ -72,6 +72,7 @@ class FakeTemplateLibrary:
             "slurm/single-python/cpu.sbatch": SINGLE_PYTHON_SUBMIT_TEMPLATE,
             "slurm/single-python/gpu.sbatch": SINGLE_PYTHON_SUBMIT_TEMPLATE,
             "vasp/run.sh": RUN_TEMPLATE,
+            "vasp-batch/run.sh": RUN_TEMPLATE,
         }
 
     def read_template(self, _root: str, relative: str) -> dict[str, Any]:

@@ -163,6 +163,76 @@ def _positive_int(value: Any, name: str) -> int:
     return value
 
 
+def _supercell_repeat(value: Any) -> tuple[int, int, int]:
+    if value is None:
+        return (1, 1, 1)
+    if (
+        not isinstance(value, (list, tuple))
+        or len(value) != 3
+        or any(
+            isinstance(item, bool) or not isinstance(item, int) or item < 1
+            for item in value
+        )
+    ):
+        raise AseMDError(
+            "supercell_repeat must contain exactly three positive integers"
+        )
+    return tuple(int(item) for item in value)
+
+
+def _prepare_structure(
+    atoms: Any,
+    repeat_value: Any,
+    minimum_initial_cell_length_angstrom: Any,
+) -> tuple[Any, tuple[int, int, int], int, list[float], float | None]:
+    """Apply one explicit repeat and enforce the approved initial-cell lower bound."""
+
+    repeat = _supercell_repeat(repeat_value)
+    source_atom_count = len(atoms)
+    if repeat != (1, 1, 1):
+        atoms = atoms.repeat(repeat)
+    minimum = (
+        None
+        if minimum_initial_cell_length_angstrom is None
+        else _finite_positive(
+            minimum_initial_cell_length_angstrom,
+            "minimum_initial_cell_length_angstrom",
+        )
+    )
+    lengths = [float(value) for value in atoms.cell.lengths()]
+    if any(not math.isfinite(value) or value <= 0 for value in lengths):
+        raise AseMDError(
+            "expanded structure has a non-finite or non-positive cell length"
+        )
+    if minimum is not None:
+        if atoms.cell.rank != 3 or not all(bool(value) for value in atoms.get_pbc()):
+            raise AseMDError(
+                "minimum_initial_cell_length_angstrom requires a full-rank 3D periodic cell"
+            )
+        if any(value <= minimum for value in lengths):
+            raise AseMDError(
+                "expanded structure does not satisfy the strict minimum initial cell length"
+            )
+    return atoms, repeat, source_atom_count, lengths, minimum
+
+
+def _minimum_pair_distance(atoms: Any, np: Any) -> float | None:
+    if len(atoms) < 2:
+        return None
+    distances = np.asarray(
+        atoms.get_all_distances(mic=bool(any(atoms.get_pbc()))), dtype=float
+    )
+    if distances.shape != (len(atoms), len(atoms)):
+        raise AseMDError("ASE returned an invalid pair-distance matrix")
+    distances[np.diag_indices(len(atoms))] = np.inf
+    minimum = float(np.min(distances))
+    if not math.isfinite(minimum) or minimum <= 0:
+        raise AseMDError(
+            "trajectory frame contains a non-finite or non-positive pair distance"
+        )
+    return minimum
+
+
 def _jsonable(value: Any) -> Any:
     """Convert NumPy-rich state to strict JSON without pickle."""
     if isinstance(value, dict):
@@ -268,6 +338,8 @@ def _base_checkpoint_identity(
     pressure_gpa: float | None,
     thermostat_damping_fs: float | None,
     barostat_damping_fs: float | None,
+    supercell_repeat: tuple[int, int, int],
+    minimum_initial_cell_length_angstrom: float | None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "plugin_id": "ase-md",
@@ -283,6 +355,8 @@ def _base_checkpoint_identity(
         "device": device,
         "default_dtype": default_dtype,
         "fix_com": bool(fix_com),
+        "supercell_repeat": list(supercell_repeat),
+        "minimum_initial_cell_length_A": minimum_initial_cell_length_angstrom,
     }
     if ensemble == "nvt-langevin":
         payload["friction_per_fs"] = friction_per_fs
@@ -454,6 +528,8 @@ def run_md(
     restart_checkpoint: Path | None = None,
     input_format: str | None = None,
     input_index: str = "-1",
+    supercell_repeat: list[int] | tuple[int, int, int] | None = None,
+    minimum_initial_cell_length_angstrom: float | None = None,
 ) -> dict[str, Any]:
     """Run or exactly resume one NVT or isotropic NPT trajectory segment."""
     if calculator not in CALCULATORS:
@@ -527,6 +603,17 @@ def run_md(
         raise AseMDError("structure selection did not produce exactly one ASE Atoms object")
     if len(atoms) == 0:
         raise AseMDError("structure contains no atoms")
+    (
+        atoms,
+        repeat,
+        source_atom_count,
+        initial_cell_lengths,
+        minimum_initial_cell_length,
+    ) = _prepare_structure(
+        atoms,
+        supercell_repeat,
+        minimum_initial_cell_length_angstrom,
+    )
     input_constraints = list(atoms.constraints)
     if ensemble == "npt-isotropic-mtk":
         if atoms.cell.rank != 3 or not all(bool(value) for value in atoms.get_pbc()):
@@ -557,6 +644,8 @@ def run_md(
         pressure_gpa=npt_pressure,
         thermostat_damping_fs=npt_tdamp,
         barostat_damping_fs=npt_pdamp,
+        supercell_repeat=repeat,
+        minimum_initial_cell_length_angstrom=minimum_initial_cell_length,
     )
     checkpoint: dict[str, Any] | None = None
     start_step = 0
@@ -635,6 +724,14 @@ def run_md(
     thermo_writer.writerow(_thermo_header(ensemble))
     frame_steps: list[int] = []
     thermo_steps: list[int] = []
+    minimum_pair_distance: float | None = None
+    minimum_pair_distance_step: int | None = None
+    thermo_observations: dict[str, list[float]] = {
+        "temperature_K": [],
+        "potential_energy_eV_per_atom": [],
+        "total_energy_eV_per_atom": [],
+        "volume_A3": [],
+    }
 
     def write_index() -> None:
         _write_json_atomic(
@@ -649,10 +746,18 @@ def run_md(
         )
 
     def write_frame() -> None:
+        nonlocal minimum_pair_distance, minimum_pair_distance_step
         step = int(dyn.get_number_of_steps())
         if not _is_new_callback_step(frame_steps, step):
             return
         trajectory.write(atoms)
+        observed_distance = _minimum_pair_distance(atoms, np)
+        if observed_distance is not None and (
+            minimum_pair_distance is None
+            or observed_distance < minimum_pair_distance
+        ):
+            minimum_pair_distance = observed_distance
+            minimum_pair_distance_step = step
         frame_steps.append(step)
         write_index()
 
@@ -685,6 +790,14 @@ def run_md(
                 raise AseMDError(f"non-positive NPT cell metric at MD step {step}")
         if any(not math.isfinite(float(value)) for value in values):
             raise AseMDError(f"non-finite thermodynamic value at MD step {step}")
+        thermo_observations["temperature_K"].append(temp)
+        thermo_observations["potential_energy_eV_per_atom"].append(
+            epot / len(atoms)
+        )
+        thermo_observations["total_energy_eV_per_atom"].append(
+            (epot + ekin) / len(atoms)
+        )
+        thermo_observations["volume_A3"].append(volume)
         thermo_writer.writerow(row)
         thermo_stream.flush()
         thermo_steps.append(step)
@@ -765,6 +878,11 @@ def run_md(
         "ensemble": ensemble,
         "model": {"id": model_id, "fingerprint": model_fingerprint},
         "structure_fingerprint": structure_fingerprint,
+        "supercell_repeat": list(repeat),
+        "source_atom_count": source_atom_count,
+        "atom_count": len(atoms),
+        "initial_cell_lengths_A": initial_cell_lengths,
+        "minimum_initial_cell_length_A": minimum_initial_cell_length,
         "temperature_K": temperature_k,
         "timestep_fs": timestep_fs,
         "steps_requested": steps,
@@ -787,6 +905,20 @@ def run_md(
             "checkpoint_interval": checkpoint_interval,
         },
         "artifacts": artifacts,
+        "observed_stability": {
+            "all_recorded_values_finite": True,
+            "minimum_pair_distance_A": minimum_pair_distance,
+            "minimum_pair_distance_step": minimum_pair_distance_step,
+            "sampled_trajectory_frames": len(frame_steps),
+            "thermodynamics": {
+                name: {
+                    "minimum": min(values),
+                    "maximum": max(values),
+                    "mean": sum(values) / len(values),
+                }
+                for name, values in thermo_observations.items()
+            },
+        },
     }
     if checkpoint_interval is not None:
         payload["checkpoint"] = {
@@ -844,6 +976,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fix-com", action="store_true")
     parser.add_argument("--input-format")
     parser.add_argument("--input-index", default="-1")
+    parser.add_argument("--supercell-repeat", nargs=3, type=int)
+    parser.add_argument("--minimum-initial-cell-length-angstrom", type=float)
     return parser
 
 
@@ -875,6 +1009,8 @@ def main(argv: list[str] | None = None) -> int:
         barostat_damping_fs=args.barostat_damping_fs,
         input_format=args.input_format,
         input_index=args.input_index,
+        supercell_repeat=args.supercell_repeat,
+        minimum_initial_cell_length_angstrom=args.minimum_initial_cell_length_angstrom,
     )
     return 0
 

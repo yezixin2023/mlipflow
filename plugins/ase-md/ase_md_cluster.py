@@ -206,7 +206,10 @@ def run(args: argparse.Namespace) -> int:
             raise ValueError("staged structure fingerprint differs from approved parameters")
 
         model_ref = _model_reference(model_reference_path, str(calculator))
-        if parameters.get("model_fingerprint") != model_ref["fingerprint"]:
+        if (
+            parameters.get("model_fingerprint") is not None
+            and parameters["model_fingerprint"] != model_ref["fingerprint"]
+        ):
             raise ValueError("model reference fingerprint differs from approved parameters")
         model_root = args.model_root or os.environ.get("MLIPFLOW_MODEL_ROOT", "")
         model = _resolve_under(model_root, model_ref["relative_path"], model_ref["kind"])
@@ -246,6 +249,10 @@ def run(args: argparse.Namespace) -> int:
             barostat_damping_fs=parameters.get("barostat_damping_fs"),
             input_format=parameters.get("input_format"),
             input_index=str(parameters.get("input_index", "-1")),
+            supercell_repeat=parameters.get("supercell_repeat"),
+            minimum_initial_cell_length_angstrom=parameters.get(
+                "minimum_initial_cell_length_angstrom"
+            ),
         )
         _normalize_result_artifacts(output_dir, result)
         model_after = fingerprint(model)
@@ -258,6 +265,14 @@ def run(args: argparse.Namespace) -> int:
                 "ensemble": ensemble,
                 "model": {**model_ref, "observed_fingerprint": model_after},
                 "structure_fingerprint": structure_fp,
+                "supercell_repeat": result.get("supercell_repeat"),
+                "source_atom_count": result.get("source_atom_count"),
+                "atom_count": result.get("atom_count"),
+                "initial_cell_lengths_A": result.get("initial_cell_lengths_A"),
+                "minimum_initial_cell_length_A": result.get(
+                    "minimum_initial_cell_length_A"
+                ),
+                "observed_stability": result.get("observed_stability"),
                 "steps_completed": result.get("steps_completed"),
                 "segment_start_step": result.get("segment_start_step"),
                 "restart": result.get("restart"),

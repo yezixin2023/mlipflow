@@ -121,7 +121,7 @@ def make_run_plan(
             str(node.get("backend", "local")) == "ssh-slurm"
             and isinstance(adapter_plan.get("scheduled_execution"), dict)
         ):
-            _scheduled_contract(
+            scheduled = _scheduled_contract(
                 project,
                 plugin,
                 {"adapter_plan": adapter_plan},
@@ -135,15 +135,39 @@ def make_run_plan(
                 if template_library is not None
                 else SshSlurmBackend(profile.ssh_profile)
             )
-            unsigned["hpc_execution"] = resolve_hpc_execution_plan(
-                profile=profile,
-                project_id=project.project_id,
-                node_id=str(node["id"]),
-                attempt=attempt,
-                resources_value=node.get("resources"),
-                scheduled_execution=adapter_plan["scheduled_execution"],
-                library=provider,
-            )
+            if scheduled["schema_version"] == 4:
+                unsigned["hpc_executions"] = [
+                    {
+                        "submission_id": submission["id"],
+                        "hpc_execution": resolve_hpc_execution_plan(
+                            profile=profile,
+                            project_id=project.project_id,
+                            node_id=str(node["id"]),
+                            attempt=attempt,
+                            resources_value=node.get("resources"),
+                            scheduled_execution={
+                                "execution_model": scheduled["execution_model"],
+                                "template_family": scheduled["template_family"],
+                                "template_variables": submission[
+                                    "template_variables"
+                                ],
+                            },
+                            library=provider,
+                            submission_id=str(submission["id"]),
+                        ),
+                    }
+                    for submission in scheduled["submissions"]
+                ]
+            else:
+                unsigned["hpc_execution"] = resolve_hpc_execution_plan(
+                    profile=profile,
+                    project_id=project.project_id,
+                    node_id=str(node["id"]),
+                    attempt=attempt,
+                    resources_value=node.get("resources"),
+                    scheduled_execution=scheduled,
+                    library=provider,
+                )
         plan = with_digest(unsigned)
     return plan
 
@@ -186,8 +210,15 @@ def run_node(
                 "staging/fetch/check contract is currently implemented"
             )
         if backend == "ssh-slurm" and has_adapter:
-            if not isinstance(adapter_plan.get("scheduled_execution"), dict) or not isinstance(
-                plan.get("hpc_execution"), dict
+            scheduled = adapter_plan.get("scheduled_execution")
+            resolved = (
+                plan.get("hpc_executions")
+                if isinstance(scheduled, dict)
+                and scheduled.get("schema_version") == 4
+                else plan.get("hpc_execution")
+            )
+            if not isinstance(scheduled, dict) or not isinstance(
+                resolved, (dict, list)
             ):
                 raise BackendError(
                     "ssh-slurm adapter execution requires templates, a site profile, and an "
@@ -449,6 +480,7 @@ def make_stop_plan(
             "backend_profile": node.get("backend_profile"),
             "scheduler_target": scheduler_target,
             "job_id": step.job_id,
+            "job_ids": step.job_id.split(",") if step.job_id else [],
         },
     )
 
@@ -474,9 +506,14 @@ def stop(
             scheduler = scheduler_for_node(
                 str(step.backend), node, site_path, factory=factory
             )
-            result = scheduler.cancel(step.job_id)
-            if result.returncode != 0:
-                raise BackendError(result.stderr or result.stdout or "scheduler cancellation failed")
+            for job_id in step.job_id.split(","):
+                result = scheduler.cancel(job_id)
+                if result.returncode != 0:
+                    raise BackendError(
+                        result.stderr
+                        or result.stdout
+                        or "scheduler cancellation failed"
+                    )
         elif state == RunState.RUNNING:
             raise BackendError("cannot safely stop a local run without a persisted process handle")
         updated = store.transition(step.run_id, RunState.STOPPED)

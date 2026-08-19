@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
+import sys
+import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from mlipflow.science.artifact_identity import fingerprint_path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins" / "mlip-training"
@@ -92,7 +98,9 @@ def _context(tmp_path: Path, framework: str, operation: str) -> dict:
     }
 
 
-def _completed_finetune_context(tmp_path: Path, module) -> tuple[dict, Path]:
+def _completed_finetune_context(
+    tmp_path: Path, module, *, publish: bool = False
+) -> tuple[dict, Path]:
     context = _context(tmp_path, "chgnet", "finetune")
     config = tmp_path / context["inputs"]["training_config"]
     _write_json(
@@ -103,6 +111,13 @@ def _completed_finetune_context(tmp_path: Path, module) -> tuple[dict, Path]:
         },
     )
     context["parameters"]["config_fingerprint"] = _sha(config)
+    if publish:
+        context["parameters"].update(
+            {
+                "publish_model_id": "chgnet-finetuned-v1",
+                "publish_model_relative_path": "chgnet/chgnet-finetuned-v1.pt",
+            }
+        )
     plan = module.Adapter().plan(context)
     assert plan["status"] == "READY"
     identity = plan["training_identity"]
@@ -160,9 +175,7 @@ def _completed_finetune_context(tmp_path: Path, module) -> tuple[dict, Path]:
         },
     )
     report_path = attempt / "cluster-run-report.json"
-    _write_json(
-        report_path,
-        {
+    report = {
             "schema_version": 1,
             "status": "OK",
             "return_code": 0,
@@ -177,8 +190,16 @@ def _completed_finetune_context(tmp_path: Path, module) -> tuple[dict, Path]:
                 **identity["foundation_model"],
                 "observed_fingerprint": identity["foundation_model"]["fingerprint"],
             },
-        },
-    )
+        }
+    if publish:
+        published = {
+            "schema_version": 1,
+            **identity["publish_model"],
+            "fingerprint": "sha256:" + "8" * 64,
+        }
+        report["published_model"] = published
+        _write_json(attempt / "model-reference.json", published)
+    _write_json(report_path, report)
     context["execution"] = {"plan": plan}
     return context, report_path
 
@@ -384,12 +405,99 @@ def test_generic_scheduler_matrix_is_ready(tmp_path: Path, framework: str, opera
         "mlip_m3gnet.py",
         "mlip_chgnet.py",
         "mlip_mace.py",
+        "model_runtime.py",
     } <= staged
     assert ("foundation-model-reference.json" in staged) is (operation == "finetune")
     outputs = {item["remote_name"]: item for item in scheduled["fetch_outputs"]}
     assert outputs["training-result.json"]["required"] is True
     assert outputs["model-artifact"]["required"] is True
     assert outputs["cluster-run-report.json"]["required"] is True
+
+
+def test_upstream_dataset_reference_supplies_undeclared_fingerprint(tmp_path: Path) -> None:
+    module = _load("mlip_training_cluster_adapter_handoff", PLUGIN / "adapter_cluster.py")
+    context = _context(tmp_path, "m3gnet", "finetune")
+    expected = context["parameters"].pop("dataset_fingerprint")
+
+    plan = module.Adapter().plan(context)
+
+    assert plan["status"] == "READY", plan.get("diagnostics")
+    assert plan["training_identity"]["dataset"]["fingerprint"] == expected
+    assert plan["approval_summary"]["dataset_fingerprint"] == expected
+
+
+def test_cluster_runner_uses_bound_dataset_fingerprint_when_parameter_is_absent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cluster = _load("mlip_training_cluster_handoff", PLUGIN / "training_cluster.py")
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    data_root = tmp_path / "data"
+    input_dir.mkdir()
+    dataset = data_root / "chgnet" / "dataset.json"
+    dataset.parent.mkdir(parents=True)
+    dataset.write_bytes(b"approved-dataset")
+    config = input_dir / "training-config.json"
+    _write_json(config, {"framework": "chgnet"})
+    _write_json(
+        input_dir / "dataset-reference.json",
+        {
+            "schema_version": 1,
+            "dataset_id": "chgnet-upstream-v1",
+            "relative_path": "chgnet/dataset.json",
+            "kind": "file",
+            "fingerprint": cluster.fingerprint(dataset),
+        },
+    )
+    project = tmp_path / "project.json"
+    _write_json(
+        project,
+        {
+            "workflow": {
+                "nodes": [
+                    {
+                        "id": "finetune",
+                        "parameters": {
+                            "framework": "chgnet",
+                            "operation": "train",
+                            "seed": 23,
+                            "device": "cpu",
+                            "precision": "float32",
+                            "config_fingerprint": _sha(config),
+                        },
+                    }
+                ]
+            }
+        },
+    )
+
+    def fake_training(argv: list[str]) -> int:
+        model = Path(argv[argv.index("--output") + 1])
+        result = Path(argv[argv.index("--result-manifest") + 1])
+        model.write_bytes(b"model")
+        _write_json(result, {"framework_version": "test"})
+        return 0
+
+    monkeypatch.setitem(sys.modules, "training_wrapper", SimpleNamespace(main=fake_training))
+    args = cluster.build_parser().parse_args(
+        [
+            "run",
+            "--project",
+            str(project),
+            "--node-id",
+            "finetune",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--data-root",
+            str(data_root),
+        ]
+    )
+
+    assert cluster.run(args) == 0
+    report = json.loads((output_dir / "cluster-run-report.json").read_text())
+    assert report["dataset"]["observed_fingerprint"] == cluster.fingerprint(dataset)
 
 
 def test_chgnet_scheduled_float64_is_rejected(tmp_path: Path) -> None:
@@ -408,6 +516,93 @@ def test_finetune_cluster_foundation_identity_is_accepted(tmp_path: Path) -> Non
     result = module.Adapter().check(context)
 
     assert result["status"] == "OK", result.get("diagnostics")
+
+
+def test_published_model_reference_is_fetched_checked_and_collected(tmp_path: Path) -> None:
+    module = _load("mlip_training_cluster_adapter_publish", PLUGIN / "adapter_cluster.py")
+    context, _ = _completed_finetune_context(tmp_path, module, publish=True)
+    plan = context["execution"]["plan"]
+    outputs = {
+        item["remote_name"]: item for item in plan["scheduled_execution"]["fetch_outputs"]
+    }
+    assert plan["scheduled_execution"]["template_family"] == "mlip-chgnet-publish"
+    assert outputs["model-reference.json"]["required"] is True
+
+    collected = module.Adapter().collect(context)
+
+    assert collected["status"] == "OK", collected.get("diagnostics")
+    assert "model-reference" in {item["role"] for item in collected["artifacts"]}
+
+
+def test_cluster_model_publication_handles_file_and_m3gnet_archive(tmp_path: Path) -> None:
+    cluster = _load("mlip_training_cluster_publish", PLUGIN / "training_cluster.py")
+    model_root = tmp_path / "models"
+    model_root.mkdir()
+    checkpoint = tmp_path / "chgnet.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    chgnet = cluster._publish_model(
+        checkpoint,
+        model_root,
+        "chgnet",
+        "chgnet-v1",
+        "chgnet/chgnet-v1.pt",
+    )
+    assert chgnet["kind"] == "file"
+    assert chgnet["fingerprint"] == _sha(model_root / "chgnet/chgnet-v1.pt")
+    with pytest.raises(ValueError, match="already exists"):
+        cluster._publish_model(
+            checkpoint,
+            model_root,
+            "chgnet",
+            "chgnet-v1",
+            "chgnet/chgnet-v1.pt",
+        )
+
+    archive = tmp_path / "m3gnet.tar.gz"
+    payload = b"model-data"
+    with tarfile.open(archive, "w:gz") as bundle:
+        info = tarfile.TarInfo("model/model.json")
+        info.size = len(payload)
+        bundle.addfile(info, io.BytesIO(payload))
+    m3gnet = cluster._publish_model(
+        archive,
+        model_root,
+        "m3gnet",
+        "m3gnet-v1",
+        "m3gnet/m3gnet-v1",
+    )
+    assert m3gnet["kind"] == "directory"
+    assert (model_root / "m3gnet/m3gnet-v1/model.json").read_bytes() == payload
+    assert m3gnet["fingerprint"] == cluster.fingerprint(
+        model_root / "m3gnet/m3gnet-v1"
+    )
+
+
+def test_cluster_runner_accepts_separate_foundation_and_publication_roots() -> None:
+    cluster = _load("mlip_training_cluster_roots", PLUGIN / "training_cluster.py")
+
+    args = cluster.build_parser().parse_args(
+        [
+            "run",
+            "--project",
+            "project.yaml",
+            "--node-id",
+            "finetune",
+            "--input-dir",
+            "input",
+            "--output-dir",
+            "output",
+            "--data-root",
+            "/site/data",
+            "--model-root",
+            "/site/models",
+            "--foundation-model-root",
+            "/site/foundations",
+        ]
+    )
+
+    assert args.model_root == "/site/models"
+    assert args.foundation_model_root == "/site/foundations"
 
 
 @pytest.mark.parametrize(
@@ -534,4 +729,5 @@ def test_cluster_fingerprint_is_stable_for_files_and_trees(tmp_path: Path) -> No
     first = runner.fingerprint(tree)
     second = runner.fingerprint(tree)
     assert first == second
+    assert fingerprint_path(tree) == first
     assert first.startswith("sha256:") and len(first) == 71

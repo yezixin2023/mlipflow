@@ -284,6 +284,7 @@ def _check_npt(
                     f"md-result.json field {key} differs from the approved NPT plan",
                 )
             )
+    diagnostics.extend(legacy._check_structure_summary(result, identity))
     initial_pressure = result.get("initial_pressure_GPa")
     if not _finite(initial_pressure):
         diagnostics.append(
@@ -379,6 +380,23 @@ def _check_npt(
         diagnostics.append(
             _diagnostic("error", "ase_md.cluster_structure", "cluster report structure differs")
         )
+    if "supercell_repeat" in identity:
+        for key in (
+            "supercell_repeat",
+            "source_atom_count",
+            "atom_count",
+            "initial_cell_lengths_A",
+            "minimum_initial_cell_length_A",
+            "observed_stability",
+        ):
+            if report.get(key) != result.get(key):
+                diagnostics.append(
+                    _diagnostic(
+                        "error",
+                        f"ase_md.cluster_{key}",
+                        f"cluster report {key} differs",
+                    )
+                )
     result_path = attempt / "md-result.json"
     if legacy._ordinary_file(result_path, legacy.MAX_JSON_BYTES) and report.get(
         "result_sha256"

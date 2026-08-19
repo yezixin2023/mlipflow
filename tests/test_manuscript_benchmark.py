@@ -731,6 +731,86 @@ class ManuscriptBenchmarkTests(unittest.TestCase):
         self.assertFalse(provenance["model_execution"])
         self.assertIn("does not run an MLIP", provenance["limitations"][0])
 
+    def test_execute_adapter_accepts_explicit_unavailable_single_pair_pearson(self) -> None:
+        pairs = self.root / "single_prediction_pair.csv"
+        with pairs.open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(
+                stream,
+                fieldnames=[
+                    "model",
+                    "task",
+                    "scenario",
+                    "split",
+                    "target",
+                    "unit",
+                    "reference",
+                    "prediction",
+                ],
+            )
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "model": "chgnet",
+                    "task": "static-pes",
+                    "scenario": "single-held-out-structure",
+                    "split": "test",
+                    "target": "energy",
+                    "unit": "eV/atom",
+                    "reference": 1.0,
+                    "prediction": 1.2,
+                }
+            )
+
+        attempt = self.root / "single-pair-attempt"
+        attempt.mkdir()
+        context = {
+            "project_root": str(self.root),
+            "attempt_dir": str(attempt),
+            "inputs": {
+                "evidence_inputs": [
+                    {
+                        "path": pairs.name,
+                        "evidence_locator": "evidence/single-prediction-pair.csv",
+                    }
+                ],
+                "output_dir": "normalized",
+            },
+            "parameters": {
+                "operation": "normalize-execute",
+                "model_family": "chgnet",
+                "task": "static-pes",
+                "scenario": "single-held-out-structure",
+                "split": "test",
+                "units": {"energy": "eV/atom"},
+            },
+            "backend": "local",
+            "resources": {"cpus": 1},
+        }
+        adapter = load_adapter()
+        plan = adapter.plan(context)
+        completed = subprocess.run(
+            plan["argv"],
+            cwd=plan["cwd"],
+            shell=plan["shell"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        checked = adapter.check(context)
+        self.assertEqual("OK", checked["status"], checked["diagnostics"])
+        metrics = json.loads(
+            (attempt / "normalized" / "metrics.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            ["energy_mae", "energy_rmse"],
+            [record["metric"] for record in metrics["records"]],
+        )
+        self.assertEqual("energy_pearson_r", metrics["unavailable_metrics"][0]["metric"])
+        self.assertEqual(
+            "insufficient-scalar-pairs", metrics["unavailable_metrics"][0]["reason"]
+        )
+
     def test_replay_rejects_missing_units_unknown_models_and_silent_overwrite(self) -> None:
         evidence = self.root / "bad.json"
         base = {

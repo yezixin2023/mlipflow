@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import shutil
 import tempfile
@@ -39,6 +40,10 @@ def arc_payload(energies: list[float]) -> str:
     return "".join(chunks)
 
 
+def fingerprint_bytes(payload: bytes) -> str:
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
 def lasp_run_template() -> str:
     return """#!/bin/bash
 # project={{PROJECT_ID}} node={{NODE_ID}} attempt={{ATTEMPT}}
@@ -58,7 +63,49 @@ def library() -> FakeTemplateLibrary:
 def build_project(root: Path) -> Path:
     inputs = root / "inputs"
     inputs.mkdir(parents=True)
-    (inputs / "input.arc").write_text(arc_payload([-10.0]), encoding="utf-8")
+    prepared = inputs / "prepared"
+    prepared.mkdir()
+    structure = prepared / "input.arc"
+    structure.write_text(arc_payload([-10.0]), encoding="utf-8")
+    potcar = prepared / "POTCAR"
+    potcar.write_bytes(b"FAKE-Li\nFAKE-S\n")
+    write_json(
+        prepared / "lasp-input-manifest.json",
+        {
+            "schema_version": 1,
+            "plugin_id": "pes-sampling",
+            "operation": "lasp-input-prepare",
+            "pseudopotential_reference_sha256": "sha256:" + "a" * 64,
+            "output": {
+                "path": "input.arc",
+                "sha256": fingerprint_bytes(structure.read_bytes()),
+                "size_bytes": structure.stat().st_size,
+            },
+            "potcar": {
+                "reference_id": "fixture-pbe54-plain-v1",
+                "source_env": "PMG_VASP_PSP_DIR",
+                "configuration_source": "pymatgen-settings",
+                "functional": "PBE_54",
+                "elements": ["Li", "S"],
+                "symbols": ["Li", "S"],
+                "components": [
+                    {
+                        "symbol": symbol,
+                        "sha256": fingerprint_bytes(f"FAKE-{symbol}\n".encode()),
+                    }
+                    for symbol in ("Li", "S")
+                ],
+                "combined_sha256": fingerprint_bytes(potcar.read_bytes()),
+                "portable_artifact": False,
+                "output": {
+                    "path": "POTCAR",
+                    "sha256": fingerprint_bytes(potcar.read_bytes()),
+                    "size_bytes": potcar.stat().st_size,
+                    "collectable": False,
+                },
+            },
+        },
+    )
     (inputs / "fixture.pot").write_text("scheduled auxiliary fixture\n", encoding="utf-8")
     (inputs / "lasp.in").write_text(
         "potential vasp\nexplore_type ssw\nRun_type 5\nSSW.SSWsteps 4 # inline LASP comment\nSSW.MaxOptstep 300\nSSW.Temp 200.0000\n",
@@ -75,7 +122,8 @@ def build_project(root: Path) -> Path:
                     "backend": "ssh-slurm",
                     "backend_profile": "cluster-a",
                     "inputs": {
-                        "input_structure": "inputs/input.arc",
+                        "input_structure": "inputs/prepared/input.arc",
+                        "lasp_input_manifest": "inputs/prepared/lasp-input-manifest.json",
                         "lasp_input": "inputs/lasp.in",
                         "lasp_auxiliary_files": {"fixture.pot": "inputs/fixture.pot"},
                     },
@@ -136,13 +184,22 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         self.assertEqual("lasp-ssw", scheduled["template_family"])
         self.assertEqual("mpi-task-count", adapter["approval_summary"]["cpus_meaning"])
         staged = {item["remote_name"] for item in scheduled["staged_files"]}
-        self.assertTrue({"project.yaml", "input.arc", "lasp.in", "fixture.pot", "lasp_ssw.py", "lasp_cluster.py"}.issubset(staged))
+        self.assertTrue({"project.yaml", "input.arc", "lasp.in", "lasp-input-manifest.json", "POTCAR", "fixture.pot", "lasp_ssw.py", "lasp_cluster.py"}.issubset(staged))
+        staged_records = {item["remote_name"]: item for item in scheduled["staged_files"]}
+        self.assertTrue(staged_records["POTCAR"]["sensitive"])
+        self.assertFalse(staged_records["POTCAR"]["fetch_allowed"])
+        self.assertEqual("vasp", adapter["lasp_scheduled_identity"]["potential"])
+        self.assertEqual(
+            "fixture-pbe54-plain-v1",
+            adapter["lasp_scheduled_identity"]["pseudopotential"]["reference_id"],
+        )
         self.assertNotIn("lasp_executable", staged)
         self.assertNotIn("lasp_executable", adapter["input_fingerprints"])
         self.assertNotIn("lasp_executable", adapter["lasp_scheduled_identity"])
         self.assertTrue(adapter["assumptions"]["cluster_lasp_executable_is_site_owned"])
         fetched = {item["remote_name"] for item in adapter["scheduled_execution"]["fetch_outputs"]}
         self.assertTrue({"cluster-run-report.json", "sampling-result.json", "selected-structures.tar.gz", "allstr.arc"}.issubset(fetched))
+        self.assertNotIn("POTCAR", fetched)
 
     def test_core_accepts_the_lasp_scheduled_execution(self) -> None:
         plan = make_run_plan(self.project, "lasp-walk", PLUGINS, self.site, library())
@@ -179,7 +236,12 @@ class LaspRemoteRunnerTests(unittest.TestCase):
         self.output_dir = self.root / "remote-output"
         self.input_dir.mkdir()
         shutil.copy2(self.root / "project.yaml", self.input_dir / "project.yaml")
-        shutil.copy2(self.root / "inputs" / "input.arc", self.input_dir / "input.arc")
+        shutil.copy2(self.root / "inputs" / "prepared" / "input.arc", self.input_dir / "input.arc")
+        shutil.copy2(
+            self.root / "inputs" / "prepared" / "lasp-input-manifest.json",
+            self.input_dir / "lasp-input-manifest.json",
+        )
+        shutil.copy2(self.root / "inputs" / "prepared" / "POTCAR", self.input_dir / "POTCAR")
         shutil.copy2(self.root / "inputs" / "lasp.in", self.input_dir / "lasp.in")
         shutil.copy2(self.root / "inputs" / "fixture.pot", self.input_dir / "fixture.pot")
         shutil.copy2(PES / "lasp_ssw.py", self.input_dir / "lasp_ssw.py")
@@ -212,6 +274,8 @@ class LaspRemoteRunnerTests(unittest.TestCase):
         self.assertEqual(0, code)
         report = json.loads((self.output_dir / "cluster-run-report.json").read_text(encoding="utf-8"))
         self.assertEqual("OK", report["status"])
+        self.assertEqual("vasp", report["potential"])
+        self.assertEqual("fixture-pbe54-plain-v1", report["pseudopotential"]["reference_id"])
         self.assertEqual(2, report["counts"]["selected_structure_count"])
         canonical = self.output_dir / "lasp-ssw" / "raw-run" / "allstr.arc"
         self.assertEqual(

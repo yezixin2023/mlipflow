@@ -13,6 +13,9 @@ BACKEND = "ssh-slurm"
 CALCULATORS = ("deepmd", "m3gnet", "chgnet", "mace")
 MODEL_KINDS = {"deepmd": "file", "m3gnet": "directory", "chgnet": "file", "mace": "file"}
 TEMPLATE_FAMILIES = {name: f"ase-md-{name}" for name in CALCULATORS}
+TEMPLATE_FAMILIES.update(
+    {name: f"ase-md-{name}-canonical" for name in ("m3gnet", "chgnet")}
+)
 MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_STRUCTURE_BYTES = 64 * 1024 * 1024
 MAX_TRAJECTORY_BYTES = 4 * 1024 * 1024 * 1024
@@ -81,9 +84,7 @@ def _project_file(root: Path, value: Any) -> Path:
     if reference is None:
         raise ValueError("missing project file reference")
     path = Path(reference)
-    if path.is_absolute():
-        raise ValueError("project inputs must use relative paths")
-    candidate = (root / path).absolute()
+    candidate = path.absolute() if path.is_absolute() else (root / path).absolute()
     try:
         candidate.resolve().relative_to(root.resolve())
     except (OSError, ValueError) as exc:
@@ -174,6 +175,17 @@ def _finite_positive(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value)) and float(value) > 0
 
 
+def _valid_supercell_repeat(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 3
+        and all(
+            not isinstance(item, bool) and isinstance(item, int) and item > 0
+            for item in value
+        )
+    )
+
+
 def _expected_steps(total: int, interval: int) -> list[int]:
     values = [0, *range(interval, total + 1, interval)]
     if values[-1] != total:
@@ -257,10 +269,37 @@ def _validate(context: dict[str, Any]) -> list[dict[str, str]]:
         diagnostics.append(_diagnostic("error", "ase_md.friction", "friction_per_fs must be finite and positive"))
     if not isinstance(parameters.get("fix_com"), bool):
         diagnostics.append(_diagnostic("error", "ase_md.fix_com", "fix_com must be boolean"))
-    if not _is_fingerprint(parameters.get("model_fingerprint")):
-        diagnostics.append(_diagnostic("error", "ase_md.model_fingerprint", "model_fingerprint must be sha256:<64 lowercase hex>"))
+    declared_model_fingerprint = parameters.get("model_fingerprint")
+    if declared_model_fingerprint is not None and not _is_fingerprint(
+        declared_model_fingerprint
+    ):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "ase_md.model_fingerprint",
+                "model_fingerprint must be sha256:<64 lowercase hex> when supplied",
+            )
+        )
     if not _is_fingerprint(parameters.get("structure_fingerprint")):
         diagnostics.append(_diagnostic("error", "ase_md.structure_fingerprint", "structure_fingerprint must be sha256:<64 lowercase hex>"))
+    repeat = parameters.get("supercell_repeat")
+    if repeat is not None and not _valid_supercell_repeat(repeat):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "ase_md.supercell_repeat",
+                "supercell_repeat must contain exactly three positive integers",
+            )
+        )
+    minimum_cell = parameters.get("minimum_initial_cell_length_angstrom")
+    if minimum_cell is not None and not _finite_positive(minimum_cell):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "ase_md.minimum_initial_cell_length",
+                "minimum_initial_cell_length_angstrom must be finite and positive",
+            )
+        )
     for key in ("input_format", "input_index"):
         value = parameters.get(key)
         if value is not None and not _plain_string(str(value)):
@@ -303,7 +342,10 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
     structure_fp = _sha256(structure)
     if parameters["structure_fingerprint"] != structure_fp:
         diagnostics.append(_diagnostic("error", "ase_md.structure_identity", "parameters.structure_fingerprint does not match the staged structure"))
-    if parameters["model_fingerprint"] != model["fingerprint"]:
+    if (
+        parameters.get("model_fingerprint") is not None
+        and parameters["model_fingerprint"] != model["fingerprint"]
+    ):
         diagnostics.append(_diagnostic("error", "ase_md.model_identity", "parameters.model_fingerprint does not match the model reference"))
     if diagnostics:
         return _blocked(diagnostics)
@@ -356,6 +398,20 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
         "input_format": parameters.get("input_format"),
         "input_index": str(parameters.get("input_index", "-1")),
     }
+    if (
+        "supercell_repeat" in parameters
+        or "minimum_initial_cell_length_angstrom" in parameters
+    ):
+        identity.update(
+            {
+                "supercell_repeat": list(
+                    parameters.get("supercell_repeat", [1, 1, 1])
+                ),
+                "minimum_initial_cell_length_angstrom": parameters.get(
+                    "minimum_initial_cell_length_angstrom"
+                ),
+            }
+        )
     return {
         "plugin_id": PLUGIN_ID,
         "status": "READY",
@@ -388,6 +444,10 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
             "model_id": model["model_id"],
             "model_fingerprint": model["fingerprint"],
             "structure_fingerprint": structure_fp,
+            "supercell_repeat": identity.get("supercell_repeat", [1, 1, 1]),
+            "minimum_initial_cell_length_A": identity.get(
+                "minimum_initial_cell_length_angstrom"
+            ),
             "device": identity["device"],
             "resources": dict(_mapping(context.get("resources"))),
             "template_family": TEMPLATE_FAMILIES[calculator],
@@ -491,6 +551,94 @@ def _check_thermo(path: Path, identity: dict[str, Any]) -> tuple[str | None, dic
     return None, last
 
 
+def _check_structure_summary(
+    result: dict[str, Any], identity: dict[str, Any]
+) -> list[dict[str, str]]:
+    if "supercell_repeat" not in identity:
+        return []
+    diagnostics: list[dict[str, str]] = []
+    repeat = identity["supercell_repeat"]
+    source_atoms = result.get("source_atom_count")
+    atom_count = result.get("atom_count")
+    lengths = result.get("initial_cell_lengths_A")
+    minimum = identity.get("minimum_initial_cell_length_angstrom")
+    expected = {
+        "supercell_repeat": repeat,
+        "minimum_initial_cell_length_A": minimum,
+    }
+    for key, value in expected.items():
+        if result.get(key) != value:
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    f"ase_md.result_{key}",
+                    f"md-result field {key} differs",
+                )
+            )
+    if (
+        isinstance(source_atoms, bool)
+        or not isinstance(source_atoms, int)
+        or source_atoms < 1
+        or isinstance(atom_count, bool)
+        or not isinstance(atom_count, int)
+        or atom_count != source_atoms * math.prod(repeat)
+    ):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "ase_md.atom_count",
+                "expanded atom count differs from the approved repeat",
+            )
+        )
+    if (
+        not isinstance(lengths, list)
+        or len(lengths) != 3
+        or any(not _finite_positive(value) for value in lengths)
+        or (
+            minimum is not None
+            and any(float(value) <= float(minimum) for value in lengths)
+        )
+    ):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "ase_md.initial_cell",
+                "expanded initial cell does not satisfy the approved bound",
+            )
+        )
+    stability = _mapping(result.get("observed_stability"))
+    distance = stability.get("minimum_pair_distance_A")
+    if stability.get("all_recorded_values_finite") is not True or (
+        distance is not None and not _finite_positive(distance)
+    ):
+        diagnostics.append(
+            _diagnostic(
+                "error", "ase_md.stability_summary", "MD stability summary is invalid"
+            )
+        )
+    thermodynamics = _mapping(stability.get("thermodynamics"))
+    for name in (
+        "temperature_K",
+        "potential_energy_eV_per_atom",
+        "total_energy_eV_per_atom",
+        "volume_A3",
+    ):
+        stats = _mapping(thermodynamics.get(name))
+        if any(
+            not isinstance(stats.get(key), (int, float))
+            or not math.isfinite(float(stats[key]))
+            for key in ("minimum", "maximum", "mean")
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    "error",
+                    "ase_md.stability_summary",
+                    f"stability statistics are invalid for {name}",
+                )
+            )
+    return diagnostics
+
+
 def _check(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
     diagnostics: list[dict[str, str]] = []
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
@@ -525,6 +673,7 @@ def _check(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any
     for key, expected in expected_pairs.items():
         if result.get(key) != expected:
             diagnostics.append(_diagnostic("error", f"ase_md.result_{key}", f"md-result.json field {key} differs from the approved plan"))
+    diagnostics.extend(_check_structure_summary(result, identity))
     model = _mapping(result.get("model"))
     if model.get("id") != identity.get("model_id") or model.get("fingerprint") != identity.get("model_fingerprint"):
         diagnostics.append(_diagnostic("error", "ase_md.result_model", "md-result model identity differs from the approved plan"))
@@ -566,6 +715,23 @@ def _check(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any
         diagnostics.append(_diagnostic("error", "ase_md.cluster_model", "cluster report model identity differs from the approved model"))
     if report.get("structure_fingerprint") != identity.get("structure_fingerprint"):
         diagnostics.append(_diagnostic("error", "ase_md.cluster_structure", "cluster report structure fingerprint differs from the approved structure"))
+    if "supercell_repeat" in identity:
+        for key in (
+            "supercell_repeat",
+            "source_atom_count",
+            "atom_count",
+            "initial_cell_lengths_A",
+            "minimum_initial_cell_length_A",
+            "observed_stability",
+        ):
+            if report.get(key) != result.get(key):
+                diagnostics.append(
+                    _diagnostic(
+                        "error",
+                        f"ase_md.cluster_{key}",
+                        f"cluster report {key} differs",
+                    )
+                )
     if _ordinary_file(attempt / "md-result.json", MAX_JSON_BYTES) and report.get("result_sha256") != _sha256(attempt / "md-result.json"):
         diagnostics.append(_diagnostic("error", "ase_md.cluster_result_hash", "cluster report does not bind the fetched md-result.json"))
     if diagnostics:

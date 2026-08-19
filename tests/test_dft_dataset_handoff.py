@@ -33,7 +33,7 @@ def _contract():
     return _load("dft_dataset_contract_test", DFT_PLUGIN / "dataset_contract.py")
 
 
-def _canonical(count: int = 10, *, groups: bool = False) -> dict:
+def _canonical(count: int = 10, *, groups: bool = False, sampling: bool = False) -> dict:
     contract = _contract()
     digest = "sha256:" + "1" * 64
     labels, structures = [], []
@@ -42,6 +42,23 @@ def _canonical(count: int = 10, *, groups: bool = False) -> dict:
         item = {"id": structure_id, "path": f"structures/{structure_id}.vasp", "fingerprint": digest}
         if groups:
             item["source_group_id"] = f"trajectory-{index // 3:03d}"
+        if sampling:
+            item.update(
+                {
+                    "source_sampling_method": "DIRECT",
+                    "source_sampling_methods": ["DIRECT", "LASP_SSW"],
+                    "source_records": [
+                        {
+                            "sampling_method": "DIRECT",
+                            "source_group_id": f"trajectory-{index:03d}",
+                            "source_id": f"direct-{index:06d}",
+                            "source_order": index + 1,
+                            "source_path": f"selected/{structure_id}.vasp",
+                            "source_sha256": digest,
+                        }
+                    ],
+                }
+            )
         structures.append(item)
         labels.append({
             "structure_id": structure_id, "calculation_id": f"calc-{index:04d}",
@@ -124,6 +141,20 @@ def test_group_aware_split_keeps_trajectory_frames_together() -> None:
     assert not contract.validate_split_manifest(canonical, split)
 
 
+def test_sampling_provenance_survives_canonical_dataset() -> None:
+    contract, canonical = _contract(), _canonical(3, sampling=True)
+    source = canonical["records"][0]["source_structure"]
+    assert source["source_sampling_method"] == "DIRECT"
+    assert source["source_sampling_methods"] == ["DIRECT", "LASP_SSW"]
+    assert source["source_records"][0]["source_id"] == "direct-000000"
+    assert not contract.validate_canonical_dataset(canonical)
+
+    source["source_records"][0]["source_path"] = "../escaped.vasp"
+    assert "canonical record 0 source provenance is invalid" in contract.validate_canonical_dataset(
+        canonical
+    )
+
+
 def test_four_views_share_exact_record_ids_and_scientific_conventions(tmp_path: Path) -> None:
     pytest.importorskip("numpy")
     dpdata = pytest.importorskip("dpdata")
@@ -159,17 +190,62 @@ def test_four_views_share_exact_record_ids_and_scientific_conventions(tmp_path: 
         assert reference["split_id"] == split["split_id"]
         assert reference["relative_path"] == f"{root.name}/{framework}"
         assert reference["fingerprint"].startswith("sha256:")
+    benchmark_path = output / "benchmark-test.json"
+    benchmark = json.loads(benchmark_path.read_text())
+    assert [sample["id"] for sample in benchmark["samples"]] == split["test_record_ids"]
+    assert benchmark["energy_convention"] == "total"
+    assert benchmark["stress_convention"] == "ase-voigt-xx-yy-zz-yz-xz-xy"
+    assert benchmark["samples"][0]["references"]["stress"][0] == pytest.approx(
+        -1.0 / 1602.176621
+    )
+    benchmark_reference = json.loads(
+        (output / "benchmark-dataset-reference.json").read_text()
+    )
+    assert benchmark_reference["split_id"] == split["split_id"]
+    assert benchmark_reference["fingerprint"] == "sha256:" + hashlib.sha256(
+        benchmark_path.read_bytes()
+    ).hexdigest()
+    fresh = _load(
+        "dft_benchmark_dataset_reader",
+        ROOT / "plugins" / "mlip-benchmark" / "fresh_benchmark.py",
+    )
+    _, loaded_samples = fresh._load_dataset(benchmark_path)
+    assert [sample["id"] for sample in loaded_samples] == split["test_record_ids"]
     assert not list(tmp_path.rglob("*.tar"))
 
 
 def test_converter_refuses_existing_dataset_without_forensic_reverification(tmp_path: Path) -> None:
-    converter, args, _, root, _ = _convert(tmp_path, _canonical(6), "m3gnet,chgnet,mace")
+    converter, args, _, root, first_output = _convert(tmp_path, _canonical(6), "m3gnet,chgnet,mace")
     (root / "m3gnet" / "train.json").write_text("tampered")
     second_output = tmp_path / "second-output"
     args.output_dir = str(second_output)
     with pytest.raises(converter.ConversionError, match="already exists"):
         converter.run(args)
     assert not second_output.exists()
+    args.reuse_existing = True
+    args.reuse_reference_dir = str(first_output)
+    with pytest.raises(converter.ConversionError, match="fingerprint differs"):
+        converter.run(args)
+
+
+def test_converter_recollects_verified_existing_dataset_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    converter, args, first, root, first_output = _convert(
+        tmp_path, _canonical(6), "m3gnet,chgnet"
+    )
+    second_output = tmp_path / "second-output"
+    args.output_dir = str(second_output)
+    args.reuse_existing = True
+    args.reuse_reference_dir = str(first_output)
+    assert converter.run(args) == first
+    assert root.is_dir()
+    for name in (
+        "m3gnet-dataset-reference.json",
+        "chgnet-dataset-reference.json",
+        "benchmark-dataset-reference.json",
+    ):
+        assert (second_output / name).read_bytes() == (first_output / name).read_bytes()
 
 
 def test_adapter_plan_passes_explicit_split_parameters_and_fetches_no_bundle(tmp_path: Path) -> None:
@@ -197,6 +273,28 @@ def test_adapter_plan_passes_explicit_split_parameters_and_fetches_no_bundle(tmp
     variables = plan["scheduled_execution"]["template_variables"]
     assert variables["PLUGIN_SPLIT_SEED"] == "11"
     assert variables["PLUGIN_FRAMEWORKS"] == "deepmd,m3gnet,chgnet,mace"
+
+
+def test_dataset_adapter_accepts_absolute_project_scoped_canonical_path(tmp_path: Path) -> None:
+    canonical_path = tmp_path / "canonical.json"
+    write_json(canonical_path, _canonical(4))
+    context = {
+        "project_root": str(tmp_path),
+        "attempt_dir": str(tmp_path / "attempt"),
+        "backend": "ssh-slurm",
+        "inputs": {"canonical_dataset": str(canonical_path.resolve())},
+        "parameters": {
+            "operation": "dataset-assemble",
+            "frameworks": ["m3gnet", "chgnet"],
+            "split_strategy": "deterministic",
+            "split_seed": 23,
+            "split_fractions": {"train": .8, "validation": .1, "test": .1},
+        },
+        "resources": {"cpus": 2, "gpus": 0, "memory": "4G", "walltime": "00:10:00"},
+    }
+    adapter = _load("dft_dataset_adapter_absolute", DFT_PLUGIN / "adapter.py").Adapter()
+    assert adapter.validate(context) == []
+    assert adapter.plan(context)["status"] == "READY"
 
 
 def test_adapter_checks_and_collects_only_split_result_and_references(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ import hashlib
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from ..artifacts import content_identity, fingerprint
 from ..config import Project
@@ -59,6 +60,7 @@ def _portable_roots(
             else None
         ),
         plugin_dir=plugin.path.parent if plugin is not None else None,
+        package_dir=Path(__file__).resolve().parents[1],
     )
 
 
@@ -152,8 +154,88 @@ def _scheduled_contract(
         _portable_roots(project, plugin, node_id, attempt),
     )
     scheduled = adapter_plan.get("scheduled_execution") if isinstance(adapter_plan, dict) else None
+    if isinstance(scheduled, dict) and scheduled.get("schema_version") == 4:
+        if scheduled.get("submission_strategy") != "independent-jobs":
+            raise PluginError(
+                "scheduled_execution schema_version 4 requires independent-jobs"
+            )
+        execution_model = scheduled.get("execution_model")
+        template_family = scheduled.get("template_family")
+        submissions = scheduled.get("submissions")
+        if not isinstance(submissions, list) or not submissions:
+            raise PluginError(
+                "scheduled_execution.submissions must be a non-empty list"
+            )
+        normalized_submissions: list[dict[str, Any]] = []
+        submission_ids: set[str] = set()
+        local_names: set[str] = set()
+        for index, submission in enumerate(submissions):
+            if not isinstance(submission, dict):
+                raise PluginError(f"scheduled submission {index} must be a mapping")
+            submission_id = submission.get("id")
+            if (
+                not isinstance(submission_id, str)
+                or not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", submission_id)
+                or submission_id in submission_ids
+            ):
+                raise PluginError(
+                    f"scheduled submission {index} has an unsafe or duplicate id"
+                )
+            submission_ids.add(submission_id)
+            unit = {
+                "schema_version": 3,
+                "execution_model": execution_model,
+                "template_family": template_family,
+                "template_variables": submission.get("template_variables", {}),
+                "staged_files": submission.get("staged_files"),
+                "fetch_outputs": submission.get("fetch_outputs"),
+            }
+            normalized = _scheduled_contract(
+                project,
+                plugin,
+                {"adapter_plan": {"scheduled_execution": unit}},
+                node_id=node_id,
+                attempt=attempt,
+                verify_staged_sources=verify_staged_sources,
+            )
+            outputs: list[dict[str, Any]] = []
+            for item in normalized["fetch_outputs"]:
+                adjusted = dict(item)
+                if item["remote_name"] in {
+                    "completion.json",
+                    "stdout.log",
+                    "stderr.log",
+                }:
+                    adjusted["local_name"] = (
+                        f"scheduler/{submission_id}/{item['local_name']}"
+                    )
+                local_name = str(adjusted["local_name"])
+                if local_name in local_names:
+                    raise PluginError(
+                        "scheduled independent jobs have duplicate local output: "
+                        + local_name
+                    )
+                local_names.add(local_name)
+                outputs.append(adjusted)
+            normalized_submissions.append(
+                {
+                    "id": submission_id,
+                    "template_variables": normalized["template_variables"],
+                    "staged_files": normalized["staged_files"],
+                    "fetch_outputs": outputs,
+                }
+            )
+        return {
+            "schema_version": 4,
+            "submission_strategy": "independent-jobs",
+            "execution_model": execution_model,
+            "template_family": template_family,
+            "submissions": normalized_submissions,
+        }
     if not isinstance(scheduled, dict) or scheduled.get("schema_version") != 3:
-        raise PluginError("scheduled adapter plan requires scheduled_execution schema_version 3")
+        raise PluginError(
+            "scheduled adapter plan requires scheduled_execution schema_version 3 or 4"
+        )
     schema_version = 3
     execution_model = scheduled.get("execution_model")
     if execution_model not in EXECUTION_MODELS:
@@ -180,7 +262,11 @@ def _scheduled_contract(
     staged = scheduled.get("staged_files")
     if not isinstance(staged, list) or not staged:
         raise PluginError("scheduled_execution.staged_files must be a non-empty list")
-    allowed_roots = (project.root.resolve(), plugin.path.parent.resolve())
+    allowed_roots = (
+        project.root.resolve(),
+        plugin.path.parent.resolve(),
+        Path(__file__).resolve().parents[1],
+    )
     names: set[str] = set()
     normalized_stage: list[dict[str, Any]] = []
     for index, item in enumerate(staged):
@@ -306,6 +392,79 @@ def _planned_attempt(project: Project, node_id: str) -> int:
         return store.latest_step(project.project_id, node_id).attempt
 
 
+def _resolve_collected_artifact_bindings(
+    value: Any,
+    *,
+    project: Project,
+    upstream_artifacts: list[dict[str, Any]],
+) -> Any:
+    """Resolve explicit ``from_node``/``role`` inputs from final OK artifacts."""
+
+    if isinstance(value, list):
+        return [
+            _resolve_collected_artifact_bindings(
+                item, project=project, upstream_artifacts=upstream_artifacts
+            )
+            for item in value
+        ]
+    if not isinstance(value, dict):
+        return value
+    if "from_node" not in value and "role" not in value:
+        return {
+            key: _resolve_collected_artifact_bindings(
+                item, project=project, upstream_artifacts=upstream_artifacts
+            )
+            for key, item in value.items()
+        }
+    if set(value) - {"from_node", "role", "resolve"}:
+        raise PluginError(
+            "collected artifact bindings accept only from_node, role, and resolve"
+        )
+    node_id = value.get("from_node")
+    role = value.get("role")
+    resolution = value.get("resolve", "artifact")
+    if not isinstance(node_id, str) or not node_id:
+        raise PluginError("collected artifact binding requires a non-empty from_node")
+    if not isinstance(role, str) or not role:
+        raise PluginError("collected artifact binding requires a non-empty role")
+    if resolution not in {"artifact", "parent"}:
+        raise PluginError("collected artifact binding resolve must be artifact or parent")
+
+    matches: set[str] = set()
+    for record in upstream_artifacts:
+        if record.get("node_id") != node_id or record.get("state") != RunState.OK.value:
+            continue
+        for artifact in record.get("artifacts", []):
+            if isinstance(artifact, dict) and artifact.get("role") == role:
+                raw_path = artifact.get("path")
+                if isinstance(raw_path, str) and raw_path:
+                    matches.add(raw_path)
+    if len(matches) != 1:
+        raise PluginError(
+            f"artifact binding {node_id}:{role} requires exactly one unique artifact "
+            f"from a final OK direct dependency; found {len(matches)}"
+        )
+    raw_path = matches.pop()
+    if raw_path.startswith("file://"):
+        parsed = urlparse(raw_path)
+        if parsed.netloc not in {"", "localhost"}:
+            raise PluginError(f"artifact binding {node_id}:{role} is not a local artifact")
+        raw_path = unquote(parsed.path)
+    elif "://" in raw_path:
+        raise PluginError(f"artifact binding {node_id}:{role} is not a local artifact")
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = project.root / candidate
+    if candidate.is_symlink() or not candidate.exists():
+        raise PluginError(f"artifact binding {node_id}:{role} is missing or a symlink")
+    resolved = candidate.resolve()
+    if not _is_within(resolved, project.root.resolve()):
+        raise PluginError(f"artifact binding {node_id}:{role} escapes the project root")
+    if resolution == "parent":
+        resolved = resolved.parent
+    return str(resolved)
+
+
 def _adapter_context(project: Project, node: dict[str, Any], attempt: int) -> dict[str, Any]:
     upstream_artifacts: list[dict[str, Any]] = []
     database = state_path(project)
@@ -338,6 +497,12 @@ def _adapter_context(project: Project, node: dict[str, Any], attempt: int) -> di
                         )
     raw_inputs = node.get("inputs", {})
     inputs = dict(raw_inputs) if isinstance(raw_inputs, dict) else raw_inputs
+    if isinstance(inputs, dict):
+        inputs = _resolve_collected_artifact_bindings(
+            inputs,
+            project=project,
+            upstream_artifacts=upstream_artifacts,
+        )
     if (
         isinstance(inputs, dict)
         and str(node.get("uses", "")).split("@", 1)[0] == "ionic-transport"

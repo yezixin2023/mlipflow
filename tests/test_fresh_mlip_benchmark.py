@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -186,6 +188,29 @@ class FreshBenchmarkTests(unittest.TestCase):
         self.assertEqual("OK", checked["status"], checked["diagnostics"])
         self.assertEqual("fresh", checked["mode"])
 
+    def test_single_structure_keeps_errors_and_records_energy_pearson_unavailable(self):
+        dataset = json.loads(self.dataset.read_text(encoding="utf-8"))
+        dataset["samples"] = dataset["samples"][:1]
+        self.dataset.write_text(json.dumps(dataset), encoding="utf-8")
+        self.dataset_sha = self.fresh.fingerprint_path(self.dataset)
+
+        paths = self.evaluate()
+        metrics = json.loads(paths["metrics.json"].read_text())
+        provenance = json.loads(paths["provenance.json"].read_text())
+        metric_names = {record["metric"] for record in metrics["records"]}
+        self.assertIn("energy_mae", metric_names)
+        self.assertIn("energy_rmse", metric_names)
+        self.assertNotIn("energy_pearson_r", metric_names)
+        self.assertEqual(1, len(metrics["unavailable_metrics"]))
+        unavailable = metrics["unavailable_metrics"][0]
+        self.assertEqual("energy_pearson_r", unavailable["metric"])
+        self.assertEqual("insufficient-scalar-pairs", unavailable["reason"])
+        self.assertEqual(1, unavailable["sample_count"])
+        self.assertEqual(metrics["unavailable_metrics"], provenance["unavailable_metrics"])
+
+        checked = self.adapter.check(self.context())
+        self.assertEqual("OK", checked["status"], checked["diagnostics"])
+
     def test_total_and_per_atom_energy_conventions_are_distinct(self):
         self.evaluate()
         per_atom = json.loads((self.output / "prediction_evidence.json").read_text())
@@ -278,6 +303,174 @@ class FreshBenchmarkTests(unittest.TestCase):
         provenance["model_execution"] = False
         (self.output / "provenance.json").write_text(json.dumps(provenance))
         self.assertEqual("FAIL", self.adapter.check(self.context())["status"])
+
+    def test_model_only_stress_is_not_a_fair_two_model_selection_axis(self):
+        self.evaluate()
+        first = self.root / "model-a" / "prediction_evidence.json"
+        second = self.root / "model-b" / "prediction_evidence.json"
+        first.parent.mkdir()
+        second.parent.mkdir()
+        payload = json.loads((self.output / "prediction_evidence.json").read_text())
+        first.write_text(json.dumps(payload), encoding="utf-8")
+        payload["model"]["family"] = "chgnet"
+        payload["model"]["framework"] = "chgnet"
+        for record in payload["records"]:
+            record["model"] = "chgnet"
+        payload["records"] = [
+            record for record in payload["records"] if record["target"] != "stress"
+        ]
+        second.write_text(json.dumps(payload), encoding="utf-8")
+        context = {
+            "project_root": str(self.root),
+            "attempt_dir": str(self.root / "joint-attempt"),
+            "inputs": {
+                "evidence_inputs": [
+                    {
+                        "path": "model-a/prediction_evidence.json",
+                        "evidence_locator": "fresh/deepmd-dpa2/prediction_evidence.json",
+                    },
+                    {
+                        "path": "model-b/prediction_evidence.json",
+                        "evidence_locator": "fresh/chgnet/prediction_evidence.json",
+                    },
+                ],
+                "output_dir": "joint",
+            },
+            "parameters": {
+                "operation": "normalize-execute",
+                "expected_models": ["deepmd-dpa2", "chgnet"],
+                "task": "static-pes",
+                "scenario": "fresh-contract-v1",
+                "split": "test",
+                "units": {
+                    "energy": "eV/atom",
+                    "force": "eV/angstrom",
+                    "stress": "GPa",
+                },
+            },
+            "backend": "local",
+            "resources": {"cpus": 1},
+        }
+        plan = self.adapter.plan(context)
+        self.assertEqual("READY", plan["status"], plan["diagnostics"])
+        self.assertEqual(2, plan["argv"].count("--input-locator"))
+        result = subprocess.run(plan["argv"], check=False, capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        checked = self.adapter.check(context)
+        self.assertEqual("OK", checked["status"], checked["diagnostics"])
+        ranking = json.loads(
+            (Path(context["attempt_dir"]) / "joint" / "model_ranking.json").read_text()
+        )
+        fair_axes = [
+            item
+            for item in ranking["rankings"]
+            if item["comparable_model_count"] == 2
+        ]
+        diagnostic_only = [
+            item
+            for item in ranking["rankings"]
+            if item["comparable_model_count"] < 2
+        ]
+        self.assertTrue(fair_axes)
+        self.assertTrue(
+            all(item["metric"].startswith(("energy_", "force_")) for item in fair_axes)
+        )
+        self.assertTrue(diagnostic_only)
+        self.assertTrue(
+            all(item["metric"].startswith("stress_") for item in diagnostic_only)
+        )
+
+    def test_scheduled_fresh_plan_and_fetched_report_roundtrip(self):
+        model_reference = self.root / "model-reference.json"
+        dataset_reference = self.root / "benchmark-dataset-reference.json"
+        model_reference.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "model_id": "deepmd-test-model",
+                    "framework": "deepmd",
+                    "relative_path": "deepmd/deepmd-test-model.pb",
+                    "kind": "file",
+                    "fingerprint": self.model_sha,
+                }
+            ),
+            encoding="utf-8",
+        )
+        dataset_reference.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "dataset_id": "test-dataset",
+                    "relative_path": "test-dataset/benchmark/test.json",
+                    "kind": "file",
+                    "fingerprint": self.dataset_sha,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (self.root / "project.yaml").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "project": {"id": "scheduled-benchmark-test"},
+                    "workflow": {"nodes": [{"id": "benchmark-deepmd"}]},
+                }
+            ),
+            encoding="utf-8",
+        )
+        context = self.context()
+        context.update(
+            {
+                "inputs": {
+                    "model_reference": "model-reference.json",
+                    "benchmark_dataset_reference": "benchmark-dataset-reference.json",
+                    "output_dir": "fresh",
+                },
+                "backend": "ssh-slurm",
+                "resources": {
+                    "cpus": 1,
+                    "gpus": 0,
+                    "memory": "2G",
+                    "walltime": "00:05:00",
+                },
+            }
+        )
+        plan = self.adapter.plan(context)
+        self.assertEqual("READY", plan["status"], plan["diagnostics"])
+        self.assertEqual(
+            "benchmark-deepmd-canonical",
+            plan["scheduled_execution"]["template_family"],
+        )
+        self.assertEqual(6, len(plan["scheduled_execution"]["fetch_outputs"]))
+        self.evaluate()
+        report = {
+            "schema_version": 1,
+            "status": "OK",
+            "return_code": 0,
+            "exact_model_family": "deepmd-dpa2",
+            "framework": "deepmd",
+            "model": {
+                "id": "deepmd-test-model",
+                "observed_fingerprint": self.model_sha,
+            },
+            "dataset": {
+                "id": "test-dataset",
+                "observed_fingerprint": self.dataset_sha,
+            },
+            "outputs": {
+                name: "sha256:"
+                + hashlib.sha256(path.read_bytes()).hexdigest()
+                for name, path in {
+                    item: self.output / item for item in self.fresh.OUTPUT_NAMES
+                }.items()
+            },
+        }
+        (self.root / "attempt" / "cluster-benchmark-report.json").write_text(
+            json.dumps(report), encoding="utf-8"
+        )
+        context["execution"] = {"plan": plan}
+        checked = self.adapter.check(context)
+        self.assertEqual("OK", checked["status"], checked["diagnostics"])
 
 
 if __name__ == "__main__":

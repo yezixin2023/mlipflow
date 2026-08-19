@@ -13,22 +13,22 @@ bounded fetch → completion 身份校验 → plugin check/collect` 已经承载
 1. 一次 **CPU tiny smoke**，科学内容为零：远端脚本只对 staged 输入重算 SHA-256
    并回传，因此 `check` 只能证明输入字节完整到达计算节点、作业确实在计算节点
    执行、输出字节完整取回。
-2. 一次 **真实 DeePMD-kit 训练**（job `27356151`，500 步 fresh training，
+2. 一次 **真实 DeePMD-kit 训练**（job `redacted`，500 步 fresh training，
    scheduler `COMPLETED`，MLIPFlow `OK`）。这是第一次有真实科学程序在调度器上
    由 MLIPFlow 端到端执行并通过科学 check：`dp train` 正常结束、实际完成步数等于
    请求步数、learning curve 全部有限、checkpoint 存在、dataset/config/version
    身份三项均与已批准 plan 一致。
-3. 一次 **DeepMD + LAMMPS CPU 5-step NVT functional smoke**（job `27442624`，
+3. 一次 **DeepMD + LAMMPS CPU 5-step NVT functional smoke**（job `redacted`，
    scheduler `COMPLETED`，MLIPFlow `OK`）。真实 `pair_style deepmd` 完成 5/5 步，
    写出 trajectory、`final.data`、`final.restart`，随后才打印批准的 completion marker；
    bounded fetch 后 checker 复核 LAMMPS/model/input/output identity。
 4. 一次 **MatGL/M3GNet GNNP + LAMMPS CPU 5-step NVT functional smoke**
-   （最终成功 job `27442885`，scheduler `COMPLETED`，MLIPFlow `OK`）。真实
+   （最终成功 job `redacted`，scheduler `COMPLETED`，MLIPFlow `OK`）。真实
    `pair_style gnnp` 加载 tree-fingerprinted MatGL model directory 并完成 5/5 步；
    前一 fresh attempt 的失败被保留并分类为站点 Python 环境缺失，修正 canonical
    site template 后才在 attempt 2 成功。
 5. 一次 **LASP 3.6.0 NN 14-atom CPU SSW functional smoke**（最终成功 job
-   `27443025`，12 MPI ranks、0 GPU，scheduler `COMPLETED`，MLIPFlow `OK`）。前一
+   `redacted`，12 MPI ranks、0 GPU，scheduler `COMPLETED`，MLIPFlow `OK`）。前一
    attempt 暴露 ARC 兼容名称选择 bug 并保留为 `FAIL`；通用修复后，相同科学输入、
    potential、LASP 参数与资源在 fresh attempt 生成/接受/选择 14/14/14 个结构，随后
    bounded fetch 与 pinned checker/collect 完整通过。
@@ -54,7 +54,7 @@ bounded fetch → completion 身份校验 → plugin check/collect` 已经承载
 | real queue monitoring | 已通过 `squeue`/`sacct` 观察到 terminal `COMPLETED` |
 | real cancellation | 未执行 |
 | remote result fetch + local re-check | 真实站点已验证：bounded allowlist 抓取、二次审批绑定 inventory、fetch 后指纹复核、completion 身份字段校验、pinned plugin `check`/`collect` |
-| scientific program on scheduler | LASP 3.6.0 NN 在 job `27443025` 完成 14-atom tiny SSW 并经 bounded fetch + checker/collect 到 `OK`；DeepMD-kit v3.0.0b1 CPU `dp train` 在 job `27356151` 完成 500 步并到 `OK`；LAMMPS 2 Aug 2023 分别在 job `27442624` 真实执行 `pair_style deepmd`、在 job `27442885` 真实执行 `pair_style gnnp`，两者均完成 5/5 步并到 `OK`。VASP 尚未在调度器上运行 |
+| scientific program on scheduler | LASP 3.6.0 NN 在 job `redacted` 完成 14-atom tiny SSW 并经 bounded fetch + checker/collect 到 `OK`；DeepMD-kit v3.0.0b1 CPU `dp train` 在 job `redacted` 完成 500 步并到 `OK`；LAMMPS 2 Aug 2023 分别在 job `redacted` 真实执行 `pair_style deepmd`、在 job `redacted` 真实执行 `pair_style gnnp`，两者均完成 5/5 步并到 `OK`。VASP 尚未在调度器上运行 |
 | training numerical reproduction | **已验证一次**：与历史 run `split_train/se_e2_a/para0` 的前 6 个 reporting step（0/100/…/500）在 lcurve 全部 7 列上逐位相同，相对差 0.0 |
 | GPU / multi-node | **未验证**。这里记录的 LASP、训练和 LAMMPS 验证均为单节点 CPU |
 | production scientific job | 未提交。LASP 为 14-atom/10-step tiny smoke，DeePMD 训练为 500 步 bounded validation run，LAMMPS 为 5 步 functional smoke，均不是生产任务 |
@@ -135,7 +135,7 @@ train`）、一个 descriptor（`se_e2_a`）、一个数据集（180+180 Li10 sy
 2026-08-16 的真实 LASP CPU tiny smoke 证明同一生命周期能够承载 site-owned LASP
 executable 与 MPI launcher。attempt 1 暴露通用 ARC canonicalization bug 并保留；修复后
 仅有的一次授权 retry 使用相同 14-atom NN 输入、potential、LASP 参数和 12-rank CPU
-资源，在 job `27443025` 得到 14/14/14 结构，经 terminal observation、bounded fetch、
+资源，在 job `redacted` 得到 14/14/14 结构，经 terminal observation、bounded fetch、
 pinned checker/collect 到 `OK`。匿名化 identity、fingerprints 与 retry lineage 见
 [`reports/lasp_cpu_tiny_hpc_smoke.json`](../reports/lasp_cpu_tiny_hpc_smoke.json)。该记录
 不含 potential 内容或 site 私有路径，也不建立 SSW numerical parity。
@@ -146,7 +146,7 @@ pinned checker/collect 到 `OK`。匿名化 identity、fingerprints 与 retry li
 随后经过 scheduler terminal observation、bounded fetch 和 pinned checker/collect
 到 `OK`。模型、input manifest、LAMMPS executable 和输出 artifact 的 SHA-256
 均已固定在匿名化报告
-[`reports/lammps_hfeshell_cpu_functional_smokes.json`](../reports/lammps_hfeshell_cpu_functional_smokes.json)
+[`reports/lammps_cluster_cpu_functional_smokes.json`](../reports/lammps_cluster_cpu_functional_smokes.json)
 中。该报告不保存绝对模型路径或权重。
 
 同一 smoke 暴露的一个通用缺陷已修复：`render_template` 原先在替换后拒绝任何残留

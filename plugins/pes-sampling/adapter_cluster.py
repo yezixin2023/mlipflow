@@ -19,14 +19,17 @@ HERE = Path(__file__).resolve().parent
 LEGACY_PATH = HERE / "adapter.py"
 WRAPPER_PATH = HERE / "lasp_ssw.py"
 REMOTE_RUNNER_PATH = HERE / "lasp_cluster.py"
+ARC_CONTRACT_PATH = HERE / "lasp_input_arc.py"
 UNKNOWN = "HISTORICAL_PARAMETER_UNKNOWN"
 MAX_JSON_BYTES = 16 * 1024 * 1024
 MAX_ARC_BYTES = 512 * 1024 * 1024
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_LOG_BYTES = 64 * 1024 * 1024
+MAX_POTCAR_BYTES = 64 * 1024 * 1024
 MAX_FRAMES = 10000
 HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _load_legacy():
@@ -39,6 +42,20 @@ def _load_legacy():
 
 
 LEGACY = _load_legacy()
+
+
+def _load_arc_contract():
+    spec = importlib.util.spec_from_file_location(
+        "mlipflow_lasp_input_arc", ARC_CONTRACT_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load LASP input ARC contract")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ARC_CONTRACT = _load_arc_contract()
 
 
 def _diag(level: str, code: str, message: str) -> dict[str, str]:
@@ -94,8 +111,111 @@ def _resolve_input(value: Any, root: Path) -> Path | None:
     return path.resolve()
 
 
-def _stage(path: Path, remote_name: str) -> dict[str, Any]:
-    return {"source": str(path), "remote_name": remote_name, "sha256": _sha256(path), "size_bytes": path.stat().st_size}
+def _stage(path: Path, remote_name: str, *, sensitive: bool = False) -> dict[str, Any]:
+    return {
+        "source": str(path),
+        "remote_name": remote_name,
+        "sha256": _sha256(path),
+        "size_bytes": path.stat().st_size,
+        "sensitive": sensitive,
+        "fetch_allowed": False,
+    }
+
+
+def _lasp_potential(path: Path) -> str:
+    value = LEGACY._parse_lasp_input(path).get("potential")
+    if not LEGACY._plain_string(value):
+        raise ValueError("lasp.in must declare exactly one explicit potential")
+    return str(value).lower()
+
+
+def _potcar_bundle(
+    manifest_path: Path, project_root: Path, structure: Path
+) -> tuple[Path, dict[str, Any]]:
+    manifest = _json(manifest_path)
+    if (
+        manifest.get("schema_version") != 1
+        or manifest.get("plugin_id") != "pes-sampling"
+        or manifest.get("operation") != "lasp-input-prepare"
+    ):
+        raise ValueError("lasp_input_manifest identity is invalid")
+    structure_record = manifest.get("output")
+    if (
+        not isinstance(structure_record, Mapping)
+        or structure_record.get("path") != "input.arc"
+        or structure_record.get("sha256") != _sha256(structure)
+        or structure_record.get("size_bytes") != structure.stat().st_size
+    ):
+        raise ValueError("lasp_input_manifest does not bind input_structure")
+    reference_sha256 = manifest.get("pseudopotential_reference_sha256")
+    potcar = manifest.get("potcar")
+    if not isinstance(reference_sha256, str) or FINGERPRINT.fullmatch(reference_sha256) is None:
+        raise ValueError("lasp_input_manifest lacks a pseudopotential reference fingerprint")
+    if not isinstance(potcar, Mapping):
+        raise ValueError("lasp_input_manifest lacks a POTCAR identity")
+    reference_id = potcar.get("reference_id")
+    functional = potcar.get("functional")
+    elements = potcar.get("elements")
+    symbols = potcar.get("symbols")
+    components = potcar.get("components")
+    output = potcar.get("output")
+    if (
+        not LEGACY._portable_source_id(reference_id)
+        or potcar.get("source_env") != "PMG_VASP_PSP_DIR"
+        or potcar.get("configuration_source") not in {"environment", "pymatgen-settings"}
+        or not LEGACY._plain_string(functional)
+        or potcar.get("portable_artifact") is not False
+        or not isinstance(elements, list)
+        or not elements
+        or any(
+            not isinstance(element, str)
+            or re.fullmatch(r"[A-Z][a-z]?", element) is None
+            for element in elements
+        )
+        or not isinstance(symbols, list)
+        or len(symbols) != len(elements)
+        or any(not isinstance(symbol, str) or SAFE_NAME.fullmatch(symbol) is None for symbol in symbols)
+        or not isinstance(components, list)
+        or len(components) != len(symbols)
+        or any(
+            not isinstance(component, Mapping)
+            or component.get("symbol") != symbol
+            or not isinstance(component.get("sha256"), str)
+            or FINGERPRINT.fullmatch(str(component.get("sha256"))) is None
+            for component, symbol in zip(components, symbols)
+        )
+        or not isinstance(output, Mapping)
+        or output.get("path") != "POTCAR"
+        or output.get("collectable") is not False
+        or output.get("sha256") != potcar.get("combined_sha256")
+        or not isinstance(output.get("sha256"), str)
+        or FINGERPRINT.fullmatch(str(output.get("sha256"))) is None
+        or isinstance(output.get("size_bytes"), bool)
+        or not isinstance(output.get("size_bytes"), int)
+        or output.get("size_bytes") < 1
+    ):
+        raise ValueError("lasp_input_manifest POTCAR identity is invalid")
+    potcar_path = manifest_path.parent / "POTCAR"
+    if (
+        not _ordinary(potcar_path, MAX_POTCAR_BYTES)
+        or not _within(potcar_path, project_root)
+        or potcar_path.stat().st_size != output.get("size_bytes")
+        or _sha256(potcar_path) != output.get("sha256")
+    ):
+        raise ValueError("runtime-only POTCAR is missing or differs from its manifest")
+    identity = {
+        "reference_id": reference_id,
+        "reference_sha256": reference_sha256,
+        "functional": functional,
+        "elements": elements,
+        "symbols": symbols,
+        "components": [dict(component) for component in components],
+        "combined_sha256": output.get("sha256"),
+        "configuration_source": potcar.get("configuration_source"),
+        "manifest_sha256": _sha256(manifest_path),
+        "portable_or_collectable": False,
+    }
+    return potcar_path, identity
 
 
 def _operation(context: Mapping[str, Any]) -> str:
@@ -131,7 +251,13 @@ def _validate_scheduled(context: Any) -> list[dict[str, str]]:
     if not isinstance(inputs, Mapping):
         diagnostics.append(_diag("ERROR", "inputs.mapping_required", "inputs must be a mapping"))
         return diagnostics
-    allowed_inputs = {"input_structure", "lasp_input", "lasp_auxiliary_files", "result_manifest"}
+    allowed_inputs = {
+        "input_structure",
+        "lasp_input",
+        "lasp_input_manifest",
+        "lasp_auxiliary_files",
+        "result_manifest",
+    }
     unknown_inputs = sorted(set(inputs) - allowed_inputs)
     if unknown_inputs:
         diagnostics.append(_diag("ERROR", "input.unknown", "scheduled LASP does not accept: " + ", ".join(unknown_inputs)))
@@ -141,17 +267,50 @@ def _validate_scheduled(context: Any) -> list[dict[str, str]]:
         diagnostics.append(_diag("ERROR", "path.input_structure", "input_structure must be an ordinary project file"))
     else:
         try:
-            if len(LEGACY._read_arc_frames(structure, 1)) != 1:
-                raise ValueError("not exactly one frame")
+            ARC_CONTRACT.canonicalize_prepared_arc(structure.read_bytes())
         except Exception as exc:
-            diagnostics.append(_diag("ERROR", "input.structure_arc", f"input_structure must contain one LASP ARC frame: {exc}"))
+            diagnostics.append(
+                _diag(
+                    "ERROR",
+                    "input.structure_arc",
+                    f"input_structure must normalize to one LASP ARC frame: {exc}",
+                )
+            )
+    potential: str | None = None
     if lasp_input is None or not _within(lasp_input, root):
         diagnostics.append(_diag("ERROR", "path.lasp_input", "lasp_input must be an ordinary project file"))
     else:
         try:
             LEGACY._validate_ssw_input(LEGACY._parse_lasp_input(lasp_input))
+            potential = _lasp_potential(lasp_input)
         except Exception as exc:
             diagnostics.append(_diag("ERROR", "input.lasp_ssw_contract", f"invalid LASP SSW input: {exc}"))
+
+    manifest_path = _resolve_input(inputs.get("lasp_input_manifest"), root)
+    if potential == "vasp":
+        if manifest_path is None or not _within(manifest_path, root) or structure is None:
+            diagnostics.append(
+                _diag(
+                    "ERROR",
+                    "path.lasp_input_manifest",
+                    "potential vasp requires the verified lasp-input-prepare manifest",
+                )
+            )
+        else:
+            try:
+                _potcar_bundle(manifest_path, root, structure)
+            except Exception as exc:
+                diagnostics.append(
+                    _diag("ERROR", "input.potcar_bundle", str(exc))
+                )
+    elif manifest_path is not None:
+        diagnostics.append(
+            _diag(
+                "ERROR",
+                "input.unused_lasp_input_manifest",
+                "lasp_input_manifest is accepted only for potential vasp",
+            )
+        )
 
     auxiliary = inputs.get("lasp_auxiliary_files", {})
     if auxiliary is None:
@@ -168,6 +327,9 @@ def _validate_scheduled(context: Any) -> list[dict[str, str]]:
             "project.yaml",
             "lasp_ssw.py",
             "lasp_cluster.py",
+            "lasp_input_arc.py",
+            "lasp-input-manifest.json",
+            "POTCAR",
         }
         for name, source in auxiliary.items():
             if not isinstance(name, str) or not SAFE_NAME.fullmatch(name) or name in reserved:
@@ -215,7 +377,11 @@ def _validate_scheduled(context: Any) -> list[dict[str, str]]:
         diagnostics.append(_diag("ERROR", "parameter.lasp_version", "lasp_version must be explicit"))
     if parameters.get("mpi_processes") is not None:
         diagnostics.append(_diag("ERROR", "parameter.mpi_site_owned", "scheduled LASP process count comes from resources.cpus/site template, not mpi_processes"))
-    if not _ordinary(WRAPPER_PATH) or not _ordinary(REMOTE_RUNNER_PATH):
+    if (
+        not _ordinary(WRAPPER_PATH)
+        or not _ordinary(REMOTE_RUNNER_PATH)
+        or not _ordinary(ARC_CONTRACT_PATH)
+    ):
         diagnostics.append(_diag("ERROR", "path.bundled_runner", "bundled LASP cluster helpers are missing"))
     return diagnostics
 
@@ -235,13 +401,32 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
     structure = _resolve_input(inputs["input_structure"], root)
     lasp_input = _resolve_input(inputs["lasp_input"], root)
     assert project_path is not None and structure is not None and lasp_input is not None
+    potential = _lasp_potential(lasp_input)
+    canonical_arc, arc_conversion = ARC_CONTRACT.canonicalize_prepared_arc(
+        structure.read_bytes()
+    )
+    canonical_arc_sha256 = "sha256:" + hashlib.sha256(canonical_arc).hexdigest()
     staged = [
         _stage(project_path, "project.yaml"),
         _stage(structure, "input.arc"),
         _stage(lasp_input, "lasp.in"),
         _stage(WRAPPER_PATH, "lasp_ssw.py"),
         _stage(REMOTE_RUNNER_PATH, "lasp_cluster.py"),
+        _stage(ARC_CONTRACT_PATH, "lasp_input_arc.py"),
     ]
+    pseudopotential = None
+    if potential == "vasp":
+        lasp_input_manifest = _resolve_input(inputs["lasp_input_manifest"], root)
+        assert lasp_input_manifest is not None
+        potcar_path, pseudopotential = _potcar_bundle(
+            lasp_input_manifest, root, structure
+        )
+        staged.extend(
+            [
+                _stage(lasp_input_manifest, "lasp-input-manifest.json"),
+                _stage(potcar_path, "POTCAR", sensitive=True),
+            ]
+        )
     auxiliary = inputs.get("lasp_auxiliary_files", {}) or {}
     for name in sorted(auxiliary):
         path = _resolve_input(auxiliary[name], root)
@@ -276,7 +461,11 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
         "seed_status": UNKNOWN,
         "preserve_historical_order": True,
         "lasp_version": parameters["lasp_version"],
+        "potential": potential,
+        "pseudopotential": pseudopotential,
         "input_structure_sha256": _sha256(structure),
+        "canonical_input_structure_sha256": canonical_arc_sha256,
+        "input_arc_conversion": arc_conversion,
         "lasp_input_sha256": _sha256(lasp_input),
     }
     return {
@@ -297,6 +486,13 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
             "cpus_meaning": "mpi-task-count",
             "framework": "LASP",
             "sampling_method": "stochastic-surface-walking",
+            "potential": potential,
+            "runs_vasp": potential == "vasp",
+            "pseudopotential": pseudopotential,
+            "potcar_staged_sensitive": potential == "vasp",
+            "potcar_fetch_allowed": False,
+            "input_arc_conversion": arc_conversion,
+            "canonical_input_structure_sha256": canonical_arc_sha256,
             "max_frames": parameters["max_frames"],
             "selection_stride": parameters["selection_stride"],
             "fetch_allowlist": sorted(item["remote_name"] for item in fetch_outputs),
@@ -352,6 +548,20 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("remote result operation/status mismatch")
         if report.get("lasp_version") != identity.get("lasp_version"):
             raise ValueError("LASP version differs from approved plan")
+        if report.get("potential") != identity.get("potential"):
+            raise ValueError("LASP potential differs from approved plan")
+        if report.get("pseudopotential") != identity.get("pseudopotential"):
+            raise ValueError("LASP pseudopotential identity differs from approved plan")
+        input_structure = report.get("input_structure", {})
+        if (
+            input_structure.get("source_sha256")
+            != identity.get("input_structure_sha256")
+            or input_structure.get("canonical_sha256")
+            != identity.get("canonical_input_structure_sha256")
+            or input_structure.get("conversion")
+            != identity.get("input_arc_conversion")
+        ):
+            raise ValueError("LASP input ARC conversion differs from approved plan")
         policy = report.get("selection_policy")
         expected_policy = {
             "selection_stride": identity.get("selection_stride"),

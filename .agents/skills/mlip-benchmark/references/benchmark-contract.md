@@ -47,6 +47,12 @@ Fresh evaluation requires:
 - an explicit stress convention when stress is selected;
 - a fresh, empty attempt-relative output directory.
 
+Local fresh evaluation uses direct model/dataset paths. Reviewed SSH-SLURM fresh
+evaluation instead uses small logical model and benchmark-dataset reference manifests;
+the remote runner resolves them below the selected site's canonical roots, recomputes
+both fingerprints, and emits a cluster report binding the exact family and all fetched
+outputs. Site environments and root paths remain template-owned.
+
 The versioned `prediction_evidence.json` binds structure/sample identity,
 structure index, atom count, model family/framework/fingerprint, dataset
 fingerprint, task/scenario/split, references, predictions, units, component
@@ -60,12 +66,28 @@ six-component order; do not convert a historical nine-component table to this
 contract without reliable source evidence. Confirm component and structure
 counts rather than inferring them from file size or row count.
 
+MAE and RMSE are always required for each selected target. Pearson correlation is
+mathematically unavailable with fewer than two scalar pairs or when either series is
+constant. Preserve that as explicit unavailable-metric provenance and omit it from
+numeric ranking; never substitute zero, NaN, or a fabricated coefficient. This permits
+a tiny held-out set to retain valid error metrics without overstating correlation
+evidence.
+
 ## Metric-only and replay inputs
 
 `normalize-execute` consumes actual reference/prediction values, groups them by
 their scientific identities, and computes one implementation of MAE, RMSE, and
 Pearson r. Its provenance states `model_execution: false`. It does not establish
 how or when predictions were generated.
+
+One joint comparison may consume prediction evidence from multiple fresh model nodes.
+Each input must have a distinct portable locator even when all source basenames are
+`prediction_evidence.json`. The normalized ranking is valid only for exact shared
+task/scenario/split/metric/unit/direction/dimensions; it is the primary static test-set
+comparison, not a universal model-quality claim. For a requested model set, only groups
+whose `comparable_model_count` covers that entire set may inform the winner. A
+single-model stress group remains useful diagnostic evidence but is excluded from a
+two-model decision when the other model has no comparable stress prediction.
 
 `normalize-replay` parses existing prepared JSON/CSV/XLSX evidence and preserves
 source locator, parser identity, SHA-256, units or unit uncertainty, split,
@@ -83,6 +105,10 @@ All three modes emit:
 - `provenance.json`
 
 Fresh additionally emits `prediction_evidence.json`.
+
+Scheduled fresh evaluation additionally emits `cluster-benchmark-report.json`; it must
+match the approved model/dataset logical identities, remotely observed fingerprints,
+exact framework/family, return code, and all five fetched artifact hashes.
 
 Inspect normalized records for finite values, positive sample counts, explicit
 direction, exact model/task/scenario/split identities, units, dimensions, and

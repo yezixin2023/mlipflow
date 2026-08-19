@@ -114,6 +114,15 @@ def _checkpoint_matches_identity(checkpoint: dict[str, Any], identity: dict[str,
         "default_dtype": identity.get("default_dtype"),
         "fix_com": identity.get("fix_com"),
     }
+    if "supercell_repeat" in identity:
+        expected.update(
+            {
+                "supercell_repeat": identity.get("supercell_repeat"),
+                "minimum_initial_cell_length_A": identity.get(
+                    "minimum_initial_cell_length_angstrom"
+                ),
+            }
+        )
     for key, value in expected.items():
         if checkpoint.get(key) != value:
             raise ValueError(f"previous checkpoint identity mismatch for {key}")

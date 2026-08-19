@@ -662,6 +662,17 @@ class ScheduledTrainingCompletionTests(TemporaryProjectTest):
         outcome = lifecycle.run()
         self.assertEqual(self.state(outcome), "OK")
 
+    def test_exact_partial_fetch_is_reused_after_interrupted_finalization(self) -> None:
+        lifecycle = TrainingLifecycle(self.root)
+        lifecycle.submit()
+        lifecycle.write_remote_outputs()
+        shutil.copy2(
+            lifecycle.remote / "output" / "lcurve.out",
+            lifecycle.attempt / "lcurve.out",
+        )
+        outcome = lifecycle.finish()
+        self.assertEqual(self.state(outcome), "OK")
+
     def test_result_records_curve_and_provenance(self) -> None:
         lifecycle = TrainingLifecycle(self.root)
         lifecycle.run()

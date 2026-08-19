@@ -22,10 +22,10 @@ manifests, inspected plans, Adapter results, and specialist Skills remain author
 | Goal/stage | Owner | Current routing boundary |
 |---|---|---|
 | Seeded high-entropy/SQS candidates | `$high-entropy-structure` | Explicit prototype, one alloy sublattice, integer counts; local |
-| PES sampling/selection | `$pes-sampling` | DIRECT local; LASP local or reviewed SSH-SLURM; historical ARC replay |
-| VASP preparation, DFT labels, and framework datasets | `$dft-labeling` | Separate prepare/label; canonical dataset; reviewed SSH-SLURM DeepMD/M3GNet/CHGNet/MACE assembly |
+| PES sampling/selection | `$pes-sampling` | DIRECT local; LASP local or reviewed SSH-SLURM; verified local DIRECT+LASP merge; historical ARC replay |
+| VASP preparation, DFT labels, and framework datasets | `$dft-labeling` | Separate prepare/label; calculation-level fresh retry; canonical dataset; shared split plus framework views and benchmark test reference |
 | MLIP training/fine-tuning | `$mlip-training` | DeepMD, M3GNet/MatGL, CHGNet, MACE; local or supported SSH-SLURM |
-| E/F/S benchmark or evidence replay | `$mlip-benchmark` | Fresh inference, metric recomputation, or historical replay; local |
+| E/F/S benchmark or evidence replay | `$mlip-benchmark` | Fresh inference local or reviewed SSH-SLURM; metric recomputation and historical replay local |
 | ASE MLIP MD | `$ase-md` | Explicit DeepMD, M3GNet/MatGL, CHGNet, or MACE; reviewed SSH-SLURM NVT/NPT |
 | LAMMPS MLIP MD | `$lammps-md` | LAMMPS-ready DeepMD, MACE, or MatGL/M3GNet; prepare/execute/restart contracts |
 | MSD/diffusion/conductivity | `$ionic-transport` | Existing ASE/LAMMPS/VASP trajectory or MSD; local analysis |
@@ -47,6 +47,7 @@ relying on this summary for parameters.
 | Verified DFT canonical dataset, no framework view | Train or fine-tune | `$dft-labeling` `dataset-assemble` for only the requested frameworks, then `$mlip-training` |
 | Verified matching DeepMD/M3GNet/CHGNet/MACE dataset reference | Train or fine-tune | `$mlip-training`; do not rerun VASP or reconvert |
 | Explicit labeled dataset plus one or more trained models | Compare predictions | `$mlip-benchmark` |
+| Shared-split benchmark reference plus published model references | Compare fresh predictions on the exact same test IDs | One scheduled `$mlip-benchmark` per model, then one local joint normalization |
 | Trained model plus initial structure | Generate a new trajectory | `$ase-md` or `$lammps-md` according to runtime compatibility and goal |
 | Existing ASE/LAMMPS/VASP trajectory or MSD | Compute transport | `$ionic-transport`; do not rerun MD |
 | Candidate manifest plus comparable numeric metrics | Select top-k | `$candidate-ranking` |
@@ -173,6 +174,16 @@ or recreate a standalone voltage Skill.
 At every edge, bind the exact collected upstream artifact rather than a guessed path.
 Record logical identity, fingerprint, schema/version, scientific parameters, producing
 plugin/attempt, and completion status where the downstream contract supports them.
+
+For an execute-node input that directly consumes one collected file, use the explicit
+project binding `{"from_node": "producer-id", "role": "artifact-role"}`. Put that
+binding inside a list when the downstream input expects a list. Use
+`"resolve": "parent"` only when the downstream contract consumes the containing
+attempt/output directory rather than the file itself. Core resolves bindings only from
+a final `OK` direct dependency, requires exactly one unique artifact for the declared
+role, confines it to the project, and re-resolves it before execution. Do not write an
+`attempt-1` path into the project or turn a failed/retried attempt into an implicit
+input.
 
 Before advancing, require:
 

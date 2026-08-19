@@ -32,7 +32,7 @@ except ModuleNotFoundError:
 
 
 PLUGIN_ID = "mlip-benchmark"
-RUNNER_VERSION = "1.0.0"
+RUNNER_VERSION = "1.0.1"
 PREDICTION_CONTRACT = "mlip-benchmark/prediction-evidence"
 PREDICTION_SCHEMA_VERSION = 1
 MODEL_FRAMEWORKS = model_runtime.MODEL_FAMILY_FRAMEWORKS
@@ -376,19 +376,22 @@ def evaluate_fresh(
     with tempfile.TemporaryDirectory(prefix=".fresh-benchmark-", dir=str(output_parent)) as temporary:
         evidence_path = Path(temporary) / "prediction_evidence.json"
         evidence_path.write_bytes(evidence_payload)
-        metric_records, _ = normalizer._execute_source({
+        metric_records, metric_provenance = normalizer._execute_source({
             "path": evidence_path, "evidence_locator": "prediction_evidence.json",
             "model": model_family, "task": task, "scenario": scenario, "split": split,
             "units": units,
         })
     for record in metric_records:
         record["mode"] = "fresh"
+    unavailable_metrics = metric_provenance["unavailable_metrics"]
+    for record in unavailable_metrics:
+        record["mode"] = "fresh"
     metric_records = normalizer._validate_records(metric_records)
     metrics = {
         "schema_version": 1, "plugin_id": PLUGIN_ID, "mode": "fresh",
         "calculation_claim": "fresh-model-inference-and-metrics-from-canonical-prediction-evidence",
         "supported_models": list(MODEL_FRAMEWORKS), "record_count": len(metric_records),
-        "records": metric_records,
+        "records": metric_records, "unavailable_metrics": unavailable_metrics,
     }
     ranking = normalizer._ranking(metric_records)
     payloads = {
@@ -414,6 +417,7 @@ def evaluate_fresh(
         "units": {target: units[target] for target in selected_targets},
         "conventions": evidence["conventions"], "structure_count": len(samples),
         "scalar_sample_counts": scalar_counts, "prediction_evidence_sha256": evidence_sha,
+        "unavailable_metrics": unavailable_metrics,
         "normalized_artifact_sha256": normalized_hashes,
         "normalized_suite_sha256": "sha256:" + suite_digest.hexdigest(),
         "output_artifacts": [
