@@ -4,7 +4,6 @@
   "framework": "deepmd",
   "relative_path": "deepmd/lips-v1/model.pth",
   "kind": "file",
-  "fingerprint": "sha256:REPLACE_WITH_64_LOWERCASE_HEX",
   "artifact_format": "deepmd-lammps-model",
   "elements": ["Li", "P", "S"]
 }

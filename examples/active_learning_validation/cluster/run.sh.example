@@ -1,0 +1,31 @@
+#!/bin/bash
+# Copy this file to the site-owned template family:
+#   <remote_template_root>/active-learning-committee-canonical/run.sh
+# Then customize only the site-owned interpreter and canonical model root.
+set -uo pipefail
+
+RUN_DIR="{{RUN_DIR}}"
+INPUT_DIR="{{INPUT_DIR}}"
+OUTPUT_DIR="{{OUTPUT_DIR}}"
+LOG_DIR="{{LOG_DIR}}"
+PYTHON_BIN="/ABS/PATH/TO/FRAMEWORK_ENV/bin/python"
+MODEL_ROOT="/ABS/CLUSTER/CANONICAL_MODELS"
+ATTEMPT=$((10#{{ATTEMPT}}))
+
+mkdir -p "$OUTPUT_DIR/active-learning" "$LOG_DIR"
+export OMP_NUM_THREADS="{{CPUS}}"
+
+"$PYTHON_BIN" "$INPUT_DIR/committee_inference_cluster.py" \
+  --project "$INPUT_DIR/project.yaml" \
+  --node-id "{{NODE_ID}}" \
+  --input-dir "$INPUT_DIR" \
+  --output-dir "$OUTPUT_DIR/active-learning" \
+  --report "$OUTPUT_DIR/cluster-active-learning-report.json" \
+  --model-root "$MODEL_ROOT" \
+  > "$LOG_DIR/active-learning.stdout.log" \
+  2> "$LOG_DIR/active-learning.stderr.log"
+code=$?
+if [ "$code" -eq 0 ]; then state="COMPLETED"; else state="FAILED"; fi
+printf '{"schema_version":1,"status":"%s","exit_code":%d,"project_id":"%s","node_id":"%s","attempt":%d}\n' \
+  "$state" "$code" "{{PROJECT_ID}}" "{{NODE_ID}}" "$ATTEMPT" > "$RUN_DIR/completion.json"
+exit "$code"

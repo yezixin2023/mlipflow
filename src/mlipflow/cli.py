@@ -121,7 +121,11 @@ def build_parser() -> argparse.ArgumentParser:
 def _approval_arguments(parser: argparse.ArgumentParser) -> None:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--dry-run", action="store_true", help="return a plan and write nothing")
-    group.add_argument("--approve", metavar="TOKEN", help="approve the exact dry-run execution")
+    group.add_argument(
+        "--approve",
+        action="store_true",
+        help="confirm that the dry-run was reviewed",
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -203,7 +207,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             return plan
         if plan.get("approval_required") is True and not args.approve:
             raise ApprovalError(
-                "this run launches approval-required work; use --dry-run and --approve TOKEN"
+                "this run launches approval-required work; review --dry-run, then use --approve"
             )
         return run_node(project, args.node, args.plugins, args.approve, args.site)
     if command == "advance":

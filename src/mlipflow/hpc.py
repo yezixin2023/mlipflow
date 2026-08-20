@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -47,7 +46,7 @@ RESIDUAL_TEMPLATE = re.compile(r"\{\{[^{}]*\}\}")
 TEMPLATE_FAMILY = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 EXECUTION_MODELS = frozenset({"single-python", "mpi"})
 MEMORY = re.compile(r"^[1-9][0-9]*(?:[KMGTP](?:i?B)?)?$")
-WALLTIME = re.compile(r"^[0-9]{2,3}:[0-5][0-9]:[0-5][0-9]$")
+WALLTIME = re.compile(r"^(?:[0-9]{2,3}:[0-5][0-9]:[0-5][0-9]|UNLIMITED)$")
 MAX_TEMPLATE_BYTES = 1024 * 1024
 
 _SLURM_CPU_SEMANTICS = {
@@ -110,7 +109,9 @@ def validate_hpc_resources(value: Any) -> HpcResources:
     if not isinstance(memory, str) or not MEMORY.fullmatch(memory):
         raise ConfigError("ssh-slurm resources.memory must look like 64G or 65536M")
     if not isinstance(walltime, str) or not WALLTIME.fullmatch(walltime):
-        raise ConfigError("ssh-slurm resources.walltime must use HH:MM:SS")
+        raise ConfigError(
+            "ssh-slurm resources.walltime must use HH:MM:SS or UNLIMITED"
+        )
     return HpcResources(cpus=cpus, gpus=gpus, memory=memory, walltime=walltime)
 
 
@@ -290,12 +291,6 @@ def resolve_hpc_execution_plan(
         content = raw.get("content") if isinstance(raw, dict) else None
         if not isinstance(content, str):
             raise ConfigError(f"required remote template is missing: {relative}")
-        raw_bytes = content.encode("utf-8")
-        digest = "sha256:" + hashlib.sha256(raw_bytes).hexdigest()
-        declared_digest = raw.get("sha256")
-        declared_size = raw.get("size_bytes")
-        if declared_digest != digest or declared_size != len(raw_bytes):
-            raise ConfigError(f"remote template identity is inconsistent: {relative}")
         if destination == "submit.sbatch":
             validate_slurm_cpu_semantics(
                 content, execution_model, template_name=relative

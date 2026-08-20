@@ -15,7 +15,7 @@
 文本脚本与小配置。后续 LASP/SSW 补充审计经授权只读复制了两套小型 BIOSYM 文本
 archive（`allstr.arc`、`best.arc`、可选 `md.arc`）与 `lasp.in` 到临时本地目录，用于
 实际运行 normalization wrapper；没有读取模型/POTCAR、执行远端程序或保留原始结构。
-仓库只保存 sanitized 报告、portable locator、指纹和 manifest。
+仓库只保存 sanitized 报告、portable locator 和 manifest。
 
 ## 复用分级
 
@@ -51,7 +51,7 @@ archive（`allstr.arc`、`best.arc`、可选 `md.arc`）与 `lasp.in` 到临时�
 | `Li10M7P8S32/SQS/7-5/gen_val_data.py` | 随机组分 → 2×2×2 验证结构 | 未固定随机种子 | B/C | `high-entropy-structure` |
 | `Li10M7P8S32/SQS/supercell/replace_sqs.py` | 原型 → 2×2×1、约 2460 个候选 | 规模较大，无标准 manifest | C/D | `candidate-ranking`（仅消费已有候选/指标） |
 
-迁移要求：随机种子、原型指纹、组分约束、超胞、cutoff 和输出结构哈希必须进入 manifest；不得静默改变原子占位规则。
+迁移要求：随机种子、原型路径、组分约束、超胞、cutoff 和输出结构路径必须进入 manifest；不得静默改变原子占位规则。
 
 ### PES 采样与 DFT 标注
 
@@ -60,7 +60,7 @@ archive（`allstr.arc`、`best.arc`、可选 `md.arc`）与 `lasp.in` 到临时�
 | `3-Element/*/sub_aimd_*.sh` | 初始结构 → 分温区 AIMD 轨迹 | 建目录、拷贝、提交和数值计算混在一起 | D | `pes-sampling` |
 | `Li24M12P16S64/data/sub_aimd.slurm` | 0–800 K 分段 AIMD → CONTCAR/轨迹 | VASP、核数、路径硬编码 | D | `pes-sampling` |
 | `Li24M12P16S64/data/extract.sh` | 轮询 CONTCAR → 每 100 次更新的快照 | 无明确超时/完成协议 | C/D | `pes-sampling` |
-| `4-Element/Li8/scf/{single/INCAR,single/KPOINTS,sub_1.slurm}` | 快照 → VASP 单点输入/标签 | 参数与调度耦合；INCAR/KPOINTS 已只读审计并 SHA-256 固定，POTCAR 未读取 | D | `dft-labeling.vasp-prepare` 的 `manuscript-static-v1` 历史模板证据 + 独立 `label` |
+| `4-Element/Li8/scf/{single/INCAR,single/KPOINTS,sub_1.slurm}` | 快照 → VASP 单点输入/标签 | 参数与调度耦合；INCAR/KPOINTS 已只读审计并记录路径/参数，POTCAR 未读取 | D | `dft-labeling.vasp-prepare` 的 `manuscript-static-v1` 历史模板证据 + 独立 `label` |
 | `*/vasp2lasptrain.py` | OUTCAR/CONTCAR → `TrainStr.txt`/`TrainFor.txt` | 约万份重复副本；解析规则可复用 | B/C/E | `dft-labeling` 的 LASP 训练数据导出；不是 SSW sampler |
 | `Li10M7P8S32/run/{sub.slurm,single.py}` | 结构 → LASP SSW archive → 能量过滤/抽样 → 单点输入 | LASP、`pos2arc_`、绝对路径和 scheduler 耦合；历史 seed 未记录 | D | 已提炼为 `pes-sampling` 的 `lasp-ssw-execute`/`lasp-ssw-normalize-replay` local contract；不复用调度脚本 |
 | `Li10M7P8S32/rerun/test_data.py` | VASP 输出 → 完成/失败清单 | 只读判据有价值 | C | `dft-labeling` checks |
@@ -68,7 +68,7 @@ archive（`allstr.arc`、`best.arc`、可选 `md.arc`）与 `lasp.in` 到临时�
 LASP/SSW 定向只读审计没有执行远端程序或修改源文件。初始代表目录
 `Li10M7P8S32/run/11113` 的 `allstr.arc` 含 6 frame，历史 `energy<=0` 规则接受 5，
 accepted-order stride 1 仍选中 5，`best.arc` 含 2 frame；本地 normalization 得到相同
-6/5/5/2/0，wrapper rc=0、Adapter check=`OK`，源 SHA-256 已核对。重采样代表目录的
+6/5/5/2/0，wrapper rc=0、Adapter check=`OK`，来源路径与参数已核对。重采样代表目录的
 `allstr.arc`/`best.arc`/`md.arc`/`lasp.in` 临时副本也实际运行 wrapper，得到
 generated/accepted/selected/best/md=66/25/9/1/17，wrapper rc=0、Adapter check=`OK`；
 这与历史 `single.py` 先排除正能量并重编号为 25 个 `output/input-*.arc`、随后每 3 个
@@ -103,7 +103,7 @@ archive 解析和历史后处理选择链，不是 LASP/SSW 科学数值 parity�
 | `LASP` train dirs | `TrainStr/TrainFor` + `lasp.in` → `.pot` | 专有可执行程序 | C | 可选 `mlip-training.lasp`；与已实现的 SSW sampling wrapper 分开，当前未启用 |
 | `MTPs` train dirs | cfg/训练集 → MTP potential | 接口不统一 | C/D | 可选 `mlip-training.mtp` |
 
-所有框架适配器必须记录框架版本、入口 argv、环境/profile、数据集指纹、随机种子、超参数、模型指纹和日志引用。仓库不包含模型权重。
+所有框架适配器必须记录框架版本、入口 argv、环境/profile、数据集路径、随机种子、超参数、模型路径和日志引用。仓库不包含模型权重。
 
 ### 静态基准
 
@@ -181,7 +181,7 @@ MSD 时间轴、体积、Li 数量、扩散维度、拟合窗、平衡段和电�
 1. 没有统一的 run/attempt/job/artifact 状态模型。
 2. 没有机器验证的 project/plugin/result schema。
 3. 训练、评估、调度和文件操作普遍耦合。
-4. 随机种子、单位、split、拟合窗和结构/数据指纹经常缺失。
+4. 随机种子、单位、split、拟合窗和结构/数据路径经常缺失。
 5. 没有统一模型 registry，也没有由 benchmark 证据驱动的 task-aware routing。
 6. 没有严格的 replay 契约；很多“分析”脚本会删文件、生成新轨迹或提交作业。
 7. 没有通用电压后处理和 production DeepMD 训练入口的充分证据。

@@ -274,7 +274,7 @@ Before approving a real training job:
 2. For GPU work, verify accelerator visibility inside a matching compute-node
    allocation, not only on the login node.
 3. Confirm `DATA_ROOT` and `MODEL_ROOT` exist and that reference manifests resolve
-   below them with the expected file/directory kind and fingerprint.
+   below them with the expected file/directory kind.
 4. Confirm the canonical template library contains the matching
    `mlip-<framework>/run.sh` and `slurm/single-python/{cpu,gpu}.sbatch`.
 5. Run `mlipflow run NODE --dry-run` locally and review the selected backend profile,
@@ -282,5 +282,5 @@ Before approving a real training job:
 6. Use a bounded scheduled environment smoke before production-scale training.
 
 Scheduler `COMPLETED` is not enough: MLIPFlow still requires the remote runner,
-output schema, content identities, and pinned scientific checker to pass before the
+output schema, declared paths/parameters, and scientific checker to pass before the
 attempt becomes `OK`.

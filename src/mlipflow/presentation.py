@@ -8,14 +8,8 @@ model; it only projects those objects for normal CLI display.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
-
-
-_HASH_KEY_PARTS = ("fingerprint", "digest", "sha256", "hash", "provenance")
-_DIGEST_PREFIXES = ("sha256:", "tree-sha256:")
-_DIGEST_VALUE = re.compile(r"(?:tree-)?sha256:[A-Za-z0-9._:+/=-]+", re.IGNORECASE)
 
 
 def compact_output(command: str, data: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
@@ -37,7 +31,7 @@ def compact_output(command: str, data: dict[str, Any], *, dry_run: bool = False)
         return _compact_run_result(data)
     if command in {"advance", "retry", "stop"}:
         return _compact_mutation_result(command, data)
-    return _without_hashes(data)
+    return data
 
 
 def render_text(command: str, data: dict[str, Any], *, audit: bool = False) -> str:
@@ -124,7 +118,7 @@ def _compact_inspect(data: dict[str, Any]) -> dict[str, Any]:
         if isinstance(plugin_record.get("manifest"), dict)
         else {}
     )
-    parameters = _without_hashes(node.get("parameters", {}))
+    parameters = node.get("parameters", {})
     result: dict[str, Any] = {
         "node_id": node.get("id"),
         "uses": node.get("uses"),
@@ -133,9 +127,9 @@ def _compact_inspect(data: dict[str, Any]) -> dict[str, Any]:
         "action": _node_action(node),
         "backend": node.get("backend", "local"),
         "needs": node.get("needs", []),
-        "inputs": _without_hashes(node.get("inputs", {})),
+        "inputs": node.get("inputs", {}),
         "parameters": parameters,
-        "resources": _without_hashes(node.get("resources", {})),
+        "resources": node.get("resources", {}),
         "plugin": {
             key: value
             for key, value in {
@@ -207,21 +201,21 @@ def _compact_run_plan(data: dict[str, Any]) -> dict[str, Any]:
         "mode": data.get("mode"),
         "backend": data.get("backend"),
         "will_run": _will_run(data, adapter),
-        "inputs": _without_hashes(data.get("inputs", {})),
-        "parameters": _without_hashes(data.get("parameters", {})),
-        "resources": _without_hashes(data.get("resources", {})),
+        "inputs": data.get("inputs", {}),
+        "parameters": data.get("parameters", {}),
+        "resources": data.get("resources", {}),
         "approval_required": data.get("approval_required") is True,
     }
     if data.get("backend_profile"):
         result["backend_profile"] = data["backend_profile"]
+    if isinstance(data.get("cluster_selection"), dict):
+        result["cluster_selection"] = data["cluster_selection"]
     selected = _selected_model(data)
     if selected is not None:
         result["selected_model"] = selected
     reason = _plan_reason(adapter, data.get("adapter_diagnostics"))
     if reason:
         result["reason"] = reason
-    if data.get("approval_required") is True:
-        result["approval_token"] = data.get("plan_digest")
     return result
 
 
@@ -242,7 +236,7 @@ def _compact_action_plan(data: dict[str, Any]) -> dict[str, Any]:
             if isinstance(item, dict)
         ]
     else:
-        result.update(_without_hashes(details))
+        result.update(details)
     return result
 
 
@@ -260,7 +254,7 @@ def _compact_run_result(data: dict[str, Any]) -> dict[str, Any]:
         result["job_id"] = step["job_id"]
     metrics = result_data.get("metrics")
     if isinstance(metrics, dict) and metrics:
-        result["metrics"] = _without_hashes(metrics)
+        result["metrics"] = metrics
     reason = _concise_reason(step.get("diagnostic"))
     if reason:
         result["reason"] = reason
@@ -348,38 +342,12 @@ def _command_summary(argv: list[Any]) -> list[str]:
     result: list[str] = []
     for index, raw in enumerate(argv[:10]):
         value = str(raw)
-        if value.startswith(_DIGEST_PREFIXES):
-            value = "<content-id>"
-        else:
-            value = _DIGEST_VALUE.sub("<content-id>", value)
-            if Path(value).is_absolute():
-                value = Path(value).name or "/"
+        if Path(value).is_absolute():
+            value = Path(value).name or "/"
         result.append(value)
     if len(argv) > 10:
         result.append(f"… (+{len(argv) - 10} args)")
     return result
-
-
-def _without_hashes(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: cleaned
-            for key, raw in value.items()
-            if not _is_hash_key(str(key))
-            and (cleaned := _without_hashes(raw)) is not None
-        }
-    if isinstance(value, list):
-        return [cleaned for raw in value if (cleaned := _without_hashes(raw)) is not None]
-    if isinstance(value, str):
-        if value.startswith(_DIGEST_PREFIXES):
-            return None
-        return _DIGEST_VALUE.sub("<content-id>", value)
-    return value
-
-
-def _is_hash_key(key: str) -> bool:
-    lowered = key.lower().replace("-", "_")
-    return any(part in lowered for part in _HASH_KEY_PARTS)
 
 
 def _selected_model(value: Any) -> Any:
@@ -422,7 +390,6 @@ def _concise_reason(value: Any, limit: int = 240) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     line = " ".join(value.split())
-    line = _DIGEST_VALUE.sub("<content-id>", line)
     if line == "preview: project has not been initialized":
         return None
     return line if len(line) <= limit else line[: limit - 1] + "…"
@@ -526,7 +493,7 @@ def _render_run_plan(data: dict[str, Any]) -> str:
         lines.append(f"reason: {data['reason']}")
     if data.get("approval_required"):
         lines.append("approval: required")
-        lines.append(f"token: {data.get('approval_token')}")
+        lines.append("review the dry-run, then rerun with --approve")
     else:
         lines.append("approval: not required")
     return "\n".join(lines)

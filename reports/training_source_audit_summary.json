@@ -6,8 +6,7 @@
   "mode": "read-only-source-audit",
   "scientific_execution_status": "EXTERNAL_VALIDATION_PENDING",
   "auditor": {
-    "locator": "plugins/mlip-training/audit_sources.py",
-    "sha256": "sha256:0707f5a0ae7454f1fb2b8c4a955ec08fe06015b23d94f0227e42f6913668789d"
+    "locator": "plugins/mlip-training/audit_sources.py"
   },
   "summary": {
     "source_count": 5,
@@ -23,8 +22,6 @@
       "role": "deepmd-se_atten_v2-final-config",
       "framework": "deepmd",
       "source_name": "input.json",
-      "size_bytes": 131026,
-      "sha256": "sha256:d89b00bd550d08b6474fb447b38367b1666d84574b722aa10de3b0ff4732ff11",
       "effective_configuration": {
         "descriptor": "se_atten_v2",
         "descriptor_seed": 1,
@@ -33,9 +30,7 @@
         "precision": "float64",
         "training_steps": 300000,
         "training_system_count": 747,
-        "validation_system_count": 747,
-        "training_system_ids_sha256": "sha256:d069b2f9fe5b8d5d3c98dd816dfc945557baeb72c54111aad5f09ffe0dbe9968",
-        "validation_system_ids_sha256": "sha256:7a5349d4e7e77d805bbab8e86ee8790bc0e94ee2902fd3a166979701d42dcaec"
+        "validation_system_count": 747
       },
       "issues": [
         "deepmd.absolute_paths",
@@ -46,8 +41,6 @@
       "role": "mace-scratch-shell",
       "framework": "mace",
       "source_name": "run.slurm",
-      "size_bytes": 917,
-      "sha256": "sha256:3d8624448a84859a4df4dd8b0307cf40f2a9181105fb94f37fd559bf1bf32042",
       "effective_configuration": {
         "captured_command_ends_at": "--E0s=average",
         "effective_seed": null
@@ -63,8 +56,6 @@
       "role": "mace-finetune-shell",
       "framework": "mace",
       "source_name": "run.slurm",
-      "size_bytes": 692,
-      "sha256": "sha256:db4c54561e28927fe4e758f64a879a044b760241fb61e10ea89d973cc7a28dfe",
       "effective_configuration": {
         "operation": "fine-tune",
         "seed": 3,
@@ -81,8 +72,6 @@
       "role": "chgnet-trainer",
       "framework": "chgnet",
       "source_name": "train_model_Li8.py",
-      "size_bytes": 1464,
-      "sha256": "sha256:2484ca2c6e0658af8c2fd04c5e0113000617d08a8ac50a539010015380267873",
       "effective_configuration": {
         "train_ratio": 0.8,
         "validation_ratio": 0.2,
@@ -102,8 +91,6 @@
       "role": "m3gnet-matgl-trainer",
       "framework": "m3gnet",
       "source_name": "train.py",
-      "size_bytes": 9868,
-      "sha256": "sha256:c821629784325b2ff8f219caf768b998f3be1a9ce8f6b89fd9cceef2e80ecded",
       "effective_configuration": {
         "split": [0.8, 0.05, 0.15],
         "random_state": 42,
@@ -127,7 +114,7 @@
   },
   "redaction": {
     "private_absolute_path_values_removed": true,
-    "source_identity": "role + basename + size + sha256"
+    "source_record": "role and basename"
   },
   "limitations": [
     "This report audits entrypoint/config semantics only; it does not load a framework or train a model.",

@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_ROOT = ROOT / "schemas"
 PLUGIN_ROOT = ROOT / "plugins"
 EXPECTED_PLUGINS = {
+    "active-learning",
     "ase-md",
     "high-entropy-structure",
     "pes-sampling",
@@ -25,6 +26,7 @@ EXPECTED_PLUGINS = {
 }
 CONTRACT_METHODS = {"validate", "plan", "prepare", "check", "collect", "replay"}
 EXACT_EXECUTION_OPERATIONS = {
+    "active-learning": ["committee-evaluate", "select-candidates", "assess-round"],
     "ase-md": ["run"],
     "candidate-ranking": ["rank-candidates"],
     "dft-labeling": ["vasp-prepare", "label", "dataset-assemble"],
@@ -48,6 +50,7 @@ EXACT_EXECUTION_OPERATIONS = {
     ],
 }
 EXPECTED_EXECUTION_BACKENDS = {
+    "active-learning": ["local", "ssh-slurm"],
     "ase-md": ["ssh-slurm"],
     "candidate-ranking": ["local"],
     "dft-labeling": ["local", "ssh-slurm"],
@@ -60,6 +63,7 @@ EXPECTED_EXECUTION_BACKENDS = {
     "pes-sampling": ["local", "ssh-slurm"],
 }
 JOB_SUBMITTING_PLUGINS = {
+    "active-learning",
     "ase-md",
     "dft-labeling",
     "lammps-md",

@@ -41,12 +41,9 @@ Require `inputs.model_reference` to point to a small project JSON manifest conta
 - a logical `model_id`
 - a safe `relative_path` below the site-owned model registry
 - `kind: file` for DeepMD/CHGNet/MACE or `kind: directory` for M3GNet/MatGL
-- verifiable content identity
 
 For an upstream artifact binding, accept the project-scoped resolved reference path
-produced by core and take its immutable fingerprint as authoritative. An optional
-redundant `model_fingerprint` parameter must match when supplied, but a predeclared DAG
-does not need to know the future training output fingerprint.
+produced by core. A predeclared DAG can consume that collected reference directly.
 
 The portable project must never contain the cluster's absolute model path. The site-owned `ase-md-<calculator>/run.sh` supplies `MODEL_ROOT`. The compute-node resolver verifies the model before and after inference.
 
@@ -69,7 +66,7 @@ For either ensemble, require the user/workflow to declare:
 
 `device: cuda` requires at least one scheduled GPU. Do not invent timestep, duration, temperature, pressure, damping, checkpoint cadence, or resource requests from the chemical system.
 
-DeepMD's ASE calculator uses model-native precision; `default_dtype` is recorded for cross-framework workflow identity but must not be described as recasting a DeepMD model.
+DeepMD's ASE calculator uses model-native precision; `default_dtype` is recorded with the run but must not be described as recasting a DeepMD model.
 
 ## Size the structure explicitly
 
@@ -85,7 +82,7 @@ initial 3D periodic cell length must be greater than the declared value. Do not
 invent the bound or silently increase the repeat; a failed bound is a failed
 run that requires a reviewed parameter change.
 
-The repeat and lower bound are part of checkpoint identity, so a retry cannot
+The repeat and lower bound are checked against the checkpoint, so a retry cannot
 change the effective cell. A sampling cell and a larger production cell should
 therefore be separate reviewed nodes even when both originate from the same
 structure.
@@ -127,11 +124,11 @@ Checkpointing is opt-in. Accept:
 
 `auto-from-previous-attempt` requires `checkpoint_interval`. The runner atomically replaces `output/md-checkpoint.json` using a temporary file, flush/fsync, then rename, so an interrupted write should leave the previous complete checkpoint rather than a partially overwritten one.
 
-A checkpoint is strict JSON, never pickle. It binds model/structure identity, ensemble physics, total target steps, completed global step, ASE version, atomic numbers/order, positions, momenta, cell, masses and PBC. NVT also binds Langevin implementation version and PCG64 RNG state. NPT also binds the complete MTK extended state.
+A checkpoint is strict JSON, never pickle. It records the model/structure paths, ensemble physics, total target steps, completed global step, ASE version, atomic numbers/order, positions, momenta, cell, masses and PBC. NVT also records the Langevin implementation version and PCG64 RNG state. NPT also records the complete MTK extended state.
 
 Do not let the Agent choose an arbitrary checkpoint path. A retry may consume only `md-checkpoint.json` already salvaged into the immediately previous local attempt by MLIPFlow core. The next run shows the checkpoint source attempt and completed step.
 
-Do not auto-resume a normal scientific `FAIL` whose scheduler state was `COMPLETED`. Automatic restart is for scheduler terminal interruption such as `TIMEOUT`, `PREEMPTED`, node/OOM/deadline failures, or an observed scheduler cancellation with a validated salvaged checkpoint. If the checkpoint is absent, identity-mismatched, already complete, or belongs to a non-eligible attempt, block the retry.
+Do not auto-resume a normal scientific `FAIL` whose scheduler state was `COMPLETED`. Automatic restart is for scheduler terminal interruption such as `TIMEOUT`, `PREEMPTED`, node/OOM/deadline failures, or an observed scheduler cancellation with a validated salvaged checkpoint. If the checkpoint is absent, has different scientific parameters, is already complete, or belongs to a non-eligible attempt, block the retry.
 
 ## Terminal failure salvage
 
@@ -183,9 +180,9 @@ their separate rank-count semantics.
 
 ## Execution and completion
 
-Before submission, show calculator/model identity, source-structure identity, any supercell repeat and strict initial-cell bound, ensemble, temperature, timestep, total target duration, current segment start/remaining steps, frame/thermo record counts, checkpoint policy, device, resources, template family, and expected outputs. For NVT also show friction. For NPT also show target pressure, both damping times, stress requirement, isotropic cell mode, no-constraints requirement, and pinned MTK chain configuration.
+Before submission, show calculator/model path, source-structure path, any supercell repeat and strict initial-cell bound, ensemble, temperature, timestep, total target duration, current segment start/remaining steps, frame/thermo record counts, checkpoint policy, device, resources, template family, and expected outputs. For NVT also show friction. For NPT also show target pressure, both damping times, stress requirement, isotropic cell mode, no-constraints requirement, and fixed MTK chain configuration.
 
-A Slurm `COMPLETED` state is not scientific success. After completion, ordinary `advance` performs bounded verified fetch and invokes the pinned checker. The checker must verify:
+A Slurm `COMPLETED` state is not scientific success. After completion, ordinary `advance` performs bounded fetch and invokes the scientific checker. The checker must verify:
 
 - completed global steps equal the original requested total;
 - model, structure, and any restart checkpoint match the attempt inputs;
@@ -196,8 +193,8 @@ A Slurm `COMPLETED` state is not scientific success. After completion, ordinary 
 - calculator and ASE versions are recorded.
 - stored-frame minimum pair distance and temperature, energy-per-atom, and volume summaries contain only finite values.
 
-Treat missing, oversized, changed, non-finite, stress-incompatible, checkpoint-incompatible, or identity-mismatched output as `FAIL`, not a warning.
+Treat missing, oversized, scientifically inconsistent, non-finite, stress-incompatible, or checkpoint-incompatible output as `FAIL`, not a warning.
 
 ## Scientific interpretation
 
-The `ase-md` plugin produces trajectory segments; it does not by itself establish equilibration, diffusion, ionic conductivity, phase stability, or model validity. The stability summary is diagnostic evidence, not an automatic pass/fail threshold or a substitute for the shared held-out benchmark. A successful restart proves continuity of the declared integrator state under the pinned implementation contract, not physical convergence. Do not report transport or convergence conclusions unless a separate reviewed analysis stage supports them.
+The `ase-md` plugin produces trajectory segments; it does not by itself establish equilibration, diffusion, ionic conductivity, phase stability, or model validity. The stability summary is diagnostic evidence, not an automatic pass/fail threshold or a substitute for the shared held-out benchmark. A successful restart proves continuity of the declared integrator state under the recorded implementation/version contract, not physical convergence. Do not report transport or convergence conclusions unless a separate reviewed analysis stage supports them.

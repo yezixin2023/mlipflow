@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import shutil
 import tempfile
 import unittest
@@ -60,10 +58,6 @@ cd {{RUN_DIR}}
 """
 
 
-def sha256(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 class FakeTemplateLibrary:
     def __init__(self, templates: dict[str, str] | None = None):
         self.templates = templates or {
@@ -79,13 +73,10 @@ class FakeTemplateLibrary:
         content = self.templates.get(relative)
         if content is None:
             return {"relative_path": relative, "exists": False}
-        payload = content.encode("utf-8")
         return {
             "relative_path": relative,
             "exists": True,
             "content": content,
-            "size_bytes": len(payload),
-            "sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
         }
 
 
@@ -123,7 +114,7 @@ def prepared_fixture(root: Path) -> tuple[dict[str, Any], Path]:
         structures,
         {
             "schema_version": 1,
-            "structures": [{"id": "li", "path": "li.vasp", "fingerprint": sha256(source)}],
+            "structures": [{"id": "li", "path": "li.vasp"}],
         },
     )
     labeling = inputs / "labeling.json"
@@ -149,8 +140,6 @@ def prepared_fixture(root: Path) -> tuple[dict[str, Any], Path]:
         path.write_text(text, encoding="utf-8")
         files[name] = {
             "path": name,
-            "sha256": sha256(path),
-            "size_bytes": path.stat().st_size,
             "collectable": name != "POTCAR",
         }
     write_json(
@@ -447,6 +436,70 @@ class RealVasprunParsingTests(unittest.TestCase):
 
 
 class ScheduledDftTests(unittest.TestCase):
+    def test_automatic_cluster_selection_prefers_more_available_nodes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, site = prepared_fixture(root)
+            project_value = json.loads((root / "project.yaml").read_text(encoding="utf-8"))
+            project_value["workflow"]["nodes"][0].pop("backend_profile")
+            write_json(root / "project.yaml", project_value)
+            site_value = json.loads(site.read_text(encoding="utf-8"))
+            site_value["clusters"]["cluster-a"]["scheduler"] = {
+                "partition_candidates": ["a"]
+            }
+            site_value["clusters"]["cluster-b"] = {
+                "backend": "ssh-slurm",
+                "ssh_profile": "cluster-b",
+                "remote_template_root": "/templates/cluster-b",
+                "work_root": "/work/cluster-b",
+                "scheduler": {"partition_candidates": ["b"]},
+            }
+            write_json(site, site_value)
+
+            def observed(backend, candidates, _resources):
+                available = 1 if backend.profile == "cluster-a" else 4
+                partition = candidates[0]
+                return {
+                    "selected_partition": partition,
+                    "observed_partition_availability": [
+                        {
+                            "partition": partition,
+                            "observed_node_availability": {
+                                "available_now": available,
+                                "capable_for_request": 8,
+                            },
+                        }
+                    ],
+                }
+
+            with patch(
+                "mlipflow.services.commands.SshSlurmBackend.select_partition",
+                autospec=True,
+                side_effect=observed,
+            ):
+                plan = make_run_plan(
+                    load_project(root),
+                    "label-li",
+                    PLUGINS,
+                    site,
+                    FakeTemplateLibrary(),
+                )
+
+        self.assertEqual("cluster-b", plan["backend_profile"])
+        self.assertEqual(
+            {
+                "mode": "automatic",
+                "selected_profile": "cluster-b",
+                "criterion": (
+                    "most currently available capable nodes; site order breaks ties"
+                ),
+            },
+            plan["cluster_selection"],
+        )
+        self.assertEqual(
+            "cluster-b", plan["hpc_execution"]["cluster_profile"]["name"]
+        )
+
     def _submit(self, root: Path) -> tuple[Any, dict[str, Any], Path, FakeTemplateLibrary]:
         _, site = prepared_fixture(root)
         initialize(root)
@@ -461,9 +514,7 @@ class ScheduledDftTests(unittest.TestCase):
             "mlipflow.services.SshSlurmBackend.submit",
             return_value=ExecutionResult(0, "Submitted batch job 77\n", "", "77"),
         ):
-            run_node(
-                project, "label-li", PLUGINS, plan["plan_digest"], site, library
-            )
+            run_node(project, "label-li", PLUGINS, True, site, library)
         staged_paths = {item[1] for item in staged.call_args.args[1]}
         self.assertIn("input/calc-0001/POTCAR", staged_paths)
         self.assertIn("submit.sbatch", staged_paths)
@@ -480,7 +531,6 @@ class ScheduledDftTests(unittest.TestCase):
                 "path": remote_path,
                 "exists": True,
                 "size_bytes": path.stat().st_size,
-                "sha256": sha256(path),
             }
 
         def fetch(
@@ -558,7 +608,7 @@ class ScheduledDftTests(unittest.TestCase):
                     project,
                     "label-li",
                     PLUGINS,
-                    plan["plan_digest"],
+                    True,
                     site,
                     library,
                 )
@@ -579,6 +629,41 @@ class ScheduledDftTests(unittest.TestCase):
             self.assertEqual(
                 ["gpu3", "gpu2"],
                 submitted.call_args.kwargs["partition_candidates"],
+            )
+
+    def test_unreported_memory_policy_reaches_submission_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, site = prepared_fixture(root)
+            site_value = json.loads(site.read_text(encoding="utf-8"))
+            site_value["clusters"]["cluster-a"]["scheduler"] = {
+                "partition_candidates": ["cpu-large"],
+                "memory_constraint": "unreported",
+            }
+            write_json(site, site_value)
+            initialize(root)
+            project = load_project(root)
+            library = FakeTemplateLibrary()
+            plan = make_run_plan(project, "label-li", PLUGINS, site, library)
+            remote_dir = plan["hpc_execution"]["workspace"]["run_dir"]
+            with patch(
+                "mlipflow.services.SshSlurmBackend.stage_workspace",
+                return_value=remote_dir,
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.submit",
+                return_value=ExecutionResult(0, "Submitted batch job 78\n", "", "78"),
+            ) as submitted:
+                run_node(
+                    project,
+                    "label-li",
+                    PLUGINS,
+                    True,
+                    site,
+                    library,
+                )
+
+            self.assertEqual(
+                "unreported", submitted.call_args.kwargs["memory_constraint"]
             )
 
     def test_plan_stage_fetch_check_collect_reaches_ok(self) -> None:
@@ -621,7 +706,6 @@ class ScheduledDftTests(unittest.TestCase):
                 autospec=True,
                 side_effect=fetch,
             ):
-                self.assertNotIn("plan_digest", approved)
                 finished = advance(project, PLUGINS)
             self.assertEqual("OK", finished["changed"][0]["state"])
             attempt = root / ".mlipflow/runs/label-li/attempt-1"
@@ -649,7 +733,7 @@ class ScheduledDftTests(unittest.TestCase):
                 ),
             )
             with patches[0], patches[1]:
-                approved = make_advance_plan(project, PLUGINS)
+                make_advance_plan(project, PLUGINS)
             with patch(
                 "mlipflow.services.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
@@ -662,7 +746,6 @@ class ScheduledDftTests(unittest.TestCase):
                 autospec=True,
                 side_effect=fetch,
             ):
-                self.assertNotIn("plan_digest", approved)
                 finished = advance(project, PLUGINS)
             self.assertEqual("FAIL", finished["changed"][0]["state"])
             self.assertIn("completion check", finished["changed"][0]["diagnostic"])
@@ -675,7 +758,7 @@ class ScheduledDftTests(unittest.TestCase):
                 submitted = store.latest_step(project.project_id, "label-li")
                 store.transition(submitted.run_id, RunState.FAIL, diagnostic="synthetic failure")
             retry_plan = make_retry_plan(project, "label-li", PLUGINS)
-            self.assertNotIn("plan_digest", retry_plan)
+            self.assertEqual("retry", retry_plan["action"])
             retried = retry(project, "label-li", PLUGINS)
             self.assertEqual(2, retried["step"]["attempt"])
             second = make_run_plan(project, "label-li", PLUGINS, site, library)
@@ -684,7 +767,7 @@ class ScheduledDftTests(unittest.TestCase):
                 second["hpc_execution"]["workspace"]["run_dir"],
             )
 
-    def test_invalid_completion_identity_fails_before_scientific_collect(self) -> None:
+    def test_wrong_completion_attempt_fails_before_scientific_collect(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project, _, site, _ = self._submit(root)
@@ -700,7 +783,7 @@ class ScheduledDftTests(unittest.TestCase):
                 autospec=True,
                 side_effect=inspect,
             ):
-                approved = make_advance_plan(project, PLUGINS)
+                make_advance_plan(project, PLUGINS)
             with patch(
                 "mlipflow.services.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
@@ -713,7 +796,6 @@ class ScheduledDftTests(unittest.TestCase):
                 autospec=True,
                 side_effect=fetch,
             ):
-                self.assertNotIn("plan_digest", approved)
                 finished = advance(project, PLUGINS)
             self.assertEqual("FAIL", finished["changed"][0]["state"])
             self.assertIn("field attempt", finished["changed"][0]["diagnostic"])
@@ -738,26 +820,20 @@ class ScheduledDftTests(unittest.TestCase):
             "mlipflow.services.SshSlurmBackend.submit",
             return_value=ExecutionResult(0, "Submitted batch job 77\n", "", "77"),
         ):
-            run_node(project, "label-li", plugins, plan["plan_digest"], site, library)
+            run_node(project, "label-li", plugins, True, site, library)
         return project, plugins, site
 
-    def test_pinned_plan_survives_touching_every_file_after_submission(self) -> None:
-        """A queued job must not become unadvanceable because mtimes moved.
-
-        Under plan schema 1 this failed with ``pinned scheduled plan field
-        changed: plugin``: re-staging, an rsync, or any tool that rewrites a file
-        in place stranded the submitted job permanently.
-        """
+    def test_submitted_plan_does_not_recheck_adapter_source(self) -> None:
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project, plugins, site = self._submit_with_plugin_copy(root)
 
-            times = (1_700_000_000, 1_700_000_000)
-            for tree in (plugins, root / "prepared"):
-                for path in sorted(tree.rglob("*"), reverse=True):
-                    os.utime(path, times, follow_symlinks=False)
-
+            adapter = plugins / "dft-labeling" / "adapter.py"
+            adapter.write_text(
+                adapter.read_text(encoding="utf-8") + "\n# tampered\n",
+                encoding="utf-8",
+            )
             remote = root / "fake-remote"
             write_vasp_outputs(remote)
             write_completion(remote, project.project_id, "label-li", 1)
@@ -770,46 +846,12 @@ class ScheduledDftTests(unittest.TestCase):
                 autospec=True,
                 side_effect=inspect,
             ):
-                approved = make_advance_plan(project, plugins)
+                observed = make_advance_plan(project, plugins)
             self.assertEqual(
-                "adapter-finalize", approved["details"]["transitions"][0]["action"]
+                "adapter-finalize", observed["details"]["transitions"][0]["action"]
             )
 
-    def _advance_expecting_rejection(self, project, plugins, site) -> str:
-        """Advance with every remote call trapped: rejection must precede them."""
-
-        with patch(
-            "mlipflow.services.SshSlurmBackend.status",
-            return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
-        ), patch(
-            "mlipflow.services.SshSlurmBackend.inspect_file",
-            side_effect=AssertionError("a rejected plan must not touch the cluster"),
-        ), patch(
-            "mlipflow.backends.subprocess.run",
-            side_effect=AssertionError("no subprocess may be spawned"),
-        ):
-            observed = make_advance_plan(project, plugins)
-        self.assertEqual([], observed["details"]["transitions"])
-        return str(observed["details"]["observations"][0]["reason"])
-
-    def test_pinned_plan_still_rejects_a_real_adapter_source_change(self) -> None:
-        """The guarantee that must survive dropping mtime from the digest."""
-
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            project, plugins, site = self._submit_with_plugin_copy(root)
-
-            adapter = plugins / "dft-labeling" / "adapter.py"
-            adapter.write_text(
-                adapter.read_text(encoding="utf-8") + "\n# tampered\n",
-                encoding="utf-8",
-            )
-            self.assertIn(
-                "pinned scheduled checker implementation changed",
-                self._advance_expecting_rejection(project, plugins, site),
-            )
-
-    def test_pinned_plan_does_not_recheck_local_inputs_after_submission(self) -> None:
+    def test_submitted_plan_does_not_recheck_local_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project, plugins, site = self._submit_with_plugin_copy(root)
@@ -835,14 +877,13 @@ class ScheduledDftTests(unittest.TestCase):
                 "adapter-finalize", observed["details"]["transitions"][0]["action"]
             )
 
-    def test_core_plan_fields_carry_no_mtime_and_no_absolute_path(self) -> None:
+    def test_core_plan_fields_use_portable_paths(self) -> None:
         """Everything the core contributes to a plan must be relocatable.
 
         ``adapter_plan`` is excluded because it is authored by the plugin, and
         ``dft-labeling`` still emits absolute ``source``/``path`` values there.
         That is a known remaining source of machine dependence, tracked as plugin
-        work; this test locks down the core so the boundary cannot quietly widen,
-        and asserts that *no* part of a plan — adapter included — carries mtime.
+        work; this test locks down the core so the boundary cannot quietly widen.
         """
 
         def leaves(value, trail=""):
@@ -864,10 +905,7 @@ class ScheduledDftTests(unittest.TestCase):
                 project, "label-li", PLUGINS, site, FakeTemplateLibrary()
             )
 
-            self.assertEqual(3, plan["schema_version"])
-            self.assertEqual(
-                [], [trail for trail, _ in leaves(plan) if "mtime" in trail.lower()]
-            )
+            self.assertEqual(4, plan["schema_version"])
             core = {key: value for key, value in plan.items() if key != "adapter_plan"}
             self.assertEqual(
                 [],
@@ -878,29 +916,18 @@ class ScheduledDftTests(unittest.TestCase):
                     and (str(root) in value or value.startswith("file:///"))
                 ],
             )
+            self.assertEqual("dft-labeling", plan["plugin"]["id"])
             self.assertEqual(
-                "adapter.py", plan["plugin"]["implementation_identity"]["locator"]
-            )
-            self.assertEqual(
-                "prepared/dft-input-manifest.json",
-                plan["input_identities"]["dft_input_manifest"]["locator"],
+                "prepared/dft-input-manifest.json", plan["inputs"]["dft_input_manifest"]
             )
 
-    def test_scheduled_plan_digests_identically_across_checkouts(self) -> None:
-        """The full ssh-slurm READY plan, planned twice under different roots.
-
-        This is the richest adapter plan the project produces: staged sources,
-        per-file fingerprints and a rendered remote workspace.  It is also the one
-        whose approval has to survive a clone, because staging and advancing may
-        well happen from a different machine than planning did.
-        """
+    def test_scheduled_plan_uses_portable_paths_across_checkouts(self) -> None:
 
         with tempfile.TemporaryDirectory() as first_temporary, tempfile.TemporaryDirectory() as second_temporary:
             first = Path(first_temporary).resolve()
             second = Path(second_temporary).resolve() / "nested" / "deeper"
             second.mkdir(parents=True)
 
-            digests = []
             for root in (first, second):
                 _, site = prepared_fixture(root)
                 initialize(root)
@@ -908,7 +935,6 @@ class ScheduledDftTests(unittest.TestCase):
                     load_project(root), "label-li", PLUGINS, site, FakeTemplateLibrary()
                 )
                 self.assertEqual("READY", plan["adapter_plan"]["status"])
-                digests.append(plan["plan_digest"])
                 self.assertEqual(
                     "{PROJECT_ROOT}/prepared/POSCAR",
                     next(
@@ -919,9 +945,8 @@ class ScheduledDftTests(unittest.TestCase):
                         if item["remote_name"] == "calc-0001/POSCAR"
                     ),
                 )
-            self.assertEqual(digests[0], digests[1])
 
-    def test_stop_plan_uses_current_cluster_target_without_an_approval_digest(self) -> None:
+    def test_stop_plan_uses_current_cluster_target(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project, _, site, _ = self._submit(root)
@@ -936,8 +961,6 @@ class ScheduledDftTests(unittest.TestCase):
             raw["clusters"]["cluster-a"]["ssh_profile"] = "changed-alias"
             write_json(site, raw)
             changed = make_stop_plan(project, "label-li", site)
-            self.assertNotIn("plan_digest", first)
-            self.assertNotIn("plan_digest", changed)
             self.assertEqual(
                 "changed-alias", changed["details"]["scheduler_target"]["ssh_profile"]
             )

@@ -2,8 +2,8 @@
   "schema_version": 1,
   "artifact_type": "mlipflow.evidence_replay.top_candidate_transport_link",
   "status": "REPLAY_VERIFIED",
-  "identity_link": {
-    "status": "EXACT_IDENTITY_MAPPING",
+  "candidate_mapping": {
+    "status": "EXACT_COMPOSITION_MAPPING",
     "ranked_candidate_id": "Mn6_Fe3_Ni8_Cu4_Zn7",
     "historical_folder_id": "6_3_8_4_7",
     "historical_token_order": [
@@ -88,29 +88,21 @@
       {
         "role": "target_msd_400K",
         "locator": "historical-transport/deepmd_6_3_8_4_7/400K/target.msd",
-        "sha256": "sha256:bad4a7d15e129fe3426c46a19f561ccabc341240d7dec27c0cd42a6715a2b403",
-        "size_bytes": 366091,
         "read_only": true
       },
       {
         "role": "target_msd_600K",
         "locator": "historical-transport/deepmd_6_3_8_4_7/600K/target.msd",
-        "sha256": "sha256:3758bfb7445a311ae937f15c650c48d4582f1404711f7e181cff3168b54b32c1",
-        "size_bytes": 355418,
         "read_only": true
       },
       {
         "role": "target_msd_800K",
         "locator": "historical-transport/deepmd_6_3_8_4_7/800K/target.msd",
-        "sha256": "sha256:b1e5e6334ed285b099bcc6e2bbbe3132d6d1aedcae8730762d5f864d8a138442",
-        "size_bytes": 347675,
         "read_only": true
       },
       {
         "role": "historical_transport_stdout",
         "locator": "historical-transport/Li10_test.out",
-        "sha256": "sha256:7d822dbb41ca4b0e66ff9070d6274635e1c620aeb92d2b00dea52af824fe671b",
-        "size_bytes": 2281,
         "read_only": true
       }
     ],
@@ -118,17 +110,12 @@
       "wrapper": "ionic-transport.adapter.reproduce_manuscript_transport",
       "wrapper_version": "1.0",
       "wrapper_locator": "plugins/ionic-transport/adapter.py",
-      "wrapper_sha256": "sha256:1255a5423be3b1a8c59ecbb597ecc79656b2afa9a58589ee419c436e95045e67",
       "historical_scripts": [
         {
-          "locator": "historical-transport/code/get_MSD_Li10.py",
-          "sha256": "sha256:584c8f1f94d072cbd43902ff5d2ec2ec3299bdaa6f5af1340e3ab2dd1ce343a5",
-          "size_bytes": 1134
+          "locator": "historical-transport/code/get_MSD_Li10.py"
         },
         {
-          "locator": "historical-transport/code/get_sigma.py",
-          "sha256": "sha256:9294764155f5cca395d7d0ba8165543c8cf8e87746ff18c67a89bb721fa96f6d",
-          "size_bytes": 1280
+          "locator": "historical-transport/code/get_sigma.py"
         }
       ]
     }

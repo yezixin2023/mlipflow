@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import hashlib
 import json
 import tempfile
 import unittest
@@ -24,7 +23,7 @@ def _module():
 
 
 class TrainingSourceAuditTests(unittest.TestCase):
-    def test_committed_real_source_audit_is_redacted_and_fingerprint_bound(self) -> None:
+    def test_committed_real_source_audit_is_redacted_and_records_sources(self) -> None:
         report = json.loads(REPORT.read_text(encoding="utf-8"))
         self.assertEqual("read-only-source-audit", report["mode"])
         self.assertEqual("EXTERNAL_VALIDATION_PENDING", report["scientific_execution_status"])
@@ -32,8 +31,10 @@ class TrainingSourceAuditTests(unittest.TestCase):
         self.assertFalse(report["claims"]["numerical_parity_established"])
         self.assertEqual(5, report["summary"]["source_count"])
         self.assertNotIn("/public/home/", json.dumps(report))
-        auditor_digest = "sha256:" + hashlib.sha256(AUDITOR.read_bytes()).hexdigest()
-        self.assertEqual(auditor_digest, report["auditor"]["sha256"])
+        self.assertEqual(
+            "plugins/mlip-training/audit_sources.py", report["auditor"]["locator"]
+        )
+        self.assertTrue(all(source["source_name"] for source in report["sources"]))
 
     def test_detects_real_mace_missing_continuation_pattern(self) -> None:
         auditor = _module()

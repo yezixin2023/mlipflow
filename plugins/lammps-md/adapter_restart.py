@@ -74,7 +74,7 @@ def _proxy(context: dict[str, Any]) -> dict[str, Any]:
     parameters = _mapping(context.get("parameters"))
     copied["parameters"] = {
         key: parameters[key]
-        for key in ("operation", "target", "input_manifest_fingerprint")
+        for key in ("operation", "target")
         if key in parameters
     }
     return copied
@@ -95,17 +95,17 @@ def _read_json(path: Path, max_bytes: int) -> dict[str, Any]:
 
 
 def _pin_facade_helpers(plan: dict[str, Any]) -> dict[str, Any]:
-    """Bind dynamic control-plane dependencies into the approval digest."""
+    """Record the facade helper paths in the plan."""
 
     if plan.get("status") != "READY":
         return plan
-    fingerprints = plan.setdefault("input_fingerprints", {})
-    if not isinstance(fingerprints, dict):
+    paths = plan.setdefault("input_paths", {})
+    if not isinstance(paths, dict):
         return {
             "plugin_id": PLUGIN_ID,
             "status": "BLOCKED",
             "executable": False,
-            "diagnostics": [_diagnostic("error", "lammps.facade_fingerprints", "plan input_fingerprints must be an object")],
+            "diagnostics": [_diagnostic("error", "lammps.facade_paths", "plan input_paths must be an object")],
         }
     for filename, key in (
         ("adapter_execute.py", "adapter_execute"),
@@ -119,7 +119,7 @@ def _pin_facade_helpers(plan: dict[str, Any]) -> dict[str, Any]:
                 "executable": False,
                 "diagnostics": [_diagnostic("error", "lammps.facade_helper", f"missing bundled helper: {filename}")],
             }
-        fingerprints[key] = base._sha256(path)
+        paths[key] = str(path)
     return plan
 
 
@@ -131,7 +131,6 @@ def _validate(context: dict[str, Any]) -> list[dict[str, str]]:
     allowed = {
         "operation",
         "target",
-        "input_manifest_fingerprint",
         "restart_policy",
         "checkpoint_interval",
     }
@@ -171,39 +170,38 @@ def _validate(context: dict[str, Any]) -> list[dict[str, str]]:
     return diagnostics
 
 
-def _runtime_identity_matches(
-    runtime: dict[str, Any], identity: dict[str, Any], resources: dict[str, Any], previous: int
+def _runtime_matches(
+    runtime: dict[str, Any], calculation: dict[str, Any], resources: dict[str, Any], previous: int
 ) -> None:
     expected = {
         "schema_version": 1,
         "runtime_contract": RUNTIME_CONTRACT,
         "attempt": previous,
-        "framework": identity.get("framework"),
-        "target": identity.get("target"),
-        "input_manifest_fingerprint": identity.get("input_manifest_fingerprint"),
-        "model_fingerprint": identity.get("model_fingerprint"),
-        "model_kind": identity.get("model_kind"),
-        "lammps_interface": identity.get("lammps_interface"),
-        "checkpoint_interval": identity.get("checkpoint_interval"),
+        "framework": calculation.get("framework"),
+        "target": calculation.get("target"),
+        "input_manifest_path": calculation.get("input_manifest_path"),
+        "model_path": calculation.get("model_path"),
+        "model_kind": calculation.get("model_kind"),
+        "lammps_interface": calculation.get("lammps_interface"),
+        "checkpoint_interval": calculation.get("checkpoint_interval"),
         "resources": resources,
     }
     for key, value in expected.items():
         if runtime.get(key) != value:
-            raise ValueError(f"previous restart runtime identity mismatch for {key}")
-    for key in (
-        "lammps_executable_sha256",
-        "launcher_prefix_sha256",
-        "prepared_launcher_sha256",
+            raise ValueError(f"previous restart runtime setting mismatch for {key}")
+    if not base._plain(runtime.get("lammps_executable")):
+        raise ValueError("previous restart runtime lacks the LAMMPS executable path")
+    if not isinstance(runtime.get("launcher_prefix"), list) or not isinstance(
+        runtime.get("prepared_launcher"), list
     ):
-        if not base._fingerprint(runtime.get(key)):
-            raise ValueError(f"previous restart runtime lacks valid {key}")
+        raise ValueError("previous restart runtime lacks launcher arguments")
     platform = runtime.get("platform")
     if not isinstance(platform, dict) or set(platform) != {"system", "machine", "byteorder"}:
-        raise ValueError("previous restart runtime platform identity is invalid")
+        raise ValueError("previous restart runtime platform record is invalid")
 
 
 def _previous_restart(
-    context: dict[str, Any], identity: dict[str, Any], attempt: int
+    context: dict[str, Any], calculation: dict[str, Any], attempt: int
 ) -> tuple[Path, dict[str, Any], dict[str, Path]]:
     previous = attempt - 1
     final_manifest = _read_json(
@@ -219,7 +217,7 @@ def _previous_restart(
     runtime_path = _previous_attempt_path(context, previous, "restart-runtime.json")
     runtime = _read_json(runtime_path, base.MAX_JSON_BYTES)
     resources = _mapping(context.get("resources"))
-    _runtime_identity_matches(runtime, identity, resources, previous)
+    _runtime_matches(runtime, calculation, resources, previous)
 
     candidates: dict[str, Path] = {}
     for name in CHECKPOINT_FILES:
@@ -242,8 +240,8 @@ def _plan_execute(context: dict[str, Any]) -> dict[str, Any]:
     parameters = _mapping(context["parameters"])
     interval = parameters.get("checkpoint_interval")
     policy = str(parameters.get("restart_policy", RESTART_DISABLED))
-    identity = _mapping(plan.get("lammps_execution_identity"))
-    total_steps = identity.get("steps")
+    calculation = _mapping(plan.get("lammps_calculation"))
+    total_steps = calculation.get("steps")
     if interval is not None and (
         not isinstance(total_steps, int) or isinstance(total_steps, bool) or interval > total_steps
     ):
@@ -281,12 +279,12 @@ def _plan_execute(context: dict[str, Any]) -> dict[str, Any]:
         staged.append(base._staged(path, remote_name))
 
     attempt = _attempt_number(context)
-    identity.update(
+    calculation.update(
         {
             "restart_policy": policy,
             "checkpoint_interval": interval,
             "restart_from_attempt": None,
-            "restart_runtime_sha256": None,
+            "restart_runtime_path": None,
             "restart_candidates": {},
         }
     )
@@ -323,7 +321,7 @@ def _plan_execute(context: dict[str, Any]) -> dict[str, Any]:
 
     if policy == RESTART_AUTO and attempt > 1:
         try:
-            runtime_path, runtime, candidates = _previous_restart(context, identity, attempt)
+            runtime_path, runtime, candidates = _previous_restart(context, calculation, attempt)
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
             return {
                 "plugin_id": PLUGIN_ID,
@@ -335,38 +333,37 @@ def _plan_execute(context: dict[str, Any]) -> dict[str, Any]:
         candidate_records: dict[str, dict[str, Any]] = {}
         for name, path in sorted(candidates.items()):
             staged.append(base._staged(path, f"restart/{name}"))
-            candidate_records[name] = {
-                "sha256": base._sha256(path),
-                "size_bytes": path.stat().st_size,
-            }
-        identity.update(
+            candidate_records[name] = {"path": str(path), "source_attempt": attempt - 1}
+        calculation.update(
             {
                 "restart_from_attempt": attempt - 1,
-                "restart_runtime_sha256": base._sha256(runtime_path),
+                "restart_runtime_path": str(runtime_path),
                 "restart_candidates": candidate_records,
-                "previous_runtime_executable_sha256": runtime["lammps_executable_sha256"],
+                "previous_runtime_executable": runtime["lammps_executable"],
+                "previous_launcher_prefix": runtime["launcher_prefix"],
+                "previous_prepared_launcher": runtime["prepared_launcher"],
                 "previous_runtime_platform": runtime["platform"],
             }
         )
 
-    plan["lammps_execution_identity"] = identity
-    fingerprints = plan.setdefault("input_fingerprints", {})
-    if isinstance(fingerprints, dict):
-        fingerprints["restart_runner"] = base._sha256(restart_runner)
-        fingerprints["restart_helper"] = base._sha256(restart_helper)
-        if identity.get("restart_runtime_sha256"):
-            fingerprints["restart_runtime"] = identity["restart_runtime_sha256"]
-        for name, record in _mapping(identity.get("restart_candidates")).items():
-            fingerprints[f"restart_{name}"] = record["sha256"]
+    plan["lammps_calculation"] = calculation
+    paths = plan.setdefault("input_paths", {})
+    if isinstance(paths, dict):
+        paths["restart_runner"] = str(restart_runner)
+        paths["restart_helper"] = str(restart_helper)
+        if calculation.get("restart_runtime_path"):
+            paths["restart_runtime"] = calculation["restart_runtime_path"]
+        for name, record in _mapping(calculation.get("restart_candidates")).items():
+            paths[f"restart_{name}"] = record["path"]
 
     summary = _mapping(plan.get("approval_summary"))
     summary.update(
         {
             "checkpoint_interval": interval,
             "restart_policy": policy,
-            "restart_from_attempt": identity.get("restart_from_attempt"),
-            "restart_candidates": identity.get("restart_candidates"),
-            "restart_start_step_resolved_on_compute_node": bool(identity.get("restart_from_attempt")),
+            "restart_from_attempt": calculation.get("restart_from_attempt"),
+            "restart_candidates": calculation.get("restart_candidates"),
+            "restart_start_step_resolved_on_compute_node": bool(calculation.get("restart_from_attempt")),
             "binary_restart_runtime_bound": True,
             "bitwise_exact_restart_guaranteed": False,
             "failure_salvage": plan.get("failure_salvage"),
@@ -378,19 +375,19 @@ def _plan_execute(context: dict[str, Any]) -> dict[str, Any]:
 
 def _check_restart(context: dict[str, Any]) -> list[dict[str, str]]:
     diagnostics: list[dict[str, str]] = []
-    identity = _mapping(base._scheduled_plan(context).get("lammps_execution_identity"))
+    calculation = _mapping(base._scheduled_plan(context).get("lammps_calculation"))
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
     try:
         result = base._read_json(attempt / "lammps-execution-result.json")
     except Exception as exc:
         return [_diagnostic("error", "lammps.restart_result", str(exc))]
     restart = _mapping(result.get("restart"))
-    resumed = identity.get("restart_from_attempt") is not None
+    resumed = calculation.get("restart_from_attempt") is not None
     expected = {
-        "policy": identity.get("restart_policy"),
-        "checkpoint_interval": identity.get("checkpoint_interval"),
+        "policy": calculation.get("restart_policy"),
+        "checkpoint_interval": calculation.get("checkpoint_interval"),
         "resumed": resumed,
-        "from_attempt": identity.get("restart_from_attempt"),
+        "from_attempt": calculation.get("restart_from_attempt"),
         "runtime_compatibility_checked": resumed,
         "bitwise_exact_guaranteed": False,
     }
@@ -399,8 +396,8 @@ def _check_restart(context: dict[str, Any]) -> list[dict[str, str]]:
             diagnostics.append(_diagnostic("error", f"lammps.restart_{key}", f"restart field {key} differs from approved plan"))
     start = result.get("segment_start_step")
     if resumed:
-        interval = identity.get("checkpoint_interval")
-        total = identity.get("steps")
+        interval = calculation.get("checkpoint_interval")
+        total = calculation.get("steps")
         if (
             isinstance(start, bool)
             or not isinstance(start, int)
@@ -410,20 +407,20 @@ def _check_restart(context: dict[str, Any]) -> list[dict[str, str]]:
             or start % interval != 0
         ):
             diagnostics.append(_diagnostic("error", "lammps.restart_start_step", "selected restart timestep is not a valid periodic checkpoint"))
-        selected = restart.get("selected_checkpoint_sha256")
-        approved = {
-            record.get("sha256")
-            for record in _mapping(identity.get("restart_candidates")).values()
-            if isinstance(record, dict)
-        }
+        selected = restart.get("selected_checkpoint")
+        approved = set(_mapping(calculation.get("restart_candidates")))
         if selected not in approved:
-            diagnostics.append(_diagnostic("error", "lammps.restart_checkpoint", "selected restart SHA was not an approved salvaged candidate"))
-        if restart.get("lammps_executable_sha256") != identity.get("previous_runtime_executable_sha256"):
-            diagnostics.append(_diagnostic("error", "lammps.restart_executable", "resume did not use the previously bound LAMMPS executable identity"))
-        if restart.get("platform") != identity.get("previous_runtime_platform"):
-            diagnostics.append(_diagnostic("error", "lammps.restart_platform", "resume platform differs from the salvaged runtime identity"))
+            diagnostics.append(_diagnostic("error", "lammps.restart_checkpoint", "selected restart path was not a staged salvaged candidate"))
+        if restart.get("lammps_executable") != calculation.get("previous_runtime_executable"):
+            diagnostics.append(_diagnostic("error", "lammps.restart_executable", "resume used a different LAMMPS executable path"))
+        if restart.get("launcher_prefix") != calculation.get("previous_launcher_prefix"):
+            diagnostics.append(_diagnostic("error", "lammps.restart_launcher", "resume used different site launcher arguments"))
+        if restart.get("prepared_launcher") != calculation.get("previous_prepared_launcher"):
+            diagnostics.append(_diagnostic("error", "lammps.restart_prepared_launcher", "resume used different prepared launcher arguments"))
+        if restart.get("platform") != calculation.get("previous_runtime_platform"):
+            diagnostics.append(_diagnostic("error", "lammps.restart_platform", "resume platform differs from the salvaged runtime record"))
     else:
-        if start != 0 or restart.get("selected_checkpoint_sha256") is not None:
+        if start != 0 or restart.get("selected_checkpoint") is not None:
             diagnostics.append(_diagnostic("error", "lammps.restart_fresh", "fresh execution reported unexpected restart state"))
     try:
         report = base._read_json(attempt / "cluster-run-report.json")
@@ -432,10 +429,10 @@ def _check_restart(context: dict[str, Any]) -> list[dict[str, str]]:
         report = {}
     if (
         report.get("segment_start_step") != start
-        or report.get("restart_from_attempt") != identity.get("restart_from_attempt")
-        or report.get("selected_checkpoint_sha256") != restart.get("selected_checkpoint_sha256")
+        or report.get("restart_from_attempt") != calculation.get("restart_from_attempt")
+        or report.get("selected_checkpoint") != restart.get("selected_checkpoint")
     ):
-        diagnostics.append(_diagnostic("error", "lammps.restart_report_identity", "cluster restart report differs from execution result"))
+        diagnostics.append(_diagnostic("error", "lammps.restart_report", "cluster restart report differs from execution result"))
     return diagnostics
 
 
@@ -464,11 +461,11 @@ class Adapter:
         diagnostics = _check_restart(context)
         if diagnostics:
             return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
-        identity = _mapping(base._scheduled_plan(context).get("lammps_execution_identity"))
+        calculation = _mapping(base._scheduled_plan(context).get("lammps_calculation"))
         result = base._read_json(Path(str(context["attempt_dir"])) / "lammps-execution-result.json")
         metrics = dict(_mapping(checked.get("metrics")))
         metrics["segment_start_step"] = float(result.get("segment_start_step", 0))
-        metrics["resumed"] = 1.0 if identity.get("restart_from_attempt") is not None else 0.0
+        metrics["resumed"] = 1.0 if calculation.get("restart_from_attempt") is not None else 0.0
         checked["metrics"] = metrics
         return checked
 

@@ -107,7 +107,6 @@
       }
     }
   },
-  "fingerprints": {"full_hash_max_bytes": 1048576},
   "safety": {
     "auto_submit": false,
     "auto_advance": false,

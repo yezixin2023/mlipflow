@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import importlib.util
 import json
 import math
@@ -18,9 +17,6 @@ ROOT = Path(__file__).resolve().parents[1]
 REPLAY_PATH = ROOT / "plugins" / "electrochemical-voltage" / "manuscript_replay.py"
 ADAPTER_PATH = ROOT / "plugins" / "electrochemical-voltage" / "adapter.py"
 PLUGIN_PATH = ROOT / "plugins" / "electrochemical-voltage" / "plugin.yaml"
-SI_DOCUMENT_SHA256 = "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732"
-
-
 def load_replay():
     spec = importlib.util.spec_from_file_location("test_manuscript_voltage_replay", REPLAY_PATH)
     if spec is None or spec.loader is None:
@@ -162,7 +158,6 @@ def manuscript_rows(replay) -> list[dict[str, object]]:
         for stage_index in range(2):
             row: dict[str, object] = {
                 "source_table": replay.SOURCE_TABLE,
-                "source_document_sha256": SI_DOCUMENT_SHA256,
                 "unit_source": "SI Table S11 caption and voltage-value context",
                 "prototype": prototype,
                 "metal_composition": composition,
@@ -202,7 +197,7 @@ class ManuscriptVoltageReplayTests(unittest.TestCase):
     def test_real_table_replay_ranks_chgnet_first_and_recomputes_every_error(self) -> None:
         evidence = self.root / "table_s11.csv"
         write_csv(evidence, self.replay, manuscript_rows(self.replay))
-        evidence_sha256 = hashlib.sha256(evidence.read_bytes()).hexdigest()
+        evidence_before = evidence.read_bytes()
 
         output = self.root / "replay"
         paths = self.replay.replay_table(evidence, output)
@@ -235,14 +230,12 @@ class ManuscriptVoltageReplayTests(unittest.TestCase):
         self.assertEqual("chgnet", ranking["ranking"][0]["model"])
         self.assertEqual(list(range(1, 7)), [item["rank"] for item in ranking["ranking"]])
 
-        self.assertEqual(SI_DOCUMENT_SHA256, provenance["source_document_sha256"])
-        self.assertEqual(evidence_sha256, provenance["input_evidence_sha256"])
         self.assertFalse(provenance["model_execution"])
         self.assertFalse(provenance["dft_execution"])
         self.assertFalse(provenance["recomputed_from_total_energies"])
         self.assertIn("does not recompute voltages", provenance["disclaimer"])
         self.assertNotIn(str(self.root), "\n".join(path.read_text() for path in paths.values()))
-        self.assertEqual(evidence_sha256, hashlib.sha256(evidence.read_bytes()).hexdigest())
+        self.assertEqual(evidence_before, evidence.read_bytes())
 
         relocated = self.root / "different-layout" / "renamed.csv"
         relocated.parent.mkdir()
@@ -322,10 +315,7 @@ class ManuscriptVoltageAdapterIntegrationTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def context(self, **parameter_overrides):
-        parameters = {
-            "operation": "replay-si-table-s11",
-            "source_document_sha256": SI_DOCUMENT_SHA256,
-        }
+        parameters = {"operation": "replay-si-table-s11"}
         parameters.update(parameter_overrides)
         return {
             "project_root": str(self.root),
@@ -346,7 +336,7 @@ class ManuscriptVoltageAdapterIntegrationTests(unittest.TestCase):
     def test_standard_adapter_plan_execute_check_collect_and_no_write_replay(self) -> None:
         context = self.context()
         output = self.attempt / "manuscript-voltage-replay"
-        evidence_before = hashlib.sha256(self.evidence.read_bytes()).hexdigest()
+        evidence_before = self.evidence.read_bytes()
 
         replayed = self.adapter.replay(context)
         self.assertEqual("OK", replayed["status"])
@@ -397,25 +387,17 @@ class ManuscriptVoltageAdapterIntegrationTests(unittest.TestCase):
             {item["role"] for item in collected["artifacts"]},
         )
         provenance = json.loads((output / "provenance.json").read_text(encoding="utf-8"))
-        self.assertEqual(SI_DOCUMENT_SHA256, provenance["source_document_sha256"])
         self.assertEqual("manuscript-table-replay", provenance["evidence_mode"])
         self.assertEqual("V", provenance["voltage_unit"])
         self.assertFalse(provenance["model_execution"])
         self.assertFalse(provenance["recomputed_from_total_energies"])
-        self.assertEqual(evidence_before, hashlib.sha256(self.evidence.read_bytes()).hexdigest())
+        self.assertEqual(evidence_before, self.evidence.read_bytes())
 
         blocked = self.adapter.plan(context)
         self.assertEqual("BLOCKED", blocked["status"])
         self.assertIn("output_exists", blocked["diagnostics"][0]["code"])
 
-    def test_adapter_rejects_wrong_document_hash_non_v_and_tampered_outputs(self) -> None:
-        wrong_hash = self.context(source_document_sha256="0" * 64)
-        diagnostics = self.adapter.validate(wrong_hash)
-        self.assertIn(
-            "manuscript_replay.source_document_sha256",
-            {item["code"] for item in diagnostics},
-        )
-
+    def test_adapter_rejects_non_v_and_tampered_outputs(self) -> None:
         rows = manuscript_rows(self.replay)
         rows[0]["unit"] = "mV"
         write_csv(self.evidence, self.replay, rows)

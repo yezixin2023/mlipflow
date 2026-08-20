@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -17,10 +16,6 @@ def _load(name: str, path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def _sha(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _write_json(path: Path, value) -> None:
@@ -88,7 +83,6 @@ def _prepared(root: Path, framework: str = "mace", target: str = "gpu") -> Path:
             "framework": framework,
             "relative_path": f"{framework}/model.pt",
             "kind": "file",
-            "fingerprint": "sha256:" + "2" * 64,
             "artifact_format": artifact_format,
             "elements": ["Li"],
         },
@@ -105,8 +99,8 @@ def _prepared(root: Path, framework: str = "mace", target: str = "gpu") -> Path:
             "thermostat_damping_fs": 100.0,
         },
         "generated_files": [
-            {"name": "structure.data", "sha256": _sha(structure), "size_bytes": structure.stat().st_size},
-            {"name": deck.name, "sha256": _sha(deck), "size_bytes": deck.stat().st_size},
+            {"name": "structure.data"},
+            {"name": deck.name},
         ],
         "launchers": [
             {
@@ -131,11 +125,10 @@ def _prepared(root: Path, framework: str = "mace", target: str = "gpu") -> Path:
 
 
 def _context(root: Path, attempt: int = 1, policy: str = "auto-from-previous-attempt") -> dict:
-    manifest = _prepared(root)
+    _prepared(root)
     parameters = {
         "operation": "execute",
         "target": "gpu",
-        "input_manifest_fingerprint": _sha(manifest),
         "restart_policy": policy,
         "checkpoint_interval": 100,
     }
@@ -171,7 +164,13 @@ def _previous_runtime(context: dict, scheduler_state: str = "TIMEOUT", checkpoin
         previous / "run-manifest.final.json",
         {"state": "FAIL", "job": {"scheduler_state": scheduler_state}},
     )
-    identity = json.loads((Path(context["project_root"]) / "prepared" / "lammps-input-manifest.json").read_text())
+    prepared = json.loads(
+        (
+            Path(context["project_root"])
+            / "prepared"
+            / "lammps-input-manifest.json"
+        ).read_text()
+    )
     _write_json(
         previous / "restart-runtime.json",
         {
@@ -180,15 +179,15 @@ def _previous_runtime(context: dict, scheduler_state: str = "TIMEOUT", checkpoin
             "attempt": 1,
             "framework": "mace",
             "target": "gpu",
-            "input_manifest_fingerprint": context["parameters"]["input_manifest_fingerprint"],
-            "model_fingerprint": identity["model"]["fingerprint"],
-            "model_kind": identity["model"]["kind"],
+            "input_manifest_path": "prepared/lammps-input-manifest.json",
+            "model_path": prepared["model"]["relative_path"],
+            "model_kind": prepared["model"]["kind"],
             "lammps_interface": None,
             "checkpoint_interval": 100,
             "resources": context["resources"],
-            "lammps_executable_sha256": "sha256:" + "3" * 64,
-            "launcher_prefix_sha256": "sha256:" + "4" * 64,
-            "prepared_launcher_sha256": "sha256:" + "5" * 64,
+            "lammps_executable": "/site/lmp",
+            "launcher_prefix": ["srun"],
+            "prepared_launcher": prepared["launchers"][0]["argv_after_executable"],
             "platform": {"system": "Linux", "machine": "x86_64", "byteorder": "little"},
         },
     )
@@ -201,10 +200,10 @@ def test_attempt_one_declares_periodic_failure_salvage(tmp_path: Path) -> None:
     module = _load("lammps_restart_adapter_first", PLUGIN / "adapter_restart.py")
     plan = module.Adapter().plan(_context(tmp_path))
     assert plan["status"] == "READY", plan.get("diagnostics")
-    identity = plan["lammps_execution_identity"]
-    assert identity["restart_policy"] == "auto-from-previous-attempt"
-    assert identity["checkpoint_interval"] == 100
-    assert identity["restart_from_attempt"] is None
+    calculation = plan["lammps_calculation"]
+    assert calculation["restart_policy"] == "auto-from-previous-attempt"
+    assert calculation["checkpoint_interval"] == 100
+    assert calculation["restart_from_attempt"] is None
     salvage = set(plan["failure_salvage"]["fetch_remote_names"])
     assert {"checkpoint.1.restart", "checkpoint.2.restart", "restart-runtime.json"} <= salvage
     staged = {item["remote_name"] for item in plan["scheduled_execution"]["staged_files"]}
@@ -217,9 +216,9 @@ def test_attempt_two_binds_immediately_previous_salvaged_candidates(tmp_path: Pa
     _previous_runtime(context, "TIMEOUT")
     plan = module.Adapter().plan(context)
     assert plan["status"] == "READY", plan.get("diagnostics")
-    identity = plan["lammps_execution_identity"]
-    assert identity["restart_from_attempt"] == 1
-    assert set(identity["restart_candidates"]) == {"checkpoint.1.restart", "checkpoint.2.restart"}
+    calculation = plan["lammps_calculation"]
+    assert calculation["restart_from_attempt"] == 1
+    assert set(calculation["restart_candidates"]) == {"checkpoint.1.restart", "checkpoint.2.restart"}
     staged = {item["remote_name"] for item in plan["scheduled_execution"]["staged_files"]}
     assert {
         "restart/restart-runtime.json",

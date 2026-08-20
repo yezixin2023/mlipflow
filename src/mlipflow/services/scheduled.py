@@ -1,8 +1,7 @@
 """Scheduler-backed execution: stage, submit, observe, fetch, finalize.
 
-Submission is the approval boundary. Later scheduler observation, bounded
-transport, and scientific completion checks are continuations of that approved
-run and do not require another approval digest.
+Later scheduler observation, bounded transport, and scientific completion
+checks continue the reviewed submission without another approval.
 """
 
 from __future__ import annotations
@@ -10,11 +9,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import fingerprint
+from ..artifacts import artifact as artifact_record
 from ..config import Project
 from ..errors import ApprovalError, BackendError, ConfigError, StateError
 from ..io import load_mapping, write_json_atomic, write_text_atomic
-from ..planning import node_plan, with_digest
 from ..plugins import PluginSpec, discover_plugins, load_adapter
 from ..portable import to_runtime
 from ..state import RunState, StateStore, StepRun, utc_now
@@ -28,7 +26,6 @@ from .contracts import (
     _portable_roots,
     _normalize_adapter_artifacts,
     _scheduled_contract,
-    _sha256_file,
 )
 from .paths import attempt_directory
 
@@ -75,24 +72,20 @@ def _stage_and_submit_scheduled_adapter(
     cluster = hpc_execution.get("cluster_profile")
     workspace = hpc_execution.get("workspace")
     if not isinstance(cluster, dict) or not isinstance(workspace, dict):
-        raise BackendError("approved plan lacks cluster/workspace identity")
+        raise BackendError("approved plan lacks cluster/workspace settings")
     remote_run_dir = workspace.get("run_dir")
     ssh_profile = cluster.get("ssh_profile")
     if not isinstance(remote_run_dir, str) or not isinstance(ssh_profile, str):
-        raise BackendError("approved plan has invalid cluster/workspace identity")
+        raise BackendError("approved plan has invalid cluster/workspace settings")
     approved_plan = attempt_dir / "approved-plan.json"
     write_json_atomic(approved_plan, plan)
     submit_script, run_script = _materialize_hpc_scripts(attempt_dir, hpc_execution)
-    files: list[tuple[Path, str, str]] = [
-        (
-            Path(str(item["source"])),
-            f"input/{item['remote_name']}",
-            str(item["sha256"]),
-        )
+    files: list[tuple[Path, str]] = [
+        (Path(str(item["source"])), f"input/{item['remote_name']}")
         for item in scheduled["staged_files"]
     ]
     files.extend(
-        (path, name, _sha256_file(path))
+        (path, name)
         for path, name in (
             (submit_script, _HPC_SUBMIT_SCRIPT),
             (run_script, _HPC_RUN_SCRIPT),
@@ -114,12 +107,13 @@ def _stage_and_submit_scheduled_adapter(
         resources = hpc_execution.get("resources")
         if not isinstance(partition_candidates, list) or not isinstance(resources, dict):
             raise BackendError("approved plan has invalid scheduler routing configuration")
-        result = backend.submit(
-            _HPC_SUBMIT_SCRIPT,
-            remote_run_dir,
-            partition_candidates=partition_candidates,
-            resources=resources,
-        )
+        submit_options = {
+            "partition_candidates": partition_candidates,
+            "resources": resources,
+        }
+        if scheduler_config.get("memory_constraint") == "unreported":
+            submit_options["memory_constraint"] = "unreported"
+        result = backend.submit(_HPC_SUBMIT_SCRIPT, remote_run_dir, **submit_options)
     return result, remote_run_dir, ["template", str(scheduled["template_family"])]
 
 
@@ -169,7 +163,7 @@ def _stage_and_submit_independent_jobs(
         cluster = hpc_execution.get("cluster_profile")
         workspace = hpc_execution.get("workspace")
         if not isinstance(cluster, dict) or not isinstance(workspace, dict):
-            raise BackendError("approved independent job lacks cluster/workspace identity")
+            raise BackendError("approved independent job lacks cluster/workspace settings")
         remote_run_dir = workspace.get("run_dir")
         if not isinstance(remote_run_dir, str):
             raise BackendError("approved independent job has an invalid workspace")
@@ -178,16 +172,12 @@ def _stage_and_submit_independent_jobs(
         submit_script, run_script = _materialize_hpc_scripts(
             control_dir, hpc_execution
         )
-        files: list[tuple[Path, str, str]] = [
-            (
-                Path(str(item["source"])),
-                f"input/{item['remote_name']}",
-                str(item["sha256"]),
-            )
+        files: list[tuple[Path, str]] = [
+            (Path(str(item["source"])), f"input/{item['remote_name']}")
             for item in submission["staged_files"]
         ]
         files.extend(
-            (path, name, _sha256_file(path))
+            (path, name)
             for path, name in (
                 (submit_script, _HPC_SUBMIT_SCRIPT),
                 (run_script, _HPC_RUN_SCRIPT),
@@ -223,11 +213,14 @@ def _stage_and_submit_independent_jobs(
                     )
                 offset = index % len(candidates)
                 rotated = [*candidates[offset:], *candidates[:offset]]
+                submit_options = {
+                    "partition_candidates": rotated,
+                    "resources": resources,
+                }
+                if scheduler_config.get("memory_constraint") == "unreported":
+                    submit_options["memory_constraint"] = "unreported"
                 result = backend.submit(
-                    _HPC_SUBMIT_SCRIPT,
-                    remote_run_dir,
-                    partition_candidates=rotated,
-                    resources=resources,
+                    _HPC_SUBMIT_SCRIPT, remote_run_dir, **submit_options
                 )
             if result.returncode != 0 or result.job_id is None:
                 raise BackendError(
@@ -246,29 +239,6 @@ def _stage_and_submit_independent_jobs(
             backend.cancel(str(record["job_id"]))
         raise
     return submitted
-
-
-def _scheduler_expected_identity(step: StepRun) -> dict[str, Any]:
-    if not isinstance(step.manifest_path, str):
-        raise ConfigError("scheduled run has no initial run manifest")
-    initial_path = Path(step.manifest_path)
-    if not initial_path.is_file():
-        raise ConfigError(f"scheduled run manifest does not exist: {initial_path}")
-    initial = load_mapping(initial_path)
-    plugin = initial.get("plugin")
-    provenance = initial.get("provenance")
-    plugin_id = plugin.get("id") if isinstance(plugin, dict) else None
-    plan_digest = provenance.get("plan_digest") if isinstance(provenance, dict) else None
-    if not isinstance(plugin_id, str) or not isinstance(plan_digest, str):
-        raise ConfigError("scheduled run manifest lacks plugin/plan identity")
-    return {
-        "project_id": step.project_id,
-        "node_id": step.node_id,
-        "run_id": step.run_id,
-        "attempt": step.attempt,
-        "plugin_id": plugin_id,
-        "plan_digest": plan_digest,
-    }
 
 
 def _failure_salvage_outputs(
@@ -369,7 +339,7 @@ def _independent_submission_records(
             or not isinstance(workspace, dict)
             or remote_run_dir != workspace.get("run_dir")
         ):
-            raise BackendError("persisted independent scheduler job identity changed")
+            raise BackendError("persisted independent scheduler job record changed")
         seen.add(submission_id)
         normalized.append({**record, "hpc_execution": execution})
     if seen != set(expected):
@@ -717,11 +687,7 @@ def _remote_output_inventory_items(
 def _remote_output_inventory(
     backend: Any, workspace: dict[str, Any], scheduled: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """Read the bounded identity of every approved output without mutating it.
-
-    The inventory is re-read immediately before fetch so a remote file cannot
-    change between observation and transport.
-    """
+    """Read the existence and bounded transfer size of every declared output."""
 
     return _remote_output_inventory_items(
         backend, workspace, list(scheduled["fetch_outputs"])
@@ -738,31 +704,26 @@ def _load_pinned_scheduled_plan(
     if plan_path.is_symlink() or not plan_path.is_file():
         raise ConfigError("approved scheduled plan is missing or is a symlink")
     plan = load_mapping(plan_path)
-    expected_digest = with_digest(
-        {key: value for key, value in plan.items() if key != "plan_digest"}
-    )["plan_digest"]
-    if plan.get("plan_digest") != expected_digest:
-        raise ApprovalError("approved scheduled plan digest is invalid")
-    identity = _scheduler_expected_identity(step)
-    if plan.get("plan_digest") != identity["plan_digest"]:
-        raise ApprovalError("approved plan differs from the initial run manifest")
-    node = _attempt_node(plan, step)
+    if (
+        plan.get("project_id") != step.project_id
+        or plan.get("node_id") != step.node_id
+        or plan.get("attempt") != step.attempt
+    ):
+        raise ApprovalError("stored run plan does not match this attempt")
+    _attempt_node(plan, step)
     pinned_plugin = plan.get("plugin")
     if not isinstance(pinned_plugin, dict) or not isinstance(pinned_plugin.get("id"), str):
-        raise ApprovalError("approved scheduled plan lacks a plugin identity")
+        raise ApprovalError("stored run plan lacks a plugin id")
     plugins = discover_plugins(plugin_root)
     plugin_id = str(pinned_plugin["id"])
     if plugin_id not in plugins:
         raise ApprovalError(f"pinned scheduled plugin is unavailable: {plugin_id}")
     plugin = plugins[plugin_id]
-    current = node_plan(project, node, plugin, attempt=step.attempt)
-    current_plugin = current.get("plugin")
     if (
-        pinned_plugin.get("id") != current_plugin.get("id")
-        or pinned_plugin.get("implementation_identity")
-        != current_plugin.get("implementation_identity")
+        pinned_plugin.get("id") != plugin.plugin_id
+        or pinned_plugin.get("version") != plugin.raw.get("version")
     ):
-        raise ApprovalError("pinned scheduled checker implementation changed")
+        raise ApprovalError("stored run plan uses a different plugin version")
     scheduled = _scheduled_contract(
         project,
         plugin,
@@ -796,14 +757,6 @@ def _attempt_node(
         "parameters": plan.get("parameters", {}),
         "resources": plan.get("resources", {}),
     }
-
-
-def _stored_fingerprint_mode(value: Any) -> str:
-    if isinstance(value, str) and value.startswith("sha256:"):
-        return "full"
-    if isinstance(value, str) and value.startswith("tree-sha256:"):
-        return "tree-full"
-    return "external"
 
 
 def _write_independent_completion(
@@ -903,10 +856,6 @@ def _finalize_independent_jobs(
             execution.get("cluster_profile"), factory=factory
         )
         current = _remote_output_inventory_items(backend, workspace, outputs)
-        if current != observed_record.get("outputs"):
-            raise StateError(
-                "independent remote outputs changed between observation and fetch"
-            )
         for item in current:
             if not item.get("exists"):
                 if item["required"]:
@@ -921,14 +870,9 @@ def _finalize_independent_jobs(
                 continue
             destination = attempt_dir / str(item["local_name"])
             if destination.exists() or destination.is_symlink():
-                if (
-                    destination.is_symlink()
-                    or not destination.is_file()
-                    or destination.stat().st_size != item["size_bytes"]
-                    or _sha256_file(destination) != item["sha256"]
-                ):
+                if destination.is_symlink() or not destination.is_file():
                     raise StateError(
-                        "pre-existing independent fetched output differs: "
+                        "pre-existing independent output is not an ordinary file: "
                         f"{submission_id}/{item['remote_name']}"
                     )
             else:
@@ -937,16 +881,8 @@ def _finalize_independent_jobs(
                     str(item["remote_path"]),
                     destination,
                 )
-                if (
-                    destination.stat().st_size != item["size_bytes"]
-                    or _sha256_file(destination) != item["sha256"]
-                ):
-                    raise StateError(
-                        "independent fetched output fingerprint mismatch: "
-                        f"{submission_id}/{item['remote_name']}"
-                    )
             fetched.append(
-                fingerprint(destination)
+                artifact_record(destination)
                 | {"role": str(item.get("role", "scheduler-output"))}
             )
 
@@ -954,7 +890,7 @@ def _finalize_independent_jobs(
         attempt_dir, step, [str(item["submission_id"]) for item in records]
     )
     if completion is not None:
-        fetched.append(fingerprint(completion) | {"role": "scheduler-completion"})
+        fetched.append(artifact_record(completion) | {"role": "scheduler-completion"})
     metrics: dict[str, Any] = {}
     if failure_salvage:
         raw_target = details.get("terminal_target")
@@ -1021,14 +957,7 @@ def _finalize_independent_jobs(
                     )
 
     initial_artifacts = store.artifacts(step.run_id)
-    artifacts = [
-        {
-            **item,
-            "fingerprint_mode": _stored_fingerprint_mode(item.get("fingerprint")),
-            "mtime_ns": None,
-        }
-        for item in initial_artifacts
-    ]
+    artifacts = list(initial_artifacts)
     known_uris = {str(item["uri"]) for item in artifacts}
     artifacts.extend(item for item in fetched if str(item["uri"]) not in known_uris)
     if not failure_salvage and RunState(step.state) in {
@@ -1048,8 +977,6 @@ def _finalize_independent_jobs(
             step.run_id,
             str(artifact["role"]),
             str(artifact["uri"]),
-            artifact.get("fingerprint"),
-            artifact.get("size_bytes"),
             artifact.get("metadata", {}),
         )
     final_manifest = _finalize_scheduler_manifest(
@@ -1121,8 +1048,6 @@ def _finalize_scheduled_adapter(
         )
     else:
         current_inventory = _remote_output_inventory(backend, workspace, scheduled)
-    if current_inventory != observed_inventory:
-        raise StateError("remote outputs changed between observation and fetch")
     fetched: list[dict[str, Any]] = []
     fetch_errors: list[str] = []
     for item in current_inventory:
@@ -1135,28 +1060,21 @@ def _finalize_scheduled_adapter(
             continue
         destination = attempt_dir / str(item["local_name"])
         if destination.exists() or destination.is_symlink():
-            if (
-                destination.is_symlink()
-                or not destination.is_file()
-                or destination.stat().st_size != item["size_bytes"]
-                or _sha256_file(destination) != item["sha256"]
-            ):
+            if destination.is_symlink() or not destination.is_file():
                 raise StateError(
-                    "pre-existing fetched output differs from the observed remote file: "
+                    "pre-existing fetched output is not an ordinary file: "
                     f"{item['remote_name']}"
                 )
             fetched.append(
-                fingerprint(destination)
+                artifact_record(destination)
                 | {"role": str(item.get("role", "scheduler-output"))}
             )
             continue
         backend.fetch_from(
             str(workspace["run_dir"]), str(item["remote_path"]), destination
         )
-        if destination.stat().st_size != item["size_bytes"] or _sha256_file(destination) != item["sha256"]:
-            raise StateError(f"fetched output fingerprint mismatch: {item['remote_name']}")
         fetched.append(
-            fingerprint(destination)
+            artifact_record(destination)
             | {"role": str(item.get("role", "scheduler-output"))}
         )
 
@@ -1228,14 +1146,7 @@ def _finalize_scheduled_adapter(
                     )
 
     initial_artifacts = store.artifacts(step.run_id)
-    artifacts = [
-        {
-            **item,
-            "fingerprint_mode": _stored_fingerprint_mode(item.get("fingerprint")),
-            "mtime_ns": None,
-        }
-        for item in initial_artifacts
-    ]
+    artifacts = list(initial_artifacts)
     known_uris = {str(item["uri"]) for item in artifacts}
     artifacts.extend(item for item in fetched if str(item["uri"]) not in known_uris)
     current_state = RunState(step.state)
@@ -1253,8 +1164,6 @@ def _finalize_scheduled_adapter(
             step.run_id,
             str(artifact["role"]),
             str(artifact["uri"]),
-            artifact.get("fingerprint"),
-            artifact.get("size_bytes"),
             artifact.get("metadata", {}),
         )
     scheduler_state = str(change.get("scheduler_state", "UNKNOWN"))

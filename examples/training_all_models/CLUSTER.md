@@ -53,15 +53,13 @@ The remote publish target is `<dataset_id>`. It contains `canonical.json`, `spli
 four framework directories, and `assembly-result.json`. A pre-existing target is not
 rescanned or reused by the converter; use the already collected references instead.
 `collect` returns the split, assembly result, and four small reference manifests while
-the large datasets stay under the site data root. The Agent reads each reference fingerprint into its matching
-training node, so users do not run or author a converter. See
+the large datasets stay under the site data root. Each training node consumes its
+matching collected reference path, so users do not run or author a converter. See
 [`dft-to-all-training.yaml`](dft-to-all-training.yaml) for the full minimal DAG shape.
 
 ## Cluster artifact references
 
-Large datasets and foundation models are not copied through the control plane. The project instead points to small JSON reference manifests. A dataset reference contains `dataset_id`, a safe `relative_path` below the site-owned data root, `kind` (`file` or `directory`), and a content fingerprint. Fine-tuning adds an analogous foundation-model reference below the site-owned model root.
-
-Use `plugins/mlip-training/training_cluster.py fingerprint /ABS/CLUSTER/PATH` on the cluster to compute the expected fingerprint. Files use ordinary SHA-256. Directories use deterministic `tree-sha256-v1`: sorted relative file names, sizes, and per-file SHA-256 values are hashed together. Symlinked files inside a referenced tree are refused.
+Large datasets and foundation models are not copied through the control plane. The project instead points to small JSON reference manifests. A dataset reference contains `dataset_id`, a safe `relative_path` below the site-owned data root, and `kind` (`file` or `directory`). Fine-tuning adds an analogous foundation-model reference below the site-owned model root.
 
 Framework data shapes are intentionally explicit:
 
@@ -91,9 +89,6 @@ A scheduled MACE fine-tune node, for example, is shaped like this:
     seed: 23
     device: gpu
     precision: float32
-    dataset_fingerprint: sha256:DATASET_SHA256
-    config_fingerprint: sha256:CONFIG_SHA256
-    foundation_model_fingerprint: sha256:FOUNDATION_SHA256
     result_manifest: mace-finetune-result.json
   resources:
     cpus: 16
@@ -110,6 +105,6 @@ The generic path emits `scheduled_execution schema_version=3` with `execution_mo
 
 Training is one Python process. `resources.cpus` is its thread budget, so the Slurm template must use `--ntasks=1` and `--cpus-per-task={{CPUS}}`. Mapping `CPUS` to `--ntasks` is rejected before staging.
 
-Required fetched outputs are `cluster-run-report.json`, `training-result.json`, and `model-artifact`. The checker verifies framework/operation/seed/device/precision, staged config SHA-256, cluster-resolved dataset and foundation fingerprints, finite reported metrics, and the exact model size/SHA-256.
+Required fetched outputs are `cluster-run-report.json`, `training-result.json`, and `model-artifact`. The checker verifies framework/operation/seed/device/precision, the recorded config, dataset and foundation-model paths, finite reported metrics, and the declared model output.
 
 Legacy DeepMD fresh-training references without `relative_path`/`kind` keep using the earlier strict DeepMD scheduler contract for backward compatibility. Add the explicit generic reference fields to use the unified bundled scheduler contract.

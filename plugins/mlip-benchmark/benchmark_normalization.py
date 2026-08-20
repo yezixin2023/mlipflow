@@ -3,14 +3,14 @@
 Two deliberately different modes are provided:
 
 ``replay``
-    Import metrics that were already computed by a manuscript workflow.  The
-    source file is hashed and every normalized record points back to that
-    digest.  No numerical benchmark is claimed to have been rerun.
+    Import metrics that were already computed by a manuscript workflow. Every
+    normalized record names its source path. No numerical benchmark is claimed
+    to have been rerun.
 
 ``execute``
-    Recompute MAE, RMSE, and Pearson correlation from supplied reference and
-    prediction values.  This executes metric calculations only; it never loads
-    a model or generates predictions.
+    Recompute MAE, RMSE, Pearson correlation, and—when explicit N×3 force
+    vectors are supplied—the maximum atomic force-vector error.  This executes
+    metric calculations only; it never loads a model or generates predictions.
 
 The implementation has no third-party dependencies.  In particular, the XLSX
 reader is a small, read-only OOXML reader so the two historical pandas/openpyxl
@@ -39,12 +39,10 @@ from mlipflow.science.model_runtime import (
     RuntimeCompatibilityError,
     canonical_model_family,
 )
-from mlipflow.science.artifact_identity import sha256_bytes as _digest_bytes
-from mlipflow.science.artifact_identity import sha256_file as _sha256
 
 
 PLUGIN_ID = "mlip-benchmark"
-WRAPPER_VERSION = "1.0.1"
+WRAPPER_VERSION = "1.1.0"
 MAX_SOURCE_BYTES = 256 * 1024 * 1024
 MAX_XLSX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 OUTPUT_NAMES = (
@@ -402,7 +400,6 @@ def _record(
     unit: Any,
     direction: Any,
     sample_count: Any,
-    evidence_sha256: str,
     source_path: str,
     source_format: str,
     mode: str,
@@ -414,8 +411,6 @@ def _record(
     if direction_value not in {"minimize", "maximize"}:
         raise BenchmarkNormalizationError("direction must be minimize or maximize")
     unit_value = _explicit_string(unit, "unit")
-    if not evidence_sha256.startswith("sha256:") or len(evidence_sha256) != 71:
-        raise BenchmarkNormalizationError("evidence_sha256 must be a full SHA-256 digest")
     result = {
         "model": _canonical_model(model),
         "task": _identifier(task, "task"),
@@ -427,7 +422,6 @@ def _record(
         "direction": direction_value,
         "sample_count": _positive_int(sample_count, "sample_count"),
         "mode": mode,
-        "evidence_sha256": evidence_sha256,
         "source_path": source_path,
         "source_format": source_format,
         "evidence_locator": _explicit_string(locator, "evidence_locator"),
@@ -448,7 +442,6 @@ def _normalize_generic_rows(
     defaults: dict[str, Any],
     source_locator: str,
     source_format: str,
-    evidence_sha256: str,
     mode: str,
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
@@ -469,11 +462,6 @@ def _normalize_generic_rows(
         if not isinstance(dimensions, dict):
             raise BenchmarkNormalizationError(f"dimensions must be an object at {locator}")
 
-        claimed_sha = _first(row, "evidence_sha256", "evidence_sha", "source_sha256")
-        if claimed_sha not in (None, "") and claimed_sha != evidence_sha256:
-            raise BenchmarkNormalizationError(
-                f"evidence SHA mismatch at {locator}: expected {evidence_sha256}, got {claimed_sha}"
-            )
         records.append(
             _record(
                 model=_required_context(row, defaults, "model"),
@@ -485,7 +473,6 @@ def _normalize_generic_rows(
                 unit=_first(row, "unit"),
                 direction=_first(row, "direction"),
                 sample_count=_first(row, "sample_count", "n", "count"),
-                evidence_sha256=evidence_sha256,
                 source_path=source_locator,
                 source_format=source_format,
                 mode=mode,
@@ -532,7 +519,6 @@ def _normalize_chgnet(
     *,
     defaults: dict[str, Any],
     source_locator: str,
-    evidence_sha256: str,
 ) -> list[dict[str, Any]]:
     if defaults.get("model") not in (None, ""):
         if _canonical_model(defaults["model"]) != "chgnet":
@@ -583,7 +569,6 @@ def _normalize_chgnet(
                             unit=unit,
                             direction=direction,
                             sample_count=count,
-                            evidence_sha256=evidence_sha256,
                             source_path=source_locator,
                             source_format="chgnet-efs-metrics-xlsx",
                             mode="replay",
@@ -602,7 +587,6 @@ def _normalize_m3gnet(
     *,
     defaults: dict[str, Any],
     source_locator: str,
-    evidence_sha256: str,
 ) -> list[dict[str, Any]]:
     if defaults.get("model") not in (None, ""):
         if _canonical_model(defaults["model"]) != "m3gnet":
@@ -646,7 +630,6 @@ def _normalize_m3gnet(
                         unit=unit,
                         direction=direction,
                         sample_count=_first(row, "n_scalar"),
-                        evidence_sha256=evidence_sha256,
                         source_path=source_locator,
                         source_format="m3gnet-metrics-summary-xlsx",
                         mode="replay",
@@ -665,7 +648,6 @@ def _normalize_deepmd(
     *,
     defaults: dict[str, Any],
     source_locator: str,
-    evidence_sha256: str,
 ) -> list[dict[str, Any]]:
     model = _canonical_model(defaults.get("model"))
     if not model.startswith("deepmd-"):
@@ -723,7 +705,6 @@ def _normalize_deepmd(
                             unit=unit,
                             direction=direction,
                             sample_count=count,
-                            evidence_sha256=evidence_sha256,
                             source_path=source_locator,
                             source_format="deepmd-metrics-xlsx",
                             mode="replay",
@@ -739,7 +720,6 @@ def _normalize_deepmd(
 
 def _normalize_replay_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     path = _check_source(spec.get("path"))
-    digest = _sha256(path)
     source_locator = _portable_locator(spec.get("evidence_locator"), path)
     defaults = _source_defaults(spec)
     suffix = path.suffix.lower()
@@ -751,7 +731,6 @@ def _normalize_replay_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]]
             defaults=defaults,
             source_locator=source_locator,
             source_format=parser,
-            evidence_sha256=digest,
             mode="replay",
         )
         sheets: list[str] = []
@@ -767,7 +746,6 @@ def _normalize_replay_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]]
             defaults=defaults,
             source_locator=source_locator,
             source_format=parser,
-            evidence_sha256=digest,
             mode="replay",
         )
         sheets = []
@@ -780,7 +758,6 @@ def _normalize_replay_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]]
                 tables,
                 defaults=defaults,
                 source_locator=source_locator,
-                evidence_sha256=digest,
             )
         elif _is_m3gnet(tables):
             parser = "m3gnet-metrics-summary-xlsx"
@@ -788,7 +765,6 @@ def _normalize_replay_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]]
                 tables,
                 defaults=defaults,
                 source_locator=source_locator,
-                evidence_sha256=digest,
             )
         elif _is_deepmd(tables):
             parser = "deepmd-metrics-xlsx"
@@ -796,7 +772,6 @@ def _normalize_replay_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]]
                 tables,
                 defaults=defaults,
                 source_locator=source_locator,
-                evidence_sha256=digest,
             )
         else:
             parser = "prepared-xlsx"
@@ -806,7 +781,6 @@ def _normalize_replay_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]]
                 defaults=defaults,
                 source_locator=source_locator,
                 source_format=parser,
-                evidence_sha256=digest,
                 mode="replay",
             )
     else:
@@ -817,8 +791,6 @@ def _normalize_replay_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]]
         raise BenchmarkNormalizationError(f"no metric records found in {path}")
     provenance = {
         "path": source_locator,
-        "sha256": digest,
-        "size_bytes": path.stat().st_size,
         "parser": parser,
         "sheets": sheets,
         "normalized_record_count": len(records),
@@ -851,8 +823,6 @@ def _normalize_replay_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]]
             "path": _portable_locator(
                 spec.get("source_script_locator"), source_script, "source_script_locator"
             ),
-            "sha256": _sha256(source_script),
-            "size_bytes": source_script.stat().st_size,
             "read_only_reference": True,
         }
     return records, provenance
@@ -874,6 +844,53 @@ def _parse_numeric_values(value: Any, field: str) -> list[float]:
             result.extend(_parse_numeric_values(item, field))
         return result
     return [_finite_float(value, field)]
+
+
+def _atomic_force_errors(reference: Any, prediction: Any) -> list[float] | None:
+    """Return per-atom L2 force errors only for explicit N×3 vector evidence."""
+
+    parsed: list[Any] = []
+    for value, field in ((reference, "reference"), (prediction, "prediction")):
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped.startswith("["):
+                return None
+            try:
+                value = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise BenchmarkNormalizationError(
+                    f"{field} is not valid JSON numeric data"
+                ) from exc
+        parsed.append(value)
+    ref_vectors, pred_vectors = parsed
+    if (
+        not isinstance(ref_vectors, (list, tuple))
+        or not isinstance(pred_vectors, (list, tuple))
+        or not ref_vectors
+        or len(ref_vectors) != len(pred_vectors)
+    ):
+        return None
+    errors: list[float] = []
+    for atom_index, (ref_vector, pred_vector) in enumerate(
+        zip(ref_vectors, pred_vectors)
+    ):
+        if (
+            not isinstance(ref_vector, (list, tuple))
+            or not isinstance(pred_vector, (list, tuple))
+            or len(ref_vector) != 3
+            or len(pred_vector) != 3
+        ):
+            return None
+        ref = [
+            _finite_float(item, f"reference force atom {atom_index}")
+            for item in ref_vector
+        ]
+        pred = [
+            _finite_float(item, f"prediction force atom {atom_index}")
+            for item in pred_vector
+        ]
+        errors.append(math.sqrt(sum((b - a) ** 2 for a, b in zip(ref, pred))))
+    return errors
 
 
 def _paired_rows(path: Path) -> tuple[list[dict[str, Any]], str, list[str]]:
@@ -909,7 +926,6 @@ def _pearson(
 
 def _execute_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     path = _check_source(spec.get("path"))
-    digest = _sha256(path)
     source_locator = _portable_locator(spec.get("evidence_locator"), path)
     defaults = _source_defaults(spec)
     rows, parser, sheets = _paired_rows(path)
@@ -933,10 +949,25 @@ def _execute_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[st
         unit = _first(row, "unit") or defaults["units"].get(target)
         unit = _explicit_string(unit, f"{target} unit")
         key = (model, task, scenario, split, target, unit)
-        group = groups.setdefault(key, {"reference": [], "prediction": [], "locators": []})
+        group = groups.setdefault(
+            key,
+            {
+                "reference": [],
+                "prediction": [],
+                "locators": [],
+                "atomic_force_errors": [],
+                "force_vector_grouping_complete": True,
+            },
+        )
         group["reference"].extend(ref_values)
         group["prediction"].extend(pred_values)
         group["locators"].append(f"{row.get('__sheet__', parser)}!row-{row.get('__row__', '?')}")
+        if target == "force":
+            atomic_errors = _atomic_force_errors(reference, prediction)
+            if atomic_errors is None:
+                group["force_vector_grouping_complete"] = False
+            else:
+                group["atomic_force_errors"].extend(atomic_errors)
     records: list[dict[str, Any]] = []
     unavailable_metrics: list[dict[str, Any]] = []
     for key, values in sorted(groups.items()):
@@ -963,7 +994,6 @@ def _execute_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[st
                         "direction": "maximize",
                         "sample_count": len(reference),
                         "mode": "execute",
-                        "evidence_sha256": digest,
                         "source_path": source_locator,
                         "source_format": parser,
                         "evidence_locator": f"{len(values['locators'])} prepared row(s)",
@@ -984,7 +1014,6 @@ def _execute_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[st
                     unit="dimensionless" if statistic == "pearson_r" else unit,
                     direction="maximize" if statistic == "pearson_r" else "minimize",
                     sample_count=len(reference),
-                    evidence_sha256=digest,
                     source_path=source_locator,
                     source_format=parser,
                     mode="execute",
@@ -995,10 +1024,38 @@ def _execute_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[st
                     ),
                 )
             )
+        atomic_errors = values["atomic_force_errors"]
+        if (
+            target == "force"
+            and values["force_vector_grouping_complete"]
+            and atomic_errors
+        ):
+            records.append(
+                _record(
+                    model=model,
+                    task=task,
+                    scenario=scenario,
+                    split=split,
+                    metric="maximum_atomic_force_error",
+                    value=max(atomic_errors),
+                    unit=unit,
+                    direction="minimize",
+                    sample_count=len(atomic_errors),
+                    source_path=source_locator,
+                    source_format=parser,
+                    mode="execute",
+                    locator=f"{len(values['locators'])} prepared row(s)",
+                    dimensions={
+                        "scope": "overall",
+                        "target": "force",
+                        "error_norm": "atomic-l2-vector",
+                        "aggregation": "maximum-over-atoms",
+                    },
+                    unit_provenance="declared-by-source",
+                )
+            )
     provenance = {
         "path": source_locator,
-        "sha256": digest,
-        "size_bytes": path.stat().st_size,
         "parser": parser,
         "sheets": sheets,
         "normalized_record_count": len(records),
@@ -1077,7 +1134,6 @@ def _ranking(records: Sequence[dict[str, Any]]) -> dict[str, Any]:
                     "model": item["model"],
                     "value": item["value"],
                     "sample_count": item["sample_count"],
-                    "evidence_sha256": item["evidence_sha256"],
                 }
             )
         rankings.append(
@@ -1120,7 +1176,6 @@ def _summary_bytes(records: Sequence[dict[str, Any]]) -> bytes:
         "direction",
         "sample_count",
         "mode",
-        "evidence_sha256",
         "source_path",
         "source_format",
         "evidence_locator",
@@ -1255,14 +1310,7 @@ def normalize_benchmark(
         "model_execution": False,
         "network_access": False,
         "source_evidence": sorted(provenance_sources, key=lambda item: item["path"]),
-        "output_artifacts": [
-            {
-                "path": name,
-                "sha256": _digest_bytes(payload),
-                "size_bytes": len(payload),
-            }
-            for name, payload in sorted(payloads.items())
-        ],
+        "output_artifacts": [{"path": name} for name in sorted(payloads)],
         "limitations": [
             (
                 "Replay imports historical metrics and does not claim a fresh model evaluation."
@@ -1313,7 +1361,7 @@ def _cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force-unit")
     parser.add_argument("--stress-unit")
     parser.add_argument(
-        "--source-script", help="optional read-only original implementation to hash in provenance"
+        "--source-script", help="optional read-only original implementation path for provenance"
     )
     parser.add_argument("--source-script-locator", help="portable locator for --source-script")
     parser.add_argument("--overwrite", action="store_true")

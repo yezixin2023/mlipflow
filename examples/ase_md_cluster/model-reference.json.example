@@ -2,6 +2,5 @@
   "schema_version": 1,
   "model_id": "mace-li-ps-v1",
   "relative_path": "mace/li-ps-v1/model.model",
-  "kind": "file",
-  "fingerprint": "sha256:REPLACE_WITH_64_LOWERCASE_HEX"
+  "kind": "file"
 }

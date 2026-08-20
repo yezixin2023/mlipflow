@@ -1,0 +1,112 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "schema_version": 1,
+  "id": "active-learning",
+  "name": "Offline active learning",
+  "display_name": "Offline active learning",
+  "version": "0.2.0",
+  "api_version": 1,
+  "description": "Deterministic committee disagreement, per-model uncertainty calibration, risk-union candidate selection, and explicit round assessment for finite offline MLIP active-learning campaigns.",
+  "category": "active-learning",
+  "contract": {
+    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
+  },
+  "implementation": {
+    "kind": "python-adapter",
+    "entrypoint": "adapter.py:Adapter",
+    "status": "implemented",
+    "source_classification": ["new"],
+    "source_references": [],
+    "limitations": [
+      "The first version is finite, offline, and round based; it does not interrupt MD on the fly, submit DFT, train a model, mutate a canonical dataset, or create a dynamic DAG.",
+      "Local committee-evaluate consumes explicit member predictions and calibration DFT labels. Reviewed SSH-SLURM committee-evaluate resolves immutable member models below the canonical site model root, runs fresh inference on a staged bounded evaluation dataset, and then applies the same deterministic calibration contract.",
+      "select-candidates requires reviewed DIRECT selection evidence whenever physical QUERY candidates remain after deterministic prefiltering; it does not implement a new descriptor or clustering method.",
+      "Force disagreement is the primary acquisition quantity. Energy disagreement is diagnostic, and stress is not used unless a later explicit all-model convention contract is supplied.",
+      "All scientific thresholds, committee seeds, target conditions, budgets, audit gates, and consecutive-round requirements must be explicit in policy evidence.",
+      "select-candidates and assess-round remain local deterministic decisions. Scheduled committee inference, training, MD, DFT, and fresh benchmark operations retain dry-run approval contracts."
+    ]
+  },
+  "execution": {
+    "mode": "external-command",
+    "backends": ["local", "ssh-slurm"],
+    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
+    "operations": ["committee-evaluate", "select-candidates", "assess-round"],
+    "shell": false,
+    "executes_external_programs": true,
+    "writes_files": true,
+    "submits_jobs": true
+  },
+  "replay": {
+    "supported": true,
+    "behavior": "parse-existing-artifacts",
+    "accepted_media_types": ["application/json", "application/yaml", "text/csv"],
+    "reason": "Replay deterministically re-evaluates supplied prediction, DFT, DIRECT, benchmark, split, campaign, and history evidence without model inference, MD, DFT, training, or dataset mutation."
+  },
+  "inputs": [
+    {"name": "policy", "kind": "manifest", "required": true, "media_type": "application/json"},
+    {"name": "committee-predictions", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "committee-model-index", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled committee-evaluate: member IDs, seeds, model families, frameworks, and model-root-relative paths."},
+    {"name": "evaluation-dataset", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "Scheduled committee-evaluate: bounded calibration labels plus unlabeled candidate structures and fixed split/metadata records."},
+    {"name": "committee-evaluation", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "committee-prediction-evidence", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "Fresh member predictions emitted by scheduled committee-evaluate."},
+    {"name": "cluster-active-learning-report", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled inference report recording models, inputs, outputs, software, and sample counts."},
+    {"name": "candidate-manifest", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "direct-selection", "kind": "artifact-reference", "required": false, "description": "Reviewed DIRECT JSON evidence or the collected pes-sampling direct-select manifest.csv."},
+    {"name": "selection-result", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "audit-benchmark", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Immutable audit metrics plus the exact audit sample IDs verified against fresh benchmark prediction evidence."},
+    {"name": "spot-checks", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "labeling-result", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "dataset-split", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "round-history", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "campaign", "kind": "manifest", "required": false, "media_type": "application/yaml"},
+    {"name": "transport-evidence", "kind": "manifest", "required": false, "media_type": "application/json"}
+  ],
+  "parameters": [
+    {"name": "operation", "type": "string", "required": true, "description": "committee-evaluate, select-candidates, or assess-round."},
+    {"name": "result-manifest", "type": "string", "required": false, "description": "Fresh attempt-relative JSON result path; defaults by operation."}
+  ],
+  "outputs": [
+    {"name": "committee-evaluation", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "candidate-selection", "kind": "manifest", "required": false, "media_type": "application/json"},
+    {"name": "round-assessment", "kind": "manifest", "required": false, "media_type": "application/json"}
+  ],
+  "dependencies": {
+    "upstream_plugins": ["mlip-training", "ase-md", "lammps-md", "pes-sampling", "dft-labeling", "mlip-benchmark"],
+    "python_packages": [],
+    "external_programs": []
+  },
+  "safety": {
+    "expensive": true,
+    "destructive": false,
+    "network_access": false,
+    "requires_approval_before_execution": true,
+    "notes": [
+      "Local selection and assessment are bounded analysis; scheduled committee inference requires dry-run approval and never publishes or overwrites a model.",
+      "Results are created once and never overwrite an existing scientific manifest."
+    ]
+  },
+  "completion": {
+    "status": "implemented",
+    "checks": [
+      {"id": "committee-mathematics", "implemented": true, "description": "Recompute population force-vector disagreement, per-atom energy disagreement, committee-mean DFT error, and per-model calibration."},
+      {"id": "risk-union", "implemented": true, "description": "Verify calibrated SAFE/QUERY/UNSAFE classes and max-risk union without using cross-architecture disagreement as uncertainty."},
+      {"id": "unsafe-boundary", "implemented": true, "description": "Record each UNSAFE frame and its nearest earlier SAFE frame in the same condition and replica when available."},
+      {"id": "selection", "implemented": true, "description": "Verify physical filtering, temporal thinning, exact/near duplicate evidence, DIRECT subset, Strategy B trigger-model coverage, quotas, deterministic spot checks, and DFT budgets."},
+      {"id": "round-decision", "implemented": true, "description": "Recompute calibration, exact immutable-audit sample binding and metrics, cumulative QUERY-record membership, per-condition/replica coverage, false-negative, uncertainty-distribution change, marginal-gain, budget, lineage, and consecutive-round gates."},
+      {"id": "result-recomputation", "implemented": true, "description": "Checker reproduces the complete result and rejects input or output drift."},
+      {"id": "scheduled-committee-inference", "implemented": true, "description": "Resolve every declared member below the canonical model root, infer calibration/candidate structures, fetch bounded evidence, and reproduce calibration locally."}
+    ],
+    "success_state": "OK",
+    "failure_state": "FAIL"
+  },
+  "retry": {
+    "status": "delegated-to-core",
+    "allowed_from": ["FAIL", "STOPPED"],
+    "creates_new_attempt": true,
+    "reuses_previous_run_directory": false,
+    "requires_approval": false,
+    "max_attempts": null,
+    "limit_enforced": false,
+    "notes": ["Retry creates a fresh attempt and preserves every prior round artifact; a new active-learning round is never represented as retry."]
+  }
+}

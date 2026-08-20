@@ -5,42 +5,36 @@
     {
       "candidates": [
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "chgnet",
           "rank": 1,
           "sample_count": 18,
           "value": 0.182777777777778
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "m3gnet",
           "rank": 2,
           "sample_count": 18,
           "value": 0.536111111111111
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-dpa2",
           "rank": 3,
           "sample_count": 18,
           "value": 0.59
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_atten_v2",
           "rank": 4,
           "sample_count": 18,
           "value": 0.666666666666667
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_e2_r",
           "rank": 5,
           "sample_count": 18,
           "value": 1.19944444444444
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_e2_a",
           "rank": 6,
           "sample_count": 18,
@@ -65,42 +59,36 @@
     {
       "candidates": [
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_atten_v2",
           "rank": 1,
           "sample_count": 10,
           "value": 0.09599531
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_e2_a",
           "rank": 2,
           "sample_count": 10,
           "value": 0.19909484
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "m3gnet",
           "rank": 3,
           "sample_count": 10,
           "value": 0.2332
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "chgnet",
           "rank": 4,
           "sample_count": 10,
           "value": 0.307299216
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-dpa2",
           "rank": 5,
           "sample_count": 10,
           "value": 0.35609381
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_e2_r",
           "rank": 6,
           "sample_count": 10,
@@ -125,7 +113,6 @@
     {
       "candidates": [
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_atten_v2",
           "rank": 1,
           "sample_count": 12,
@@ -149,7 +136,6 @@
     {
       "candidates": [
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_atten_v2",
           "rank": 1,
           "sample_count": 12,
@@ -173,7 +159,6 @@
     {
       "candidates": [
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_atten_v2",
           "rank": 1,
           "sample_count": 4,
@@ -197,42 +182,36 @@
     {
       "candidates": [
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-dpa2",
           "rank": 1,
           "sample_count": 1,
           "value": 6.63
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_e2_a",
           "rank": 2,
           "sample_count": 1,
           "value": 7.19
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_atten_v2",
           "rank": 3,
           "sample_count": 1,
           "value": 7.91
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "chgnet",
           "rank": 4,
           "sample_count": 1,
           "value": 8.12
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_e2_r",
           "rank": 5,
           "sample_count": 1,
           "value": 13.03
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "m3gnet",
           "rank": 6,
           "sample_count": 1,
@@ -242,7 +221,6 @@
       "comparable_model_count": 6,
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
@@ -256,42 +234,36 @@
     {
       "candidates": [
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-dpa2",
           "rank": 1,
           "sample_count": 1,
           "value": 151.0
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_e2_a",
           "rank": 2,
           "sample_count": 1,
           "value": 177.0
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_atten_v2",
           "rank": 3,
           "sample_count": 1,
           "value": 186.0
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "chgnet",
           "rank": 4,
           "sample_count": 1,
           "value": 191.0
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "m3gnet",
           "rank": 5,
           "sample_count": 1,
           "value": 212.0
         },
         {
-          "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
           "model": "deepmd-se_e2_r",
           "rank": 6,
           "sample_count": 1,
@@ -301,7 +273,6 @@
       "comparable_model_count": 6,
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },

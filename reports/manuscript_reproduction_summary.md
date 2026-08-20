@@ -3,7 +3,7 @@
 Status: **REPLAY_VERIFIED**.
 
 The automated acceptance test reconstructs the manuscript's task-specific
-model choices from compact, SHA-256-pinned evidence:
+model choices from compact recorded evidence:
 
 | Task | Selected model | Recomputed criterion |
 | --- | --- | --- |
@@ -14,15 +14,15 @@ model choices from compact, SHA-256-pinned evidence:
 The exact timing reductions give AIMD/MLIP ratios of 115.592, 113.288, and
 173.080 for prototypes I, II, and III. The canonical detailed report is
 [`examples/high_entropy_sulfide_reproduction/reports/manuscript_reproduction_summary.json`](../examples/high_entropy_sulfide_reproduction/reports/manuscript_reproduction_summary.json),
-whose digest is pinned by the JSON report in this directory.
+and the JSON report in this directory records that canonical path.
 
 The acceptance fixture also replays all 247 available 228-atom screening
 results. It deterministically selects `Mn6_Fe3_Ni8_Cu4_Zn7` at
-18.420176685825222 S/m and links that identity to the historical
+18.420176685825222 S/m and links that candidate ID to the historical
 `6_3_8_4_7` MSD/post-processing parity record. This link is not an AIMD/DFT
 high-fidelity validation; that comparison remains
 `EXTERNAL_VALIDATION_PENDING`. The unseen/cross-prototype result is represented
-only as SHA-pinned manuscript claim-level evidence because the paired raw
+only as manuscript claim-level evidence because the paired raw
 reference/prediction values are unavailable.
 
 This is evidence replay, not a fresh MLIP, MD, AIMD, DFT, training, or

@@ -6,7 +6,7 @@ from mlipflow.routing import route_models
 
 
 class RoutingTests(unittest.TestCase):
-    def test_unverified_evidence_is_excluded_by_default(self) -> None:
+    def test_external_evidence_path_status_is_reported(self) -> None:
         registry = {
             "schema_version": 1,
             "models": [
@@ -25,11 +25,11 @@ class RoutingTests(unittest.TestCase):
                     ],
                 }
             ],
-            "_evidence_verification": [
+            "_evidence_files": [
                 {
                     "model_id": "external",
                     "run_id": "r1",
-                    "status": "external-not-verified",
+                    "status": "external",
                 }
             ],
         }
@@ -40,8 +40,8 @@ class RoutingTests(unittest.TestCase):
             scenario="s",
             policy={"metrics": [{"name": "mae", "direction": "minimize", "weight": 1}]},
         )
-        self.assertIsNone(result["selected_model"])
-        self.assertIn("full SHA-256", " ".join(result["rejected"][0]["reasons"]))
+        self.assertEqual("external", result["selected_model"])
+        self.assertEqual("external", result["evidence_files"][0]["status"])
 
     def test_task_specific_evidence_selects_model(self) -> None:
         registry = {

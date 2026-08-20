@@ -3,8 +3,8 @@
 The NVT/NPT scientific contracts remain in adapter_npt.py. This facade adds a
 periodic checkpoint output, terminal-failure salvage allowlist, and an explicit
 ``auto-from-previous-attempt`` retry policy. A retry stages only a checkpoint that
-was already salvaged into the previous local attempt and binds its SHA-256 and
-completed step into the new approval plan.
+was already salvaged into the previous local attempt and records its completed
+step in the new plan.
 """
 from __future__ import annotations
 
@@ -98,47 +98,47 @@ def _segment_steps(start: int, total: int, interval: int) -> list[int]:
     return values
 
 
-def _checkpoint_matches_identity(checkpoint: dict[str, Any], identity: dict[str, Any]) -> int:
+def _checkpoint_matches_parameters(checkpoint: dict[str, Any], settings: dict[str, Any]) -> int:
     expected = {
         "schema_version": 1,
         "plugin_id": PLUGIN_ID,
         "checkpoint_state_version": "ase-md-checkpoint-v1",
-        "calculator": identity.get("calculator"),
-        "ensemble": identity.get("ensemble"),
-        "structure_fingerprint": identity.get("structure_fingerprint"),
-        "temperature_K": identity.get("temperature_k"),
-        "timestep_fs": identity.get("timestep_fs"),
-        "steps_requested": identity.get("steps"),
-        "seed": identity.get("seed"),
-        "device": identity.get("device"),
-        "default_dtype": identity.get("default_dtype"),
-        "fix_com": identity.get("fix_com"),
+        "calculator": settings.get("calculator"),
+        "ensemble": settings.get("ensemble"),
+        "structure_path": settings.get("structure_path"),
+        "temperature_K": settings.get("temperature_k"),
+        "timestep_fs": settings.get("timestep_fs"),
+        "steps_requested": settings.get("steps"),
+        "seed": settings.get("seed"),
+        "device": settings.get("device"),
+        "default_dtype": settings.get("default_dtype"),
+        "fix_com": settings.get("fix_com"),
     }
-    if "supercell_repeat" in identity:
+    if "supercell_repeat" in settings:
         expected.update(
             {
-                "supercell_repeat": identity.get("supercell_repeat"),
-                "minimum_initial_cell_length_A": identity.get(
+                "supercell_repeat": settings.get("supercell_repeat"),
+                "minimum_initial_cell_length_A": settings.get(
                     "minimum_initial_cell_length_angstrom"
                 ),
             }
         )
     for key, value in expected.items():
         if checkpoint.get(key) != value:
-            raise ValueError(f"previous checkpoint identity mismatch for {key}")
+            raise ValueError(f"previous checkpoint parameter mismatch for {key}")
     model = _mapping(checkpoint.get("model"))
     if (
-        model.get("id") != identity.get("model_id")
-        or model.get("fingerprint") != identity.get("model_fingerprint")
+        model.get("id") != settings.get("model_id")
+        or model.get("path") != settings.get("model_path")
     ):
-        raise ValueError("previous checkpoint model identity differs from the approved model")
-    if identity.get("ensemble") == base.NVT:
-        if checkpoint.get("friction_per_fs") != identity.get("friction_per_fs"):
+        raise ValueError("previous checkpoint model record differs from the plan")
+    if settings.get("ensemble") == base.NVT:
+        if checkpoint.get("friction_per_fs") != settings.get("friction_per_fs"):
             raise ValueError("previous checkpoint Langevin friction differs")
         if checkpoint.get("rng_algorithm") != "PCG64":
             raise ValueError("previous checkpoint RNG algorithm is not PCG64")
     else:
-        for key, identity_key in (
+        for key, setting_key in (
             ("pressure_GPa", "pressure_gpa"),
             ("thermostat_damping_fs", "thermostat_damping_fs"),
             ("barostat_damping_fs", "barostat_damping_fs"),
@@ -147,10 +147,10 @@ def _checkpoint_matches_identity(checkpoint: dict[str, Any], identity: dict[str,
             ("thermostat_substeps", "thermostat_substeps"),
             ("barostat_substeps", "barostat_substeps"),
         ):
-            if checkpoint.get(key) != identity.get(identity_key):
-                raise ValueError(f"previous checkpoint NPT identity mismatch for {key}")
+            if checkpoint.get(key) != settings.get(setting_key):
+                raise ValueError(f"previous checkpoint NPT parameter mismatch for {key}")
     completed = checkpoint.get("completed_steps")
-    total = identity.get("steps")
+    total = settings.get("steps")
     if (
         isinstance(completed, bool)
         or not isinstance(completed, int)
@@ -164,7 +164,7 @@ def _checkpoint_matches_identity(checkpoint: dict[str, Any], identity: dict[str,
 
 
 def _previous_checkpoint(
-    context: dict[str, Any], identity: dict[str, Any], attempt: int
+    context: dict[str, Any], settings: dict[str, Any], attempt: int
 ) -> tuple[Path, dict[str, Any], int] | None:
     if attempt == 1:
         return None
@@ -181,7 +181,7 @@ def _previous_checkpoint(
         )
     checkpoint_path = _checkpoint_path(context, previous)
     checkpoint = _read_json(checkpoint_path, MAX_CHECKPOINT_BYTES)
-    completed = _checkpoint_matches_identity(checkpoint, identity)
+    completed = _checkpoint_matches_parameters(checkpoint, settings)
     return checkpoint_path, checkpoint, completed
 
 
@@ -248,9 +248,9 @@ def _pin_restart_helpers(plan: dict[str, Any]) -> dict[str, Any]:
             isinstance(item, dict) and item.get("remote_name") == remote_name for item in staged
         ):
             staged.append(legacy._staged_record(path, remote_name))
-    fingerprints = plan.setdefault("input_fingerprints", {})
-    if isinstance(fingerprints, dict):
-        fingerprints["adapter_npt"] = legacy._sha256(
+    input_paths = plan.setdefault("input_paths", {})
+    if isinstance(input_paths, dict):
+        input_paths["adapter_npt"] = str(
             Path(__file__).resolve().with_name("adapter_npt.py")
         )
     return plan
@@ -267,7 +267,7 @@ def _plan_restart(context: dict[str, Any]) -> dict[str, Any]:
     if plan.get("status") != "READY":
         return plan
     parameters = _mapping(context["parameters"])
-    identity = _mapping(plan.get("md_identity"))
+    settings = _mapping(plan.get("md_parameters"))
     scheduled = _mapping(plan.get("scheduled_execution"))
     fetch_outputs = scheduled.get("fetch_outputs")
     staged = scheduled.get("staged_files")
@@ -280,7 +280,7 @@ def _plan_restart(context: dict[str, Any]) -> dict[str, Any]:
     policy = str(parameters.get("restart_policy", RESTART_DISABLED))
     attempt = _attempt_number(context)
     start_step = 0
-    restart_sha: str | None = None
+    restart_path: str | None = None
     restart_attempt: int | None = None
     if interval is not None:
         fetch_outputs.append(
@@ -305,7 +305,7 @@ def _plan_restart(context: dict[str, Any]) -> dict[str, Any]:
 
     if policy == RESTART_AUTO and attempt > 1:
         try:
-            previous = _previous_checkpoint(context, identity, attempt)
+            previous = _previous_checkpoint(context, settings, attempt)
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
             return legacy._blocked([_diagnostic("error", "ase_md.restart_previous", str(exc))])
         if previous is None:
@@ -313,28 +313,28 @@ def _plan_restart(context: dict[str, Any]) -> dict[str, Any]:
                 [_diagnostic("error", "ase_md.restart_previous", "previous checkpoint is missing")]
             )
         checkpoint_path, _checkpoint, start_step = previous
-        restart_sha = legacy._sha256(checkpoint_path)
+        restart_path = "restart/md-checkpoint.json"
         restart_attempt = attempt - 1
         staged.append(legacy._staged_record(checkpoint_path, "restart/md-checkpoint.json"))
-        fingerprints = plan.setdefault("input_fingerprints", {})
-        if isinstance(fingerprints, dict):
-            fingerprints["restart_checkpoint"] = restart_sha
+        input_paths = plan.setdefault("input_paths", {})
+        if isinstance(input_paths, dict):
+            input_paths["restart_checkpoint"] = str(checkpoint_path)
 
-    total = int(identity["steps"])
-    trajectory_interval = int(identity["trajectory_interval"])
-    thermo_interval = int(identity["thermo_interval"])
-    identity.update(
+    total = int(settings["steps"])
+    trajectory_interval = int(settings["trajectory_interval"])
+    thermo_interval = int(settings["thermo_interval"])
+    settings.update(
         {
             "checkpoint_interval": interval,
             "restart_policy": policy,
             "segment_start_step": start_step,
-            "restart_checkpoint_sha256": restart_sha,
+            "restart_checkpoint_path": restart_path,
             "restart_from_attempt": restart_attempt,
             "trajectory_steps": _segment_steps(start_step, total, trajectory_interval),
             "thermo_steps": _segment_steps(start_step, total, thermo_interval),
         }
     )
-    plan["md_identity"] = identity
+    plan["md_parameters"] = settings
     summary = _mapping(plan.get("approval_summary"))
     summary.update(
         {
@@ -343,9 +343,9 @@ def _plan_restart(context: dict[str, Any]) -> dict[str, Any]:
             "segment_start_step": start_step,
             "remaining_steps": total - start_step,
             "restart_from_attempt": restart_attempt,
-            "restart_checkpoint_sha256": restart_sha,
-            "trajectory_frames_this_attempt": len(identity["trajectory_steps"]),
-            "thermo_records_this_attempt": len(identity["thermo_steps"]),
+            "restart_checkpoint_path": restart_path,
+            "trajectory_frames_this_attempt": len(settings["trajectory_steps"]),
+            "thermo_records_this_attempt": len(settings["thermo_steps"]),
             "failure_salvage": plan.get("failure_salvage"),
         }
     )
@@ -356,22 +356,22 @@ def _plan_restart(context: dict[str, Any]) -> dict[str, Any]:
 def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
     diagnostics: list[dict[str, str]] = []
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
-    identity = _mapping(legacy._scheduled_plan(context).get("md_identity"))
-    interval = identity.get("checkpoint_interval")
+    settings = _mapping(legacy._scheduled_plan(context).get("md_parameters"))
+    interval = settings.get("checkpoint_interval")
     try:
         result = legacy._read_bounded_json(attempt / "md-result.json")
     except Exception as exc:
         return [_diagnostic("error", "ase_md.restart_result", str(exc))]
-    if result.get("segment_start_step") != identity.get("segment_start_step"):
+    if result.get("segment_start_step") != settings.get("segment_start_step"):
         diagnostics.append(
             _diagnostic("error", "ase_md.segment_start", "md-result segment start differs")
         )
     restart = _mapping(result.get("restart"))
-    resumed = int(identity.get("segment_start_step", 0)) > 0
+    resumed = int(settings.get("segment_start_step", 0)) > 0
     expected_restart = {
         "resumed": resumed,
-        "checkpoint_sha256": identity.get("restart_checkpoint_sha256"),
-        "checkpoint_start_step": identity.get("segment_start_step") if resumed else None,
+        "checkpoint_path": settings.get("restart_checkpoint_path"),
+        "checkpoint_start_step": settings.get("segment_start_step") if resumed else None,
         "checkpoint_interval": interval,
     }
     for key, value in expected_restart.items():
@@ -389,19 +389,17 @@ def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
             checkpoint_record = _mapping(result.get("checkpoint"))
             if (
                 checkpoint_record.get("path") != "md-checkpoint.json"
-                or checkpoint_record.get("sha256") != legacy._sha256(checkpoint_path)
-                or checkpoint_record.get("size_bytes") != checkpoint_path.stat().st_size
-                or checkpoint_record.get("completed_steps") != identity.get("steps")
+                or checkpoint_record.get("completed_steps") != settings.get("steps")
             ):
                 diagnostics.append(
                     _diagnostic(
-                        "error", "ase_md.checkpoint_identity", "final checkpoint record differs"
+                        "error", "ase_md.checkpoint_record", "final checkpoint record differs"
                     )
                 )
             try:
                 checkpoint = _read_json(checkpoint_path, MAX_CHECKPOINT_BYTES)
-                completed = _checkpoint_matches_identity(checkpoint, identity)
-                if completed != identity.get("steps"):
+                completed = _checkpoint_matches_parameters(checkpoint, settings)
+                if completed != settings.get("steps"):
                     diagnostics.append(
                         _diagnostic(
                             "error",
@@ -410,27 +408,27 @@ def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
                         )
                     )
             except ValueError as exc:
-                # _checkpoint_matches_identity intentionally rejects completed==total
-                # for an input restart. Validate final identity separately here.
+                # Input restart validation intentionally rejects completed==total.
+                # Validate the final checkpoint parameters separately here.
                 checkpoint = _read_json(checkpoint_path, MAX_CHECKPOINT_BYTES)
-                expected_total = identity.get("steps")
+                expected_total = settings.get("steps")
                 if checkpoint.get("completed_steps") != expected_total:
                     diagnostics.append(_diagnostic("error", "ase_md.checkpoint", str(exc)))
                 else:
                     probe = dict(checkpoint)
                     probe["completed_steps"] = max(0, int(expected_total) - 1)
                     try:
-                        _checkpoint_matches_identity(probe, identity)
-                    except ValueError as identity_exc:
+                        _checkpoint_matches_parameters(probe, settings)
+                    except ValueError as parameter_exc:
                         diagnostics.append(
-                            _diagnostic("error", "ase_md.checkpoint", str(identity_exc))
+                            _diagnostic("error", "ase_md.checkpoint", str(parameter_exc))
                         )
     try:
         report = legacy._read_bounded_json(attempt / "cluster-run-report.json")
     except Exception as exc:
         diagnostics.append(_diagnostic("error", "ase_md.restart_cluster", str(exc)))
         report = {}
-    if report.get("segment_start_step") != identity.get("segment_start_step"):
+    if report.get("segment_start_step") != settings.get("segment_start_step"):
         diagnostics.append(
             _diagnostic("error", "ase_md.cluster_segment_start", "cluster segment start differs")
         )

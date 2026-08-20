@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -100,23 +99,19 @@ class BackendTests(unittest.TestCase):
                     ["tool", "https://user:password@example.invalid/data"], Path(temporary)
                 )
 
-    def test_ssh_stage_workspace_is_attempt_scoped_and_verifies_each_hash(self) -> None:
+    def test_ssh_stage_workspace_is_attempt_scoped(self) -> None:
         backend = SshSlurmBackend("safe-profile")
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "POSCAR"
             source.write_text("Li\n", encoding="utf-8")
-            digest = "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
             responses = [
                 subprocess.CompletedProcess(["ssh"], 0, "", ""),
                 subprocess.CompletedProcess(["scp"], 0, "", ""),
-                subprocess.CompletedProcess(
-                    ["ssh"], 0, f"3\n{digest.removeprefix('sha256:')}  input/POSCAR\n", ""
-                ),
             ]
             with patch("mlipflow.backends.subprocess.run", side_effect=responses) as invoked:
                 remote = backend.stage_workspace(
                     "/work/project/node/attempt-0001",
-                    [(source, "input/POSCAR", digest)],
+                    [(source, "input/POSCAR")],
                 )
             self.assertEqual("/work/project/node/attempt-0001", remote)
             self.assertIn("mkdir --", invoked.call_args_list[0].args[0][-1])
@@ -140,11 +135,10 @@ class BackendTests(unittest.TestCase):
     def test_ssh_remote_template_read_is_bounded_and_parsed(self) -> None:
         backend = SshSlurmBackend("safe-profile")
         content = "#!/bin/bash\n# {{RUN_DIR}}\n"
-        digest = hashlib.sha256(content.encode()).hexdigest()
         completed = subprocess.CompletedProcess(
             ["ssh"],
             0,
-            f"{len(content.encode())}\n{digest}  slurm/cpu.sbatch\n{content}",
+            f"OK\n{content}",
             "",
         )
         with patch("mlipflow.backends.subprocess.run", return_value=completed) as invoked:
@@ -152,7 +146,6 @@ class BackendTests(unittest.TestCase):
                 "/remote/templates", "slurm/cpu.sbatch"
             )
         self.assertEqual(content, observed["content"])
-        self.assertEqual("sha256:" + digest, observed["sha256"])
         self.assertTrue(observed["root_exists"])
         self.assertFalse(invoked.call_args.kwargs["shell"])
         with self.assertRaises(BackendError), patch(
@@ -316,6 +309,26 @@ class BackendTests(unittest.TestCase):
         self.assertEqual("large", routing["selected_partition"])
         first = routing["observed_partition_availability"][0]
         self.assertEqual(0, first["observed_node_availability"]["capable_for_request"])
+
+    def test_partition_routing_can_ignore_unreported_site_memory(self) -> None:
+        backend = SshSlurmBackend("safe-profile")
+        snapshot = slurm_snapshot(
+            [slurm_partition("cpu-large")],
+            [slurm_node("node-a", "cpu-large", cpus=192, memory_mib=1)],
+        )
+        requested = {**REQUEST, "cpus": 128, "memory": "128G"}
+        completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
+        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+            with self.assertRaisesRegex(BackendError, "no candidate Slurm partition"):
+                backend.select_partition(["cpu-large"], requested)
+        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+            routing = backend.select_partition(
+                ["cpu-large"], requested, memory_constraint="unreported"
+            )
+
+        self.assertEqual("cpu-large", routing["selected_partition"])
+        observed = routing["observed_partition_availability"][0]
+        self.assertEqual(1, observed["observed_node_availability"]["available_now"])
 
 
 if __name__ == "__main__":

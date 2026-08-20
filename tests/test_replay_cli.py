@@ -9,7 +9,7 @@ from .helpers import plugin_manifest, project_config, run_cli, write_json
 
 
 class ReplayCliTests(unittest.TestCase):
-    def test_replay_references_artifact_without_cryptographic_approval(self) -> None:
+    def test_replay_references_existing_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             plugins = root / "plugins"
@@ -98,42 +98,6 @@ class ReplayCliTests(unittest.TestCase):
             code, _, stderr = run_cli([*base, "run", "failed-result"])
             self.assertEqual(code, 2)
             self.assertIn("not scientifically successful", stderr)
-
-    def test_wrong_digest_does_not_initialize_or_write(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            plugins = root / "plugins"
-            write_json(plugins / "demo" / "plugin.yaml", plugin_manifest())
-            write_json(root / "result.json", {"schema_version": 1, "metrics": {}, "artifacts": []})
-            write_json(
-                root / "project.yaml",
-                project_config(
-                    [
-                        {
-                            "id": "x",
-                            "uses": "demo@1",
-                            "mode": "replay",
-                            "needs": [],
-                            "inputs": {"result_manifest": "result.json"},
-                        }
-                    ]
-                ),
-            )
-            code, _, _ = run_cli(
-                [
-                    "--project",
-                    str(root),
-                    "--plugins",
-                    str(plugins),
-                    "run",
-                    "x",
-                    "--approve",
-                    "sha256:wrong",
-                ]
-            )
-            self.assertEqual(code, 2)
-            self.assertFalse((root / ".mlipflow").exists())
-
 
 if __name__ == "__main__":
     unittest.main()

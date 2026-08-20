@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import importlib.util
-import hashlib
 import json
 import shutil
 import tempfile
@@ -40,10 +39,6 @@ def arc_payload(energies: list[float]) -> str:
     return "".join(chunks)
 
 
-def fingerprint_bytes(payload: bytes) -> str:
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
-
-
 def lasp_run_template() -> str:
     return """#!/bin/bash
 # project={{PROJECT_ID}} node={{NODE_ID}} attempt={{ATTEMPT}}
@@ -75,12 +70,8 @@ def build_project(root: Path) -> Path:
             "schema_version": 1,
             "plugin_id": "pes-sampling",
             "operation": "lasp-input-prepare",
-            "pseudopotential_reference_sha256": "sha256:" + "a" * 64,
-            "output": {
-                "path": "input.arc",
-                "sha256": fingerprint_bytes(structure.read_bytes()),
-                "size_bytes": structure.stat().st_size,
-            },
+            "pseudopotential_reference_path": "inputs/pseudopotentials.json",
+            "output": {"path": "input.arc"},
             "potcar": {
                 "reference_id": "fixture-pbe54-plain-v1",
                 "source_env": "PMG_VASP_PSP_DIR",
@@ -88,21 +79,9 @@ def build_project(root: Path) -> Path:
                 "functional": "PBE_54",
                 "elements": ["Li", "S"],
                 "symbols": ["Li", "S"],
-                "components": [
-                    {
-                        "symbol": symbol,
-                        "sha256": fingerprint_bytes(f"FAKE-{symbol}\n".encode()),
-                    }
-                    for symbol in ("Li", "S")
-                ],
-                "combined_sha256": fingerprint_bytes(potcar.read_bytes()),
+                "components": [{"symbol": symbol} for symbol in ("Li", "S")],
                 "portable_artifact": False,
-                "output": {
-                    "path": "POTCAR",
-                    "sha256": fingerprint_bytes(potcar.read_bytes()),
-                    "size_bytes": potcar.stat().st_size,
-                    "collectable": False,
-                },
+                "output": {"path": "POTCAR", "collectable": False},
             },
         },
     )
@@ -188,14 +167,14 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         staged_records = {item["remote_name"]: item for item in scheduled["staged_files"]}
         self.assertTrue(staged_records["POTCAR"]["sensitive"])
         self.assertFalse(staged_records["POTCAR"]["fetch_allowed"])
-        self.assertEqual("vasp", adapter["lasp_scheduled_identity"]["potential"])
+        self.assertEqual("vasp", adapter["lasp_calculation"]["potential"])
         self.assertEqual(
             "fixture-pbe54-plain-v1",
-            adapter["lasp_scheduled_identity"]["pseudopotential"]["reference_id"],
+            adapter["lasp_calculation"]["pseudopotential"]["reference_id"],
         )
         self.assertNotIn("lasp_executable", staged)
-        self.assertNotIn("lasp_executable", adapter["input_fingerprints"])
-        self.assertNotIn("lasp_executable", adapter["lasp_scheduled_identity"])
+        self.assertNotIn("lasp_executable", adapter["input_paths"])
+        self.assertNotIn("lasp_executable", adapter["lasp_calculation"])
         self.assertTrue(adapter["assumptions"]["cluster_lasp_executable_is_site_owned"])
         fetched = {item["remote_name"] for item in adapter["scheduled_execution"]["fetch_outputs"]}
         self.assertTrue({"cluster-run-report.json", "sampling-result.json", "selected-structures.tar.gz", "allstr.arc"}.issubset(fetched))

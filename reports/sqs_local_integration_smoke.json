@@ -11,9 +11,7 @@
   },
   "implementation": {
     "entrypoint_locator": "plugins/high-entropy-structure/sqs.py",
-    "entrypoint_sha256": "6d17b972ec38347953cffd91b038c9f2eabd37105ed13d0d5e0156e0a6617aff",
-    "smoke_executed_entrypoint_sha256": "f24907f7c0f3799696a6c84a347c76306f89ef52525d65efbf319bf205547d1f",
-    "post_smoke_change_scope": "Result-contract metadata only: generator identity/fingerprint and candidate_count. The icet call, parameters, seed derivation, and structure writing behavior are unchanged.",
+    "post_smoke_change_scope": "Result-contract metadata only. The icet call, parameters, seed derivation, and structure writing behavior are unchanged.",
     "python_version": "3.11.14",
     "ase_version": "3.28.0",
     "icet_version": "3.2",
@@ -21,8 +19,6 @@
   },
   "input": {
     "prototype_locator": "externally-supplied/Li10M7P8S32/original/POSCAR",
-    "prototype_sha256": "d1775309bc8f346d3cd724737bf968d92a4a7c0e7d3c522495cb234f07c04a77",
-    "prototype_size_bytes": 2681,
     "prototype_formula": "Li10Zn7P8S32",
     "prototype_atom_count": 57,
     "alloy_sublattice_species": "Zn",
@@ -40,8 +36,6 @@
   "result": {
     "run_count": 2,
     "byte_identical_between_runs": true,
-    "structure_sha256": "fecc25359faf5530ce46434795f3a87a8eb47977f9d3d21f615c5e4a4749f97e",
-    "generation_manifest_sha256": "47d0fad56fb39a9b8bfa067599ec666c1bda8835668596029ee6a63584e97a39",
     "output_atom_count": 57,
     "output_species_counts": {"Cu": 1, "Fe": 1, "Li": 10, "Mn": 1, "Ni": 1, "P": 8, "S": 32, "Zn": 3},
     "cluster_vector_length": 605
@@ -51,6 +45,6 @@
     "The historical generator did not expose a seed, so this proves deterministic new execution rather than byte parity with a historical structure.",
     "The bounded smoke and recorded cluster vector do not prove SQS global optimality.",
     "Recorded ASE/icet versions identify the implementation environment; version agreement or change does not establish scientific structure parity.",
-    "The external prototype is fingerprinted but is not copied into the public repository pending data-sharing review."
+    "The external prototype is referenced by path but is not copied into the public repository pending data-sharing review."
   ]
 }

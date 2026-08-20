@@ -1,5 +1,4 @@
-"""Pure validation, fingerprinting and context assembly shared by both
-execution paths.
+"""Pure validation and context assembly shared by both execution paths.
 
 Nothing here talks to a backend or mutates workflow state; these are the checks
 that must hold identically whether a node runs locally or through a scheduler.
@@ -7,13 +6,12 @@ that must hold identically whether a node runs locally or through a scheduler.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from ..artifacts import content_identity, fingerprint
+from ..artifacts import artifact as artifact_record
 from ..config import Project
 from ..errors import ConfigError, PluginError
 from ..hpc import EXECUTION_MODELS
@@ -64,14 +62,6 @@ def _portable_roots(
     )
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
 def _is_within(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -91,9 +81,7 @@ def _project_scoped_result_path(project: Project, path: Path) -> Path:
     return resolved
 
 
-def _load_result(
-    result_path: Path, expected_identity: dict[str, Any] | None = None
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _load_result(result_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     result = load_mapping(result_path)
     if result.get("schema_version") != 1:
         raise ConfigError(f"unsupported replay result schema in {result_path}")
@@ -104,13 +92,6 @@ def _load_result(
         raise ConfigError(
             f"result manifest is not scientifically successful: {scientific_state!r}"
         )
-    if expected_identity is not None:
-        for key, expected in expected_identity.items():
-            if result.get(key) != expected:
-                raise ConfigError(
-                    f"result identity mismatch for {key}: expected {expected!r}, "
-                    f"got {result.get(key)!r}"
-                )
     raw_artifacts = result.get("artifacts", [])
     if not isinstance(raw_artifacts, list):
         raise ConfigError(f"replay artifacts must be a list in {result_path}")
@@ -133,7 +114,7 @@ def _load_result(
             raise ConfigError(f"result artifact escapes its manifest directory: {path}") from exc
         if not path.is_file():
             raise ConfigError(f"replay artifact does not exist: {path}")
-        artifacts.append({**fingerprint(path), "role": item.get("role", "output")})
+        artifacts.append({**artifact_record(path), "role": item.get("role", "output")})
     return result, artifacts
 
 
@@ -146,9 +127,7 @@ def _scheduled_contract(
     attempt: int | None = None,
     verify_staged_sources: bool = True,
 ) -> dict[str, Any]:
-    # Staging needs real paths, but a signed plan carries portable tokens, so
-    # resolve before validating.  Doing it here rather than at each of the three
-    # call sites keeps the plan-form/runtime-form boundary in one place.
+    # Staging needs real paths, so resolve portable plan values before validation.
     adapter_plan = to_runtime(
         plan.get("adapter_plan"),
         _portable_roots(project, plugin, node_id, attempt),
@@ -274,8 +253,6 @@ def _scheduled_contract(
             raise PluginError(f"scheduled staged file {index} must be a mapping")
         source_value = item.get("source")
         remote_name = item.get("remote_name")
-        declared = item.get("sha256")
-        size_bytes = item.get("size_bytes")
         if not isinstance(source_value, str) or not isinstance(remote_name, str):
             raise PluginError(f"scheduled staged file {index} lacks source/remote_name")
         # Uniqueness is on the full relative path, so calc-0001/POSCAR and
@@ -284,23 +261,13 @@ def _scheduled_contract(
             raise PluginError(f"unsafe or duplicate remote staging name: {remote_name!r}")
         names.add(remote_name)
         source = Path(source_value).expanduser().absolute()
-        if not isinstance(declared, str):
-            raise PluginError(f"scheduled staged file {index} lacks a content fingerprint")
-        if isinstance(size_bytes, bool) or not isinstance(size_bytes, int):
-            raise PluginError(f"scheduled staged file {index} lacks a byte size")
         if verify_staged_sources:
             if source.is_symlink() or not source.is_file():
                 raise PluginError(f"staging source must be an ordinary file: {source}")
             resolved = source.resolve()
             if not any(_is_within(resolved, root) for root in allowed_roots):
                 raise PluginError(f"staging source is outside the project/plugin roots: {source}")
-            if declared != _sha256_file(source):
-                raise PluginError(f"staging source fingerprint changed: {source}")
-            if size_bytes != source.stat().st_size:
-                raise PluginError(f"staging source size changed: {source}")
-        normalized_stage.append(
-            {**item, "source": str(source), "remote_name": remote_name}
-        )
+        normalized_stage.append({"source": str(source), "remote_name": remote_name})
     outputs = scheduled.get("fetch_outputs")
     if not isinstance(outputs, list) or not outputs:
         raise PluginError("scheduled_execution.fetch_outputs must be a non-empty list")
@@ -532,48 +499,6 @@ def _adapter_context(project: Project, node: dict[str, Any], attempt: int) -> di
     }
 
 
-def _adapter_command_identities(
-    project: Project,
-    adapter_plan: dict[str, Any],
-    *,
-    plugin: PluginSpec | None = None,
-    node_id: str | None = None,
-    attempt: int | None = None,
-) -> dict[str, dict[str, Any]]:
-    """Bind, by content, whichever argv entries name real files.
-
-    An interpreter or wrapper outside the project reports ``locator: None`` and
-    is identified purely by its bytes: the literal path the node will invoke is
-    already carried in ``adapter_plan.argv``, so repeating it here would make the
-    approval digest differ between two machines running identical software.
-    """
-
-    if isinstance(adapter_plan.get("scheduled_execution"), dict):
-        # Scheduled scientific inputs are exhaustively fingerprinted by
-        # staged_files.  Site-owned executable/launcher identity belongs to the
-        # selected remote templates, so no adapter argv is resolved locally.
-        return {}
-    # Hashing needs real paths; the resulting identities are locator-based and
-    # so remain portable regardless of which form went in.
-    adapter_plan = to_runtime(
-        adapter_plan, _portable_roots(project, plugin, node_id, attempt)
-    )
-    argv = adapter_plan.get("argv")
-    if not isinstance(argv, list):
-        return {}
-    raw_cwd = adapter_plan.get("cwd")
-    base = Path(raw_cwd) if isinstance(raw_cwd, str) else project.root
-    captured: dict[str, dict[str, Any]] = {}
-    for index, raw in enumerate(argv):
-        if not isinstance(raw, str) or not raw or "\x00" in raw:
-            continue
-        candidate = Path(raw)
-        candidate = candidate if candidate.is_absolute() else base / candidate
-        if candidate.exists():
-            captured[str(index)] = content_identity(candidate, root=project.root)
-    return captured
-
-
 def _normalize_adapter_artifacts(
     project: Project, attempt_dir: Path, raw_artifacts: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -595,27 +520,22 @@ def _normalize_adapter_artifacts(
                 ) from exc
             if not resolved.is_file():
                 raise PluginError(f"adapter artifact does not exist: {path}")
-            artifact = fingerprint(resolved)
-            artifact["role"] = role
+            record = artifact_record(resolved)
+            record["role"] = role
             if isinstance(item.get("media_type"), str):
-                artifact["media_type"] = item["media_type"]
-            normalized.append(artifact)
+                record["media_type"] = item["media_type"]
+            if isinstance(item.get("metadata"), dict):
+                record["metadata"] = item["metadata"]
+            normalized.append(record)
             continue
         uri = item.get("uri")
-        external_fingerprint = item.get("fingerprint")
-        if not isinstance(uri, str) or not isinstance(external_fingerprint, str):
-            raise PluginError(
-                f"adapter artifact {role!r} needs either path or uri plus fingerprint"
-            )
+        if not isinstance(uri, str):
+            raise PluginError(f"adapter artifact {role!r} needs either path or uri")
         normalized.append(
             {
                 "role": role,
                 "uri": uri,
                 "media_type": item.get("media_type"),
-                "fingerprint": external_fingerprint,
-                "fingerprint_mode": "external",
-                "size_bytes": item.get("size_bytes"),
-                "mtime_ns": None,
                 "metadata": item.get("metadata", {}),
             }
         )
@@ -658,5 +578,4 @@ def _manifest_context(
         "max_retries": max_retries,
         "previous_run_id": previous.run_id if previous is not None else None,
         "dependencies": dependencies,
-        "source_root": str(project.root),
     }

@@ -100,7 +100,7 @@ Template families remain:
 
 The v0.3 site `run.sh` invokes the staged `lammps_cluster_restart.py`. The site owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, optional `INTERFACE_PATH`, and JSON launcher argv. Keep executable and launcher stable across restart attempts.
 
-The compute-node runner resolves the prepared model only below MODEL_ROOT, verifies its content before execution, passes it via `-var MODEL_FILE`, and verifies it again after execution.
+The compute-node runner resolves the prepared model only below MODEL_ROOT, passes it via `-var MODEL_FILE`, and records the resolved path.
 
 ## Periodic restart policy
 
@@ -116,13 +116,13 @@ Before starting the long LAMMPS subprocess, write a bounded `restart-runtime.jso
 
 - attempt;
 - framework/target;
-- prepared manifest identity;
-- model identity;
+- prepared manifest path;
+- model path;
 - checkpoint cadence;
 - exact abstract resource object;
-- resolved LAMMPS executable identity;
-- site launcher prefix identity;
-- prepared launcher identity;
+- resolved LAMMPS executable path/version;
+- site launcher prefix;
+- prepared launcher argv;
 - platform system/machine/byteorder.
 
 These are failure-recovery artifacts, not normal successful outputs. After normal success, periodic checkpoint files and the runtime sidecar are removed; `final.restart` remains the ordinary successful restart artifact.
@@ -154,15 +154,15 @@ For attempt N > 1 with `auto-from-previous-attempt`, accept only the immediately
 - scheduler terminal state is restart-eligible;
 - `restart-runtime.json` was locally salvaged;
 - at least one alternating checkpoint was locally salvaged;
-- previous runtime identity matches the new plan's framework, target, prepared manifest, model, checkpoint interval, and resources.
+- previous runtime record matches the new plan's framework, target, prepared manifest, model, checkpoint interval, and resources.
 
-Stage every validated available candidate plus the runtime sidecar into the new fresh attempt. Bind each candidate to its source attempt and previous executable/platform identity.
+Stage every validated available candidate plus the runtime sidecar into the new fresh attempt. Record each candidate's source attempt and previous executable/platform version.
 
 The control plane must not parse the binary LAMMPS restart or guess its timestep.
 
 ## Compute-node resume
 
-Before `read_restart`, require current runtime to match the salvaged sidecar for executable identity, platform, site launcher identity, prepared launcher identity, resources, framework/target, prepared manifest, model, and checkpoint interval.
+Before `read_restart`, require current runtime to match the salvaged sidecar for executable path/version, platform, site launcher prefix, prepared launcher argv, resources, framework/target, prepared manifest, model, and checkpoint interval.
 
 Use the same LAMMPS executable to inspect each salvaged binary candidate. Ignore corrupt/unreadable/out-of-contract candidates and choose the largest valid timestep that lies on the declared checkpoint cadence and is below the global total step.
 
@@ -181,9 +181,9 @@ The derived resume deck must:
 
 ## Reproducibility statement
 
-Do not promise universal bitwise trajectory identity for LAMMPS restart. Binary restart is runtime-bound, and processor decomposition / floating-point ordering can still alter the resumed numerical trajectory. Record `bitwise_exact_guaranteed: false` even after compatibility checks.
+Do not promise universal bitwise trajectory equivalence for LAMMPS restart. Binary restart is runtime-bound, and processor decomposition / floating-point ordering can still alter the resumed numerical trajectory. Record `bitwise_exact_guaranteed: false` even after compatibility checks.
 
-Describe the feature as **state-continuous restart under a pinned compatible runtime**, not cross-platform portable checkpointing.
+Describe the feature as **state-continuous restart under a compatible runtime**, not cross-platform portable checkpointing.
 
 ## Completion
 
@@ -200,7 +200,7 @@ New prepared decks write wrapped `x y z` together with `ix iy iz`, allowing exac
 
 For scheduler-terminal restart attempts, `trajectory.lammpstrj` is part of the bounded salvage allowlist. The failed attempt remains `FAIL`/`STOPPED`; retaining the segment only enables `$ionic-transport` to combine it later with the successful retry by global timestep and deduplicate the boundary.
 
-For a resumed attempt, additionally require the selected checkpoint to be one of the staged salvaged candidates, a valid periodic start step, the expected source attempt, runtime compatibility confirmation, and cluster/result restart identities that agree.
+For a resumed attempt, additionally require the selected checkpoint to be one of the staged salvaged candidates, a valid periodic start step, the expected source attempt, runtime compatibility confirmation, and matching cluster/result restart records.
 
 ## Scientific interpretation
 

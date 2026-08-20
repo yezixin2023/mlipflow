@@ -57,7 +57,7 @@ If a change affects scientific results, include the relevant units, normalizatio
 Some behaviors are part of the public workflow contract:
 
 - `list`, `status`, `json`, `inspect`, `logs`, `route`, and `doctor` are read-only commands.
-- Approval-gated execution is planned with `run --dry-run` and bound to the exact reviewed plan digest.
+- Approval-gated execution is reviewed with `run --dry-run` and confirmed explicitly with `--approve`.
 - Retries create fresh attempts instead of overwriting prior attempts.
 - Scheduler completion is followed by scientific checking before a run is treated as scientifically successful.
 - Model routing is evidence- and policy-driven rather than hard-coded to a preferred model family.

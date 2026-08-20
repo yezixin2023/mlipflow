@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import importlib.util
 import json
 import sys
@@ -25,11 +24,6 @@ def _load(name: str, path: Path):
     return module
 
 
-def _sha(path: Path) -> str:
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return "sha256:" + digest
-
-
 def _write_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
@@ -39,7 +33,6 @@ def _context(tmp_path: Path, calculator: str) -> dict:
     structure = tmp_path / "inputs" / "start.extxyz"
     structure.parent.mkdir(parents=True, exist_ok=True)
     structure.write_text("1\nLattice=\"10 0 0 0 10 0 0 0 10\" Properties=species:S:1:pos:R:3 pbc=\"T T T\"\nLi 0 0 0\n", encoding="utf-8")
-    model_fp = "sha256:" + "2" * 64
     model_ref = tmp_path / "inputs" / f"{calculator}-model.json"
     _write_json(
         model_ref,
@@ -48,7 +41,6 @@ def _context(tmp_path: Path, calculator: str) -> dict:
             "model_id": f"{calculator}-model-v1",
             "relative_path": f"{calculator}/model-v1" + ("" if calculator == "m3gnet" else ".model"),
             "kind": "directory" if calculator == "m3gnet" else "file",
-            "fingerprint": model_fp,
         },
     )
     parameters = {
@@ -64,8 +56,6 @@ def _context(tmp_path: Path, calculator: str) -> dict:
         "default_dtype": "float32" if calculator == "chgnet" else "float64",
         "friction_per_fs": 0.01,
         "fix_com": True,
-        "model_fingerprint": model_fp,
-        "structure_fingerprint": _sha(structure),
         "input_index": "-1",
     }
     project = {
@@ -105,7 +95,7 @@ def test_scheduler_matrix_is_ready(tmp_path: Path, calculator: str) -> None:
     module = _load("ase_md_adapter", PLUGIN / "adapter.py")
     plan = module.Adapter().plan(_context(tmp_path, calculator))
     assert plan["status"] == "READY", plan.get("diagnostics")
-    assert plan["md_identity"]["calculator"] == calculator
+    assert plan["md_parameters"]["calculator"] == calculator
     scheduled = plan["scheduled_execution"]
     assert scheduled["schema_version"] == 3
     assert scheduled["execution_model"] == "single-python"
@@ -140,17 +130,17 @@ def test_chgnet_requires_float32(tmp_path: Path) -> None:
     assert any(item["code"] == "ase_md.chgnet_dtype" for item in plan["diagnostics"])
 
 
-def test_upstream_model_reference_fingerprint_is_authoritative(tmp_path: Path) -> None:
+def test_upstream_model_reference_path_is_authoritative(tmp_path: Path) -> None:
     module = _load("ase_md_adapter_upstream_binding", PLUGIN / "adapter_restart.py")
     context = _context(tmp_path, "m3gnet")
     reference = tmp_path / "inputs" / "m3gnet-model.json"
     context["inputs"]["model_reference"] = str(reference)
-    context["parameters"].pop("model_fingerprint")
 
     plan = module.Adapter().plan(context)
 
     assert plan["status"] == "READY", plan.get("diagnostics")
-    assert plan["md_identity"]["model_fingerprint"] == "sha256:" + "2" * 64
+    assert plan["md_parameters"]["model_id"] == "m3gnet-model-v1"
+    assert plan["md_parameters"]["model_path"] == "m3gnet/model-v1"
     assert plan["scheduled_execution"]["template_family"] == "ase-md-m3gnet-canonical"
 
 
@@ -283,8 +273,8 @@ def test_plan_binds_explicit_supercell_and_cell_bound(tmp_path: Path) -> None:
     plan = module.Adapter().plan(context)
 
     assert plan["status"] == "READY", plan.get("diagnostics")
-    assert plan["md_identity"]["supercell_repeat"] == [2, 1, 1]
-    assert plan["md_identity"]["minimum_initial_cell_length_angstrom"] == 10.0
+    assert plan["md_parameters"]["supercell_repeat"] == [2, 1, 1]
+    assert plan["md_parameters"]["minimum_initial_cell_length_angstrom"] == 10.0
     assert plan["approval_summary"]["supercell_repeat"] == [2, 1, 1]
     assert plan["approval_summary"]["minimum_initial_cell_length_A"] == 10.0
 
@@ -328,31 +318,16 @@ def test_m3gnet_reference_must_be_directory(tmp_path: Path) -> None:
     assert any(item["code"] == "ase_md.model_reference" for item in plan["diagnostics"])
 
 
-def test_cluster_fingerprint_is_stable_for_file_and_tree(tmp_path: Path) -> None:
-    cluster = _load("ase_md_cluster", PLUGIN / "ase_md_cluster.py")
-    model = tmp_path / "model.model"
-    model.write_bytes(b"model")
-    assert cluster.fingerprint(model) == _sha(model)
-    tree = tmp_path / "matgl-model"
-    tree.mkdir()
-    (tree / "model.json").write_text("{}\n", encoding="utf-8")
-    (tree / "model.pt").write_bytes(b"weights")
-    first = cluster.fingerprint(tree)
-    second = cluster.fingerprint(tree)
-    assert first == second
-    assert first.startswith("sha256:") and len(first) == 71
-
-
-def test_checker_verifies_schedule_and_hashes(tmp_path: Path) -> None:
+def test_checker_verifies_schedule_and_scientific_outputs(tmp_path: Path) -> None:
     module = _load("ase_md_checker", PLUGIN / "adapter.py")
     attempt = tmp_path / "attempt"
     attempt.mkdir()
-    identity = {
+    settings = {
         "calculator": "mace",
         "ensemble": "nvt-langevin",
         "model_id": "mace-v1",
-        "model_fingerprint": "sha256:" + "2" * 64,
-        "structure_fingerprint": "sha256:" + "3" * 64,
+        "model_path": "mace/mace-v1.model",
+        "structure_path": "structure/start.extxyz",
         "temperature_k": 900.0,
         "timestep_fs": 1.0,
         "steps": 5,
@@ -376,12 +351,12 @@ def test_checker_verifies_schedule_and_hashes(tmp_path: Path) -> None:
     final.write_text("1\nProperties=species:S:1:pos:R:3\nLi 0 0 0\n", encoding="utf-8")
     _write_json(
         attempt / "trajectory-index.json",
-        {"schema_version": 1, "steps": identity["trajectory_steps"], "time_fs": [0.0, 2.0, 4.0, 5.0]},
+        {"schema_version": 1, "steps": settings["trajectory_steps"], "time_fs": [0.0, 2.0, 4.0, 5.0]},
     )
     with (attempt / "thermo.csv").open("w", encoding="utf-8", newline="") as stream:
         writer = csv.writer(stream)
         writer.writerow(["step", "time_fs", "temperature_K", "potential_energy_eV", "kinetic_energy_eV", "total_energy_eV", "volume_A3"])
-        for step in identity["thermo_steps"]:
+        for step in settings["thermo_steps"]:
             writer.writerow([step, float(step), 900.0, -10.0, 1.0, -9.0, 100.0])
     artifact_rows = []
     for role, path in (
@@ -390,7 +365,7 @@ def test_checker_verifies_schedule_and_hashes(tmp_path: Path) -> None:
         ("thermo", attempt / "thermo.csv"),
         ("final-structure", final),
     ):
-        artifact_rows.append({"name": role, "path": path.name, "sha256": _sha(path), "size_bytes": path.stat().st_size})
+        artifact_rows.append({"name": role, "path": path.name})
     result = {
         "schema_version": 1,
         "plugin_id": "ase-md",
@@ -399,8 +374,8 @@ def test_checker_verifies_schedule_and_hashes(tmp_path: Path) -> None:
         "calculator_version": "test",
         "ase_version": "test",
         "ensemble": "nvt-langevin",
-        "model": {"id": identity["model_id"], "fingerprint": identity["model_fingerprint"]},
-        "structure_fingerprint": identity["structure_fingerprint"],
+        "model": {"id": settings["model_id"], "path": settings["model_path"]},
+        "structure_path": settings["structure_path"],
         "supercell_repeat": [2, 1, 1],
         "source_atom_count": 2,
         "atom_count": 4,
@@ -441,8 +416,8 @@ def test_checker_verifies_schedule_and_hashes(tmp_path: Path) -> None:
             "status": "OK",
             "calculator": "mace",
             "ensemble": "nvt-langevin",
-            "model": {"id": identity["model_id"], "observed_fingerprint": identity["model_fingerprint"]},
-            "structure_fingerprint": identity["structure_fingerprint"],
+            "model": {"id": settings["model_id"], "path": settings["model_path"]},
+            "structure_path": settings["structure_path"],
             "supercell_repeat": result["supercell_repeat"],
             "source_atom_count": result["source_atom_count"],
             "atom_count": result["atom_count"],
@@ -451,10 +426,12 @@ def test_checker_verifies_schedule_and_hashes(tmp_path: Path) -> None:
                 "minimum_initial_cell_length_A"
             ],
             "observed_stability": result["observed_stability"],
-            "result_sha256": _sha(attempt / "md-result.json"),
         },
     )
-    context = {"attempt_dir": str(attempt), "execution": {"plan": {"md_identity": identity}}}
+    context = {
+        "attempt_dir": str(attempt),
+        "execution": {"plan": {"md_parameters": settings}},
+    }
     checked = module.Adapter().check(context)
     assert checked["status"] == "OK", checked.get("diagnostics")
     assert checked["metrics"]["steps_completed"] == 5.0

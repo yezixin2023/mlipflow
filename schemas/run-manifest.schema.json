@@ -126,15 +126,12 @@
     "provenance": {
       "type": "object",
       "required": [
-        "plan_digest",
         "created_by",
         "software",
         "environment",
-        "source_git_commit",
         "captured_at"
       ],
       "properties": {
-        "plan_digest": {"$ref": "#/$defs/digest"},
         "created_by": {"const": "mlipflow"},
         "software": {
           "type": "array",
@@ -158,7 +155,6 @@
           },
           "additionalProperties": false
         },
-        "source_git_commit": {"type": ["string", "null"]},
         "captured_at": {"$ref": "#/$defs/timestamp"},
         "source_run_id": {"type": ["string", "null"]},
         "candidate_partitions": {
@@ -256,18 +252,13 @@
     },
     "timestamp": {"type": "string", "format": "date-time"},
     "nullable_timestamp": {"type": ["string", "null"], "format": "date-time"},
-    "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
     "artifact": {
       "type": "object",
-      "required": ["role", "uri", "fingerprint", "fingerprint_mode", "size_bytes", "mtime_ns"],
+      "required": ["role", "uri"],
       "properties": {
         "role": {"$ref": "#/$defs/identifier"},
         "uri": {"$ref": "#/$defs/non_empty_string"},
         "media_type": {"type": ["string", "null"]},
-        "fingerprint": {"$ref": "#/$defs/non_empty_string"},
-        "fingerprint_mode": {"enum": ["full", "metadata", "external"]},
-        "size_bytes": {"type": ["integer", "null"], "minimum": 0},
-        "mtime_ns": {"type": ["integer", "null"], "minimum": 0},
         "metadata": {"type": "object"}
       },
       "additionalProperties": false

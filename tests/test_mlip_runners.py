@@ -24,8 +24,8 @@ def ns(framework, operation="train", precision="float64"):
         device="cpu",
         precision=precision,
         foundation_model="foundation.model",
-        dataset_fingerprint="sha256:" + "1" * 64,
-        config_fingerprint="sha256:" + "2" * 64,
+        data="dataset.json",
+        config="config.json",
     )
 
 
@@ -143,7 +143,7 @@ def test_chgnet_columnar_schema_rejects_different_column_lengths(tmp_path):
         list(mlip_chgnet._normalized_records(data, contract, "ef"))
 
 
-def test_chgnet_split_is_seeded_and_fingerprinted():
+def test_chgnet_split_is_seeded_and_records_indices():
     cfg = {"split": {"train_ratio": 0.8, "val_ratio": 0.05, "include_test": True}}
 
     first = mlip_chgnet._split_indices(100, cfg, 23)
@@ -154,9 +154,9 @@ def test_chgnet_split_is_seeded_and_fingerprinted():
     assert (len(train), len(val), len(test)) == (80, 5, 15)
     assert len(set(train + val + test)) == 100
     assert evidence["seed"] == 23
-    assert evidence["train_indices_sha256"].startswith("sha256:")
-    assert evidence["val_indices_sha256"].startswith("sha256:")
-    assert evidence["test_indices_sha256"].startswith("sha256:")
+    assert evidence["train_indices"] == train
+    assert evidence["validation_indices"] == val
+    assert evidence["test_indices"] == test
 
 
 def test_chgnet_historical_freeze_groups_are_explicit():
@@ -275,7 +275,7 @@ def test_m3gnet_api_selection_preserves_high_level_and_legacy_paths():
         mlip_m3gnet._select_api({"api": "high_level"}, historical)
 
 
-def test_m3gnet_split_is_seeded_and_fingerprinted():
+def test_m3gnet_split_is_seeded_and_records_indices():
     cfg = {"split": {"train_ratio": 0.8, "val_ratio": 0.1, "include_test": True}}
 
     first = mlip_m3gnet._split_indices(128, cfg, 23)
@@ -286,9 +286,9 @@ def test_m3gnet_split_is_seeded_and_fingerprinted():
     assert (len(train), len(val), len(test)) == (102, 12, 14)
     assert len(set(train + val + test)) == 128
     assert evidence["seed"] == 23
-    assert evidence["train_indices_sha256"].startswith("sha256:")
-    assert evidence["val_indices_sha256"].startswith("sha256:")
-    assert evidence["test_indices_sha256"].startswith("sha256:")
+    assert evidence["train_indices"] == train
+    assert evidence["validation_indices"] == val
+    assert evidence["test_indices"] == test
 
 
 def test_m3gnet_history_requires_every_requested_finite_epoch(tmp_path):
@@ -392,7 +392,6 @@ def test_mace_plan_preserves_historical_gpu_options_and_pins_test_file(tmp_path)
             "auxiliary_data": {
                 "test_file": {
                     "relative_path": "test.xyz",
-                    "fingerprint": mlip_mace._sha256(test_data),
                 }
             },
             "options": {
@@ -437,7 +436,6 @@ def test_mace_fresh_plan_uses_dataset_energy_key_without_finetune_arguments(tmp_
             "auxiliary_data": {
                 "test_file": {
                     "relative_path": "test.xyz",
-                    "fingerprint": mlip_mace._sha256(test_data),
                 }
             },
             "options": {

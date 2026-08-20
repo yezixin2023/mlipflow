@@ -10,7 +10,6 @@ The strict caps make this path suitable only for integration smoke testing.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import random
@@ -48,35 +47,11 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
 def _artifact(path: Path, role: str, attempt_dir: Path | None = None) -> dict[str, Any]:
     resolved = path.resolve()
-    locator = resolved.name
-    relative = False
-    locator_kind = "local-basename"
-    portable = False
     if attempt_dir is not None and _is_within(resolved, attempt_dir):
-        locator = resolved.relative_to(attempt_dir).as_posix()
-        relative = True
-        locator_kind = "attempt-relative"
-        portable = True
-    return {
-        "role": role,
-        "path": locator,
-        "path_is_attempt_relative": relative,
-        "locator_kind": locator_kind,
-        "portable": portable,
-        "absolute_path_recorded": False,
-        "size_bytes": resolved.stat().st_size,
-        "sha256": _sha256(resolved),
-    }
+        return {"role": role, "path": resolved.relative_to(attempt_dir).as_posix()}
+    return {"role": role, "path": str(resolved)}
 
 
 def _load_md_source(path: Path) -> types.ModuleType:
@@ -262,11 +237,6 @@ def run_handoff(
         model_value = str(model_path)
     else:
         model_value = "default"
-    immutable_paths = [md_script, analysis_script, structure]
-    if model_path is not None:
-        immutable_paths.append(model_path)
-    before = {path: _sha256(path) for path in immutable_paths}
-
     source_module = _load_md_source(md_script)
     production_steps = int(round(production_time_ps * 1000.0 / timestep_fs))
     npt_steps = int(round(npt_time_ps * 1000.0 / timestep_fs))
@@ -382,10 +352,6 @@ def run_handoff(
         raise IntegrationSmokeError("integration smoke did not complete an Arrhenius fit")
     if not isinstance(arrhenius.get("single"), Mapping):
         raise IntegrationSmokeError("integration smoke requires a single-line Arrhenius result")
-    after = {path: _sha256(path) for path in immutable_paths}
-    if before != after:
-        raise IntegrationSmokeError("a source/input artifact changed during the smoke run")
-
     md_files = sorted(path for path in md_output.rglob("*") if path.is_file())
     analysis_files = sorted(path for path in analysis_output.rglob("*") if path.is_file())
     for path in [*md_files, *analysis_files]:
@@ -414,19 +380,12 @@ def run_handoff(
         "model": (
             {
                 "kind": "explicit-file",
-                "path": model_path.name,
-                "locator_kind": "local-basename",
-                "portable": False,
-                "absolute_path_recorded": False,
-                "sha256": _sha256(model_path),
+                "path": str(model_path),
             }
             if model_path is not None
             else {
                 "kind": "calculator-default",
                 "value": "default",
-                "portable": True,
-                "absolute_path_recorded": False,
-                "sha256": None,
             }
         ),
         "configuration": {
@@ -466,10 +425,7 @@ def run_handoff(
                 "<attempt-dir>/%s" % analysis_output.relative_to(attempt_dir).as_posix(),
                 *analysis_arguments,
             ],
-            "analysis_argv_sha256": "sha256:"
-            + hashlib.sha256(
-                json.dumps(analysis_argv, separators=(",", ":")).encode("utf-8")
-            ).hexdigest(),
+            "analysis_argv": analysis_argv,
             "absolute_paths_recorded": False,
             "analysis_shell": False,
             "analysis_returncode": completed.returncode,

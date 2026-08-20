@@ -108,9 +108,11 @@ def validate_project(raw: dict[str, Any], source: Path | str = "project") -> Non
                     f"{', '.join(embedded_scheduler)}; scheduler routing is site-owned"
                 )
             profile = node.get("backend_profile")
-            if not isinstance(profile, str) or not IDENTIFIER.fullmatch(profile):
+            if profile is not None and (
+                not isinstance(profile, str) or not IDENTIFIER.fullmatch(profile)
+            ):
                 raise ConfigError(
-                    f"{source}: ssh-slurm node {node_id} requires a safe backend_profile"
+                    f"{source}: ssh-slurm node {node_id} backend_profile must be a safe identifier"
                 )
             validate_hpc_resources(node.get("resources"))
         parameters = node.get("parameters", {})

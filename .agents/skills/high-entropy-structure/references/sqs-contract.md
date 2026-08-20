@@ -82,13 +82,13 @@ it, and output must cover exactly the approved ordered candidates—no missing, 
 duplicate IDs. Do not use the cap as permission to truncate silently.
 
 The plugin is local-only and marked expensive. Review `run --dry-run`, including exact
-candidate count, parameters, local runtime/resources, generator identity, fresh output
-locations, and staged argv. Start generation only with the approval token issued for
-that plan. Keep retries in fresh attempts and retain earlier evidence.
+candidate count, parameters, local runtime/resources, generator path/version, fresh output
+locations, and staged argv. Start generation only after the user confirms with
+`--approve`. Keep retries in fresh attempts and retain earlier evidence.
 
 ## Generator and execution boundary
 
-Omitting `sqs_script` selects the bundled, fingerprinted
+Omitting `sqs_script` selects the bundled
 `icet.generate_sqs_from_supercells` implementation. Prefer it. A custom project-relative
 script is allowed only after explicit user request and review; it must accept the fixed
 argv contract, run without a shell, honor fresh outputs and the same deterministic seed
@@ -104,12 +104,12 @@ The standard generation result binds at least:
 
 - schema/plugin/status and the base `seed`;
 - exact `candidate_count`;
-- prototype and composition-manifest SHA-256;
-- generator identity and source SHA-256;
-- ordered structure records with ID, safe attempt-relative path, structure SHA-256,
+- prototype and composition-manifest paths;
+- generator path/API/version;
+- ordered structure records with ID, safe attempt-relative path,
   exact declared alloy composition, media type, and per-candidate `random_seed`;
 - method provenance, including seed policy and, for the bundled generator, icet library/
-  API/version and ASE version identities;
+  API/version and ASE version;
 - optional `cluster_vector` per structure.
 
 If `cluster_vector` is present, it must be a non-empty finite numeric array. Its presence
@@ -118,7 +118,7 @@ does not mean the Adapter recomputed the icet objective or established a global 
 Adapter `check/collect` independently rereads the approved composition manifest and
 actual structure artifacts. It enforces candidate coverage/order/uniqueness, exact
 species/counts, alloy site count, seed derivation, candidate cap, input and generator
-identity, structure fingerprints, and full structure composition. Missing, changed,
+paths, and full structure composition. Missing, changed,
 malformed, non-finite, out-of-contract, or self-inconsistent evidence is `FAIL`.
 
 Framework versions are provenance. Same or different ASE/icet version strings do not by
@@ -128,7 +128,7 @@ themselves establish scientific structure parity.
 
 Replay consumes an existing standard `generation-result.json` plus the referenced,
 verifiable approved inputs and structure artifacts. It performs the same contract and
-fingerprint checks without importing/executing the generator, running icet, writing new
+scientific checks without importing/executing the generator, running icet, writing new
 structures, or mutating source evidence. Describe success as read-only verification of
 existing generation evidence, never as regeneration or independent scientific
 validation.
@@ -137,7 +137,7 @@ validation.
 
 - “generated SQS candidate” does not mean “globally optimal SQS.”
 - deterministic output under the declared seed policy does not prove convergence.
-- a new seeded execution cannot establish historical byte identity when the historical
+- a new seeded execution cannot establish historical byte-for-byte parity when the historical
   generator had no seed.
 - `LOCAL_INTEGRATION_SMOKE_PASS` proves only the bounded wrapper/seed/write/manifest
   integration and determinism exercised by that smoke; it is not production-quality SQS.

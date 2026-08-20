@@ -17,16 +17,13 @@
   },
   "implementation": {
     "adapter": {
-      "locator": "plugins/pes-sampling/adapter.py",
-      "sha256": "52f065d6fb58e79361425d6d575762888d0d70067786f30de886a8958079a84f"
+      "locator": "plugins/pes-sampling/adapter.py"
     },
     "wrapper": {
-      "locator": "plugins/pes-sampling/lasp_ssw.py",
-      "sha256": "a999ef8edb5190766a5a3e20f776451d326e002337a7cb8b80aff027a5d29f6a"
+      "locator": "plugins/pes-sampling/lasp_ssw.py"
     },
     "plugin_manifest": {
-      "locator": "plugins/pes-sampling/plugin.yaml",
-      "sha256": "b60ac5bad8c44b1a7b93df767af81f6f97e2dbce098826242dcc3e34da38c405"
+      "locator": "plugins/pes-sampling/plugin.yaml"
     }
   },
   "source_audit": {
@@ -39,28 +36,13 @@
     "temporary_local_copies_retained_after_audit": false,
     "initial_run": {
       "locator": "remote-mlp://Li10M7P8S32/run/11113",
-      "source_files": {
-        "lasp.in": {
-          "size_bytes": 247,
-          "sha256": "c882875e4760a07de7f49cfa20e0df6d3b2089220d044b4e6b4034f4ba8c3e13"
-        },
-        "allstr.arc": {
-          "size_bytes": 28837,
-          "sha256": "e432c7f2a4e3a581bddb1b4a86a47f4adc566dd113bb1688ce42db2aaadcb65a"
-        },
-        "best.arc": {
-          "size_bytes": 9629,
-          "sha256": "d72e7208db8bd9ec93986fcbf1643737d848bf8432a6d527adeb9b5d3ad2d83f"
-        },
-        "SSWtraj": {
-          "size_bytes": 156,
-          "sha256": "4cb137bd4268b1f96631a42996f129bcd394cdd399c777046d14be56d05b8591"
-        },
-        "single.py": {
-          "size_bytes": 1011,
-          "sha256": "cf5dc705d67103a942104851e1fdb48e2395c5114f01b85b4e42d704b8e5acf4"
-        }
-      },
+      "source_files": [
+        "lasp.in",
+        "allstr.arc",
+        "best.arc",
+        "SSWtraj",
+        "single.py"
+      ],
       "reviewed_parameters": {
         "potential": "vasp",
         "explore_type": "ssw",
@@ -79,38 +61,16 @@
     },
     "rerun": {
       "locator": "remote-mlp://Li10M7P8S32/rerun/run/11113",
-      "source_files": {
-        "lasp.in": {
-          "size_bytes": 367,
-          "sha256": "d3619680bc4c3f50c467f59e44c0d13c1f8c4a30767896e8e4a0299bee1edb71"
-        },
-        "allstr.arc": {
-          "size_bytes": 316547,
-          "sha256": "6f5a3e202aaab95ff32f1e488fc2be6ebbdc0cebd87412d81ffb19ef458c91f0"
-        },
-        "best.arc": {
-          "size_bytes": 4827,
-          "sha256": "01627e9d6b75767567c974c5a89c1372e6ba5f6a36db3e0b81fe8487e8505841"
-        },
-        "md.arc": {
-          "size_bytes": 82645,
-          "sha256": "117a9470cf88aa28abd78c6986b8317012dbc438f302b09f2181722d3bafa4c1"
-        },
-        "SSWtraj": {
-          "size_bytes": 108,
-          "sha256": "688d43b3d163040af70e0f3c58c143612f561bd2641dc9d527d1c981068b2e70"
-        },
-        "single.py": {
-          "size_bytes": 1011,
-          "sha256": "cf5dc705d67103a942104851e1fdb48e2395c5114f01b85b4e42d704b8e5acf4"
-        },
-        "single_extract.slurm": {
-          "sha256": "f8058827bdbf7f45a9a98635ed2af8e2146b76efd831b9ba3a19e383a8e3a2b3"
-        },
-        "md.py": {
-          "sha256": "44e1ddf12b1d6c4b5c458c72d4bf8b609a455feff45c563840cd9627d7d74aa2"
-        }
-      },
+      "source_files": [
+        "lasp.in",
+        "allstr.arc",
+        "best.arc",
+        "md.arc",
+        "SSWtraj",
+        "single.py",
+        "single_extract.slurm",
+        "md.py"
+      ],
       "reviewed_parameters": {
         "potential": "vasp",
         "explore_type": "ssw",
@@ -147,9 +107,7 @@
       "energy_accepted_count": 5,
       "selected_structure_count": 5,
       "aimd_seed_candidate_count": 2,
-      "md_structure_count": 0,
-      "sampling_result_size_bytes": 5594,
-      "sampling_result_sha256": "20f3ddf49d049054203b2ce729bd2fcc5b4623481ad75a88a9686b5d98c3b0ae"
+      "md_structure_count": 0
     },
     "rerun": {
       "wrapper_returncode": 0,
@@ -158,13 +116,11 @@
       "energy_accepted_count": 25,
       "selected_structure_count": 9,
       "aimd_seed_candidate_count": 1,
-      "md_structure_count": 17,
-      "sampling_result_size_bytes": 27161,
-      "sampling_result_sha256": "1a3233429a52f4607846134d33ff9b183d99f9321bd338893a0e02765d4c9090"
+      "md_structure_count": 17
     }
   },
   "comparison": {
-    "source_sha256": "exact",
+    "source_paths_and_reviewed_parameters": "recorded",
     "frame_counts": "exact",
     "finite_energy_values": "exact text-to-float parse",
     "energy_filter": "exact inclusive energy_ev <= 0",

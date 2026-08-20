@@ -1,10 +1,9 @@
-"""Fingerprint-pinned regressions from the read-only historical benchmark audit."""
+"""Scientific regressions from the read-only historical benchmark audit."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
-import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,20 +24,17 @@ def _wrapper():
 
 
 class HistoricalBenchmarkAuditTests(unittest.TestCase):
-    def test_real_source_and_output_extractions_are_pinned_without_fresh_claim(self) -> None:
+    def test_real_source_and_output_extractions_preserve_their_claim_boundary(self) -> None:
         audit = json.loads(AUDIT.read_text(encoding="utf-8"))
         families = audit["families"]
         self.assertFalse(audit["model_execution"])
         self.assertIn("not fresh inference parity", audit["claim"])
         self.assertEqual(set(_wrapper().MODEL_NAMES), set(families))
 
-        sha = re.compile(r"^sha256:[0-9a-f]{64}$")
         for family in ("deepmd-se_e2_a", "deepmd-se_e2_r", "deepmd-se_atten_v2"):
             record = families[family]
             self.assertEqual("REPLAY_VERIFIED", record["status"])
-            self.assertEqual("deepmd-metrics-xlsx", record["parser_identity"])
-            self.assertRegex(record["source_sha256"], sha)
-            self.assertRegex(record["output_sha256"], sha)
+            self.assertEqual("deepmd-metrics-xlsx", record["parser"])
             self.assertEqual("per-atom", record["energy_normalization"])
             self.assertEqual("source-unit-unspecified", record["energy_unit"])
             self.assertEqual("source-unit-unspecified", record["force_unit"])
@@ -46,7 +42,7 @@ class HistoricalBenchmarkAuditTests(unittest.TestCase):
             self.assertEqual(2673726, record["force_component_count"])
 
         chgnet = families["chgnet"]
-        self.assertEqual("chgnet-efs-metrics-xlsx", chgnet["parser_identity"])
+        self.assertEqual("chgnet-efs-metrics-xlsx", chgnet["parser"])
         self.assertEqual(9753, chgnet["structure_count"])
         self.assertEqual(1992795, chgnet["force_component_count"])
         self.assertEqual(9 * chgnet["structure_count"], chgnet["stress_component_count"])
@@ -57,7 +53,6 @@ class HistoricalBenchmarkAuditTests(unittest.TestCase):
         self.assertAlmostEqual(12.46909130171059, chgnet["stress_rmse"])
 
         self.assertEqual("MISSING_SOURCE", families["m3gnet"]["status"])
-        self.assertRegex(families["m3gnet"]["source_sha256"], sha)
         self.assertEqual("MISSING_SOURCE", families["deepmd-dpa2"]["status"])
 
     def test_ranking_direction_and_ties_are_metric_only(self) -> None:

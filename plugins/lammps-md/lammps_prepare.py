@@ -7,7 +7,6 @@ is supplied later through the LAMMPS command-line variable ``MODEL_FILE``.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import math
@@ -21,7 +20,6 @@ SCHEMA_VERSION = 1
 MAX_JSON_BYTES = 16 * 1024 * 1024
 MAX_STRUCTURE_BYTES = 128 * 1024 * 1024
 MAX_OUTPUT_BYTES = 256 * 1024 * 1024
-SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SAFE_ELEMENT = re.compile(r"[A-Z][a-z]?")
 SAFE_STRUCTURE_FORMAT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
@@ -90,14 +88,6 @@ M3GNET_INTERFACES: dict[str, dict[str, Any]] = {
 
 class ContractError(ValueError):
     pass
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def _ordinary_file(path: Path, label: str, max_bytes: int) -> Path:
@@ -177,7 +167,7 @@ def _model_reference(path: Path) -> dict[str, Any]:
     value = _read_json(path, "model_reference")
     allowed = {
         "schema_version", "model_id", "framework", "relative_path", "kind",
-        "fingerprint", "artifact_format", "elements", "lammps_interface",
+        "artifact_format", "elements", "lammps_interface",
     }
     unknown = sorted(set(value) - allowed)
     if unknown:
@@ -215,9 +205,6 @@ def _model_reference(path: Path) -> dict[str, Any]:
         raise ContractError(
             f"{framework} lammps_interface={lammps_interface or framework} model_reference.kind must be {expected_kind}"
         )
-    fingerprint = value.get("fingerprint")
-    if not isinstance(fingerprint, str) or not SHA256.fullmatch(fingerprint):
-        raise ContractError("model_reference.fingerprint must be sha256:<64 lowercase hex>")
     expected_format = interface["artifact_format"]
     if value.get("artifact_format") != expected_format:
         raise ContractError(f"{framework} LAMMPS artifact_format must be {expected_format}")
@@ -226,7 +213,6 @@ def _model_reference(path: Path) -> dict[str, Any]:
         "framework": framework,
         "relative_path": relative,
         "kind": expected_kind,
-        "fingerprint": fingerprint,
         "artifact_format": expected_format,
         "elements": _elements(value.get("elements"), "model_reference.elements"),
     }
@@ -464,14 +450,14 @@ def prepare(
             _deck(str(model["framework"]), target, config, lammps_interface),
             encoding="utf-8",
         )
-        generated.append({"name": name, "sha256": _sha256(path), "size_bytes": path.stat().st_size})
+        generated.append({"name": name})
         launchers.append(
             _launcher(str(model["framework"]), target, name, lammps_interface)
         )
 
     generated.insert(
         0,
-        {"name": "structure.data", "sha256": _sha256(structure_data), "size_bytes": structure_data.stat().st_size},
+        {"name": "structure.data"},
     )
     manifest = {
         "schema_version": SCHEMA_VERSION,
@@ -480,10 +466,10 @@ def prepare(
         "status": "OK",
         "ase_version": importlib.metadata.version("ase"),
         "source_structure_format": source_structure_format or "auto",
-        "input_fingerprints": {
-            "structure": _sha256(structure),
-            "model_reference": _sha256(model_reference),
-            "lammps_config": _sha256(config_path),
+        "input_paths": {
+            "structure": str(structure),
+            "model_reference": str(model_reference),
+            "lammps_config": str(config_path),
         },
         "model": model,
         "md": config,
@@ -492,9 +478,9 @@ def prepare(
         "launchers": launchers,
         "notes": [
             "Input decks contain no absolute model or cluster path.",
-            "The execution layer must resolve the approved model fingerprint and pass -var MODEL_FILE <path>.",
+            "The execution layer must resolve the recorded model path and pass -var MODEL_FILE <path>.",
             "MACE and native MatGL inputs require LAMMPS-exported model artifacts, not raw training checkpoints.",
-            "Legacy MatGL Python-bridge interfaces accept only an explicitly declared, tree-fingerprinted native MatGL model directory.",
+            "Legacy MatGL Python-bridge interfaces accept only an explicitly declared native MatGL model directory.",
         ],
     }
     manifest_path = output_dir / "lammps-input-manifest.json"

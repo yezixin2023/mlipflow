@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import importlib.util
 import io
 import json
@@ -33,10 +32,6 @@ def load_module(name: str, path: Path) -> Any:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def sha256_bytes(payload: bytes) -> str:
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
 def arc_payload(symbols: list[str], scaled: list[list[float]]) -> bytes:
@@ -106,9 +101,8 @@ def write_fixture(root: Path) -> tuple[Path, Path, Path]:
                         "structure_id": f"lasp-ssw-{index:02d}",
                         "selected_order": index,
                         "output_file": name,
-                        "frame_sha256": sha256_bytes(payload),
                     }
-                    for index, (name, payload) in enumerate(payloads.items(), 1)
+                    for index, name in enumerate(payloads, 1)
                 ],
             },
             indent=2,
@@ -195,7 +189,9 @@ def test_merge_runner_adapter_and_dft_ready_manifest(tmp_path: Path) -> None:
     assert [record["id"] for record in records] == [item["id"] for item in manifest["structures"]]
 
 
-def test_merge_checker_rejects_changed_normalized_structure(tmp_path: Path) -> None:
+def test_merge_checker_accepts_nonscientific_text_change(
+    tmp_path: Path,
+) -> None:
     adapter = load_module("test_structure_merge_adapter_changed", ADAPTER_PATH).Adapter()
     value = context(tmp_path)
     plan = adapter.plan(value)
@@ -208,8 +204,7 @@ def test_merge_checker_rejects_changed_normalized_structure(tmp_path: Path) -> N
     structure = Path(plan["expected_outputs"][0]).parent / manifest["structures"][0]["path"]
     structure.write_text(structure.read_text(encoding="utf-8") + "\n", encoding="utf-8")
     checked = adapter.check(value)
-    assert checked["status"] == "FAIL"
-    assert any(item["code"] == "result.structure_fingerprint" for item in checked["diagnostics"])
+    assert checked["status"] == "OK"
 
 
 def test_lasp_input_prepare_converts_selected_ase_frame(tmp_path: Path) -> None:
@@ -306,7 +301,6 @@ def test_lasp_input_prepare_materializes_noncollectable_potcar(
                 "".join(str(component) for component in self), encoding="utf-8"
             )
 
-    component_payloads = {symbol: f"FAKE-{symbol}\n".encode() for symbol in ("Li", "P")}
     reference = tmp_path / "pseudopotentials.json"
     reference.write_text(
         json.dumps(
@@ -317,13 +311,6 @@ def test_lasp_input_prepare_materializes_noncollectable_potcar(
                 "license_acknowledged": True,
                 "functional": "PBE_54",
                 "symbols": {"Li": "Li", "P": "P"},
-                "expected_component_sha256": {
-                    symbol: sha256_bytes(payload)
-                    for symbol, payload in component_payloads.items()
-                },
-                "expected_combined_sha256": sha256_bytes(
-                    b"".join(component_payloads.values())
-                ),
             },
             indent=2,
             sort_keys=True,
@@ -381,4 +368,4 @@ def test_lasp_input_prepare_materializes_noncollectable_potcar(
     assert all(Path(item["path"]).name != "POTCAR" for item in collected["artifacts"])
     manifest = json.loads(Path(checked["result_file"]).read_text(encoding="utf-8"))
     assert manifest["potcar"]["output"]["collectable"] is False
-    assert manifest["potcar"]["combined_sha256"] == manifest["potcar"]["output"]["sha256"]
+    assert manifest["potcar"]["symbols"] == ["Li", "P"]

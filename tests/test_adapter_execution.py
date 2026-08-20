@@ -71,7 +71,7 @@ class AdapterExecutionTests(unittest.TestCase):
             project = type(
                 "FixtureProject",
                 (),
-                {"raw": {"fingerprints": {"full_hash_max_bytes": 1024}}},
+                {"raw": {}},
             )()
             with self.assertRaisesRegex(PluginError, "escapes"):
                 _normalize_adapter_artifacts(
@@ -84,7 +84,7 @@ class AdapterExecutionTests(unittest.TestCase):
                     project, attempt, [{"role": "bad", "path": str(link)}]
                 )
 
-    def test_adapter_source_and_command_files_are_bound_to_approval_digest(self) -> None:
+    def test_adapter_and_command_paths_are_recorded(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             plugins = root / "plugins"
@@ -121,13 +121,14 @@ class Adapter:
             first = make_run_plan(project, "bound", plugins)
             worker.write_text("print('two')\n", encoding="utf-8")
             second = make_run_plan(project, "bound", plugins)
-            self.assertNotEqual(first["plan_digest"], second["plan_digest"])
+            self.assertEqual(first, second)
             adapter_path.write_text(
                 adapter_path.read_text(encoding="utf-8") + "\n# reviewed change\n",
                 encoding="utf-8",
             )
             third = make_run_plan(project, "bound", plugins)
-            self.assertNotEqual(second["plan_digest"], third["plan_digest"])
+            self.assertEqual(second, third)
+            self.assertEqual(str(worker), third["adapter_plan"]["argv"][0])
 
     def test_retry_limit_and_manifest_lineage_are_enforced(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -158,14 +159,13 @@ class Adapter:
             write_json(root / "project.yaml", project_config([node]))
             initialize(root)
             project = load_project(root)
-            first_plan = make_run_plan(project, "fails", plugins)
-            first = run_node(project, "fails", plugins, first_plan["plan_digest"])
+            first = run_node(project, "fails", plugins)
             first_run_id = first["step"]["run_id"]
             retry_plan = make_retry_plan(project, "fails", plugins)
-            self.assertNotIn("plan_digest", retry_plan)
+            self.assertEqual(1, retry_plan["details"]["previous_attempt"])
             retry(project, "fails", plugins)
-            second_plan = make_run_plan(project, "fails", plugins)
-            second = run_node(project, "fails", plugins, second_plan["plan_digest"])
+            second = run_node(project, "fails", plugins)
+            self.assertEqual(2, second["step"]["attempt"])
             second_manifest = json.loads(
                 Path(second["step"]["manifest_path"]).read_text(encoding="utf-8")
             )
@@ -203,9 +203,8 @@ class Adapter:
                 write_json(cwd / "result.json", {"metrics": {"mae": 0.1}})
                 return ExecutionResult(0, "fixture stdout\n", "")
 
-            plan = make_run_plan(project, "adapter", plugins)
             with patch("mlipflow.services.LocalBackend.run", side_effect=execute):
-                result = run_node(project, "adapter", plugins, plan["plan_digest"])
+                result = run_node(project, "adapter", plugins)
             self.assertEqual(result["step"]["state"], "OK")
             state = query_workflow(project)["steps"][0]
             self.assertEqual({"stdout", "stderr", "metric"}, {a["role"] for a in state["artifacts"]})

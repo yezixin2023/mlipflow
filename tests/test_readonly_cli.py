@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,7 +30,6 @@ class ReadOnlyCliTests(unittest.TestCase):
         write_json(self.root / "project.yaml", project_config([node]))
         evidence = self.root / "benchmark.csv"
         evidence.write_text("model,diffusion_mae\ndeepmd,0.1\n", encoding="utf-8")
-        evidence_digest = "sha256:" + hashlib.sha256(evidence.read_bytes()).hexdigest()
         write_json(
             self.root / "model_registry.yaml",
             {
@@ -49,8 +47,6 @@ class ReadOnlyCliTests(unittest.TestCase):
                                 "validation_samples": 5,
                                 "artifact": {
                                     "uri": "benchmark.csv",
-                                    "fingerprint": evidence_digest,
-                                    "size_bytes": evidence.stat().st_size,
                                 },
                                 "metrics": {"diffusion_mae": 0.1},
                             }
@@ -131,7 +127,6 @@ class ReadOnlyCliTests(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         compact = json.loads(stdout)["data"]
         self.assertFalse(compact["approval_required"])
-        self.assertNotIn("plan_digest", compact)
         self.assertNotIn("adapter_plan", compact)
 
         code, stdout, stderr = run_cli(
@@ -150,8 +145,7 @@ class ReadOnlyCliTests(unittest.TestCase):
         )
         self.assertEqual(code, 0, stderr)
         audit = json.loads(stdout)["data"]
-        self.assertTrue(audit["plan_digest"].startswith("sha256:"))
-        self.assertIn("input_identities", audit)
+        self.assertEqual({"result_manifest": "result.json"}, audit["inputs"])
         self.assertEqual(snapshot(self.root), before)
 
 

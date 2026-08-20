@@ -24,9 +24,7 @@ ASE MD declares `execution_model: single-python`; install `slurm/single-python/c
 
 ## Model registry reference
 
-The project stores a small `model-reference.json` rather than uploading the model. DeepMD, CHGNet, and MACE use `kind: file`. M3GNet/MatGL uses `kind: directory`. `relative_path` is resolved only below the site-owned `MODEL_ROOT`, and the compute-node runner recomputes the declared content fingerprint before and after MD.
-
-For a directory model, the fingerprint is a deterministic tree hash over sorted relative file names, sizes, and per-file SHA-256 values.
+The project stores a small `model-reference.json` rather than uploading the model. DeepMD, CHGNet, and MACE use `kind: file`. M3GNet/MatGL uses `kind: directory`. `relative_path` is resolved only below the site-owned `MODEL_ROOT`; the run record keeps the model ID, path, calculator settings, software version, seed, and outputs.
 
 ## NVT workflow node with restart
 
@@ -54,8 +52,6 @@ For a directory model, the fingerprint is a deterministic tree hash over sorted 
     default_dtype: float64
     friction_per_fs: 0.01
     fix_com: true
-    model_fingerprint: sha256:REPLACE_WITH_MODEL_FINGERPRINT
-    structure_fingerprint: sha256:REPLACE_WITH_STRUCTURE_SHA256
     input_index: "-1"
   resources:
     cpus: 8
@@ -96,8 +92,6 @@ NVT checkpoints restore the atomic state plus the NumPy `PCG64` bit-generator st
     device: cuda
     default_dtype: float64
     fix_com: false
-    model_fingerprint: sha256:REPLACE_WITH_MODEL_FINGERPRINT
-    structure_fingerprint: sha256:REPLACE_WITH_STRUCTURE_SHA256
     input_index: "-1"
   resources:
     cpus: 8
@@ -119,7 +113,7 @@ When `checkpoint_interval` is set, the runner atomically replaces `output/md-che
 The checkpoint binds:
 
 - plugin/checkpoint schema and exact ASE version;
-- calculator, ensemble, model id/fingerprint and original structure fingerprint;
+- calculator, ensemble, model ID/path and original structure path;
 - total requested steps, completed global step, timestep, temperature and seed;
 - device/dtype and ensemble-specific friction or NPT pressure/damping/chain settings;
 - atomic numbers/order, positions, momenta, cell, masses and PBC;
@@ -136,8 +130,8 @@ A scheduler failure does **not** make arbitrary remote files eligible for downlo
 2. If Slurm reports `TIMEOUT`, `PREEMPTED`, `NODE_FAIL`, `OUT_OF_MEMORY`, `DEADLINE`, or another restart-eligible terminal state, run `advance` before creating a retry.
 3. Core inventories only the adapter's `failure_salvage` subset of the already approved fetch allowlist, rechecks it during transport, and leaves the attempt in `FAIL` or `STOPPED`. For ASE MD this can include `md-checkpoint.json` and partial trajectory/index/thermo segment files. A salvaged checkpoint is not scientific success.
 4. Run `retry`. This creates a **fresh attempt directory**; it does not reuse the failed remote workspace or launch computation.
-5. Dry-run the new MD attempt. With `restart_policy: auto-from-previous-attempt`, the adapter reads only the immediately previous local attempt's salvaged `md-checkpoint.json`, verifies the previous scheduler terminal state and checkpoint identity, stages the checkpoint as `input/restart/md-checkpoint.json`, and binds its SHA-256 into the new execution plan.
-6. Review `restart_from_attempt`, `restart_checkpoint_sha256`, `segment_start_step`, `remaining_steps`, and the new segment's frame/thermo schedules, then approve submission.
+5. Dry-run the new MD attempt. With `restart_policy: auto-from-previous-attempt`, the adapter reads only the immediately previous local attempt's salvaged `md-checkpoint.json`, verifies the previous scheduler terminal state and matching scientific parameters, and stages the checkpoint as `input/restart/md-checkpoint.json`.
+6. Review `restart_from_attempt`, the checkpoint path, `segment_start_step`, `remaining_steps`, and the new segment's frame/thermo schedules, then approve submission.
 
 There is no project parameter for an arbitrary restart path. This prevents an Agent from pointing a retry at an unrelated or unreviewed checkpoint.
 
@@ -155,8 +149,8 @@ The producer does not concatenate segments into a replacement file. Keep all att
 
 ## Approval and successful output contract
 
-The submission approval summary exposes total simulated time, current segment start/remaining steps, exact output schedules, checkpoint/restart identity, structure/model identities, device, abstract resources, and ensemble-specific settings. NPT additionally exposes target pressure, thermostat/barostat damping, stress requirement, isotropic cell mode, no-constraints requirement, and pinned chain configuration.
+The submission approval summary exposes total simulated time, current segment start/remaining steps, exact output schedules, checkpoint path, structure/model paths, device, abstract resources, and ensemble-specific settings. NPT additionally exposes target pressure, thermostat/barostat damping, stress requirement, isotropic cell mode, no-constraints requirement, and fixed chain configuration.
 
-After Slurm reports `COMPLETED`, use the normal second `advance` approval so MLIPFlow inventories and fetches only bounded declared outputs and runs the pinned checker.
+After Slurm reports `COMPLETED`, use the normal second `advance` approval so MLIPFlow inventories and fetches only bounded declared outputs and runs the scientific checker.
 
-A successful checkpoint-enabled attempt fetches `trajectory.traj`, `trajectory-index.json`, `thermo.csv`, `md-checkpoint.json`, `final.extxyz`, `md-result.json`, and `cluster-run-report.json`. The checker verifies completed total steps, segment frame/thermo schedules, finite thermodynamic values, model/structure/restart fingerprints, checkpoint identity, and output SHA-256 values. NPT thermo additionally checks `pressure_GPa`, positive volume, and positive cell lengths. Scheduler exit code alone is never accepted as scientific success.
+A successful checkpoint-enabled attempt fetches `trajectory.traj`, `trajectory-index.json`, `thermo.csv`, `md-checkpoint.json`, `final.extxyz`, `md-result.json`, and `cluster-run-report.json`. The checker verifies completed total steps, segment frame/thermo schedules, finite thermodynamic values, the recorded model/structure paths, and checkpoint scientific parameters. NPT thermo additionally checks `pressure_GPa`, positive volume, and positive cell lengths. Scheduler exit code alone is never accepted as scientific success.

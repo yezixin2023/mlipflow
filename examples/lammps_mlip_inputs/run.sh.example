@@ -9,7 +9,7 @@ MODEL_ROOT=/ABS/PATH/TO/site/model-registry
 # JSON argv placed before LAMMPS_BIN, e.g. ["srun","--ntasks=1"] or [].
 # For MACE/MatGL GPU v0.3 use exactly one LAMMPS rank/GPU.
 # For DeepMD multi-GPU, the site may choose one rank per GPU.
-# Keep this launcher stable across restart attempts: v0.3 fingerprints it.
+# Keep these launcher arguments stable across binary-restart attempts.
 LAMMPS_LAUNCHER_JSON='["srun","--ntasks=1"]'
 
 # Standard MLIPFlow template variables are deliberately visible here:

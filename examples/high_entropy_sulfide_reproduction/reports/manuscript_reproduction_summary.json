@@ -2,55 +2,40 @@
   "benchmark_normalization": {
     "artifacts": [
       {
-        "path": "benchmark/benchmark_summary.csv",
-        "sha256": "sha256:992064cf3f2cd20e2e2e82fe266df5d2c9301d20b83fb8ea5466ab015c1dfd53",
-        "size_bytes": 14180
+        "path": "benchmark/benchmark_summary.csv"
       },
       {
-        "path": "benchmark/metrics.json",
-        "sha256": "sha256:4429869a822527955096a6eb1cb246e7c9f2fb4d08d11f2b22298138fa8ac352",
-        "size_bytes": 24808
+        "path": "benchmark/metrics.json"
       },
       {
-        "path": "benchmark/model_ranking.json",
-        "sha256": "sha256:2e2847fbbbe2d7265a0dc6f2f4ad8f093ebe2aaa6e58b5f2f2974cd1c0d114bd",
-        "size_bytes": 10634
+        "path": "benchmark/model_ranking.json"
       },
       {
-        "path": "benchmark/provenance.json",
-        "sha256": "sha256:8b3da7bfa4341c0399d41041a3bcbac50c8824a0b0dbc1a5e3d006cd4f7d8131",
-        "size_bytes": 1253
+        "path": "benchmark/provenance.json"
       }
     ],
     "implementation": "plugins/mlip-benchmark/benchmark_wrapper.py",
     "implementation_files": [
       {
-        "locator": "plugins/mlip-benchmark/benchmark_wrapper.py",
-        "sha256": "sha256:b6e0baf816288e29a8def026b9756caa032ad05f47596d7841bd212b2c5e2681"
+        "locator": "plugins/mlip-benchmark/benchmark_wrapper.py"
       },
       {
-        "locator": "plugins/mlip-benchmark/benchmark_normalization.py",
-        "sha256": "sha256:d29459b7e3b0ecbccf91f5fbfae0ea40aa1cd4ea27c185bdcd63f28fe14ae5eb"
+        "locator": "plugins/mlip-benchmark/benchmark_normalization.py"
       },
       {
-        "locator": "src/mlipflow/science/model_runtime.py",
-        "sha256": "sha256:29da14bbada6851bb9e32966c150012c69ddf28cc3fbc4e000284d2e7e55d2c0"
+        "locator": "src/mlipflow/science/model_runtime.py"
       },
       {
-        "locator": "plugins/mlip-benchmark/plugin.yaml",
-        "sha256": "sha256:ec00b11bd0a0b852a00394c94d525401b3ffb0b0268733ddeb16d4d5bfa5b264"
+        "locator": "plugins/mlip-benchmark/plugin.yaml"
       }
     ],
-    "implementation_sha256": "sha256:b6e0baf816288e29a8def026b9756caa032ad05f47596d7841bd212b2c5e2681",
     "input": [
       {
         "normalized_record_count": 27,
         "parser": "prepared-json",
         "path": "evidence/benchmark_records.json",
         "read_only_import": true,
-        "sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
-        "sheets": [],
-        "size_bytes": 13240
+        "sheets": []
       }
     ],
     "mode": "replay",
@@ -60,7 +45,7 @@
   },
   "calculation_claim": "No MLIP, MD, AIMD, DFT, training, or structure generation was executed.",
   "evidence_integrity": {
-    "all_transcriptions_sha256_verified": true,
+    "all_evidence_paths_present": true,
     "all_transparent_reductions_recomputed": true,
     "prepared_benchmark_record_count": 27,
     "transcription_manifest": "evidence/transcription_provenance.json",
@@ -140,24 +125,20 @@
   "large_supercell_screening": {
     "artifact_type": "mlipflow.evidence_replay.large_supercell_screening_top10",
     "calculation_claim": "This compact artifact transcribes an already-completed deterministic screening result; this example did not generate candidates, run transport simulations, or execute an MLIP.",
-    "evidence_level": "PINNED_LOCAL_RESULT_ARTIFACT",
+    "evidence_level": "RECORDED_LOCAL_RESULT_ARTIFACT",
     "implementation": {
       "files": [
         {
-          "locator": "plugins/composition-screening/screen.py",
-          "sha256": "sha256:18fab4cb37aae5c485277050a8ba0d2df03b27545082e75cd342df495b15d335"
+          "locator": "plugins/composition-screening/screen.py"
         },
         {
-          "locator": "plugins/composition-screening/normalize_legacy.py",
-          "sha256": "sha256:783a6db77ea116e045e4c4ad7a6f56b3a08b5ff5915e673d23389bec84af4d0b"
+          "locator": "plugins/composition-screening/normalize_legacy.py"
         },
         {
-          "locator": "plugins/composition-screening/adapter.py",
-          "sha256": "sha256:ad43b2a8a12873eb188760ebfaeed4bb018925b3cbbd85890c4d8f9c0002edb5"
+          "locator": "plugins/composition-screening/adapter.py"
         },
         {
-          "locator": "plugins/composition-screening/plugin.yaml",
-          "sha256": "sha256:413c0985d43df3cfa76bc3005ffcbb77178944a88bd17e619f7c938b3eec022e"
+          "locator": "plugins/composition-screening/plugin.yaml"
         }
       ],
       "plugin_id": "composition-screening",
@@ -185,7 +166,7 @@
       "excluded_missing_count": 0,
       "expected_metal_sites_per_candidate": 28,
       "normalizer": "mlipflow-legacy-li10-screening-v1",
-      "portable_locator_note": "Personal and cluster absolute paths are intentionally omitted; full input manifests and every legacy source text are pinned by SHA-256, basename, and byte size.",
+      "portable_locator_note": "Personal and cluster absolute paths are intentionally omitted; source basenames and reviewed parameters are recorded.",
       "source_structure_count": 247,
       "unique_source_structure_count": 247
     },
@@ -193,117 +174,73 @@
       "candidate_source_file_count": 11,
       "candidate_sources": [
         {
-          "basename": "output_Zn2.txt",
-          "sha256": "sha256:136a289a9f5f288873357fb813b09b418a122cdc434861a5985cbbbe98b00c07",
-          "size_bytes": 2670
+          "basename": "output_Zn2.txt"
         },
         {
-          "basename": "output_Zn3.txt",
-          "sha256": "sha256:5398fe7632314bed27e2f2050d55cf1a48583c4dab08dad10cd65aee354ac979",
-          "size_bytes": 2670
+          "basename": "output_Zn3.txt"
         },
         {
-          "basename": "output_Zn3_add.txt",
-          "sha256": "sha256:23e5b6ff9216ffb2b3f8c853c9f21eb2c3b0d4200356081bfd644bcdb90866c4",
-          "size_bytes": 178
+          "basename": "output_Zn3_add.txt"
         },
         {
-          "basename": "output_Zn4.txt",
-          "sha256": "sha256:7da331d94af6313a46e15f4c5dc6d57b372c875c6a2893704a06eb198185a5c8",
-          "size_bytes": 2670
+          "basename": "output_Zn4.txt"
         },
         {
-          "basename": "output_Zn5.txt",
-          "sha256": "sha256:5707cc645d6dcae35d8946b2607adc955c2389bac661130510303b0475712693",
-          "size_bytes": 2670
+          "basename": "output_Zn5.txt"
         },
         {
-          "basename": "output_Zn5_add.txt",
-          "sha256": "sha256:376645defc56fecfe16e8b60bec3c79735a9426dc3adca72289d7db475bea4d8",
-          "size_bytes": 267
+          "basename": "output_Zn5_add.txt"
         },
         {
-          "basename": "output_Zn6.txt",
-          "sha256": "sha256:99a09c0685522ede8f75b81adbac073683975e451f5f3722b71f655a8ba56f42",
-          "size_bytes": 2670
+          "basename": "output_Zn6.txt"
         },
         {
-          "basename": "output_Zn7.txt",
-          "sha256": "sha256:d5eaf7fad977e9fe355b1d4a62880b232e26ed46133312700d4b734a4f533900",
-          "size_bytes": 2670
+          "basename": "output_Zn7.txt"
         },
         {
-          "basename": "output_Zn7_add.txt",
-          "sha256": "sha256:179b2cc658c4085c6b6e61079b285b3528f6e8e7e47e3eae3baaf346c053bf0d",
-          "size_bytes": 178
+          "basename": "output_Zn7_add.txt"
         },
         {
-          "basename": "output_Zn8.txt",
-          "sha256": "sha256:869aa651ccec33231f1d912bb9844dd172011e7c74372d82954ceda2abaa3bec",
-          "size_bytes": 2670
+          "basename": "output_Zn8.txt"
         },
         {
-          "basename": "output_Zn9.txt",
-          "sha256": "sha256:8e78ffdfd4fd69528c32313a71865424f67258152f38fe9cb4dc0c57121aaf00",
-          "size_bytes": 2670
+          "basename": "output_Zn9.txt"
         }
       ],
       "metric_source_file_count": 11,
       "metric_sources": [
         {
-          "basename": "sigma_Li10_Zn2.txt",
-          "sha256": "sha256:6da424621e15020534a3fe436c72ae75338b45a1835c40cef591d7f9227b5431",
-          "size_bytes": 1143
+          "basename": "sigma_Li10_Zn2.txt"
         },
         {
-          "basename": "sigma_Li10_Zn3.txt",
-          "sha256": "sha256:b62d4fbc049a2eb871c4c4e5416183836cdf4cfbef2d26ab54e1e73219a15bf9",
-          "size_bytes": 1143
+          "basename": "sigma_Li10_Zn3.txt"
         },
         {
-          "basename": "sigma_Li10_Zn3_add.txt",
-          "sha256": "sha256:d2e40e792972e4d6afa65894dd711a226dfbe3c4f4fab0f74d8a1bbcd6a33e54",
-          "size_bytes": 78
+          "basename": "sigma_Li10_Zn3_add.txt"
         },
         {
-          "basename": "sigma_Li10_Zn4.txt",
-          "sha256": "sha256:4755c358fe63a8d3aeafc53a0b71a71908fafef53f4841b9ce57441192e6177e",
-          "size_bytes": 1142
+          "basename": "sigma_Li10_Zn4.txt"
         },
         {
-          "basename": "sigma_Li10_Zn5.txt",
-          "sha256": "sha256:3494fbd7433caf97b4026691b1c291c30dfc22c725b482e82a2184ef490e722c",
-          "size_bytes": 1143
+          "basename": "sigma_Li10_Zn5.txt"
         },
         {
-          "basename": "sigma_Li10_Zn5_add.txt",
-          "sha256": "sha256:3e95b4b16b50bfac8be75ca53c851243069f27c88c2ccf30a575cc469da40b5b",
-          "size_bytes": 114
+          "basename": "sigma_Li10_Zn5_add.txt"
         },
         {
-          "basename": "sigma_Li10_Zn6.txt",
-          "sha256": "sha256:5246899ef2c61220b5944386bc28641c51a3bd1e38e0937a5c06bc7750616b8e",
-          "size_bytes": 1143
+          "basename": "sigma_Li10_Zn6.txt"
         },
         {
-          "basename": "sigma_Li10_Zn7.txt",
-          "sha256": "sha256:38be4b54170dd1edba276fcdb88e79724ae07d7a998c3ac3400611a4ca42b20d",
-          "size_bytes": 1148
+          "basename": "sigma_Li10_Zn7.txt"
         },
         {
-          "basename": "sigma_Li10_Zn7_add.txt",
-          "sha256": "sha256:7737500222a1d2946902375dc7a20aec70298835a26fd16d15d1f02c483014a3",
-          "size_bytes": 75
+          "basename": "sigma_Li10_Zn7_add.txt"
         },
         {
-          "basename": "sigma_Li10_Zn8.txt",
-          "sha256": "sha256:89b54c68998443288b5f707be25637b07c441d889c4bc5420ca467791561c5fd",
-          "size_bytes": 1145
+          "basename": "sigma_Li10_Zn8.txt"
         },
         {
-          "basename": "sigma_Li10_Zn9.txt",
-          "sha256": "sha256:88ef008dfd9b16b37cb6795984e2bf31c408b7079fdf29a67cba1987482733c9",
-          "size_bytes": 1147
+          "basename": "sigma_Li10_Zn9.txt"
         }
       ]
     },
@@ -322,21 +259,15 @@
     "source_artifacts": {
       "candidate_manifest": {
         "locator": "external-screening-artifact/candidates.json",
-        "read_only": true,
-        "sha256": "sha256:d030d2fdbd9c042b13a1a15c6a124ef2b953d62ca1170e963c272a57b43aa90d",
-        "size_bytes": 76042
+        "read_only": true
       },
       "ranking": {
         "locator": "external-screening-artifact/ranking.json",
-        "read_only": true,
-        "sha256": "sha256:30ada4653684618ab1594b4b428502ba324908b208028910d68b8e4785f5793a",
-        "size_bytes": 1813
+        "read_only": true
       },
       "transport_results_manifest": {
         "locator": "external-screening-artifact/transport.json",
-        "read_only": true,
-        "sha256": "sha256:e3c4f4466b872b575345e4a10560b311fff19a8ed049383a82c18132534cd1c0",
-        "size_bytes": 129776
+        "read_only": true
       }
     },
     "status": "REPLAY_VERIFIED",
@@ -487,17 +418,13 @@
     "electrochemical-voltage": {
       "decision_provenance": {
         "prepared_benchmark_input": "evidence/benchmark_records.json",
-        "prepared_benchmark_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
         "source_chain": [
           {
             "evidence_file": "evidence/table_s11_voltage.csv",
-            "evidence_file_sha256": "sha256:e0aa693f787fd2289aa40b98c2c937344234ff093dcda36528352d6c2c1f5ad0",
             "source_document": "SI_0510zdl.docx",
-            "source_document_sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
             "source_location": "Table S11; unit from SI Figure S11 y-axis",
             "transcription": "Each reported two-value voltage cell is split, in source order, into stage_1 and stage_2.",
-            "unit_source_document": "SI_0510zdl.docx",
-            "unit_source_document_sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732"
+            "unit_source_document": "SI_0510zdl.docx"
           }
         ]
       },
@@ -516,7 +443,6 @@
           "contributions": {
             "voltage_mae": 1.0
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "voltage_mae": 0.182777777777778
           },
@@ -528,7 +454,6 @@
           "contributions": {
             "voltage_mae": 0.8549931600547195
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "voltage_mae": 0.536111111111111
           },
@@ -540,7 +465,6 @@
           "contributions": {
             "voltage_mae": 0.832877336981304
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "voltage_mae": 0.59
           },
@@ -552,7 +476,6 @@
           "contributions": {
             "voltage_mae": 0.8014135886912901
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "voltage_mae": 0.666666666666667
           },
@@ -564,7 +487,6 @@
           "contributions": {
             "voltage_mae": 0.5827633378932979
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "voltage_mae": 1.19944444444444
           },
@@ -576,7 +498,6 @@
           "contributions": {
             "voltage_mae": 0.0
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "voltage_mae": 2.61944444444444
           },
@@ -597,17 +518,13 @@
     "ionic-transport": {
       "decision_provenance": {
         "prepared_benchmark_input": "evidence/benchmark_records.json",
-        "prepared_benchmark_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
         "source_chain": [
           {
             "evidence_file": "evidence/table_s3_ionic_conductivity.csv",
-            "evidence_file_sha256": "sha256:08bdc9ec6f78b1b01f04b1d2670383ad6a35fb8281f5c14c74c53f209deb43a6",
             "source_document": "SI_0510zdl.docx",
-            "source_document_sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
             "source_location": "Table S3; unit from main Figure 3 y-axis",
             "transcription": "Merged prototype labels are filled down; reported wide numerical cells are otherwise preserved.",
-            "unit_source_document": "Manuscirpt_0510zdl.docx",
-            "unit_source_document_sha256": "sha256:22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b"
+            "unit_source_document": "Manuscirpt_0510zdl.docx"
           }
         ]
       },
@@ -626,7 +543,6 @@
           "contributions": {
             "conductivity_mae": 1.0
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "conductivity_mae": 0.09599531
           },
@@ -638,7 +554,6 @@
           "contributions": {
             "conductivity_mae": 0.8977901748429463
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "conductivity_mae": 0.19909484
           },
@@ -650,7 +565,6 @@
           "contributions": {
             "conductivity_mae": 0.8639793277852212
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "conductivity_mae": 0.2332
           },
@@ -662,7 +576,6 @@
           "contributions": {
             "conductivity_mae": 0.7905195563232684
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "conductivity_mae": 0.307299216
           },
@@ -674,7 +587,6 @@
           "contributions": {
             "conductivity_mae": 0.7421460387975394
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "conductivity_mae": 0.35609381
           },
@@ -686,7 +598,6 @@
           "contributions": {
             "conductivity_mae": 0.0
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "conductivity_mae": 1.1047
           },
@@ -707,13 +618,10 @@
     "static-pes": {
       "decision_provenance": {
         "prepared_benchmark_input": "evidence/benchmark_records.json",
-        "prepared_benchmark_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
         "source_chain": [
           {
             "evidence_file": "evidence/table_3_pes_rmse.csv",
-            "evidence_file_sha256": "sha256:67dfcd85ddf8be6da25d720192a63d4133d72f93c7c4a7b7d69519bd88644fac",
             "source_document": "SI_0510zdl.docx",
-            "source_document_sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
             "source_location": "Table captioned 'Table 3' immediately after Table S2",
             "transcription": "Slash-separated train/validation/test cells are split into explicit columns; '-' is represented as an empty field."
           }
@@ -741,7 +649,6 @@
             "energy_rmse": 0.5,
             "force_rmse": 0.5
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "energy_rmse": 6.63,
             "force_rmse": 151.0
@@ -755,7 +662,6 @@
             "energy_rmse": 0.46959826275787186,
             "force_rmse": 0.396
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "energy_rmse": 7.19,
             "force_rmse": 177.0
@@ -769,7 +675,6 @@
             "energy_rmse": 0.4305103148751357,
             "force_rmse": 0.36
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "energy_rmse": 7.91,
             "force_rmse": 186.0
@@ -783,7 +688,6 @@
             "energy_rmse": 0.41910966340933775,
             "force_rmse": 0.33999999999999997
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "energy_rmse": 8.12,
             "force_rmse": 191.0
@@ -797,7 +701,6 @@
             "energy_rmse": 0.0,
             "force_rmse": 0.256
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "energy_rmse": 15.84,
             "force_rmse": 212.0
@@ -811,7 +714,6 @@
             "energy_rmse": 0.15255157437567868,
             "force_rmse": 0.0
           },
-          "evidence_status": "sha256-verified",
           "metrics": {
             "energy_rmse": 13.03,
             "force_rmse": 276.0
@@ -852,20 +754,36 @@
       "basename": "Manuscirpt_0510zdl.docx",
       "id": "manuscript-main",
       "included_in_example": false,
-      "read_only": true,
-      "sha256": "sha256:22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b",
-      "size_bytes": 1671589
+      "read_only": true
     },
     {
       "basename": "SI_0510zdl.docx",
       "id": "supporting-information",
       "included_in_example": false,
-      "read_only": true,
-      "sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
-      "size_bytes": 2958512
+      "read_only": true
     }
   ],
   "top_candidate_validation": {
+    "candidate_mapping": {
+      "historical_folder_id": "6_3_8_4_7",
+      "historical_token_order": [
+        "Mn",
+        "Fe",
+        "Ni",
+        "Cu",
+        "Zn"
+      ],
+      "mapping_rule": "Zip underscore-separated integer tokens to the declared historical_token_order and render the canonical candidate ID in that same order.",
+      "parsed_composition": {
+        "Cu": 4,
+        "Fe": 3,
+        "Mn": 6,
+        "Ni": 8,
+        "Zn": 7
+      },
+      "ranked_candidate_id": "Mn6_Fe3_Ni8_Cu4_Zn7",
+      "status": "EXACT_COMPOSITION_MAPPING"
+    },
     "high_fidelity_validation": {
       "blockers": [
         "No matched AIMD trajectory or DFT reference result for Mn6_Fe3_Ni8_Cu4_Zn7 is included in the available evidence.",
@@ -920,19 +838,14 @@
       "implementation_provenance": {
         "historical_scripts": [
           {
-            "locator": "historical-transport/code/get_MSD_Li10.py",
-            "sha256": "sha256:584c8f1f94d072cbd43902ff5d2ec2ec3299bdaa6f5af1340e3ab2dd1ce343a5",
-            "size_bytes": 1134
+            "locator": "historical-transport/code/get_MSD_Li10.py"
           },
           {
-            "locator": "historical-transport/code/get_sigma.py",
-            "sha256": "sha256:9294764155f5cca395d7d0ba8165543c8cf8e87746ff18c67a89bb721fa96f6d",
-            "size_bytes": 1280
+            "locator": "historical-transport/code/get_sigma.py"
           }
         ],
         "wrapper": "ionic-transport.adapter.reproduce_manuscript_transport",
         "wrapper_locator": "plugins/ionic-transport/adapter.py",
-        "wrapper_sha256": "sha256:1255a5423be3b1a8c59ecbb597ecc79656b2afa9a58589ee419c436e95045e67",
         "wrapper_version": "1.0"
       },
       "not_high_fidelity_validation": true,
@@ -953,53 +866,25 @@
         {
           "locator": "historical-transport/deepmd_6_3_8_4_7/400K/target.msd",
           "read_only": true,
-          "role": "target_msd_400K",
-          "sha256": "sha256:bad4a7d15e129fe3426c46a19f561ccabc341240d7dec27c0cd42a6715a2b403",
-          "size_bytes": 366091
+          "role": "target_msd_400K"
         },
         {
           "locator": "historical-transport/deepmd_6_3_8_4_7/600K/target.msd",
           "read_only": true,
-          "role": "target_msd_600K",
-          "sha256": "sha256:3758bfb7445a311ae937f15c650c48d4582f1404711f7e181cff3168b54b32c1",
-          "size_bytes": 355418
+          "role": "target_msd_600K"
         },
         {
           "locator": "historical-transport/deepmd_6_3_8_4_7/800K/target.msd",
           "read_only": true,
-          "role": "target_msd_800K",
-          "sha256": "sha256:b1e5e6334ed285b099bcc6e2bbbe3132d6d1aedcae8730762d5f864d8a138442",
-          "size_bytes": 347675
+          "role": "target_msd_800K"
         },
         {
           "locator": "historical-transport/Li10_test.out",
           "read_only": true,
-          "role": "historical_transport_stdout",
-          "sha256": "sha256:7d822dbb41ca4b0e66ff9070d6274635e1c620aeb92d2b00dea52af824fe671b",
-          "size_bytes": 2281
+          "role": "historical_transport_stdout"
         }
       ],
       "status": "EXACT_NUMERICAL_PARITY"
-    },
-    "identity_link": {
-      "historical_folder_id": "6_3_8_4_7",
-      "historical_token_order": [
-        "Mn",
-        "Fe",
-        "Ni",
-        "Cu",
-        "Zn"
-      ],
-      "mapping_rule": "Zip underscore-separated integer tokens to the declared historical_token_order and render the canonical candidate ID in that same order.",
-      "parsed_composition": {
-        "Cu": 4,
-        "Fe": 3,
-        "Mn": 6,
-        "Ni": 8,
-        "Zn": 7
-      },
-      "ranked_candidate_id": "Mn6_Fe3_Ni8_Cu4_Zn7",
-      "status": "EXACT_IDENTITY_MAPPING"
     },
     "screening_metric": {
       "method": "mean_msd_over_time",
@@ -1055,8 +940,6 @@
       "basename": "Manuscirpt_0510zdl.docx",
       "id": "manuscript-main",
       "read_only": true,
-      "sha256": "sha256:22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b",
-      "size_bytes": 1671589,
       "source_location": "Main-manuscript Results narrative describing the unseen Li24M12(PS4)16 system and doped-composition transfer assessment."
     },
     "status": "EXTERNAL_VALIDATION_PENDING"

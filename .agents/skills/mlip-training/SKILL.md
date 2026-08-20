@@ -48,8 +48,8 @@ carry those site paths.
 
 Each site template may activate a different framework environment. It supplies the cluster data/model roots and, when needed, a separate read-only foundation-model root, then calls the staged `training_cluster.py`; MLIPFlow core alone owns SSH, staging, `sbatch`, polling, bounded fetch, retry, and cancellation.
 
-The scheduler stages the small shared `model_runtime.py` needed for framework-version
-identity together with the bundled trainer. Do not install MLIPFlow into an otherwise
+The scheduler stages the small shared `model_runtime.py` needed to record the framework version
+together with the bundled trainer. Do not install MLIPFlow into an otherwise
 validated framework environment merely to satisfy that import.
 
 The bundled training contract has `execution_model: single-python`. It launches
@@ -69,22 +69,18 @@ A dataset reference declares:
 - stable `dataset_id`
 - safe site-root-relative `relative_path`
 - `kind: file` or `directory`
-- a verifiable content identity
 
-A fine-tune node additionally needs a foundation-model reference with `model_id`, `relative_path`, `kind`, and verifiable content identity. A site template may resolve that reference below `MLIPFLOW_FOUNDATION_MODEL_ROOT` while reserving `MLIPFLOW_MODEL_ROOT` for canonical publication. If no separate foundation root is configured, the model root remains the fallback.
+A fine-tune node additionally needs a foundation-model reference with `model_id`, `relative_path`, and `kind`. A site template may resolve that reference below `MLIPFLOW_FOUNDATION_MODEL_ROOT` while reserving `MLIPFLOW_MODEL_ROOT` for canonical publication. If no separate foundation root is configured, the model root remains the fallback.
 
 All DFT-assembled datasets are directories so their predefined split remains intact.
 Legacy M3GNet/CHGNet/MACE single-file datasets remain supported. M3GNet foundation
 models are directories; the currently bundled DeepMD/CHGNet/MACE foundation paths are files.
 
-The remote runner verifies the referenced content before training. A mismatch is `FAIL`, never a warning. Do not manually copy an installed or historical foundation into the canonical publication root merely to connect the stages.
+The remote runner resolves the declared path below the site-owned root, checks the declared file/directory kind, and loads that artifact for training. Do not manually copy an installed or historical foundation into the canonical publication root merely to connect the stages.
 
 Prefer a matching `*-dataset-reference.json` collected from
 `dft-labeling.dataset-assemble`. When the input uses an upstream artifact binding, the
-collected reference itself supplies the authoritative dataset fingerprint; MLIPFlow
-pins it in the approved training identity, so the predeclared workflow does not need to
-copy an as-yet-unknown value into `parameters.dataset_fingerprint`. If that optional
-redundant parameter is explicitly supplied, require an exact match. The four references
+collected reference supplies the dataset path directly. The four references
 from one assembly share one `split_id`; their train/validation/test partitions contain
 the same canonical record IDs. The framework runners must consume these predefined
 partitions and must not randomly split the combined data again.
@@ -105,16 +101,16 @@ Require these parameters:
 - `device`
 - `precision`
 
-`result_manifest` may set the fetched result filename. Configs must be JSON on the generic scheduler path. Bind actual dataset/config/foundation-model references; do not invent their identity or substitute similarly named files.
+`result_manifest` may set the fetched result filename. Configs must be JSON on the generic scheduler path. Bind actual dataset/config/foundation-model references; do not substitute similarly named files.
 
 When a downstream benchmark or MD node needs a stable site-owned model, set both
 `publish_model_id` and `publish_model_relative_path`. Treat that canonical destination
-as part of the approved training identity. Publication refuses an existing destination;
+as an explicit training parameter. Publication refuses an existing destination;
 never overwrite, delete, or manually copy a model to make the handoff work.
 
 ## Execution
 
-Before submission, show the user the framework, operation, config/dataset/foundation-model identity, seed, device, precision, abstract resources, selected backend profile, template family, important staged inputs, expected outputs, and fresh attempt workspace.
+Before submission, show the user the framework, operation, config/dataset/foundation-model paths, seed, device, precision, abstract resources, selected backend profile, template family, important staged inputs, expected outputs, and fresh attempt workspace.
 
 Scheduler `COMPLETED` is not scientific success. After completion, ordinary `advance` bounded-fetches the run's declared outputs, then runs `check/collect`.
 
@@ -127,13 +123,13 @@ For the generic path, required remote outputs are:
 When canonical publication was requested, also require `model-reference.json`. M3GNet
 is published as its extracted model directory; the other supported framework outputs
 are published as files. The reference must bind logical ID, framework, kind, safe
-site-root-relative path, and the observed content fingerprint.
+site-root-relative path.
 
 Optional training stdout/stderr logs are bounded and may also be fetched.
 
 ## Completion checks
 
-Accept `OK` only when the pinned checker confirms:
+Accept `OK` only when the scientific checker confirms:
 
 - framework and operation match the attempt snapshot;
 - seed, device, and precision match;
@@ -141,9 +137,9 @@ Accept `OK` only when the pinned checker confirms:
 - the foundation model matches for fine-tuning;
 - the cluster runner reports return code 0;
 - all reported numeric metrics are finite;
-- the fetched model content matches `training-result.json`.
+- the fetched model path matches `training-result.json` and the output exists.
 - requested canonical publication succeeded without overwrite and the fetched
-  `model-reference.json` matches the published model content.
+  `model-reference.json` records the published model path and kind.
 
 Retry always creates a fresh attempt. Do not infer resume behavior from a failed attempt.
 

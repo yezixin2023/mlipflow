@@ -3,12 +3,11 @@
 The portable project contains a structure, a model-reference manifest and,
 for approved retries, an explicitly staged restart checkpoint. The site-owned
 run template supplies the cluster-local model root. This module resolves the
-approved model content and invokes the staged ase_md.py implementation in-process.
+declared model path and invokes the staged ase_md.py implementation in-process.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.util
 import json
 import os
@@ -16,7 +15,6 @@ import traceback
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-FINGERPRINT_PREFIX = "sha256:"
 MODEL_KINDS = {"deepmd": "file", "m3gnet": "directory", "chgnet": "file", "mace": "file"}
 ENSEMBLES = {"nvt-langevin", "npt-isotropic-mtk"}
 
@@ -51,34 +49,6 @@ def _safe_relative(value: Any) -> str:
     return value
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return FINGERPRINT_PREFIX + digest.hexdigest()
-
-
-def fingerprint(path: Path) -> str:
-    path = path.expanduser().resolve()
-    if path.is_file():
-        return _sha256_file(path)
-    if not path.is_dir():
-        raise ValueError(f"artifact does not exist: {path}")
-    files = [item for item in path.rglob("*") if item.is_file()]
-    if not files:
-        raise ValueError(f"artifact directory is empty: {path}")
-    digest = hashlib.sha256()
-    for item in sorted(files, key=lambda value: value.relative_to(path).as_posix()):
-        if item.is_symlink():
-            raise ValueError(f"artifact tree contains a symlinked file: {item}")
-        relative = item.relative_to(path).as_posix()
-        digest.update(
-            f"{relative}\0{item.stat().st_size}\0{_sha256_file(item)}\n".encode("utf-8")
-        )
-    return FINGERPRINT_PREFIX + digest.hexdigest()
-
-
 def _resolve_under(root_value: str, relative: str, kind: str) -> Path:
     if not root_value:
         raise ValueError("site model root is required")
@@ -109,19 +79,10 @@ def _model_reference(path: Path, calculator: str) -> dict[str, str]:
     kind = raw.get("kind", expected_kind)
     if kind != expected_kind:
         raise ValueError(f"{calculator} model reference kind must be {expected_kind}")
-    declared = raw.get("fingerprint")
-    if (
-        not isinstance(declared, str)
-        or not declared.startswith(FINGERPRINT_PREFIX)
-        or len(declared) != 71
-        or any(character not in "0123456789abcdef" for character in declared[7:])
-    ):
-        raise ValueError("model reference fingerprint must be sha256:<64 lowercase hex>")
     return {
         "id": model_id,
         "relative_path": relative,
         "kind": kind,
-        "fingerprint": declared,
     }
 
 
@@ -200,22 +161,9 @@ def run(args: argparse.Namespace) -> int:
         model_reference_path = input_dir / "model-reference.json"
         if not structure.is_file() or not model_reference_path.is_file():
             raise ValueError("staged structure and model-reference.json are required")
-        structure_fp = _sha256_file(structure)
-        expected_structure = parameters.get("structure_fingerprint")
-        if expected_structure is not None and expected_structure != structure_fp:
-            raise ValueError("staged structure fingerprint differs from approved parameters")
-
         model_ref = _model_reference(model_reference_path, str(calculator))
-        if (
-            parameters.get("model_fingerprint") is not None
-            and parameters["model_fingerprint"] != model_ref["fingerprint"]
-        ):
-            raise ValueError("model reference fingerprint differs from approved parameters")
         model_root = args.model_root or os.environ.get("MLIPFLOW_MODEL_ROOT", "")
         model = _resolve_under(model_root, model_ref["relative_path"], model_ref["kind"])
-        model_before = fingerprint(model)
-        if model_before != model_ref["fingerprint"]:
-            raise ValueError("cluster model content fingerprint differs from approved reference")
 
         restart_path = input_dir / "restart" / "md-checkpoint.json"
         restart_checkpoint = restart_path if restart_path.is_file() else None
@@ -230,8 +178,8 @@ def run(args: argparse.Namespace) -> int:
             calculator=str(calculator),
             ensemble=str(ensemble),
             model_id=model_ref["id"],
-            model_fingerprint=model_before,
-            structure_fingerprint=structure_fp,
+            model_record_path=model_ref["relative_path"],
+            structure_record_path=f"structure/{structure_name}",
             temperature_k=parameters.get("temperature_k"),
             timestep_fs=parameters.get("timestep_fs"),
             steps=parameters.get("steps"),
@@ -255,16 +203,13 @@ def run(args: argparse.Namespace) -> int:
             ),
         )
         _normalize_result_artifacts(output_dir, result)
-        model_after = fingerprint(model)
-        if model_after != model_before:
-            raise ValueError("model artifact changed while running inference")
         report.update(
             {
                 "status": "OK",
                 "calculator": calculator,
                 "ensemble": ensemble,
-                "model": {**model_ref, "observed_fingerprint": model_after},
-                "structure_fingerprint": structure_fp,
+                "model": model_ref,
+                "structure_path": f"structure/{structure_name}",
                 "supercell_repeat": result.get("supercell_repeat"),
                 "source_atom_count": result.get("source_atom_count"),
                 "atom_count": result.get("atom_count"),
@@ -276,7 +221,6 @@ def run(args: argparse.Namespace) -> int:
                 "steps_completed": result.get("steps_completed"),
                 "segment_start_step": result.get("segment_start_step"),
                 "restart": result.get("restart"),
-                "result_sha256": _sha256_file(output_dir / "md-result.json"),
             }
         )
         if ensemble == "npt-isotropic-mtk":

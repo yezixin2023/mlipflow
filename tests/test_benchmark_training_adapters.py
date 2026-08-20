@@ -50,8 +50,6 @@ class BenchmarkAdapterTests(unittest.TestCase):
                 "scenario": "static-holdout-v1",
                 "energy_normalization": "per-atom",
                 "stress_convention": "VASP sign; GPa; xx,yy,zz,xy,yz,zx",
-                "dataset_fingerprint": "sha256:dataset",
-                "model_fingerprint": "sha256:model",
             },
             "backend": "local",
             "resources": {"cpus": 4},
@@ -83,8 +81,6 @@ class BenchmarkAdapterTests(unittest.TestCase):
             "model_family": "chgnet",
             "task": "ionic-transport",
             "scenario": "static-holdout-v1",
-            "dataset_fingerprint": "sha256:dataset",
-            "model_fingerprint": "sha256:model",
             "conventions": {
                 "energy_normalization": "per-atom",
                 "stress_convention": "VASP sign; GPa; xx,yy,zz,xy,yz,zx",
@@ -150,17 +146,15 @@ class BenchmarkAdapterTests(unittest.TestCase):
         self.assertEqual("FAIL", checked["status"])
         self.assertIn("benchmark.metric_unit", {item["code"] for item in checked["diagnostics"]})
 
-    def test_result_identity_must_match_approved_plan(self) -> None:
+    def test_result_scenario_must_match_plan(self) -> None:
         path = self._write_result()
         payload = json.loads(path.read_text(encoding="utf-8"))
         payload["scenario"] = "different-scenario"
-        payload["model_fingerprint"] = "sha256:different-model"
         path.write_text(json.dumps(payload), encoding="utf-8")
         checked = self.adapter.check(self.context)
         self.assertEqual("FAIL", checked["status"])
         codes = {item["code"] for item in checked["diagnostics"]}
         self.assertIn("benchmark.scenario_mismatch", codes)
-        self.assertIn("benchmark.model_fingerprint_mismatch", codes)
 
     def test_collect_existing_is_read_only_and_not_an_execution_plan(self) -> None:
         path = self._write_result()
@@ -202,8 +196,6 @@ class TrainingAdapterTests(unittest.TestCase):
                 "seed": 20260810,
                 "device": "cpu",
                 "precision": "float64",
-                "dataset_fingerprint": "sha256:dataset",
-                "config_fingerprint": "sha256:config",
             },
             "backend": "local",
             "resources": {"cpus": 8},
@@ -222,8 +214,8 @@ class TrainingAdapterTests(unittest.TestCase):
             "seed": seed,
             "device": context["parameters"]["device"],
             "precision": context["parameters"]["precision"],
-            "dataset_fingerprint": "sha256:dataset",
-            "config_fingerprint": "sha256:config",
+            "dataset_path": str(self.root / "data/labeled"),
+            "config_path": str(self.root / f"configs/{framework}.json"),
             "model_artifact": {"path": "model.bin", "media_type": "application/octet-stream"},
             "metrics": {"best_validation_loss": 0.012},
         }
@@ -244,7 +236,6 @@ class TrainingAdapterTests(unittest.TestCase):
     def test_finetune_support_and_deepmd_boundary(self) -> None:
         for framework in ("m3gnet", "chgnet", "mace"):
             context = self.context(framework, "finetune")
-            context["parameters"]["foundation_model_fingerprint"] = "sha256:foundation"
             plan = self.adapter.plan(context)
             self.assertEqual("READY", plan["status"])
             self.assertIn("--foundation-model", plan["argv"])

@@ -28,12 +28,12 @@ Use fictional hostnames and revoked/test credentials in reproductions.
 Examples include:
 
 - a documented read-only command performing writes, launching a process, accessing the network, or mutating scheduler state;
-- bypassing or replaying an execution approval against a different plan;
+- bypassing the explicit approval requirement for external or expensive work;
 - command, argument, path, manifest, SSH-profile, or template injection;
 - path traversal or artifact handling that can overwrite files outside the intended project/attempt workspace;
 - leakage of passwords, tokens, private keys, credentials, or sensitive cluster data into logs or manifests;
 - unsafe plugin discovery or configuration loading that executes code unexpectedly;
-- scheduler staging/fetch behavior that accepts the wrong project, node, attempt, or content identity;
+- scheduler staging/fetch behavior that accepts the wrong project, node, attempt, or output path;
 - unsafe loading of model or serialized data that creates an unexpected code-execution path in MLIPFlow-controlled behavior.
 
 A disagreement about numerical accuracy is normally a scientific bug rather than a security vulnerability. If a scientific-data path also enables code execution, destructive writes, credential exposure, or another security impact, report it privately as a security issue.
@@ -63,6 +63,6 @@ Review third-party plugins before running `run --dry-run`: planning a selected a
 
 ## Current safeguards
 
-The current codebase includes controls such as explicit argv execution for local external programs, bounded project/attempt artifact paths, content identities for staged/fetched artifacts, plan-bound approvals for approval-gated execution, immutable attempt lineage, and scientific completion checks after scheduler completion.
+The current codebase includes controls such as explicit argv execution for local external programs, bounded project/attempt artifact paths, explicit approval for approval-gated execution, preserved attempt lineage, output allowlists and size bounds, and scientific completion checks after scheduler completion.
 
 These controls reduce orchestration risk; they do not constitute a security audit of VASP, LAMMPS, LASP, MLIP frameworks, model files, site scripts, SSH, Slurm, or other external components used through MLIPFlow.

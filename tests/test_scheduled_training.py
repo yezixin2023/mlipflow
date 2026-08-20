@@ -7,8 +7,8 @@ layout the site's ``deepmd/run.sh`` template is contracted to produce.
 
 The point of the checks under test is that a COMPLETED scheduler job is not
 evidence of training.  Reaching the requested step count, finite losses, a
-parseable learning rate, a real checkpoint, and a dataset whose fingerprint was
-recomputed on the cluster all have to hold independently.
+parseable learning rate, a real checkpoint, and the requested dataset record all
+have to hold independently.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from mlipflow.services.contracts import _scheduled_contract
 from mlipflow.plugins import discover_plugins
 
 from .helpers import project_config, write_json
-from .test_scheduled_dft import PLUGINS, FakeTemplateLibrary, sha256, write_site
+from .test_scheduled_dft import PLUGINS, FakeTemplateLibrary, write_site
 
 
 DEEPMD_RUN_TEMPLATE = """#!/bin/bash
@@ -39,7 +39,6 @@ DEEPMD_RUN_TEMPLATE = """#!/bin/bash
 # outputs={{OUTPUT_DIR}}
 cd {{RUN_DIR}}
 """
-DATASET_FINGERPRINT = "sha256:" + "a1" * 32
 CURVE_HEADER = (
     "#  step      rmse_val    rmse_trn    rmse_e_val  rmse_e_trn"
     "    rmse_f_val  rmse_f_trn         lr"
@@ -136,7 +135,6 @@ def build_project(
         else {
             "schema_version": 1,
             "dataset_id": "demo-set",
-            "fingerprint": DATASET_FINGERPRINT,
             "systems": {"training": 2, "validation": 1},
         },
     )
@@ -146,8 +144,6 @@ def build_project(
         "seed": 10,
         "device": "cpu",
         "precision": "float64",
-        "dataset_fingerprint": DATASET_FINGERPRINT,
-        "config_fingerprint": sha256(config_path),
         "result_manifest": "mlip-training-result.json",
     }
     node_parameters.update(parameters or {})
@@ -225,7 +221,7 @@ class TrainingLifecycle:
         plan = self.plan()
 
         def stage(remote_dir, files):
-            for source, relative, _ in files:
+            for source, relative in files:
                 self.staged[relative] = str(source)
             return remote_dir
 
@@ -239,7 +235,7 @@ class TrainingLifecycle:
                 self.project,
                 "train-deepmd",
                 PLUGINS,
-                plan["plan_digest"],
+                True,
                 self.site,
                 library(),
             )
@@ -269,11 +265,9 @@ class TrainingLifecycle:
             "template_family": "deepmd",
             "exit_code": 0,
             "dataset_id": "demo-set",
-            "dataset_fingerprint": DATASET_FINGERPRINT,
-            "config_sha256": sha256(self.root / "inputs" / "deepmd-input.json"),
             "host": "node-1",
             "threads": {"omp_num_threads": "16"},
-            "checkpoint_files": [{"name": "model.ckpt-500.index", "size_bytes": 4405}],
+            "checkpoint_files": [{"name": "model.ckpt-500.index"}],
         }
         if report is not None:
             payload.update(report)
@@ -318,7 +312,6 @@ class TrainingLifecycle:
                 "path": remote_path,
                 "exists": True,
                 "size_bytes": path.stat().st_size,
-                "sha256": sha256(path),
             }
 
         def fetch(_self, _cwd, remote_path, destination):
@@ -338,7 +331,7 @@ class TrainingLifecycle:
             autospec=True,
             side_effect=inspect,
         ):
-            approved = make_advance_plan(self.project, PLUGINS)
+            make_advance_plan(self.project, PLUGINS)
         with patch(
             "mlipflow.services.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
@@ -351,7 +344,6 @@ class TrainingLifecycle:
             autospec=True,
             side_effect=fetch,
         ):
-            assert "plan_digest" not in approved
             return advance(self.project, PLUGINS)
 
     def run(self, **overrides: Any) -> dict[str, Any]:
@@ -424,8 +416,7 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
             [item["remote_name"] for item in staged], ["input.json", "dataset.json"]
         )
         for item in staged:
-            self.assertGreater(item["size_bytes"], 0)
-            self.assertTrue(str(item["sha256"]).startswith("sha256:"))
+            self.assertTrue(item["source"].startswith("{PROJECT_ROOT}/inputs/"))
             self.assertFalse(item["fetch_allowed"])
 
     def test_fetch_outputs_declare_bounded_required_artifacts(self) -> None:
@@ -450,28 +441,25 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
             self.assertIsInstance(item["max_bytes"], int)
             self.assertGreater(item["max_bytes"], 0)
 
-    def test_plan_pins_the_trajectory_relevant_identity(self) -> None:
-        identity = self.plan()["adapter_plan"]["training_identity"]
-        self.assertEqual(identity["training"]["numb_steps"], 500)
-        self.assertEqual(identity["training"]["disp_freq"], 100)
-        self.assertEqual(identity["training"]["seed"], 10)
-        self.assertEqual(identity["descriptor"]["seed"], 1)
-        self.assertEqual(identity["fitting_net"]["seed"], 1)
-        self.assertEqual(identity["learning_rate"]["start_lr"], 0.001)
-        self.assertEqual(identity["loss"]["start_pref_f"], 1000)
-        self.assertEqual(identity["system_counts"], {"training": 2, "validation": 1})
-        self.assertTrue(identity["system_order_fingerprint"].startswith("sha256:"))
+    def test_plan_records_trajectory_relevant_parameters(self) -> None:
+        calculation = self.plan()["adapter_plan"]["training_calculation"]
+        self.assertEqual(calculation["training"]["numb_steps"], 500)
+        self.assertEqual(calculation["training"]["disp_freq"], 100)
+        self.assertEqual(calculation["training"]["seed"], 10)
+        self.assertEqual(calculation["descriptor"]["seed"], 1)
+        self.assertEqual(calculation["fitting_net"]["seed"], 1)
+        self.assertEqual(calculation["learning_rate"]["start_lr"], 0.001)
+        self.assertEqual(calculation["loss"]["start_pref_f"], 1000)
+        self.assertEqual(calculation["system_counts"], {"training": 2, "validation": 1})
 
-    def test_system_order_change_changes_the_pinned_identity(self) -> None:
-        first = self.plan()["adapter_plan"]["training_identity"]
+    def test_system_order_is_recorded_directly(self) -> None:
+        first = self.plan()["adapter_plan"]["training_calculation"]
         shutil.rmtree(self.root)
         self.root.mkdir()
         reordered = deepmd_config(systems=["data/train/sys-2", "data/train/sys-1"])
-        second = self.plan(config=reordered)["adapter_plan"]["training_identity"]
+        second = self.plan(config=reordered)["adapter_plan"]["training_calculation"]
         self.assertEqual(first["system_counts"], second["system_counts"])
-        self.assertNotEqual(
-            first["system_order_fingerprint"], second["system_order_fingerprint"]
-        )
+        self.assertNotEqual(first["systems"], second["systems"])
 
     def test_plan_carries_no_absolute_site_path(self) -> None:
         adapter_plan = self.plan()["adapter_plan"]
@@ -549,14 +537,6 @@ class ScheduledTrainingRefusalTests(TemporaryProjectTest):
         plan = self.blocked(config=deepmd_config(numb_steps=300000, disp_freq=100))
         self.assertIn("training.config_contract", self.codes(plan))
 
-    def test_config_fingerprint_mismatch_is_refused(self) -> None:
-        plan = self.blocked(parameters={"config_fingerprint": "sha256:" + "0" * 64})
-        self.assertIn("training.config_fingerprint_mismatch", self.codes(plan))
-
-    def test_dataset_fingerprint_mismatch_is_refused(self) -> None:
-        plan = self.blocked(parameters={"dataset_fingerprint": "sha256:" + "0" * 64})
-        self.assertIn("training.dataset_fingerprint_mismatch", self.codes(plan))
-
     def test_seed_disagreement_between_plan_and_config_is_refused(self) -> None:
         plan = self.blocked(parameters={"seed": 11})
         self.assertIn("training.seed_mismatch", self.codes(plan))
@@ -566,7 +546,6 @@ class ScheduledTrainingRefusalTests(TemporaryProjectTest):
             dataset={
                 "schema_version": 1,
                 "dataset_id": "demo-set",
-                "fingerprint": DATASET_FINGERPRINT,
                 "systems": {"training": 7, "validation": 1},
             }
         )
@@ -577,7 +556,6 @@ class ScheduledTrainingRefusalTests(TemporaryProjectTest):
             dataset={
                 "schema_version": 1,
                 "dataset_id": "../secrets",
-                "fingerprint": DATASET_FINGERPRINT,
             }
         )
         self.assertIn("training.dataset_contract", self.codes(plan))
@@ -689,7 +667,7 @@ class ScheduledTrainingCompletionTests(TemporaryProjectTest):
             [0, 100, 200, 300, 400, 500],
         )
         self.assertEqual(result["dataset"]["id"], "demo-set")
-        self.assertEqual(result["dataset"]["fingerprint"], DATASET_FINGERPRINT)
+        self.assertEqual(result["dataset"]["system_counts"], {"training": 2, "validation": 1})
         self.assertEqual(result["seed"], 10)
         self.assertEqual(result["model"]["type_map"], ["Li", "P", "S"])
         self.assertTrue(result["model_artifacts"])
@@ -704,16 +682,14 @@ class ScheduledTrainingCompletionTests(TemporaryProjectTest):
         outcome = lifecycle.run(log="DEEPMD INFO batch 500\nKilled\n")
         self.assertEqual(self.state(outcome), "FAIL")
 
-    def test_cluster_recomputed_dataset_fingerprint_must_match(self) -> None:
+    def test_cluster_report_dataset_id_must_match(self) -> None:
         lifecycle = TrainingLifecycle(self.root)
-        outcome = lifecycle.run(
-            report={"dataset_fingerprint": "sha256:" + "b2" * 32}
-        )
+        outcome = lifecycle.run(report={"dataset_id": "different-set"})
         self.assertEqual(self.state(outcome), "FAIL")
 
-    def test_staged_config_hash_must_match_the_approved_plan(self) -> None:
+    def test_cluster_template_record_must_match_when_reported(self) -> None:
         lifecycle = TrainingLifecycle(self.root)
-        outcome = lifecycle.run(report={"config_sha256": "sha256:" + "c3" * 32})
+        outcome = lifecycle.run(report={"template_family": "different-template"})
         self.assertEqual(self.state(outcome), "FAIL")
 
     def test_nonzero_training_exit_code_fails(self) -> None:

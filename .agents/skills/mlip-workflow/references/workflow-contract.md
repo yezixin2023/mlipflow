@@ -26,6 +26,7 @@ manifests, inspected plans, Adapter results, and specialist Skills remain author
 | VASP preparation, DFT labels, and framework datasets | `$dft-labeling` | Separate prepare/label; calculation-level fresh retry; canonical dataset; shared split plus framework views and benchmark test reference |
 | MLIP training/fine-tuning | `$mlip-training` | DeepMD, M3GNet/MatGL, CHGNet, MACE; local or supported SSH-SLURM |
 | E/F/S benchmark or evidence replay | `$mlip-benchmark` | Fresh inference local or reviewed SSH-SLURM; metric recomputation and historical replay local |
+| Finite offline active-learning campaign | `$mlip-active-learning` | One- or two-model calibrated committees; immutable round projects; local deterministic decisions with existing training/MD/DIRECT/DFT/benchmark stages |
 | ASE MLIP MD | `$ase-md` | Explicit DeepMD, M3GNet/MatGL, CHGNet, or MACE; reviewed SSH-SLURM NVT/NPT |
 | LAMMPS MLIP MD | `$lammps-md` | LAMMPS-ready DeepMD, MACE, or MatGL/M3GNet; prepare/execute/restart contracts |
 | MSD/diffusion/conductivity | `$ionic-transport` | Existing ASE/LAMMPS/VASP trajectory or MSD; local analysis |
@@ -48,13 +49,14 @@ relying on this summary for parameters.
 | Verified matching DeepMD/M3GNet/CHGNet/MACE dataset reference | Train or fine-tune | `$mlip-training`; do not rerun VASP or reconvert |
 | Explicit labeled dataset plus one or more trained models | Compare predictions | `$mlip-benchmark` |
 | Shared-split benchmark reference plus published model references | Compare fresh predictions on the exact same test IDs | One scheduled `$mlip-benchmark` per model, then one local joint normalization |
+| Explicit active-learning policy plus verified split/models/labels | Run or resume a finite offline campaign | `$mlip-active-learning`; enter at the earliest missing artifact in the current immutable round |
 | Trained model plus initial structure | Generate a new trajectory | `$ase-md` or `$lammps-md` according to runtime compatibility and goal |
 | Existing ASE/LAMMPS/VASP trajectory or MSD | Compute transport | `$ionic-transport`; do not rerun MD |
 | Candidate manifest plus comparable numeric metrics | Select top-k | `$candidate-ranking` |
 | Li-content total-energy sequence | Compute voltage | `electrochemical-voltage` plugin `compute-from-energies` |
 | Existing standard result/evidence manifests | Verify/reconstruct history | Applicable replay/check path; do not default to fresh execution |
 
-An artifact is reusable only when its identity, scientific parameters, and completion
+An artifact is reusable only when its path, scientific parameters, and completion
 contract are known. File existence, filename, scheduler state, or a JSON `status` field
 alone is insufficient. If a supplied artifact lacks checker evidence, enter at its
 validation/replay boundary rather than treating its upstream stage as complete.
@@ -112,9 +114,9 @@ inference, long MD, large screening, and scheduled jobs as expensive. Before exe
 
 1. inspect current persistent state and the selected node;
 2. run the appropriate dry-run;
-3. show the stage, exact input identities, scale, backend, abstract resources, expected
+3. show the stage, exact input paths, scale, backend, abstract resources, expected
    artifacts, freshness/overwrite semantics, and why execution is needed;
-4. use the approval token returned for that exact plan.
+4. use the explicit boolean approval after review.
 
 Do not auto-submit because the user requested an “end-to-end” or “fully automatic” run.
 Do not widen resources, candidate counts, MD duration, DFT scope, or training schedule
@@ -155,7 +157,7 @@ manual metadata, rename/copy, or concatenation. Preserve all collected restart a
 ionic-transport orders their frames by global step and removes a repeated boundary.
 Multiple completed ASE and/or LAMMPS temperature nodes may feed one Arrhenius analysis.
 If a new trajectory is necessary, accept it downstream only after the MD Skill's
-completion checks and collected artifact identity succeed.
+completion checks and artifact collection succeed.
 
 ## Voltage exception
 
@@ -172,7 +174,7 @@ or recreate a standalone voltage Skill.
 ## Artifact handoff
 
 At every edge, bind the exact collected upstream artifact rather than a guessed path.
-Record logical identity, fingerprint, schema/version, scientific parameters, producing
+Record logical ID, path, schema/version, scientific parameters, producing
 plugin/attempt, and completion status where the downstream contract supports them.
 
 For an execute-node input that directly consumes one collected file, use the explicit
@@ -188,9 +190,9 @@ input.
 Before advancing, require:
 
 - upstream Adapter `check/collect` and final plugin `OK`;
-- no fingerprint or parameter drift;
+- matching paths and scientific parameters;
 - downstream inputs reference the approved collected artifacts;
-- units, composition/model identity, task/scenario/split, and other scientific
+- units, composition/model records, task/scenario/split, and other scientific
   conventions needed downstream are explicit;
 - a fresh downstream attempt with no silent overwrite.
 
@@ -200,9 +202,8 @@ planned intermediate stages unnecessary or reveal a new required decision.
 For DFT-to-training handoff, keep the canonical `dataset_id`, shared `split_id`, and each
 final framework artifact reference explicit. `dataset-assemble` owns the deterministic
 or group-aware record assignment and all four split-preserving serializations. Its
-collected `*-dataset-reference.json` is the direct `mlip-training.dataset_reference`,
-and its necessary final artifact fingerprint is the training node's
-`dataset_fingerprint`. Reuse a collected reference; do not generate a new semantic
+collected `*-dataset-reference.json` is the direct `mlip-training.dataset_reference`.
+Reuse a collected reference; do not generate a new semantic
 dataset for a repeated downstream request. Benchmark the four trained models only on
 the shared held-out test record IDs.
 

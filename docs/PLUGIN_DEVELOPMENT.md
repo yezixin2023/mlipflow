@@ -54,7 +54,7 @@ class Adapter:
 9. 原脚本含 `rm/mv`、无限轮询或隐式提交时必须拆分，不能原样调用。
 
 内置 adapter 默认只允许 `local`。若要接入 `ssh-slurm`，新 adapter 只能声明科学合同：
-`schema_version: 3`、明确的 `execution_model`、安全 `template_family`、已指纹化 `staged_files` 和有单文件上限的
+`schema_version: 3`、明确的 `execution_model`、安全 `template_family`、显式 `staged_files` 和有单文件上限的
 `fetch_outputs`。adapter 不得声明 host、partition、module、executable path、launcher、
 remote work root 或完整 sbatch；这些属于用户本地 cluster profile 与远端 template library。
 核心从持久 attempt state 解析 fresh workspace、渲染脚本、提交，并在普通 `advance` 中
@@ -74,12 +74,12 @@ bounded fetch，再加载 pinned plugin 执行 `check/collect`。不要仅在 ma
 
 LASP/SSW 是这条边界的一个具体例子：execute 只包装用户自备 executable，要求显式
 版本、ARC/`lasp.in`/辅助输入与 fresh attempt，使用 `shell=False`；可选 MPI 只接受
-显式、可指纹化的 `mpirun`/`mpiexec` 普通可执行文件路径与 `-np N` 的受限 argv，不等于 SLURM 支持。normalize-replay 只解析已有
+显式的 `mpirun`/`mpiexec` 普通可执行文件路径与 `-np N` 的受限 argv，不等于 SLURM 支持。normalize-replay 只解析已有
 archive。fake executable smoke 只能证明 contract，不能写成真实 LASP 或科学 parity。
 
 ## 科学结果要求
 
-结果应按能力记录适用字段：单位、归一化方式、样本和分量数量、随机 seed、split、温度、时间步、平衡段、拟合窗、体积、移动粒子、DFT 设置引用、模型/数据集指纹和软件版本。
+结果应按能力记录适用字段：单位、归一化方式、样本和分量数量、随机 seed、split、温度、时间步、平衡段、拟合窗、体积、移动粒子、DFT 设置、模型/数据集路径和软件版本。
 
 常见错误：
 
@@ -97,15 +97,15 @@ Replay 可以：
 
 - 读取小型结果 manifest；
 - 验证其中明确列出的现有文件；
-- 为小文件计算 SHA-256，为大文件记录轻量 metadata fingerprint；
+- 记录来源路径、参数、软件版本和已有输出；
 - 写当前项目的新 run manifest（仅在显式批准的 `run` 中）。
 
 Replay 不可以：启动数值程序、提交作业、复制大数据/权重、修改来源产物，或把既有结果称为重新计算。
 
 portable replay/result manifest 必须显式为 `OK`，使用相对、无 `..` 的普通文件引用，且
 不得通过符号链接逃逸。远端 `completion.json` 只证明进程终止，必须至少绑定
-`project_id/node_id/attempt/status/exit_code`；core 另以 pinned approved plan 绑定
-run/plugin/plan/template identity，并且仍须执行科学 `check/collect`。
+`project_id/node_id/attempt/status/exit_code`；core 保留该 attempt 的 approved plan，
+并且仍须执行科学 `check/collect`。
 
 ## 测试清单
 

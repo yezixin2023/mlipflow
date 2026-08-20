@@ -2,14 +2,13 @@
 
 The site-owned run.sh selects the Python/framework environment and provides
 cluster-local data/model roots. This helper resolves only approved relative
-references below those roots, verifies content fingerprints, and calls the
+references below those roots and calls the
 bundled training_wrapper in-process (never through a shell).
 """
 from __future__ import annotations
 
 import argparse
 import contextlib
-import hashlib
 import json
 import os
 import re
@@ -22,7 +21,6 @@ from typing import Any
 
 FRAMEWORKS = {"deepmd", "m3gnet", "chgnet", "mace"}
 OPERATIONS = {"train", "finetune"}
-FINGERPRINT_PREFIX = "sha256:"
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 
 
@@ -46,43 +44,6 @@ def _safe_relative(value: Any) -> str:
     if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
         raise ValueError(f"unsafe relative_path: {value!r}")
     return value
-
-
-def _valid_fingerprint(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and value.startswith(FINGERPRINT_PREFIX)
-        and len(value) == 71
-        and all(char in "0123456789abcdef" for char in value[7:])
-    )
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return FINGERPRINT_PREFIX + digest.hexdigest()
-
-
-def fingerprint(path: Path) -> str:
-    """Return file SHA-256 or deterministic tree-sha256-v1 for a directory."""
-    path = path.resolve()
-    if path.is_file():
-        return _sha256_file(path)
-    if not path.is_dir():
-        raise ValueError(f"artifact does not exist: {path}")
-    digest = hashlib.sha256()
-    files = [item for item in path.rglob("*") if item.is_file()]
-    if not files:
-        raise ValueError(f"artifact directory is empty: {path}")
-    for item in sorted(files, key=lambda value: value.relative_to(path).as_posix()):
-        if item.is_symlink():
-            raise ValueError(f"artifact tree contains symlink: {item}")
-        relative = item.relative_to(path).as_posix()
-        record = f"{relative}\0{item.stat().st_size}\0{_sha256_file(item)}\n"
-        digest.update(record.encode("utf-8"))
-    return FINGERPRINT_PREFIX + digest.hexdigest()
 
 
 def _site_root(cli_value: str | None, env_name: str) -> Path:
@@ -119,14 +80,10 @@ def _reference(path: Path, *, id_key: str, default_kind: str) -> dict[str, str]:
     kind = raw.get("kind", default_kind)
     if kind not in {"file", "directory"}:
         raise ValueError(f"{path.name} kind must be file or directory")
-    declared = raw.get("fingerprint")
-    if not _valid_fingerprint(declared):
-        raise ValueError(f"{path.name} fingerprint must be sha256:<64 lowercase hex>")
     return {
         "id": artifact_id,
         "relative_path": relative,
         "kind": kind,
-        "fingerprint": str(declared),
     }
 
 
@@ -220,7 +177,6 @@ def _publish_model(
                 created = True
                 shutil.copyfileobj(input_stream, output)
             kind = "file"
-        observed = fingerprint(destination)
     except Exception:
         if created:
             if destination.is_dir() and not destination.is_symlink():
@@ -234,7 +190,6 @@ def _publish_model(
         "framework": framework,
         "relative_path": relative,
         "kind": kind,
-        "fingerprint": observed,
     }
 
 
@@ -263,28 +218,15 @@ def run(args: argparse.Namespace) -> int:
         dataset_file = input_dir / "dataset-reference.json"
         if not config.is_file() or not dataset_file.is_file():
             raise ValueError("staged training-config.json and dataset-reference.json are required")
-        config_fingerprint = _sha256_file(config)
-        if config_fingerprint != parameters.get("config_fingerprint"):
-            raise ValueError("staged config fingerprint differs from approved parameters")
-
         dataset_ref = _reference(
             dataset_file,
             id_key="dataset_id",
             default_kind=_framework_default_dataset_kind(str(framework)),
         )
-        declared_dataset_fingerprint = parameters.get("dataset_fingerprint")
-        if (
-            declared_dataset_fingerprint is not None
-            and dataset_ref["fingerprint"] != declared_dataset_fingerprint
-        ):
-            raise ValueError("dataset reference fingerprint differs from approved parameters")
         data_root = _site_root(args.data_root, "MLIPFLOW_DATA_ROOT")
         data_path = _resolve_under(
             data_root, dataset_ref["relative_path"], dataset_ref["kind"]
         )
-        observed_dataset = fingerprint(data_path)
-        if observed_dataset != dataset_ref["fingerprint"]:
-            raise ValueError("cluster dataset content fingerprint differs from approved reference")
 
         wrapper_args = [
             "--framework",
@@ -305,10 +247,6 @@ def run(args: argparse.Namespace) -> int:
             str(parameters.get("device")),
             "--precision",
             str(parameters.get("precision")),
-            "--dataset-fingerprint",
-            observed_dataset,
-            "--config-fingerprint",
-            config_fingerprint,
         ]
         foundation_ref: dict[str, str] | None = None
         foundation_report: dict[str, str] | None = None
@@ -322,9 +260,6 @@ def run(args: argparse.Namespace) -> int:
                 id_key="model_id",
                 default_kind=default_kind,
             )
-            approved_foundation = parameters.get("foundation_model_fingerprint")
-            if foundation_ref["fingerprint"] != approved_foundation:
-                raise ValueError("foundation reference fingerprint differs from approved parameters")
             foundation_root_value = (
                 args.foundation_model_root
                 or os.environ.get("MLIPFLOW_FOUNDATION_MODEL_ROOT")
@@ -339,19 +274,14 @@ def run(args: argparse.Namespace) -> int:
                 foundation_ref["relative_path"],
                 foundation_ref["kind"],
             )
-            observed_foundation = fingerprint(foundation_path)
-            if observed_foundation != foundation_ref["fingerprint"]:
-                raise ValueError("cluster foundation model fingerprint differs from approved reference")
             foundation_report = {
                 **foundation_ref,
-                "observed_fingerprint": observed_foundation,
+                "resolved_path": str(foundation_path),
             }
             wrapper_args.extend(
                 [
                     "--foundation-model",
                     str(foundation_path),
-                    "--foundation-model-fingerprint",
-                    observed_foundation,
                 ]
             )
 
@@ -394,8 +324,8 @@ def run(args: argparse.Namespace) -> int:
                 "return_code": return_code,
                 "framework": framework,
                 "operation": operation,
-                "dataset": {**dataset_ref, "observed_fingerprint": observed_dataset},
-                "config_fingerprint": config_fingerprint,
+                "dataset": {**dataset_ref, "resolved_path": str(data_path)},
+                "config_path": str(config),
                 "foundation_model": foundation_report,
                 "published_model": published_model,
                 "framework_version": result.get("framework_version")
@@ -425,16 +355,11 @@ def build_parser() -> argparse.ArgumentParser:
     execute.add_argument("--data-root")
     execute.add_argument("--model-root")
     execute.add_argument("--foundation-model-root")
-    fingerprint_parser = sub.add_parser("fingerprint")
-    fingerprint_parser.add_argument("path")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command == "fingerprint":
-        print(fingerprint(Path(args.path)))
-        return 0
     return run(args)
 
 

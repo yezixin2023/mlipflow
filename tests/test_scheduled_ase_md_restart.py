@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -22,11 +21,6 @@ def _load(name: str, path: Path):
     return module
 
 
-def _sha(path: Path) -> str:
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return "sha256:" + digest
-
-
 def _write_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
@@ -41,7 +35,6 @@ def _context(tmp_path: Path, *, ensemble: str = "nvt-langevin", attempt: int = 1
         "Li 0 0 0\n",
         encoding="utf-8",
     )
-    model_fp = "sha256:" + "2" * 64
     model_ref = tmp_path / "inputs" / "mace-model.json"
     _write_json(
         model_ref,
@@ -50,7 +43,6 @@ def _context(tmp_path: Path, *, ensemble: str = "nvt-langevin", attempt: int = 1
             "model_id": "mace-model-v1",
             "relative_path": "mace/model-v1.model",
             "kind": "file",
-            "fingerprint": model_fp,
         },
     )
     parameters = {
@@ -67,8 +59,6 @@ def _context(tmp_path: Path, *, ensemble: str = "nvt-langevin", attempt: int = 1
         "device": "cpu",
         "default_dtype": "float64",
         "fix_com": ensemble == "nvt-langevin",
-        "model_fingerprint": model_fp,
-        "structure_fingerprint": _sha(structure),
         "input_index": "-1",
     }
     if ensemble == "nvt-langevin":
@@ -114,41 +104,41 @@ def _context(tmp_path: Path, *, ensemble: str = "nvt-langevin", attempt: int = 1
     }
 
 
-def _checkpoint(identity: dict, *, completed_steps: int, ase_version: str = "test-ase") -> dict:
+def _checkpoint(settings: dict, *, completed_steps: int, ase_version: str = "test-ase") -> dict:
     value = {
         "schema_version": 1,
         "plugin_id": "ase-md",
         "checkpoint_state_version": "ase-md-checkpoint-v1",
-        "calculator": identity["calculator"],
-        "ensemble": identity["ensemble"],
+        "calculator": settings["calculator"],
+        "ensemble": settings["ensemble"],
         "model": {
-            "id": identity["model_id"],
-            "fingerprint": identity["model_fingerprint"],
+            "id": settings["model_id"],
+            "path": settings["model_path"],
         },
-        "structure_fingerprint": identity["structure_fingerprint"],
-        "temperature_K": identity["temperature_k"],
-        "timestep_fs": identity["timestep_fs"],
-        "steps_requested": identity["steps"],
-        "seed": identity["seed"],
-        "device": identity["device"],
-        "default_dtype": identity["default_dtype"],
-        "fix_com": identity["fix_com"],
+        "structure_path": settings["structure_path"],
+        "temperature_K": settings["temperature_k"],
+        "timestep_fs": settings["timestep_fs"],
+        "steps_requested": settings["steps"],
+        "seed": settings["seed"],
+        "device": settings["device"],
+        "default_dtype": settings["default_dtype"],
+        "fix_com": settings["fix_com"],
         "ase_version": ase_version,
         "completed_steps": completed_steps,
     }
-    if identity["ensemble"] == "nvt-langevin":
-        value["friction_per_fs"] = identity["friction_per_fs"]
+    if settings["ensemble"] == "nvt-langevin":
+        value["friction_per_fs"] = settings["friction_per_fs"]
         value["rng_algorithm"] = "PCG64"
     else:
         value.update(
             {
-                "pressure_GPa": identity["pressure_gpa"],
-                "thermostat_damping_fs": identity["thermostat_damping_fs"],
-                "barostat_damping_fs": identity["barostat_damping_fs"],
-                "thermostat_chain_length": identity["thermostat_chain_length"],
-                "barostat_chain_length": identity["barostat_chain_length"],
-                "thermostat_substeps": identity["thermostat_substeps"],
-                "barostat_substeps": identity["barostat_substeps"],
+                "pressure_GPa": settings["pressure_gpa"],
+                "thermostat_damping_fs": settings["thermostat_damping_fs"],
+                "barostat_damping_fs": settings["barostat_damping_fs"],
+                "thermostat_chain_length": settings["thermostat_chain_length"],
+                "barostat_chain_length": settings["barostat_chain_length"],
+                "thermostat_substeps": settings["thermostat_substeps"],
+                "barostat_substeps": settings["barostat_substeps"],
             }
         )
     return value
@@ -161,9 +151,9 @@ def test_first_attempt_declares_checkpoint_and_failure_salvage(
     module = _load("ase_md_restart_adapter_first", PLUGIN / "adapter_restart.py")
     plan = module.Adapter().plan(_context(tmp_path, ensemble=ensemble, attempt=1))
     assert plan["status"] == "READY", plan.get("diagnostics")
-    assert plan["md_identity"]["segment_start_step"] == 0
-    assert plan["md_identity"]["checkpoint_interval"] == 50
-    assert plan["md_identity"]["restart_from_attempt"] is None
+    assert plan["md_parameters"]["segment_start_step"] == 0
+    assert plan["md_parameters"]["checkpoint_interval"] == 50
+    assert plan["md_parameters"]["restart_from_attempt"] is None
     assert plan["failure_salvage"] == {
         "schema_version": 1,
         "fetch_remote_names": [
@@ -193,10 +183,10 @@ def test_retry_stages_immediately_previous_salvaged_checkpoint(
     first_context = _context(tmp_path, ensemble=ensemble, attempt=1)
     first = module.Adapter().plan(first_context)
     assert first["status"] == "READY", first.get("diagnostics")
-    identity = first["md_identity"]
+    settings = first["md_parameters"]
     previous_dir = tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1"
     checkpoint_path = previous_dir / "md-checkpoint.json"
-    _write_json(checkpoint_path, _checkpoint(identity, completed_steps=400))
+    _write_json(checkpoint_path, _checkpoint(settings, completed_steps=400))
     _write_json(
         previous_dir / "run-manifest.final.json",
         {
@@ -207,20 +197,20 @@ def test_retry_stages_immediately_previous_salvaged_checkpoint(
 
     retry = module.Adapter().plan(_context(tmp_path, ensemble=ensemble, attempt=2))
     assert retry["status"] == "READY", retry.get("diagnostics")
-    restart_identity = retry["md_identity"]
-    assert restart_identity["segment_start_step"] == 400
-    assert restart_identity["restart_from_attempt"] == 1
-    assert restart_identity["restart_checkpoint_sha256"] == _sha(checkpoint_path)
-    assert restart_identity["trajectory_steps"] == [400, 500, 600, 700, 800, 900, 1000]
-    assert restart_identity["thermo_steps"] == [400, 600, 800, 1000]
+    restart_settings = retry["md_parameters"]
+    assert restart_settings["segment_start_step"] == 400
+    assert restart_settings["restart_from_attempt"] == 1
+    assert restart_settings["restart_checkpoint_path"] == "restart/md-checkpoint.json"
+    assert restart_settings["trajectory_steps"] == [400, 500, 600, 700, 800, 900, 1000]
+    assert restart_settings["thermo_steps"] == [400, 600, 800, 1000]
     assert retry["approval_summary"]["remaining_steps"] == 600
-    assert retry["input_fingerprints"]["restart_checkpoint"] == _sha(checkpoint_path)
+    assert retry["input_paths"]["restart_checkpoint"] == str(checkpoint_path)
     staged = {
         item["remote_name"]: item
         for item in retry["scheduled_execution"]["staged_files"]
     }
     assert "restart/md-checkpoint.json" in staged
-    assert staged["restart/md-checkpoint.json"]["sha256"] == _sha(checkpoint_path)
+    assert staged["restart/md-checkpoint.json"]["source"] == str(checkpoint_path)
 
 
 def test_retry_does_not_resume_scientific_fail_after_completed_scheduler(tmp_path: Path) -> None:
@@ -228,7 +218,10 @@ def test_retry_does_not_resume_scientific_fail_after_completed_scheduler(tmp_pat
     first = module.Adapter().plan(_context(tmp_path, attempt=1))
     assert first["status"] == "READY"
     previous_dir = tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1"
-    _write_json(previous_dir / "md-checkpoint.json", _checkpoint(first["md_identity"], completed_steps=400))
+    _write_json(
+        previous_dir / "md-checkpoint.json",
+        _checkpoint(first["md_parameters"], completed_steps=400),
+    )
     _write_json(
         previous_dir / "run-manifest.final.json",
         {"state": "FAIL", "job": {"scheduler_state": "COMPLETED"}},

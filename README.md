@@ -19,7 +19,7 @@ MLIPFlow is intentionally a **workflow layer**, not another MLIP framework. It w
 - **Local and HPC orchestration.** Run local scientific adapters or use controlled SSH + Slurm profiles with site-owned templates.
 - **Evidence-driven model routing.** Rank models from versioned benchmark evidence and explicit policies rather than hard-coded model preferences.
 - **Agent-ready supervision.** Bundled Agent Skills teach compatible tool-using agents how to plan and supervise workflows without moving numerical logic into the agent.
-- **Replay and provenance.** Reuse existing scientific evidence without pretending it was recomputed, while retaining source identity and run provenance.
+- **Replay and provenance.** Reuse existing scientific evidence without pretending it was recomputed, while retaining source paths and run provenance.
 
 ## Quick start
 
@@ -118,7 +118,7 @@ MLIPFlow keeps observation, planning, execution, and reconciliation separate.
 | `mlipflow logs NODE` | Read saved logs for an attempt. |
 | `mlipflow route ...` | Rank models from benchmark evidence and a project routing policy. |
 | `mlipflow run NODE --dry-run` | Build the exact execution plan without running it. |
-| `mlipflow run NODE --approve TOKEN` | Execute approval-gated work using the reviewed plan digest. |
+| `mlipflow run NODE --approve` | Execute approval-gated work after reviewing the dry-run. |
 | `mlipflow advance` | Observe and reconcile state; it does not launch new workflow nodes. |
 | `mlipflow retry NODE` | Create a fresh retry attempt while preserving lineage. |
 | `mlipflow stop NODE` | Explicitly stop/cancel a running node when the backend supports it. |
@@ -129,15 +129,15 @@ A typical expensive run looks like this:
 
 ```bash
 mlipflow --project . run train-model --dry-run --audit
-# Review command, inputs, backend, resources, staged files, and plan_digest.
-mlipflow --project . run train-model --approve <PLAN_DIGEST>
+# Review command, input paths, backend, resources, staged files, and scripts.
+mlipflow --project . run train-model --approve
 mlipflow --project . advance
 mlipflow --project . status train-model
 ```
 
 ## Bundled scientific capabilities
 
-MLIPFlow currently ships ten scientific plugins. Plugin manifests are the source of truth for exact operations, inputs, outputs, backend support, dependencies, and completion checks.
+MLIPFlow currently ships eleven scientific plugins. Plugin manifests are the source of truth for exact operations, inputs, outputs, backend support, dependencies, and completion checks.
 
 | Plugin | What it does | Typical execution |
 |---|---|---|
@@ -148,6 +148,7 @@ MLIPFlow currently ships ten scientific plugins. Plugin manifests are the source
 | `ase-md` | Run single-temperature ASE NVT Langevin or isotropic MTK NPT with explicit models and checkpoint/restart. | Controlled SSH-Slurm |
 | `lammps-md` | Prepare LAMMPS MLIP decks and execute NVT/NPT with restart-aware scheduled runs. | Local prepare; controlled SSH-Slurm execute |
 | `mlip-benchmark` | Normalize/evaluate prediction evidence and produce canonical metrics and rankings. | Local |
+| `active-learning` | Evaluate calibrated one/two-model committees, combine model risks, select reviewed DIRECT candidates, and assess immutable offline rounds. | Local deterministic decisions; controlled SSH-SLURM committee inference; other numerical stages remain in their existing plugins |
 | `ionic-transport` | Analyze native collected ASE-MD/LAMMPS-MD artifacts or historical ASE/LAMMPS/VASP/MSD data into diffusion, conductivity, and Arrhenius results; restart segments and upstream metadata are handled automatically. | Local |
 | `candidate-ranking` | Deterministic ranking/top-k selection from existing candidate and metric manifests. | Local |
 | `electrochemical-voltage` | Convert explicit total-energy sequences to voltage or replay reported voltage evidence. | Local |
@@ -173,6 +174,7 @@ Agent Skills live in [`.agents/skills/`](.agents/skills/). They are **supervisio
 | Skill | Use it for |
 |---|---|
 | `$mlip-workflow` | Plan and supervise an end-to-end MLIP workflow. |
+| `$mlip-active-learning` | Supervise finite offline committee active-learning campaigns and immutable rounds. |
 | `$high-entropy-structure` | Build and review high-entropy/SQS structure-generation work. |
 | `$pes-sampling` | Supervise representative selection and LASP/SSW sampling/replay. |
 | `$dft-labeling` | Prepare and supervise DFT labeling workflows. |
@@ -237,7 +239,7 @@ By default, project state is local to the project:
 .mlipflow/runs/<node>/attempt-<N>/
 ```
 
-Each retry gets a new attempt. MLIPFlow records the plan and relevant identities used for that attempt so later project edits do not silently rewrite historical execution state.
+Each retry gets a new attempt. MLIPFlow records that attempt's plan, paths, parameters, versions, seed, and outputs so later project edits do not silently rewrite historical execution state.
 
 ## HPC configuration
 
@@ -261,9 +263,10 @@ clusters:
       partition_candidates:
         - gpu
         - compute
+      memory_constraint: reported
 ```
 
-A project node selects that profile and declares only abstract resources:
+A project node may select that profile and declares only abstract resources:
 
 ```yaml
 - id: train-model
@@ -279,7 +282,17 @@ A project node selects that profile and declares only abstract resources:
   parameters: {}
 ```
 
+If `backend_profile` is omitted, MLIPFlow reads one scheduler snapshot from each
+site profile that declares `partition_candidates` and selects the cluster with
+the most currently available nodes capable of the requested resources. An
+explicit `backend_profile` always wins. Set `memory_constraint: unreported` only
+for a site whose Slurm node records do not expose usable memory capacity; the
+submitted template remains responsible for that site's memory policy.
+
 The site-owned template library is responsible for details such as modules/conda activation, executable paths, launchers, and Slurm directives. This keeps projects portable across clusters and keeps private infrastructure details out of version-controlled research manifests.
+
+`resources.walltime` accepts a reviewed `HH:MM:SS` value or the explicit literal
+`UNLIMITED`. The selected Slurm partition can still impose its own maximum time.
 
 ### DFT labels to all training frameworks
 
@@ -291,11 +304,11 @@ then publishes split-preserving DeepMD, M3GNet/MatGL, CHGNet, and MACE directori
 below the site-owned data root. The four small `*-dataset-reference.json` files are
 direct inputs to `mlip-training`.
 
-The converter preserves stable record/source identities and atom order, records every
+The converter preserves stable record IDs, source paths, and atom order, records every
 stress/unit transformation, uses dpdata for DeepMD, and refuses silent overwrite.
 Every framework train/validation/test file is selected from the same `split.json`
 record IDs, so the held-out test set is directly comparable. There is no bundle tar,
-verification archive, manifest hash graph, or user-authored data conversion command in this
+verification archive, or user-authored data conversion command in this
 path. See [`examples/training_all_models/CLUSTER.md`](examples/training_all_models/CLUSTER.md)
 for the site template and workflow YAML.
 
@@ -318,7 +331,7 @@ chgnet-exec           -> CHGNet stack, when needed
 site programs         -> VASP / LAMMPS / LASP / MPI / scheduler modules
 ```
 
-MLIPFlow records and checks the execution contract, but the scientific environment remains yours to pin and validate. For production calculations, record framework versions, model/data identities, units, seeds, device/precision choices, and the scientific parameters that matter to your result.
+MLIPFlow records and checks the execution contract, but the scientific environment remains yours to select and validate. For production calculations, record framework versions, model/data paths, units, seeds, device/precision choices, and the scientific parameters that matter to your result.
 
 ## Extending MLIPFlow
 

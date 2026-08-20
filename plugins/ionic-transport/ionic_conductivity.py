@@ -14,7 +14,6 @@ The Arrhenius fit is always performed as a linear fit in ln(D) vs 1/T.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import math
@@ -293,18 +292,18 @@ def _nested_mapping(value: Any, *keys: str) -> dict[str, Any]:
     return current if isinstance(current, dict) else {}
 
 
-def _approved_identity(segment_dir: Path, key: str) -> dict[str, Any]:
+def _approved_parameters(segment_dir: Path, key: str) -> dict[str, Any]:
     approved = _read_json_object(segment_dir / "approved-plan.json")
     return _nested_mapping(approved, "adapter_plan", key)
 
 
-def _model_identity(value: Any, fallback: dict[str, Any]) -> dict[str, Any] | None:
+def _model_record(value: Any, fallback: dict[str, Any]) -> dict[str, Any] | None:
     model = value if isinstance(value, dict) else {}
-    identity = {
+    record = {
         "id": model.get("id", model.get("model_id", fallback.get("model_id"))),
-        "fingerprint": model.get("fingerprint", fallback.get("model_fingerprint")),
+        "path": model.get("path", fallback.get("model_path")),
     }
-    return identity if any(item is not None for item in identity.values()) else None
+    return record if any(item is not None for item in record.values()) else None
 
 
 def discover_run_dirs(
@@ -500,18 +499,16 @@ def unwrap_fractional_continuity(wrapped_frames: np.ndarray) -> np.ndarray:
 def _ase_segment_metadata(segment_dir: Path) -> dict[str, Any]:
     result = _read_json_object(segment_dir / "md-result.json")
     index = _read_json_object(segment_dir / "trajectory-index.json")
-    identity = _approved_identity(segment_dir, "md_identity")
+    parameters = _approved_parameters(segment_dir, "md_parameters")
     return {
-        "temperature_K": result.get("temperature_K", identity.get("temperature_k")),
-        "timestep_fs": result.get("timestep_fs", identity.get("timestep_fs")),
+        "temperature_K": result.get("temperature_K", parameters.get("temperature_k")),
+        "timestep_fs": result.get("timestep_fs", parameters.get("timestep_fs")),
         "trajectory_interval": result.get(
-            "trajectory_interval", identity.get("trajectory_interval")
+            "trajectory_interval", parameters.get("trajectory_interval")
         ),
-        "ensemble": result.get("ensemble", identity.get("ensemble")),
-        "model": _model_identity(result.get("model"), identity),
-        "structure_identity": result.get(
-            "structure_fingerprint", identity.get("structure_fingerprint")
-        ),
+        "ensemble": result.get("ensemble", parameters.get("ensemble")),
+        "model": _model_record(result.get("model"), parameters),
+        "structure_path": result.get("structure_path", parameters.get("structure_path")),
         "steps": index.get("steps"),
         "time_fs": index.get("time_fs"),
         "index_path": segment_dir / "trajectory-index.json",
@@ -519,7 +516,7 @@ def _ase_segment_metadata(segment_dir: Path) -> dict[str, Any]:
     }
 
 
-def _same_native_identity(records: list[dict[str, Any]], keys: tuple[str, ...], label: str) -> None:
+def _same_native_settings(records: list[dict[str, Any]], keys: tuple[str, ...], label: str) -> None:
     for key in keys:
         values = [record.get(key) for record in records if record.get(key) is not None]
         if values and any(value != values[0] for value in values[1:]):
@@ -550,9 +547,9 @@ def load_ase_trajectory(
     trajectory_name = "trajectory.traj" if is_native else "production.traj"
     metadata_records = [_ase_segment_metadata(path) for path in segment_dirs] if is_native else []
     if is_native:
-        _same_native_identity(
+        _same_native_settings(
             metadata_records,
-            ("temperature_K", "timestep_fs", "trajectory_interval", "ensemble", "model", "structure_identity"),
+            ("temperature_K", "timestep_fs", "trajectory_interval", "ensemble", "model", "structure_path"),
             "ASE-MD",
         )
 
@@ -671,7 +668,7 @@ def load_ase_trajectory(
         "trajectory_interval": _first_metadata(metadata_records, "trajectory_interval") if is_native else None,
         "ensemble": _first_metadata(metadata_records, "ensemble") if is_native else None,
         "model": _first_metadata(metadata_records, "model") if is_native else None,
-        "structure_identity": _first_metadata(metadata_records, "structure_identity") if is_native else None,
+        "structure_path": _first_metadata(metadata_records, "structure_path") if is_native else None,
     }
     return RunData(
         dataset=dataset,
@@ -839,33 +836,26 @@ def _lammps_input_manifest(segment_dir: Path) -> tuple[dict[str, Any], Path | No
 def _lammps_segment_metadata(segment_dir: Path) -> dict[str, Any]:
     result_path = segment_dir / "lammps-execution-result.json"
     result = _read_json_object(result_path)
-    identity = _approved_identity(segment_dir, "lammps_execution_identity")
+    parameters = _approved_parameters(segment_dir, "lammps_calculation")
     manifest, manifest_path = _lammps_input_manifest(segment_dir)
     md = manifest.get("md") if isinstance(manifest.get("md"), dict) else {}
     manifest_model = manifest.get("model") if isinstance(manifest.get("model"), dict) else {}
-    input_fingerprints = (
-        manifest.get("input_fingerprints")
-        if isinstance(manifest.get("input_fingerprints"), dict)
-        else {}
-    )
     return {
         "temperature_K": result.get(
-            "temperature_K", identity.get("temperature_k", md.get("temperature_k"))
+            "temperature_K", parameters.get("temperature_k", md.get("temperature_k"))
         ),
         "timestep_fs": result.get(
-            "timestep_fs", identity.get("timestep_fs", md.get("timestep_fs"))
+            "timestep_fs", parameters.get("timestep_fs", md.get("timestep_fs"))
         ),
         "dump_interval": result.get(
-            "dump_interval", identity.get("dump_interval", md.get("dump_interval"))
+            "dump_interval", parameters.get("dump_interval", md.get("dump_interval"))
         ),
         "type_map": result.get(
-            "type_map", identity.get("type_map", md.get("type_map"))
+            "type_map", parameters.get("type_map", md.get("type_map"))
         ),
-        "ensemble": result.get("ensemble", identity.get("ensemble", md.get("ensemble"))),
-        "model": _model_identity(result.get("model") or manifest_model, identity),
-        "structure_identity": result.get(
-            "structure_identity", input_fingerprints.get("structure")
-        ),
+        "ensemble": result.get("ensemble", parameters.get("ensemble", md.get("ensemble"))),
+        "model": _model_record(result.get("model") or manifest_model, parameters),
+        "structure_path": result.get("structure_path", manifest.get("structure_path")),
         "result_path": result_path,
         "manifest_path": manifest_path,
     }
@@ -957,9 +947,9 @@ def load_lammps_trajectory(
         [_lammps_segment_metadata(path) for path in segment_dirs] if is_native else []
     )
     if is_native:
-        _same_native_identity(
+        _same_native_settings(
             metadata_records,
-            ("temperature_K", "timestep_fs", "dump_interval", "type_map", "ensemble", "model", "structure_identity"),
+            ("temperature_K", "timestep_fs", "dump_interval", "type_map", "ensemble", "model", "structure_path"),
             "LAMMPS-MD",
         )
 
@@ -1174,7 +1164,7 @@ def load_lammps_trajectory(
         "type_map": _first_metadata(metadata_records, "type_map") if is_native else None,
         "ensemble": _first_metadata(metadata_records, "ensemble") if is_native else None,
         "model": _first_metadata(metadata_records, "model") if is_native else None,
-        "structure_identity": _first_metadata(metadata_records, "structure_identity") if is_native else None,
+        "structure_path": _first_metadata(metadata_records, "structure_path") if is_native else None,
         "coordinate_modes": list(dict.fromkeys(coordinate_modes)),
     }
     return RunData(
@@ -1916,10 +1906,9 @@ def analyze_run(run: RunData, args, output_dir: Path):
 
 
 def safe_slug(run: RunData) -> str:
-    digest = hashlib.sha1(str(run.run_dir).encode("utf-8")).hexdigest()[:8]
     temp = f"{run.temperature_K:g}K".replace(".", "p")
     dataset = re.sub(r"[^A-Za-z0-9_.-]+", "_", run.dataset)
-    return f"{dataset}_{temp}_{digest}"
+    return f"{dataset}_{temp}"
 
 
 def plot_single_msd(run: RunData, output_path: Path):
@@ -2078,21 +2067,11 @@ def default_inputs() -> list[Path]:
     return existing if existing else [Path(".")]
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
 def artifact_record(path: Path, role: str) -> dict:
     resolved = path.resolve()
     return {
         "role": role,
         "path": str(resolved),
-        "sha256": sha256_file(resolved),
-        "size_bytes": resolved.stat().st_size,
     }
 
 

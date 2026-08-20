@@ -1,6 +1,6 @@
 ---
 name: mlip-workflow
-description: Orchestrate auditable end-to-end MLIP research workflows by identifying the user's final goal, inventorying existing artifacts and workflow state, selecting the earliest missing necessary stage, and handing each stage to the current MLIPFlow specialist Skill or plugin. Use for multi-stage planning, resuming partial workflows, manuscript replay, avoiding redundant expensive work, or coordinating structure generation, PES sampling, DFT labeling, MLIP training/benchmarking, MD, ionic transport, candidate ranking, and voltage analysis; do not implement scientific algorithms or bypass specialist contracts.
+description: Orchestrate auditable end-to-end MLIP research workflows by identifying the user's final goal, inventorying existing artifacts and workflow state, selecting the earliest missing necessary stage, and handing each stage to the current MLIPFlow specialist Skill or plugin. Use for multi-stage planning, resuming partial workflows, manuscript replay, avoiding redundant expensive work, or coordinating structure generation, PES sampling, DFT labeling, MLIP training/benchmarking, offline active learning, MD, ionic transport, candidate ranking, and voltage analysis; do not implement scientific algorithms or bypass specialist contracts.
 ---
 
 # MLIP workflow
@@ -18,7 +18,7 @@ Skill and plugin manifest; keep their scientific and safety boundaries authorita
 
 1. State the user's final scientific objective.
 2. Inspect current MLIPFlow state with read-only commands and inventory actual inputs,
-   outputs, identities, and completion evidence.
+   outputs, paths/parameters, and completion evidence.
 3. Distinguish merely present artifacts from artifacts accepted by the applicable
    Adapter `check/collect`. Validate or replay unverified evidence before reuse.
 4. Mark completed necessary stages and omit irrelevant optional stages.
@@ -58,7 +58,7 @@ or coordinate convention.
 
 Before any expensive fresh execution, show the stage, verified inputs, expected
 artifacts, backend/resources, cost class, and approval requirement. Follow the existing
-MLIPFlow dry-run/token lifecycle; do not auto-submit, enlarge resources, convert smoke
+MLIPFlow dry-run/boolean-approval lifecycle; do not auto-submit, enlarge resources, convert smoke
 settings into production settings, or rerun existing expensive evidence without
 explicit intent.
 
@@ -74,7 +74,7 @@ Use these Skills rather than copying their domain rules:
 - `$high-entropy-structure`, `$pes-sampling`, `$dft-labeling`;
 - `$mlip-training`, `$mlip-benchmark`;
 - `$ase-md`, `$lammps-md`, `$ionic-transport`;
-- `$candidate-ranking`.
+- `$candidate-ranking`, `$mlip-active-learning`.
 
 Do not select a model by brand. Require an explicit user choice or comparable benchmark,
 routing, and metric-policy evidence. Do not sort candidates yourself. Do not implement

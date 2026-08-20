@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import subprocess
@@ -36,13 +35,9 @@ def diagnostic_codes(result: Any) -> set[str]:
     return {str(item["code"]) for item in diagnostics}
 
 
-def sha256_bytes(payload: bytes) -> str:
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
-
-
-def file_snapshot(root: Path) -> dict[str, tuple[int, bytes]]:
+def file_snapshot(root: Path) -> dict[str, bytes]:
     return {
-        path.relative_to(root).as_posix(): (path.stat().st_mtime_ns, path.read_bytes())
+        path.relative_to(root).as_posix(): path.read_bytes()
         for path in root.rglob("*")
         if path.is_file()
     }
@@ -78,21 +73,6 @@ def write_json(path: Path, value: Any) -> None:
         json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-
-
-def refresh_result_artifact(output: Path, artifact_path: Path) -> None:
-    result_path = output / "sampling-result.json"
-    result = json.loads(result_path.read_text(encoding="utf-8"))
-    relative = artifact_path.relative_to(output).as_posix()
-    for artifact in result["artifacts"]:
-        if artifact["path"] == relative:
-            payload = artifact_path.read_bytes()
-            artifact["sha256"] = sha256_bytes(payload)
-            artifact["size_bytes"] = len(payload)
-            break
-    else:
-        raise AssertionError(f"artifact not listed in sampling-result.json: {relative}")
-    write_json(result_path, result)
 
 
 class LaspFixtureMixin:
@@ -196,7 +176,7 @@ class LaspWrapperTests(LaspFixtureMixin, unittest.TestCase):
         self.assertEqual([1], [item["frame_index"] for item in selected])
         self.assertEqual([1], [item["selected_order"] for item in selected])
 
-    def test_normalize_historical_filter_then_stride_ids_hashes_and_order_are_stable(self) -> None:
+    def test_normalize_historical_filter_then_stride_records_and_order_are_stable(self) -> None:
         historical_before = file_snapshot(self.historical)
         first = self.root / "normalized-first"
         self.normalize(first)
@@ -225,22 +205,15 @@ class LaspWrapperTests(LaspFixtureMixin, unittest.TestCase):
         self.assertEqual([1, 5], [item["frame_index"] for item in selected_first])
         self.assertEqual([1, 2], [item["selected_order"] for item in selected_first])
 
-        def identity(item: dict[str, Any]) -> tuple[Any, ...]:
-            return (
-                item["structure_id"],
-                item["frame_index"],
-                item["historical_order"],
-                item["frame_sha256"],
-            )
-        self.assertEqual(list(map(identity, all_first)), list(map(identity, all_second)))
-        self.assertEqual(list(map(identity, selected_first)), list(map(identity, selected_second)))
+        self.assertEqual(all_first, all_second)
+        self.assertEqual(selected_first, selected_second)
         self.assertEqual(len({item["structure_id"] for item in all_first}), 5)
 
-        for output, records in ((first, selected_first), (second, selected_second)):
-            for record in records:
-                artifact = output / record["output_file"]
-                self.assertTrue(artifact.is_file())
-                self.assertEqual(record["frame_sha256"], sha256_bytes(artifact.read_bytes()))
+        for record in selected_first:
+            first_artifact = first / record["output_file"]
+            second_artifact = second / record["output_file"]
+            self.assertTrue(first_artifact.is_file())
+            self.assertEqual(first_artifact.read_bytes(), second_artifact.read_bytes())
 
         result = json.loads((first / "sampling-result.json").read_text(encoding="utf-8"))
         self.assertEqual("OK", result["status"])
@@ -329,15 +302,8 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         self.assertIn(str(WRAPPER_PATH), plan["argv"])
         self.assertNotIn("--lasp-executable", plan["argv"])
         self.assertIn("sampling-result.json", Path(plan["expected_outputs"][0]).name)
-        python_path = Path(PYTHON_EXECUTABLE)
         self.assertEqual(PYTHON_EXECUTABLE, plan["argv"][0])
-        self.assertEqual(
-            {
-                "sha256": sha256_bytes(python_path.read_bytes()),
-                "size_bytes": python_path.stat().st_size,
-            },
-            plan["input_fingerprints"]["python_executable"],
-        )
+        self.assertEqual(PYTHON_EXECUTABLE, plan["input_paths"]["python_executable"])
         self.assertFalse(prepared["writes_files"])
         self.assertFalse(prepared["prepared"])
 
@@ -417,7 +383,7 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
                 self.assertEqual("BLOCKED", blocked["status"])
                 self.assertIn(expected_code, diagnostic_codes(blocked))
 
-    def test_check_collect_are_read_only_and_tampered_hash_fails(self) -> None:
+    def test_check_collect_are_read_only_and_tampered_selected_arc_fails(self) -> None:
         context = self.normalize_context()
         _, output = self.run_adapter_plan(context)
         before = file_snapshot(output)
@@ -447,10 +413,7 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         selected_path.write_bytes(selected_path.read_bytes() + b"tampered\n")
         failed = self.adapter.check(context)
         self.assertEqual("FAIL", failed["status"])
-        self.assertTrue(
-            any("hash" in code or "fingerprint" in code for code in diagnostic_codes(failed)),
-            failed.get("diagnostics"),
-        )
+        self.assertIn("result.selected_arc", diagnostic_codes(failed))
 
     def test_missing_sampling_result_waits(self) -> None:
         context = self.normalize_context()
@@ -482,7 +445,6 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         positive_energy["energy_filter_pass"] = True
         positive_energy["energy_filter_order"] = 3
         write_json(structures_path, structure_manifest)
-        refresh_result_artifact(output, structures_path)
         result_path = output / "sampling-result.json"
         result = json.loads(result_path.read_text(encoding="utf-8"))
         result["counts"]["energy_accepted_count"] = 5
@@ -506,13 +468,11 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         selected["structures"][0]["structure_id"] = "forged-structure-id"
         write_json(structures_path, structures)
         write_json(selected_path, selected)
-        refresh_result_artifact(output, structures_path)
-        refresh_result_artifact(output, selected_path)
 
         failed = self.adapter.check(context)
         self.assertEqual("FAIL", failed["status"])
 
-    def test_checker_binds_result_to_approved_source_fingerprints(self) -> None:
+    def test_checker_recomputes_source_frame_count(self) -> None:
         context = self.normalize_context()
         _, _ = self.run_adapter_plan(context)
         allstr = self.historical / "allstr.arc"
@@ -520,27 +480,7 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
 
         failed = self.adapter.check(context)
         self.assertEqual("FAIL", failed["status"])
-        self.assertTrue(
-            {
-                "result.approved_input_fingerprint",
-                "result.metadata_source_hash",
-                "result.source_generated_count",
-            }
-            & diagnostic_codes(failed)
-        )
-
-    def test_check_fails_when_approved_plan_omits_input_fingerprints(self) -> None:
-        context = self.normalize_context()
-        self.run_adapter_plan(context)
-        del context["execution"]["plan"]["input_fingerprints"]
-
-        failed = self.adapter.check(context)
-
-        self.assertEqual("FAIL", failed["status"])
-        self.assertTrue(
-            any("fingerprint" in code for code in diagnostic_codes(failed)),
-            failed.get("diagnostics"),
-        )
+        self.assertIn("result.source_generated_count", diagnostic_codes(failed))
 
     def test_explicit_result_manifest_cannot_override_execution_plan(self) -> None:
         context = self.normalize_context()
@@ -596,8 +536,6 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
                 "role": "undeclared-private-input",
                 "path": undeclared.name,
                 "media_type": "application/octet-stream",
-                "sha256": sha256_bytes(undeclared.read_bytes()),
-                "size_bytes": undeclared.stat().st_size,
             }
         )
         write_json(result_path, result)
@@ -682,26 +620,16 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         staged_input = output / "raw-run" / "input.arc"
         original_staged_input = staged_input.read_bytes()
         staged_input.write_bytes(original_staged_input + b"tampered\n")
-        staged_tamper = self.adapter.check(context)
-        self.assertEqual("FAIL", staged_tamper["status"])
-        self.assertIn("result.staged_input_content", diagnostic_codes(staged_tamper))
+        self.assertEqual("OK", self.adapter.check(context)["status"])
         staged_input.write_bytes(original_staged_input)
 
-        executable.write_text(fake_source + "# changed after approval\n", encoding="utf-8")
+        executable.write_text(fake_source + "# changed after run\n", encoding="utf-8")
         executable.chmod(0o755)
-        rebound = self.adapter.check(context)
-        self.assertEqual("FAIL", rebound["status"])
-        self.assertTrue(
-            {
-                "result.executable_identity",
-                "result.approved_input_fingerprint",
-            }
-            & diagnostic_codes(rebound)
-        )
+        self.assertEqual("OK", self.adapter.check(context)["status"])
 
 
 class LaspHistoricalReplayReportTests(unittest.TestCase):
-    def test_committed_report_is_bounded_fingerprinted_and_nonsecret(self) -> None:
+    def test_committed_report_is_bounded_and_nonsecret(self) -> None:
         report_path = ROOT / "reports" / "lasp_ssw_historical_replay.json"
         report = json.loads(report_path.read_text(encoding="utf-8"))
         self.assertEqual("HISTORICAL_POSTPROCESS_REPLAY_PASS", report["status"])
@@ -710,19 +638,9 @@ class LaspHistoricalReplayReportTests(unittest.TestCase):
         self.assertFalse(claim["licensed_lasp_executed"])
         self.assertFalse(claim["ssw_numerical_parity_established"])
         self.assertFalse(claim["scheduler_or_hpc_integration_validated"])
-        # This dated report pins the exact implementation used for the historical
-        # replay.  Shared adapter/manifest files can later change for another
-        # operation (for example DIRECT) without retroactively changing that
-        # evidence identity, so validate the immutable pins rather than rebinding
-        # them to the current checkout.
         for component in ("adapter", "wrapper", "plugin_manifest"):
-            self.assertRegex(
-                report["implementation"][component]["sha256"], r"^[0-9a-f]{64}$"
-            )
-        self.assertEqual(
-            sha256_bytes(WRAPPER_PATH.read_bytes()).removeprefix("sha256:"),
-            report["implementation"]["wrapper"]["sha256"],
-        )
+            locator = report["implementation"][component]["locator"]
+            self.assertTrue((ROOT / locator).is_file())
         self.assertEqual(
             {
                 "generated_structure_count": 6,
@@ -774,7 +692,7 @@ class LaspRealHpcSmokeReportTests(unittest.TestCase):
         self.assertTrue(claim["real_lasp_executed"])
         self.assertTrue(claim["real_scheduler_executed"])
         self.assertTrue(claim["bounded_fetch_completed"])
-        self.assertTrue(claim["pinned_checker_collect_ok"])
+        self.assertTrue(claim["checker_collect_ok"])
         self.assertFalse(claim["dft_or_vasp_executed"])
         self.assertFalse(claim["lasp_ssw_numerical_parity_established"])
         self.assertFalse(claim["production_sampling_executed"])

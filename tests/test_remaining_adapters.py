@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import importlib.util
 import json
 import tempfile
@@ -29,10 +28,6 @@ def load_adapter(plugin_id: str) -> ModuleType:
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def fingerprint(path: Path) -> str:
-    return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
 
 
 def write_poscar(path: Path, counts: dict[str, int]) -> None:
@@ -119,18 +114,16 @@ class HighEntropyAdapterTests(unittest.TestCase):
             "status": "OK",
             "seed": 17,
             "candidate_count": 2,
-            "prototype_fingerprint": fingerprint(prototype),
-            "composition_manifest_fingerprint": fingerprint(composition),
-            "generator": {
-                "identity": "user-supplied:scripts/sqs.py",
-                "fingerprint": fingerprint(script),
+            "input_paths": {
+                "prototype": str(prototype.resolve()),
+                "composition_manifest": str(composition.resolve()),
             },
+            "generator": {"name": "scripts/sqs.py"},
             "method": {"random_seed_policy": "base-seed-plus-candidate-index"},
             "structures": [
                 {
                     "id": "sqs-001",
                     "path": "structures/sqs-001.vasp",
-                    "fingerprint": fingerprint(structure_one),
                     "composition": {"Zn": 1, "Fe": 1},
                     "media_type": "chemical/x-vasp-poscar",
                     "random_seed": 17,
@@ -139,7 +132,6 @@ class HighEntropyAdapterTests(unittest.TestCase):
                 {
                     "id": "sqs-002",
                     "path": "structures/sqs-002.vasp",
-                    "fingerprint": fingerprint(structure_two),
                     "composition": {"Zn": 0, "Fe": 2},
                     "media_type": "chemical/x-vasp-poscar",
                     "random_seed": 18,
@@ -148,7 +140,7 @@ class HighEntropyAdapterTests(unittest.TestCase):
         }
         return ctx, result
 
-    def test_seeded_plan_and_fingerprint_checked_collection(self) -> None:
+    def test_seeded_plan_and_scientific_collection(self) -> None:
         module = load_adapter("high-entropy-structure")
         adapter = module.Adapter()
         with tempfile.TemporaryDirectory() as directory:
@@ -249,17 +241,10 @@ class HighEntropyAdapterTests(unittest.TestCase):
             )
 
             wrong_generator = copy.deepcopy(valid)
-            wrong_generator["generator"]["identity"] = "unapproved-generator"
-            cases["wrong generator identity"] = (
+            wrong_generator["generator"]["name"] = "unapproved-generator"
+            cases["wrong generator name"] = (
                 wrong_generator,
-                "result.generator_identity",
-            )
-
-            wrong_generator_fingerprint = copy.deepcopy(valid)
-            wrong_generator_fingerprint["generator"]["fingerprint"] = "sha256:" + "0" * 64
-            cases["wrong generator fingerprint"] = (
-                wrong_generator_fingerprint,
-                "result.generator_fingerprint",
+                "result.generator_name",
             )
 
             wrong_seed_policy = copy.deepcopy(valid)
@@ -280,7 +265,7 @@ class HighEntropyAdapterTests(unittest.TestCase):
                     self.assertEqual("FAIL", checked["status"])
                     self.assertIn(expected_code, {item["code"] for item in checked["diagnostics"]})
 
-    def test_bundled_generator_requires_icet_and_ase_identity_not_version_parity(self) -> None:
+    def test_bundled_generator_requires_icet_and_ase_versions(self) -> None:
         module = load_adapter("high-entropy-structure")
         adapter = module.Adapter()
         with tempfile.TemporaryDirectory() as directory:
@@ -289,10 +274,7 @@ class HighEntropyAdapterTests(unittest.TestCase):
             attempt.mkdir()
             ctx, valid = self._valid_case(project, attempt)
             del ctx["parameters"]["sqs_script"]
-            valid["generator"] = {
-                "identity": "mlipflow-bundled:icet.generate_sqs_from_supercells",
-                "fingerprint": fingerprint(ROOT / "plugins" / "high-entropy-structure" / "sqs.py"),
-            }
+            valid["generator"] = {"name": "icet.generate_sqs_from_supercells"}
             valid["method"] = {
                 "library": "icet",
                 "library_version": "recorded-version-not-runtime-parity",
@@ -304,7 +286,7 @@ class HighEntropyAdapterTests(unittest.TestCase):
 
             self.assertEqual("OK", adapter.check(ctx)["status"])
 
-    def test_generation_result_rejects_input_drift_and_actual_structure_mismatch(self) -> None:
+    def test_generation_result_uses_semantics_and_rejects_structure_mismatch(self) -> None:
         module = load_adapter("high-entropy-structure")
         adapter = module.Adapter()
         with tempfile.TemporaryDirectory() as directory:
@@ -322,28 +304,19 @@ class HighEntropyAdapterTests(unittest.TestCase):
                 encoding="utf-8",
             )
             checked = adapter.check(ctx)
-            self.assertEqual("FAIL", checked["status"], "prototype drift")
-            self.assertIn(
-                "result.prototype_fingerprint",
-                {item["code"] for item in checked["diagnostics"]},
-            )
+            self.assertEqual("OK", checked["status"], "non-scientific title change")
             prototype.write_text(original_prototype, encoding="utf-8")
 
             composition = project / "composition.json"
             original_composition = composition.read_text(encoding="utf-8")
             composition.write_text(original_composition + " ", encoding="utf-8")
             checked = adapter.check(ctx)
-            self.assertEqual("FAIL", checked["status"], "composition manifest drift")
-            self.assertIn(
-                "result.composition_manifest_fingerprint",
-                {item["code"] for item in checked["diagnostics"]},
-            )
+            self.assertEqual("OK", checked["status"], "insignificant JSON whitespace")
             composition.write_text(original_composition, encoding="utf-8")
 
             structure = attempt / "structures" / "sqs-001.vasp"
             write_poscar(structure, {"Li": 1, "Zn": 2})
             actual_mismatch = copy.deepcopy(valid)
-            actual_mismatch["structures"][0]["fingerprint"] = fingerprint(structure)
             write_json(result_path, actual_mismatch)
             checked = adapter.check(ctx)
             self.assertEqual("FAIL", checked["status"])
@@ -363,7 +336,6 @@ class HighEntropyAdapterTests(unittest.TestCase):
             marker = project / "generator-executed"
             script = project / "scripts" / "sqs.py"
             script.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
-            valid["generator"]["fingerprint"] = fingerprint(script)
             write_json(attempt / "generation-result.json", valid)
 
             replayed = adapter.replay(ctx)
@@ -416,10 +388,6 @@ class DFTLabelingAdapterTests(unittest.TestCase):
                 "plugin_id": "dft-labeling",
                 "status": "OK",
                 "engine": "vasp",
-                "input_fingerprints": {
-                    "structures_manifest": fingerprint(structures_manifest),
-                    "labeling_config": fingerprint(labeling_config),
-                },
                 "completion": {
                     "scheduler_success": True,
                     "electronic_converged": True,
@@ -435,7 +403,6 @@ class DFTLabelingAdapterTests(unittest.TestCase):
                         "name": "labels-extxyz",
                         "path": "labels.extxyz",
                         "media_type": "chemical/x-extxyz",
-                        "fingerprint": fingerprint(dataset),
                     }
                 ],
             }

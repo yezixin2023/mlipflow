@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import tempfile
 import unittest
@@ -90,9 +89,6 @@ class CliPresentationTests(unittest.TestCase):
                                 "validation_samples": 5,
                                 "artifact": {
                                     "uri": "benchmark.csv",
-                                    "fingerprint": "sha256:"
-                                    + hashlib.sha256(evidence.read_bytes()).hexdigest(),
-                                    "size_bytes": evidence.stat().st_size,
                                 },
                                 "metrics": {"diffusion_mae": 0.1},
                             }
@@ -129,13 +125,13 @@ class CliPresentationTests(unittest.TestCase):
         self.assertFalse(status["audit"])
         self.assertIn("nodes", status["data"])
         serialized = json.dumps(status["data"])
-        for forbidden in ("run_id", "manifest_path", "fingerprint", "sha256:", "file://"):
+        for forbidden in ("run_id", "manifest_path", "file://"):
             self.assertNotIn(forbidden, serialized)
 
         status_audit = self._json(["status", "benchmark", "--audit"])
         self.assertTrue(status_audit["audit"])
         self.assertIn("run_id", status_audit["data"]["steps"][0])
-        self.assertIn("fingerprint", status_audit["data"]["steps"][0]["artifacts"][0])
+        self.assertEqual("metrics", status_audit["data"]["steps"][0]["artifacts"][0]["role"])
 
         inspected = self._json(["inspect", "benchmark"])["data"]
         self.assertNotIn("manifest", inspected["plugin"])
@@ -159,29 +155,24 @@ class CliPresentationTests(unittest.TestCase):
         self.assertEqual(compact["selected_model"], "deepmd")
         self.assertIn("missing elements", compact["rejected"][0]["reason"])
         serialized = json.dumps(compact)
-        for forbidden in ("evidence_verification", "contributions", "evidence_status", "sha256:"):
+        for forbidden in ("evidence_files", "contributions", "evidence_status"):
             self.assertNotIn(forbidden, serialized)
 
         audit = self._json([*args, "--audit"])["data"]
-        self.assertIn("evidence_verification", audit)
+        self.assertIn("evidence_files", audit)
         self.assertIn("contributions", audit["ranking"][0])
 
-    def test_dry_run_shows_token_only_when_required(self) -> None:
+    def test_dry_run_shows_boolean_approval_requirement(self) -> None:
         replay = self._json(["run", "benchmark", "--dry-run"])["data"]
         self.assertFalse(replay["approval_required"])
-        self.assertNotIn("approval_token", replay)
-        self.assertNotIn("plan_digest", replay)
-        self.assertNotIn("sha256:", json.dumps(replay))
 
         expensive = self._json(["run", "expensive-run", "--dry-run"])["data"]
         self.assertTrue(expensive["approval_required"])
-        self.assertTrue(expensive["approval_token"].startswith("sha256:"))
         self.assertNotIn("adapter_plan", expensive)
-        self.assertEqual(json.dumps(expensive).count("sha256:"), 1)
 
         audit = self._json(["run", "expensive-run", "--dry-run", "--audit"])["data"]
         self.assertIn("adapter_plan", audit)
-        self.assertIn("input_identities", audit)
+        self.assertEqual({"dataset": "dataset.json"}, audit["inputs"])
 
     def test_default_text_is_command_specific_not_json(self) -> None:
         commands = [

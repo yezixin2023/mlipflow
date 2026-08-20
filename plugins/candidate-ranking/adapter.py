@@ -8,7 +8,6 @@ value policy and top-k limit.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import sys
@@ -52,14 +51,6 @@ def _path(root: str, relative: str) -> Path:
 
 def _finite_number(value: Any) -> bool:
     return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return f"sha256:{digest.hexdigest()}"
 
 
 def _base_diagnostics(context: Any) -> list[dict[str, str]]:
@@ -247,7 +238,6 @@ class Adapter:
             },
             "implementation": {
                 "path": str(script_path),
-                "sha256": _sha256(script_path) if script_path.is_file() else None,
                 "bundled": script_value is None,
             },
         }
@@ -359,7 +349,7 @@ class Adapter:
         }
         if result.get("schema_version") != 1 or result.get("plugin_id") != PLUGIN_ID:
             diagnostics.append(
-                _diagnostic("error", "result.identity", "结果 schema/plugin 标识不正确。")
+                _diagnostic("error", "result.schema", "结果 schema/plugin 标识不正确。")
             )
         if result.get("status") != "OK":
             diagnostics.append(_diagnostic("error", "result.status", "排序结果未声明 status=OK。"))

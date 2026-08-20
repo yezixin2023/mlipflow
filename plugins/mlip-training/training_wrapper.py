@@ -41,14 +41,11 @@ def build_parser():
         "output",
         "result-manifest",
         "device",
-        "dataset-fingerprint",
-        "config-fingerprint",
     ):
         p.add_argument("--" + name, required=True)
     p.add_argument("--seed", type=int, required=True)
     p.add_argument("--precision", choices=("float32", "float64"), required=True)
     p.add_argument("--foundation-model")
-    p.add_argument("--foundation-model-fingerprint")
     p.add_argument("--dry-run", action="store_true")
     return p
 
@@ -67,13 +64,13 @@ def _paths(a):
     if output == result:
         raise TrainingError("output and result manifest must differ")
     if a.operation == "finetune":
-        if not a.foundation_model or not a.foundation_model_fingerprint:
-            raise TrainingError("finetune requires foundation model and fingerprint")
+        if not a.foundation_model:
+            raise TrainingError("finetune requires foundation model")
         foundation = Path(a.foundation_model).expanduser().absolute()
         if not foundation.exists():
             raise TrainingError(f"foundation model does not exist: {foundation}")
         a.foundation_model = str(foundation)
-    elif a.foundation_model or a.foundation_model_fingerprint:
+    elif a.foundation_model:
         raise TrainingError("foundation arguments require finetune")
     a.config = str(config)
     a.data = str(data)

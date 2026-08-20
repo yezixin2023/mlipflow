@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import importlib.metadata
 import inspect
 import json
@@ -21,7 +20,7 @@ from mlip_common import (
     TrainingError,
     mapping,
     predefined_split_files,
-    predefined_split_identity,
+    predefined_split_record,
     section,
     work_dir,
 )
@@ -177,13 +176,8 @@ def _records_and_split(data_path, contract, include_stress, cfg, seed):
         list(range(train_end)),
         list(range(train_end, valid_end)),
         list(range(valid_end, len(records))),
-        predefined_split_identity(files),
+        predefined_split_record(files),
     )
-
-
-def _indices_fingerprint(indices):
-    payload = json.dumps(indices, separators=(",", ":")).encode("utf-8")
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
 def _split_indices(sample_count, cfg, seed):
@@ -226,9 +220,9 @@ def _split_indices(sample_count, cfg, seed):
         "train_count": len(train),
         "val_count": len(val),
         "test_count": len(test),
-        "train_indices_sha256": _indices_fingerprint(train),
-        "val_indices_sha256": _indices_fingerprint(val),
-        "test_indices_sha256": _indices_fingerprint(test) if include_test else None,
+        "train_indices": train,
+        "validation_indices": val,
+        "test_indices": test,
     }
     return train, val, test, evidence
 
@@ -485,7 +479,7 @@ def _run_high_level(args, cfg, data_path, matgl, torch):
         val_indices = list(range(len(datasets["validation"])))
         test_indices = list(range(len(datasets["test"])))
         selected_dataset = [None] * sum(map(len, datasets.values()))
-        split = predefined_split_identity(files)
+        split = predefined_split_record(files)
         splits = {"train": datasets["train"], "valid": datasets["validation"], "test": datasets["test"]}
     else:
         dataset = load_json(data_path, "cache")
@@ -570,7 +564,6 @@ def _run_high_level(args, cfg, data_path, matgl, torch):
         "test_samples": float(len(test_indices)),
         "requested_epochs": float(requested_epochs),
         "completed_epochs": float(len(train_history)),
-        "model_size_bytes": float(output.stat().st_size),
         **{f"final_{key}": value for key, value in final_train.items()},
         **{f"final_{key}": value for key, value in final_val.items()},
     }
@@ -750,7 +743,6 @@ def run(args, config, config_path, data_path):
         "test_samples": float(len(test_indices)),
         "requested_epochs": float(requested_epochs),
         "completed_epochs": float(len(train_history)),
-        "model_size_bytes": float(output.stat().st_size),
     }
     metrics.update({f"final_{key}": value for key, value in final_train.items()})
     metrics.update({f"final_{key}": value for key, value in final_val.items()})

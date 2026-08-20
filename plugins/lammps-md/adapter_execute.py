@@ -2,12 +2,11 @@
 
 Local preparation remains delegated to the v0.1 adapter, with its argv upgraded
 to the execution-ready v2 preparation wrapper. Scheduled execute consumes only a
-fingerprinted prepared bundle and a site-owned model artifact; cluster paths,
+prepared bundle and a site-owned model artifact; cluster paths,
 LAMMPS binaries, launchers and environment setup never enter the project.
 """
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import math
@@ -82,23 +81,6 @@ def _plain(value: Any) -> bool:
     )
 
 
-def _fingerprint(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and value.startswith("sha256:")
-        and len(value) == 71
-        and all(character in "0123456789abcdef" for character in value[7:])
-    )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
 def _ordinary_file(path: Path, max_bytes: int | None = None) -> bool:
     try:
         if path.is_symlink() or not path.is_file():
@@ -170,10 +152,6 @@ def _generated(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
         name = str(item["name"])
         if name in records:
             raise ValueError(f"duplicate generated file: {name}")
-        if not _fingerprint(item.get("sha256")):
-            raise ValueError(f"generated file fingerprint is invalid: {name}")
-        if isinstance(item.get("size_bytes"), bool) or not isinstance(item.get("size_bytes"), int) or item["size_bytes"] <= 0:
-            raise ValueError(f"generated file size is invalid: {name}")
         records[name] = item
     return records
 
@@ -204,7 +182,7 @@ def _launcher(manifest: dict[str, Any], target: str) -> dict[str, Any]:
     if launcher.get("lammps_interface", interface or model.get("framework")) != (
         interface or model.get("framework")
     ):
-        raise ValueError("prepared launcher interface identity differs from model interface")
+        raise ValueError("prepared launcher interface differs from model interface")
     return launcher
 
 
@@ -212,8 +190,6 @@ def _staged(path: Path, remote_name: str) -> dict[str, Any]:
     return {
         "source": str(path.absolute()),
         "remote_name": remote_name,
-        "sha256": _sha256(path),
-        "size_bytes": path.stat().st_size,
         "sensitive": False,
         "fetch_allowed": False,
     }
@@ -264,15 +240,13 @@ def _validate_execute(context: dict[str, Any]) -> list[dict[str, str]]:
         parameters = {}
     if set(inputs) != {"lammps_input_manifest"}:
         diagnostics.append(_diagnostic("error", "lammps.execute_inputs", "execute requires exactly inputs.lammps_input_manifest"))
-    if set(parameters) != {"operation", "target", "input_manifest_fingerprint"}:
-        diagnostics.append(_diagnostic("error", "lammps.execute_parameters", "execute parameters must be exactly operation, target, input_manifest_fingerprint"))
+    if set(parameters) != {"operation", "target"}:
+        diagnostics.append(_diagnostic("error", "lammps.execute_parameters", "execute parameters must be exactly operation and target"))
     if parameters.get("operation") != EXECUTE:
         diagnostics.append(_diagnostic("error", "lammps.operation", "operation must be execute"))
     target = parameters.get("target")
     if target not in TARGETS:
         diagnostics.append(_diagnostic("error", "lammps.target", "target must be cpu or gpu"))
-    if not _fingerprint(parameters.get("input_manifest_fingerprint")):
-        diagnostics.append(_diagnostic("error", "lammps.input_manifest_fingerprint", "input_manifest_fingerprint must be sha256:<64 lowercase hex>"))
     diagnostics.extend(_resources(context, str(target) if target in TARGETS else None))
     return diagnostics
 
@@ -291,10 +265,10 @@ def _prepare_plan(context: dict[str, Any]) -> dict[str, Any]:
     argv = list(argv)
     argv[1] = str(wrapper)
     plan["argv"] = argv
-    fingerprints = plan.setdefault("input_fingerprints", {})
-    if isinstance(fingerprints, dict):
-        fingerprints["prepare_wrapper"] = _sha256(wrapper)
-        fingerprints["legacy_prepare_wrapper"] = _sha256(old_wrapper)
+    paths = plan.setdefault("input_paths", {})
+    if isinstance(paths, dict):
+        paths["prepare_wrapper"] = str(wrapper)
+        paths["legacy_prepare_wrapper"] = str(old_wrapper)
     summary = plan.setdefault("approval_summary", {})
     if isinstance(summary, dict):
         summary["preparation_contract"] = PREPARATION_CONTRACT
@@ -315,9 +289,6 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": [_diagnostic("error", "lammps.project_inputs", str(exc))]}
     if not _ordinary_project_file(project, root, MAX_JSON_BYTES) or not _ordinary_project_file(manifest_path, root, MAX_JSON_BYTES):
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": [_diagnostic("error", "lammps.project_files", "project and prepared manifest must be ordinary bounded project files")]}
-    manifest_sha = _sha256(manifest_path)
-    if manifest_sha != parameters["input_manifest_fingerprint"]:
-        return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": [_diagnostic("error", "lammps.manifest_identity", "input_manifest_fingerprint differs from the prepared manifest")]}
     try:
         manifest = _read_json(manifest_path)
         if (
@@ -347,15 +318,14 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
             (model.get("kind"), model.get("artifact_format")) != expected_model_contract
             or not _plain(model.get("model_id"))
             or not _safe_relative(model.get("relative_path"))
-            or not _fingerprint(model.get("fingerprint"))
         ):
-            raise ValueError("prepared model identity is incomplete")
+            raise ValueError("prepared model record is incomplete")
         if framework == "m3gnet" and (interface, target) not in M3GNET_TEMPLATE_FAMILIES:
             raise ValueError("prepared M3GNet LAMMPS interface does not support the selected target")
         steps = md.get("steps")
         timestep = md.get("timestep_fs")
         if not _positive_int(steps) or not isinstance(timestep, (int, float)) or isinstance(timestep, bool) or not math.isfinite(float(timestep)) or float(timestep) <= 0:
-            raise ValueError("prepared MD step/timestep identity is invalid")
+            raise ValueError("prepared MD step/timestep values are invalid")
         marker = manifest.get("completion_marker")
         if marker != f"MLIPFLOW_LAMMPS_COMPLETED step={steps}":
             raise ValueError("prepared completion marker does not bind the step count")
@@ -372,9 +342,6 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
         path = prepared_dir / name
         if record is None or not _ordinary_project_file(path, root, MAX_INPUT_BYTES):
             diagnostics.append(_diagnostic("error", f"lammps.prepared_{name}", f"prepared file is missing or unsafe: {name}"))
-            continue
-        if path.stat().st_size != record["size_bytes"] or _sha256(path) != record["sha256"]:
-            diagnostics.append(_diagnostic("error", f"lammps.prepared_{name}", f"prepared file fingerprint differs: {name}"))
             continue
         staged_inputs.append((name, path))
     if diagnostics:
@@ -414,12 +381,12 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
         {"remote_name": "runner.stdout.log", "remote_path": "logs/lammps-runner.stdout.log", "local_name": "runner.stdout.log", "required": False, "max_bytes": MAX_LOG_BYTES, "role": "runner-log"},
         {"remote_name": "runner.stderr.log", "remote_path": "logs/lammps-runner.stderr.log", "local_name": "runner.stderr.log", "required": False, "max_bytes": MAX_LOG_BYTES, "role": "runner-log"},
     ]
-    identity = {
+    calculation = {
         "framework": framework,
         "target": target,
-        "input_manifest_fingerprint": manifest_sha,
+        "input_manifest_path": str(inputs["lammps_input_manifest"]),
         "model_id": model["model_id"],
-        "model_fingerprint": model["fingerprint"],
+        "model_path": model["relative_path"],
         "model_kind": model["kind"],
         "artifact_format": model["artifact_format"],
         "lammps_interface": interface,
@@ -449,13 +416,13 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
         "operation": EXECUTE,
         "expected_outputs": [item["remote_name"] for item in fetch_outputs if item["required"]],
         "diagnostics": [],
-        "lammps_execution_identity": identity,
-        "input_fingerprints": {
-            "project": _sha256(project),
-            "prepared_manifest": manifest_sha,
-            "structure_data": _sha256(prepared_dir / "structure.data"),
-            "input_deck": _sha256(prepared_dir / selected_name),
-            "cluster_runner": _sha256(cluster),
+        "lammps_calculation": calculation,
+        "input_paths": {
+            "project": str(project),
+            "prepared_manifest": str(manifest_path),
+            "structure_data": str(prepared_dir / "structure.data"),
+            "input_deck": str(prepared_dir / selected_name),
+            "cluster_runner": str(cluster),
         },
         "approval_summary": {
             "expensive": True,
@@ -463,7 +430,7 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
             "framework": framework,
             "target": target,
             "model_id": model["model_id"],
-            "model_fingerprint": model["fingerprint"],
+            "model_path": model["relative_path"],
             "model_kind": model["kind"],
             "artifact_format": model["artifact_format"],
             "lammps_interface": interface,
@@ -528,7 +495,7 @@ def _artifact_records(raw: Any) -> dict[str, dict[str, Any]]:
 def _check_artifact(path: Path, record: dict[str, Any], limit: int) -> str | None:
     if not _ordinary_file(path, limit):
         return f"artifact is missing, unsafe or oversized: {path.name}"
-    if record.get("path") != path.name or record.get("sha256") != _sha256(path) or record.get("size_bytes") != path.stat().st_size:
+    if record.get("path") != path.name:
         return f"artifact record differs for {path.name}"
     return None
 
@@ -552,9 +519,9 @@ def _log_has_marker(path: Path, marker: str) -> bool:
 def _check_execute(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
     diagnostics: list[dict[str, str]] = []
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
-    identity = _mapping(_scheduled_plan(context).get("lammps_execution_identity"))
-    if not identity:
-        return [_diagnostic("error", "lammps.plan_identity", "pinned plan lacks lammps_execution_identity")], None
+    calculation = _mapping(_scheduled_plan(context).get("lammps_calculation"))
+    if not calculation:
+        return [_diagnostic("error", "lammps.plan", "plan lacks lammps_calculation")], None
     try:
         result = _read_json(attempt / "lammps-execution-result.json")
     except Exception as exc:
@@ -564,26 +531,26 @@ def _check_execute(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[
         "plugin_id": PLUGIN_ID,
         "status": "OK",
         "operation": EXECUTE,
-        "framework": identity.get("framework"),
-        "target": identity.get("target"),
-        "input_manifest_fingerprint": identity.get("input_manifest_fingerprint"),
-        "ensemble": identity.get("ensemble"),
-        "steps_requested": identity.get("steps"),
-        "steps_completed": identity.get("steps"),
-        "completion_marker": identity.get("completion_marker"),
+        "framework": calculation.get("framework"),
+        "target": calculation.get("target"),
+        "input_manifest_path": calculation.get("input_manifest_path"),
+        "ensemble": calculation.get("ensemble"),
+        "steps_requested": calculation.get("steps"),
+        "steps_completed": calculation.get("steps"),
+        "completion_marker": calculation.get("completion_marker"),
     }
     for key, value in expected.items():
         if result.get(key) != value:
             diagnostics.append(_diagnostic("error", f"lammps.result_{key}", f"execution result field {key} differs from approved plan"))
     model = _mapping(result.get("model"))
     if model != {
-        "id": identity.get("model_id"),
-        "fingerprint": identity.get("model_fingerprint"),
-        "kind": identity.get("model_kind"),
-        "artifact_format": identity.get("artifact_format"),
-        "lammps_interface": identity.get("lammps_interface"),
+        "id": calculation.get("model_id"),
+        "path": calculation.get("model_path"),
+        "kind": calculation.get("model_kind"),
+        "artifact_format": calculation.get("artifact_format"),
+        "lammps_interface": calculation.get("lammps_interface"),
     }:
-        diagnostics.append(_diagnostic("error", "lammps.result_model", "execution result model identity differs"))
+        diagnostics.append(_diagnostic("error", "lammps.result_model", "execution result model record differs"))
     if not _plain(result.get("lammps_version")):
         diagnostics.append(_diagnostic("error", "lammps.version", "execution result must record LAMMPS version"))
     try:
@@ -606,7 +573,7 @@ def _check_execute(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[
             error = _check_artifact(attempt / name, artifacts[name], limit)
             if error:
                 diagnostics.append(_diagnostic("error", f"lammps.artifact_{name}", error))
-    marker = str(identity.get("completion_marker", ""))
+    marker = str(calculation.get("completion_marker", ""))
     if not _log_has_marker(attempt / "lammps.log", marker):
         diagnostics.append(_diagnostic("error", "lammps.completion_marker", "fetched LAMMPS log lacks the approved completion marker"))
     try:
@@ -616,20 +583,17 @@ def _check_execute(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[
         report = {}
     if (
         report.get("status") != "OK"
-        or report.get("framework") != identity.get("framework")
-        or report.get("target") != identity.get("target")
-        or report.get("model_id") != identity.get("model_id")
-        or report.get("model_fingerprint") != identity.get("model_fingerprint")
-        or report.get("model_kind") != identity.get("model_kind")
-        or report.get("lammps_interface") != identity.get("lammps_interface")
-        or report.get("input_manifest_fingerprint") != identity.get("input_manifest_fingerprint")
-        or report.get("steps_completed") != identity.get("steps")
+        or report.get("framework") != calculation.get("framework")
+        or report.get("target") != calculation.get("target")
+        or report.get("model_id") != calculation.get("model_id")
+        or report.get("model_path") != calculation.get("model_path")
+        or report.get("model_kind") != calculation.get("model_kind")
+        or report.get("lammps_interface") != calculation.get("lammps_interface")
+        or report.get("input_manifest_path") != calculation.get("input_manifest_path")
+        or report.get("steps_completed") != calculation.get("steps")
         or report.get("lammps_version") != result.get("lammps_version")
     ):
-        diagnostics.append(_diagnostic("error", "lammps.cluster_identity", "cluster report identity differs from the approved completed execution"))
-    result_path = attempt / "lammps-execution-result.json"
-    if _ordinary_file(result_path, MAX_JSON_BYTES) and report.get("result_sha256") != _sha256(result_path):
-        diagnostics.append(_diagnostic("error", "lammps.cluster_result_hash", "cluster report result SHA differs"))
+        diagnostics.append(_diagnostic("error", "lammps.cluster_report", "cluster report differs from the completed calculation"))
     return (diagnostics, None) if diagnostics else (diagnostics, result)
 
 
@@ -669,7 +633,7 @@ class Adapter:
             "diagnostics": [],
             "metrics": {
                 "steps_completed": float(result["steps_completed"]),
-                "simulated_time_ps": float(result["steps_completed"]) * float(_mapping(_scheduled_plan(context).get("lammps_execution_identity")).get("timestep_fs", 0.0)) / 1000.0,
+                "simulated_time_ps": float(result["steps_completed"]) * float(_mapping(_scheduled_plan(context).get("lammps_calculation")).get("timestep_fs", 0.0)) / 1000.0,
             },
             "artifacts": [],
         }

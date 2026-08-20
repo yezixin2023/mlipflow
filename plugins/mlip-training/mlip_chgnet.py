@@ -1,6 +1,5 @@
 """CHGNet scratch training and checkpoint fine-tuning."""
 
-import hashlib
 import importlib.metadata
 import json
 import math
@@ -17,7 +16,7 @@ from mlip_common import (
     TrainingError,
     mapping,
     predefined_split_files,
-    predefined_split_identity,
+    predefined_split_record,
     records,
     section,
     work_dir,
@@ -215,7 +214,7 @@ def _records_and_split(data_path, contract, targets, cfg, seed):
         list(range(train_end)),
         list(range(train_end, valid_end)),
         list(range(valid_end, len(selected))),
-        predefined_split_identity(files),
+        predefined_split_record(files),
     )
 
 
@@ -266,11 +265,6 @@ def _split_contract(cfg, sample_count):
     }
 
 
-def _indices_sha256(indices):
-    payload = json.dumps(indices, separators=(",", ":")).encode()
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
-
-
 def _split_indices(sample_count, cfg, seed):
     split = _split_contract(cfg, sample_count)
     ids = list(range(sample_count))
@@ -283,9 +277,9 @@ def _split_indices(sample_count, cfg, seed):
     evidence = {
         **split,
         "seed": seed,
-        "train_indices_sha256": _indices_sha256(train_ids),
-        "val_indices_sha256": _indices_sha256(val_ids),
-        "test_indices_sha256": _indices_sha256(test_ids) if test_ids else None,
+        "train_indices": train_ids,
+        "validation_indices": val_ids,
+        "test_indices": test_ids,
     }
     return train_ids, val_ids, test_ids, evidence
 
@@ -504,7 +498,6 @@ def run(args, config, config_path, data_path):
         "application/x-pytorch",
         {
             **metrics,
-            "model_size_bytes": float(output.stat().st_size),
             "samples": float(len(dataset)),
             "train_samples": float(len(train_ids)),
             "val_samples": float(len(val_ids)),

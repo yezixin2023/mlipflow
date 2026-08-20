@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 import math
 from pathlib import Path, PurePosixPath
@@ -50,23 +49,6 @@ def _safe_relative(value: Any) -> bool:
         return False
     path = PurePosixPath(str(value))
     return not path.is_absolute() and bool(path.parts) and all(part not in {"", ".", ".."} for part in path.parts)
-
-
-def _is_fingerprint(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and value.startswith("sha256:")
-        and len(value) == 71
-        and all(character in "0123456789abcdef" for character in value[7:])
-    )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def _ordinary_file(path: Path, max_bytes: int | None = None) -> bool:
@@ -141,14 +123,10 @@ def _model_reference(path: Path, calculator: str) -> dict[str, str]:
     kind = raw.get("kind", expected_kind)
     if kind != expected_kind:
         raise ValueError(f"{calculator} model reference kind must be {expected_kind}")
-    fingerprint = raw.get("fingerprint")
-    if not _is_fingerprint(fingerprint):
-        raise ValueError("model reference fingerprint must be sha256:<64 lowercase hex>")
     return {
         "model_id": str(model_id),
         "relative_path": str(relative),
         "kind": str(kind),
-        "fingerprint": str(fingerprint),
     }
 
 
@@ -156,8 +134,6 @@ def _staged_record(source: Path, remote_name: str) -> dict[str, Any]:
     return {
         "source": str(source.absolute()),
         "remote_name": remote_name,
-        "sha256": _sha256(source),
-        "size_bytes": source.stat().st_size,
         "sensitive": False,
         "fetch_allowed": False,
     }
@@ -269,19 +245,6 @@ def _validate(context: dict[str, Any]) -> list[dict[str, str]]:
         diagnostics.append(_diagnostic("error", "ase_md.friction", "friction_per_fs must be finite and positive"))
     if not isinstance(parameters.get("fix_com"), bool):
         diagnostics.append(_diagnostic("error", "ase_md.fix_com", "fix_com must be boolean"))
-    declared_model_fingerprint = parameters.get("model_fingerprint")
-    if declared_model_fingerprint is not None and not _is_fingerprint(
-        declared_model_fingerprint
-    ):
-        diagnostics.append(
-            _diagnostic(
-                "error",
-                "ase_md.model_fingerprint",
-                "model_fingerprint must be sha256:<64 lowercase hex> when supplied",
-            )
-        )
-    if not _is_fingerprint(parameters.get("structure_fingerprint")):
-        diagnostics.append(_diagnostic("error", "ase_md.structure_fingerprint", "structure_fingerprint must be sha256:<64 lowercase hex>"))
     repeat = parameters.get("supercell_repeat")
     if repeat is not None and not _valid_supercell_repeat(repeat):
         diagnostics.append(
@@ -339,17 +302,6 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
         model = _model_reference(model_reference, calculator)
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         return _blocked([_diagnostic("error", "ase_md.model_reference", str(exc))])
-    structure_fp = _sha256(structure)
-    if parameters["structure_fingerprint"] != structure_fp:
-        diagnostics.append(_diagnostic("error", "ase_md.structure_identity", "parameters.structure_fingerprint does not match the staged structure"))
-    if (
-        parameters.get("model_fingerprint") is not None
-        and parameters["model_fingerprint"] != model["fingerprint"]
-    ):
-        diagnostics.append(_diagnostic("error", "ase_md.model_identity", "parameters.model_fingerprint does not match the model reference"))
-    if diagnostics:
-        return _blocked(diagnostics)
-
     plugin_root = Path(__file__).resolve().parent
     runner = plugin_root / "ase_md.py"
     cluster = plugin_root / "ase_md_cluster.py"
@@ -377,12 +329,12 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
     steps = int(parameters["steps"])
     trajectory_steps = _expected_steps(steps, int(parameters["trajectory_interval"]))
     thermo_steps = _expected_steps(steps, int(parameters["thermo_interval"]))
-    identity = {
+    settings = {
         "calculator": calculator,
         "ensemble": "nvt-langevin",
         "model_id": model["model_id"],
-        "model_fingerprint": model["fingerprint"],
-        "structure_fingerprint": structure_fp,
+        "model_path": model["relative_path"],
+        "structure_path": structure_remote,
         "temperature_k": float(parameters["temperature_k"]),
         "timestep_fs": float(parameters["timestep_fs"]),
         "steps": steps,
@@ -402,7 +354,7 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
         "supercell_repeat" in parameters
         or "minimum_initial_cell_length_angstrom" in parameters
     ):
-        identity.update(
+        settings.update(
             {
                 "supercell_repeat": list(
                     parameters.get("supercell_repeat", [1, 1, 1])
@@ -422,11 +374,11 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
         "operation": "run",
         "expected_outputs": [item["remote_name"] for item in fetch_outputs if item["required"]],
         "diagnostics": [],
-        "md_identity": identity,
-        "input_fingerprints": {
-            "project": _sha256(project),
-            "structure": structure_fp,
-            "model_reference": _sha256(model_reference),
+        "md_parameters": settings,
+        "input_paths": {
+            "project": str(project),
+            "structure": str(structure),
+            "model_reference": str(model_reference),
         },
         "approval_summary": {
             "expensive": True,
@@ -435,20 +387,20 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
             "cpus_meaning": "threads-per-process",
             "calculator": calculator,
             "ensemble": "nvt-langevin",
-            "temperature_K": identity["temperature_k"],
-            "timestep_fs": identity["timestep_fs"],
+            "temperature_K": settings["temperature_k"],
+            "timestep_fs": settings["timestep_fs"],
             "steps": steps,
-            "simulated_time_ps": steps * identity["timestep_fs"] / 1000.0,
+            "simulated_time_ps": steps * settings["timestep_fs"] / 1000.0,
             "trajectory_frames": len(trajectory_steps),
             "thermo_records": len(thermo_steps),
             "model_id": model["model_id"],
-            "model_fingerprint": model["fingerprint"],
-            "structure_fingerprint": structure_fp,
-            "supercell_repeat": identity.get("supercell_repeat", [1, 1, 1]),
-            "minimum_initial_cell_length_A": identity.get(
+            "model_path": model["relative_path"],
+            "structure_path": structure_remote,
+            "supercell_repeat": settings.get("supercell_repeat", [1, 1, 1]),
+            "minimum_initial_cell_length_A": settings.get(
                 "minimum_initial_cell_length_angstrom"
             ),
-            "device": identity["device"],
+            "device": settings["device"],
             "resources": dict(_mapping(context.get("resources"))),
             "template_family": TEMPLATE_FAMILIES[calculator],
         },
@@ -489,38 +441,34 @@ def _check_artifact(path: Path, record: dict[str, Any], max_bytes: int) -> str |
         return f"missing, empty, unsafe or oversized artifact: {path.name}"
     if record.get("path") != path.name:
         return f"artifact record path mismatch for {path.name}"
-    if record.get("sha256") != _sha256(path):
-        return f"artifact SHA-256 mismatch for {path.name}"
-    if record.get("size_bytes") != path.stat().st_size:
-        return f"artifact size mismatch for {path.name}"
     return None
 
 
-def _check_trajectory_index(path: Path, identity: dict[str, Any]) -> str | None:
+def _check_trajectory_index(path: Path, settings: dict[str, Any]) -> str | None:
     try:
         raw = _read_bounded_json(path)
     except Exception as exc:
         return f"trajectory-index.json is unreadable: {exc}"
     if raw.get("schema_version") != 1:
         return "trajectory-index.json schema_version must be 1"
-    expected = identity.get("trajectory_steps")
+    expected = settings.get("trajectory_steps")
     if raw.get("steps") != expected:
         return "trajectory-index.json step schedule differs from the approved plan"
     times = raw.get("time_fs")
     if not isinstance(times, list) or not isinstance(expected, list) or len(times) != len(expected):
         return "trajectory-index.json time vector has the wrong length"
-    dt = float(identity["timestep_fs"])
+    dt = float(settings["timestep_fs"])
     for step, value in zip(expected, times):
         if not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not math.isclose(float(value), float(step) * dt, rel_tol=1e-12, abs_tol=1e-9):
             return "trajectory-index.json contains a time inconsistent with timestep_fs"
     return None
 
 
-def _check_thermo(path: Path, identity: dict[str, Any]) -> tuple[str | None, dict[str, float] | None]:
+def _check_thermo(path: Path, settings: dict[str, Any]) -> tuple[str | None, dict[str, float] | None]:
     if not _ordinary_file(path, MAX_THERMO_BYTES):
         return "thermo.csv is missing, empty, unsafe or oversized", None
     expected_header = ["step", "time_fs", "temperature_K", "potential_energy_eV", "kinetic_energy_eV", "total_energy_eV", "volume_A3"]
-    expected_steps = identity.get("thermo_steps")
+    expected_steps = settings.get("thermo_steps")
     if not isinstance(expected_steps, list):
         return "approved plan lacks thermo step schedule", None
     seen: list[int] = []
@@ -540,7 +488,7 @@ def _check_thermo(path: Path, identity: dict[str, Any]) -> tuple[str | None, dic
                     return f"thermo.csv contains an invalid numeric row: {exc}", None
                 if any(not math.isfinite(value) for value in numeric.values()):
                     return "thermo.csv contains a non-finite value", None
-                if not math.isclose(numeric["time_fs"], step * float(identity["timestep_fs"]), rel_tol=1e-12, abs_tol=1e-9):
+                if not math.isclose(numeric["time_fs"], step * float(settings["timestep_fs"]), rel_tol=1e-12, abs_tol=1e-9):
                     return "thermo.csv time_fs is inconsistent with timestep_fs", None
                 seen.append(step)
                 last = numeric
@@ -552,16 +500,16 @@ def _check_thermo(path: Path, identity: dict[str, Any]) -> tuple[str | None, dic
 
 
 def _check_structure_summary(
-    result: dict[str, Any], identity: dict[str, Any]
+    result: dict[str, Any], settings: dict[str, Any]
 ) -> list[dict[str, str]]:
-    if "supercell_repeat" not in identity:
+    if "supercell_repeat" not in settings:
         return []
     diagnostics: list[dict[str, str]] = []
-    repeat = identity["supercell_repeat"]
+    repeat = settings["supercell_repeat"]
     source_atoms = result.get("source_atom_count")
     atom_count = result.get("atom_count")
     lengths = result.get("initial_cell_lengths_A")
-    minimum = identity.get("minimum_initial_cell_length_angstrom")
+    minimum = settings.get("minimum_initial_cell_length_angstrom")
     expected = {
         "supercell_repeat": repeat,
         "minimum_initial_cell_length_A": minimum,
@@ -642,9 +590,9 @@ def _check_structure_summary(
 def _check(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
     diagnostics: list[dict[str, str]] = []
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
-    identity = _mapping(_scheduled_plan(context).get("md_identity"))
-    if not identity:
-        return [_diagnostic("error", "ase_md.plan_identity", "pinned plan lacks md_identity")], None
+    settings = _mapping(_scheduled_plan(context).get("md_parameters"))
+    if not settings:
+        return [_diagnostic("error", "ase_md.plan_parameters", "plan lacks md_parameters")], None
     try:
         result = _read_bounded_json(attempt / "md-result.json")
     except Exception as exc:
@@ -653,30 +601,30 @@ def _check(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any
         "schema_version": 1,
         "plugin_id": PLUGIN_ID,
         "status": "OK",
-        "calculator": identity.get("calculator"),
+        "calculator": settings.get("calculator"),
         "ensemble": "nvt-langevin",
-        "structure_fingerprint": identity.get("structure_fingerprint"),
-        "temperature_K": identity.get("temperature_k"),
-        "timestep_fs": identity.get("timestep_fs"),
-        "steps_requested": identity.get("steps"),
-        "steps_completed": identity.get("steps"),
-        "trajectory_interval": identity.get("trajectory_interval"),
-        "thermo_interval": identity.get("thermo_interval"),
-        "trajectory_frames": len(identity.get("trajectory_steps", [])),
-        "thermo_records": len(identity.get("thermo_steps", [])),
-        "seed": identity.get("seed"),
-        "device": identity.get("device"),
-        "default_dtype": identity.get("default_dtype"),
-        "friction_per_fs": identity.get("friction_per_fs"),
-        "fix_com": identity.get("fix_com"),
+        "structure_path": settings.get("structure_path"),
+        "temperature_K": settings.get("temperature_k"),
+        "timestep_fs": settings.get("timestep_fs"),
+        "steps_requested": settings.get("steps"),
+        "steps_completed": settings.get("steps"),
+        "trajectory_interval": settings.get("trajectory_interval"),
+        "thermo_interval": settings.get("thermo_interval"),
+        "trajectory_frames": len(settings.get("trajectory_steps", [])),
+        "thermo_records": len(settings.get("thermo_steps", [])),
+        "seed": settings.get("seed"),
+        "device": settings.get("device"),
+        "default_dtype": settings.get("default_dtype"),
+        "friction_per_fs": settings.get("friction_per_fs"),
+        "fix_com": settings.get("fix_com"),
     }
     for key, expected in expected_pairs.items():
         if result.get(key) != expected:
             diagnostics.append(_diagnostic("error", f"ase_md.result_{key}", f"md-result.json field {key} differs from the approved plan"))
-    diagnostics.extend(_check_structure_summary(result, identity))
+    diagnostics.extend(_check_structure_summary(result, settings))
     model = _mapping(result.get("model"))
-    if model.get("id") != identity.get("model_id") or model.get("fingerprint") != identity.get("model_fingerprint"):
-        diagnostics.append(_diagnostic("error", "ase_md.result_model", "md-result model identity differs from the approved plan"))
+    if model.get("id") != settings.get("model_id") or model.get("path") != settings.get("model_path"):
+        diagnostics.append(_diagnostic("error", "ase_md.result_model", "md-result model record differs from the plan"))
     if not _plain_string(result.get("calculator_version")) or not _plain_string(result.get("ase_version")):
         diagnostics.append(_diagnostic("error", "ase_md.versions", "md-result must record calculator and ASE versions"))
     try:
@@ -697,10 +645,10 @@ def _check(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any
             error = _check_artifact(attempt / name, artifacts[role], limit)
             if error:
                 diagnostics.append(_diagnostic("error", f"ase_md.artifact_{role}", error))
-    index_error = _check_trajectory_index(attempt / "trajectory-index.json", identity)
+    index_error = _check_trajectory_index(attempt / "trajectory-index.json", settings)
     if index_error:
         diagnostics.append(_diagnostic("error", "ase_md.trajectory_index", index_error))
-    thermo_error, final_thermo = _check_thermo(attempt / "thermo.csv", identity)
+    thermo_error, final_thermo = _check_thermo(attempt / "thermo.csv", settings)
     if thermo_error:
         diagnostics.append(_diagnostic("error", "ase_md.thermo", thermo_error))
     try:
@@ -708,14 +656,14 @@ def _check(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any
     except Exception as exc:
         diagnostics.append(_diagnostic("error", "ase_md.cluster_report", f"cluster-run-report.json is unreadable: {exc}"))
         report = {}
-    if report.get("status") != "OK" or report.get("calculator") != identity.get("calculator") or report.get("ensemble") != "nvt-langevin":
-        diagnostics.append(_diagnostic("error", "ase_md.cluster_identity", "cluster report does not describe the approved successful ASE MD run"))
+    if report.get("status") != "OK" or report.get("calculator") != settings.get("calculator") or report.get("ensemble") != "nvt-langevin":
+        diagnostics.append(_diagnostic("error", "ase_md.cluster_run", "cluster report does not describe the planned successful ASE MD run"))
     report_model = _mapping(report.get("model"))
-    if report_model.get("id") != identity.get("model_id") or report_model.get("observed_fingerprint") != identity.get("model_fingerprint"):
-        diagnostics.append(_diagnostic("error", "ase_md.cluster_model", "cluster report model identity differs from the approved model"))
-    if report.get("structure_fingerprint") != identity.get("structure_fingerprint"):
-        diagnostics.append(_diagnostic("error", "ase_md.cluster_structure", "cluster report structure fingerprint differs from the approved structure"))
-    if "supercell_repeat" in identity:
+    if report_model.get("id") != settings.get("model_id") or report_model.get("path") != settings.get("model_path"):
+        diagnostics.append(_diagnostic("error", "ase_md.cluster_model", "cluster report model record differs from the plan"))
+    if report.get("structure_path") != settings.get("structure_path"):
+        diagnostics.append(_diagnostic("error", "ase_md.cluster_structure", "cluster report structure path differs from the plan"))
+    if "supercell_repeat" in settings:
         for key in (
             "supercell_repeat",
             "source_atom_count",
@@ -732,8 +680,6 @@ def _check(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any
                         f"cluster report {key} differs",
                     )
                 )
-    if _ordinary_file(attempt / "md-result.json", MAX_JSON_BYTES) and report.get("result_sha256") != _sha256(attempt / "md-result.json"):
-        diagnostics.append(_diagnostic("error", "ase_md.cluster_result_hash", "cluster report does not bind the fetched md-result.json"))
     if diagnostics:
         return diagnostics, None
     return diagnostics, {"result": result, "final_thermo": final_thermo or {}}

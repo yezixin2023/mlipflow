@@ -1,12 +1,11 @@
-source_table,source_document_sha256,unit_source,unit_source_document_sha256,prototype,formula,metal_composition,unit,aimd,deepmd-se_atten_v2,deepmd-se_e2_a,deepmd-se_e2_r,deepmd-dpa2,m3gnet,chgnet
-Table S3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,Main Figure 3 y-axis,22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b,I,Li8M8(PS4)8,MnFeNiCu3Zn2,mS cm^-1,0.508,0.551,0.379,1.277,0.044,0.635,0.468
-Table S3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,Main Figure 3 y-axis,22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b,I,Li8M8(PS4)8,MnFeNi2CuZn3,mS cm^-1,0.392,0.312,0.206,0.640,0.005,0.010,0.623
-Table S3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,Main Figure 3 y-axis,22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b,I,Li8M8(PS4)8,Mn2FeNi2Cu2Zn,mS cm^-1,0.250,0.129,0.202,0.500,0.007,0.033,0.292
-Table S3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,Main Figure 3 y-axis,22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b,I,Li8M8(PS4)8,Mn3FeNi2CuZn,mS cm^-1,0.494,0.140,0.147,0.021,0.002,0.503,0.022
-Table S3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,Main Figure 3 y-axis,22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b,II,Li10M7(PS4)8,MnFeNiCu2Zn2,mS cm^-1,1.182,1.213,0.499,0.729,0.032,0.431,0.026
-Table S3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,Main Figure 3 y-axis,22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b,II,Li10M7(PS4)8,MnFeNi2Cu2Zn,mS cm^-1,0.412,0.538,0.038,2.662,0.101,0.583,0.184
-Table S3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,Main Figure 3 y-axis,22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b,II,Li10M7(PS4)8,MnFe2NiCu2Zn,mS cm^-1,0.621,0.446,0.616,2.126,0.357,0.462,0.011
-Table S3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,Main Figure 3 y-axis,22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b,II,Li10M7(PS4)8,Mn2FeNiCuZn2,mS cm^-1,0.290,0.306,0.432,3.672,0.056,0.737,0.102
-Table S3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,Main Figure 3 y-axis,22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b,III,Li16M8(PS3)16,MnFeNiCuZn4,mS cm^-1,0.011,0.001,0.084,0.020,6.19E-5,0.080,0.113
-Table S3,0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732,Main Figure 3 y-axis,22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b,III,Li16M8(PS3)16,Mn2FeNiCu2Zn2,mS cm^-1,0.004,4.69E-5,5.16E-5,1.712,0.009,0.004,7.84E-6
-
+source_table,unit_source,prototype,formula,metal_composition,unit,aimd,deepmd-se_atten_v2,deepmd-se_e2_a,deepmd-se_e2_r,deepmd-dpa2,m3gnet,chgnet
+Table S3,Main Figure 3 y-axis,I,Li8M8(PS4)8,MnFeNiCu3Zn2,mS cm^-1,0.508,0.551,0.379,1.277,0.044,0.635,0.468
+Table S3,Main Figure 3 y-axis,I,Li8M8(PS4)8,MnFeNi2CuZn3,mS cm^-1,0.392,0.312,0.206,0.640,0.005,0.010,0.623
+Table S3,Main Figure 3 y-axis,I,Li8M8(PS4)8,Mn2FeNi2Cu2Zn,mS cm^-1,0.250,0.129,0.202,0.500,0.007,0.033,0.292
+Table S3,Main Figure 3 y-axis,I,Li8M8(PS4)8,Mn3FeNi2CuZn,mS cm^-1,0.494,0.140,0.147,0.021,0.002,0.503,0.022
+Table S3,Main Figure 3 y-axis,II,Li10M7(PS4)8,MnFeNiCu2Zn2,mS cm^-1,1.182,1.213,0.499,0.729,0.032,0.431,0.026
+Table S3,Main Figure 3 y-axis,II,Li10M7(PS4)8,MnFeNi2Cu2Zn,mS cm^-1,0.412,0.538,0.038,2.662,0.101,0.583,0.184
+Table S3,Main Figure 3 y-axis,II,Li10M7(PS4)8,MnFe2NiCu2Zn,mS cm^-1,0.621,0.446,0.616,2.126,0.357,0.462,0.011
+Table S3,Main Figure 3 y-axis,II,Li10M7(PS4)8,Mn2FeNiCuZn2,mS cm^-1,0.290,0.306,0.432,3.672,0.056,0.737,0.102
+Table S3,Main Figure 3 y-axis,III,Li16M8(PS3)16,MnFeNiCuZn4,mS cm^-1,0.011,0.001,0.084,0.020,6.19E-5,0.080,0.113
+Table S3,Main Figure 3 y-axis,III,Li16M8(PS3)16,Mn2FeNiCu2Zn2,mS cm^-1,0.004,4.69E-5,5.16E-5,1.712,0.009,0.004,7.84E-6

@@ -9,7 +9,6 @@ argv wrappers after MLIPFlow approval.
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
 import json
 import math
@@ -52,7 +51,6 @@ MAX_POTCAR_BYTES = 64 * 1024 * 1024
 MAX_LASP_FRAMES = 10000
 ARC_HEADER = b"!BIOSYM archive 2\nPBC=ON\n"
 SAFE_POTCAR_SYMBOL = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
-FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 LASP_ARTIFACT_ROLES = frozenset(
     {
         "ssw-generated-structure",
@@ -240,14 +238,6 @@ def _portable_source_id(value: Any) -> bool:
     return "://" in normalized or ".." not in Path(normalized).parts
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
 def _pseudopotential_reference(path: Path) -> Dict[str, Any]:
     if not _ordinary_file(path) or path.stat().st_size > MAX_JSON_BYTES:
         raise ValueError("pseudopotential reference must be an ordinary JSON file")
@@ -261,8 +251,6 @@ def _pseudopotential_reference(path: Path) -> Dict[str, Any]:
         "license_acknowledged",
         "functional",
         "symbols",
-        "expected_component_sha256",
-        "expected_combined_sha256",
     }
     if set(value) - allowed:
         raise ValueError("pseudopotential reference contains unsupported fields")
@@ -291,36 +279,15 @@ def _pseudopotential_reference(path: Path) -> Dict[str, Any]:
         ):
             raise ValueError("pseudopotential symbols mapping is invalid")
         symbols[element] = symbol
-    raw_components = value.get("expected_component_sha256")
-    if not isinstance(raw_components, Mapping) or set(raw_components) != set(symbols.values()):
-        raise ValueError(
-            "expected_component_sha256 must cover every selected POTCAR symbol exactly"
-        )
-    components: Dict[str, str] = {}
-    for symbol, digest in raw_components.items():
-        if (
-            not isinstance(symbol, str)
-            or SAFE_POTCAR_SYMBOL.fullmatch(symbol) is None
-            or not isinstance(digest, str)
-            or FINGERPRINT.fullmatch(digest) is None
-        ):
-            raise ValueError("expected POTCAR component fingerprints are invalid")
-        components[symbol] = digest
-    combined = value.get("expected_combined_sha256")
-    if not isinstance(combined, str) or FINGERPRINT.fullmatch(combined) is None:
-        raise ValueError("expected_combined_sha256 must be a complete fingerprint")
     return {
         "reference_id": reference_id,
         "functional": functional,
         "symbols": symbols,
-        "expected_component_sha256": components,
-        "expected_combined_sha256": combined,
     }
 
 
-def _lasp_structure_id(source_id: str, role: str, frame_index: int, digest: str) -> str:
-    identity = "\0".join([source_id, role, str(frame_index), digest]).encode("utf-8")
-    return f"lasp-{role}-{hashlib.sha256(identity).hexdigest()[:20]}"
+def _lasp_structure_id(role: str, frame_index: int) -> str:
+    return f"lasp-{role}-{frame_index:06d}"
 
 
 def _ordinary_file(path: Optional[Path]) -> bool:
@@ -385,7 +352,7 @@ def _read_arc_frames(path: Path, max_frames: int) -> List[Dict[str, Any]]:
             {
                 "frame_index": position + 1,
                 "energy_ev": _parse_energy_record(block[0], path.name, position + 1),
-                "frame_sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+                "payload": payload,
             }
         )
     return frames
@@ -773,11 +740,9 @@ class Adapter:
             "shell": False,
             "expected_outputs": [str(output_dir / "manifest.csv")],
             "output_dir": str(output_dir),
-            "input_fingerprints": {
-                "direct_wrapper": {
-                    "sha256": _sha256(script),
-                    "size_bytes": script.stat().st_size,
-                }
+            "input_paths": {
+                "direct_wrapper": str(script),
+                "input_directories": [str(path) for path in input_dirs],
             },
             "assumptions": {
                 "seed": parameters["seed"],
@@ -980,16 +945,15 @@ class Adapter:
         if reference_path is not None:
             reference = _pseudopotential_reference(reference_path)
             argv.extend(["--pseudopotential-reference", str(reference_path)])
-        identity = {
-            "source_sha256": _sha256(source),
-            "source_basename": source.name,
+        conversion = {
+            "source_path": str(source),
             "input_format": parameters.get("input_format"),
             "input_index": str(parameters.get("input_index", "-1")),
             "minimum_cell_length_angstrom": parameters.get(
                 "minimum_cell_length_angstrom"
             ),
-            "pseudopotential_reference_sha256": (
-                _sha256(reference_path) if reference_path is not None else None
+            "pseudopotential_reference_path": (
+                str(reference_path) if reference_path is not None else None
             ),
             "pseudopotential": reference,
         }
@@ -1003,20 +967,20 @@ class Adapter:
             "shell": False,
             "expected_outputs": [str(output_dir / "lasp-input-manifest.json")],
             "output_dir": str(output_dir),
-            "conversion_identity": identity,
+            "conversion": conversion,
             "approval_summary": {
                 "expensive": False,
                 "submits_jobs": False,
                 "materializes_licensed_potcar": reference is not None,
                 "potcar_collectable": False if reference is not None else None,
-                **identity,
+                **conversion,
             },
-            "input_fingerprints": {
-                "source_structure": identity["source_sha256"],
-                "conversion_wrapper": _sha256(wrapper),
-                "python_executable": _sha256(python_executable),
+            "input_paths": {
+                "source_structure": str(source),
+                "conversion_wrapper": str(wrapper),
+                "python_executable": str(python_executable),
                 **(
-                    {"pseudopotential_reference": _sha256(reference_path)}
+                    {"pseudopotential_reference": str(reference_path)}
                     if reference_path is not None
                     else {}
                 ),
@@ -1061,14 +1025,13 @@ class Adapter:
                 diagnostics.append(
                     _diagnostic("ERROR", "result.manifest", "LASP input manifest is invalid")
                 )
-        identity = _mapping(plan.get("conversion_identity"))
+        conversion = _mapping(plan.get("conversion"))
         if value:
             source = _mapping(value.get("source"))
             for key, expected_value in (
-                ("basename", identity.get("source_basename")),
-                ("sha256", identity.get("source_sha256")),
-                ("input_format", identity.get("input_format")),
-                ("input_index", identity.get("input_index")),
+                ("path", conversion.get("source_path")),
+                ("input_format", conversion.get("input_format")),
+                ("input_index", conversion.get("input_index")),
             ):
                 if source.get(key) != expected_value:
                     diagnostics.append(
@@ -1076,7 +1039,7 @@ class Adapter:
                     )
             structure = _mapping(value.get("structure"))
             lengths = structure.get("cell_lengths_A")
-            minimum = identity.get("minimum_cell_length_angstrom")
+            minimum = conversion.get("minimum_cell_length_angstrom")
             if (
                 value.get("schema_version") != 1
                 or value.get("plugin_id") != PLUGIN_ID
@@ -1098,14 +1061,11 @@ class Adapter:
             if (
                 output.get("path") != "input.arc"
                 or not _ordinary_file(arc)
-                or arc is None
-                or output.get("sha256") != _sha256(arc)
-                or output.get("size_bytes") != arc.stat().st_size
             ):
                 diagnostics.append(
-                    _diagnostic("ERROR", "result.arc", "converted ARC identity is invalid")
+                    _diagnostic("ERROR", "result.arc", "converted ARC output is invalid")
                 )
-            reference = _mapping(identity.get("pseudopotential"))
+            reference = _mapping(conversion.get("pseudopotential"))
             if reference:
                 potcar = _mapping(value.get("potcar"))
                 potcar_output = _mapping(potcar.get("output"))
@@ -1117,17 +1077,14 @@ class Adapter:
                 elements = potcar.get("elements")
                 symbols = potcar.get("symbols")
                 expected_symbols = reference.get("symbols")
-                expected_components = reference.get("expected_component_sha256")
                 components = potcar.get("components")
                 valid_components = (
                     isinstance(symbols, list)
                     and isinstance(components, list)
-                    and isinstance(expected_components, Mapping)
                     and len(components) == len(symbols)
                     and all(
                         isinstance(component, Mapping)
                         and component.get("symbol") == symbol
-                        and component.get("sha256") == expected_components.get(symbol)
                         for component, symbol in zip(components, symbols)
                     )
                 )
@@ -1139,8 +1096,8 @@ class Adapter:
                     and symbols == [expected_symbols.get(element) for element in elements]
                 )
                 if (
-                    value.get("pseudopotential_reference_sha256")
-                    != identity.get("pseudopotential_reference_sha256")
+                    value.get("pseudopotential_reference_path")
+                    != conversion.get("pseudopotential_reference_path")
                     or potcar.get("reference_id") != reference.get("reference_id")
                     or potcar.get("source_env") != "PMG_VASP_PSP_DIR"
                     or potcar.get("configuration_source")
@@ -1149,27 +1106,21 @@ class Adapter:
                     or potcar.get("portable_artifact") is not False
                     or not valid_symbols
                     or not valid_components
-                    or potcar.get("combined_sha256")
-                    != reference.get("expected_combined_sha256")
                     or potcar_output.get("path") != "POTCAR"
                     or potcar_output.get("collectable") is not False
-                    or potcar_output.get("sha256") != potcar.get("combined_sha256")
-                    or not _positive_int(potcar_output.get("size_bytes"))
                     or not _ordinary_file(potcar_path)
                     or potcar_path is None
                     or potcar_path.stat().st_size > MAX_POTCAR_BYTES
-                    or potcar_path.stat().st_size != potcar_output.get("size_bytes")
-                    or _sha256(potcar_path) != potcar_output.get("sha256")
                 ):
                     diagnostics.append(
                         _diagnostic(
                             "ERROR",
                             "result.potcar",
-                            "runtime-only POTCAR identity differs from the approved reference",
+                            "runtime-only POTCAR settings differ from the approved reference",
                         )
                     )
             elif (
-                value.get("pseudopotential_reference_sha256") is not None
+                value.get("pseudopotential_reference_path") is not None
                 or value.get("potcar") is not None
             ):
                 diagnostics.append(
@@ -1411,12 +1362,12 @@ class Adapter:
                 },
                 "minimum_distance_angstrom": parameters["minimum_distance_angstrom"],
             },
-            "input_fingerprints": {
-                "direct_manifest": _sha256(direct),
-                "lasp_selected_manifest": _sha256(lasp_manifest),
-                "lasp_selected_archive": _sha256(lasp_archive),
-                "merge_wrapper": _sha256(script),
-                "python_executable": _sha256(python_executable),
+            "input_paths": {
+                "direct_manifest": str(direct),
+                "lasp_selected_manifest": str(lasp_manifest),
+                "lasp_selected_archive": str(lasp_archive),
+                "merge_wrapper": str(script),
+                "python_executable": str(python_executable),
             },
             "diagnostics": diagnostics,
         }
@@ -1840,13 +1791,10 @@ class Adapter:
         output_dir = (
             attempt_dir / str(parameters.get("output_subdir", "lasp-ssw"))
         ).resolve()
-        input_fingerprints: Dict[str, Dict[str, Any]] = {}
+        input_paths: Dict[str, str] = {}
 
         def remember_input(name: str, path: Path) -> None:
-            input_fingerprints[name] = {
-                "sha256": _sha256(path),
-                "size_bytes": path.stat().st_size,
-            }
+            input_paths[name] = str(path)
 
         python_executable = _explicit_executable(
             resources.get("python_executable"),
@@ -1942,7 +1890,7 @@ class Adapter:
             "shell": False,
             "expected_outputs": [str(output_dir / "sampling-result.json")],
             "output_dir": str(output_dir),
-            "input_fingerprints": input_fingerprints,
+            "input_paths": input_paths,
             "assumptions": {
                 "scientific_mode": (
                     "historical-replay"
@@ -2199,12 +2147,7 @@ class Adapter:
             or manifest.get("status") != "OK"
         ):
             diagnostics.append(
-                _diagnostic("ERROR", "result.merge_contract", "merge manifest identity/status is invalid")
-            )
-        set_id = manifest.get("structure_set_id")
-        if not isinstance(set_id, str) or not re.fullmatch(r"structure-set-[0-9a-f]{32}", set_id):
-            diagnostics.append(
-                _diagnostic("ERROR", "result.structure_set_id", "structure_set_id is invalid")
+                _diagnostic("ERROR", "result.merge_contract", "merge manifest schema/status is invalid")
             )
         records = manifest.get("structures")
         if not isinstance(records, list) or not records:
@@ -2240,9 +2183,9 @@ class Adapter:
         if project_root is not None:
             for key in ("direct_manifest", "lasp_selected_manifest", "lasp_selected_archive"):
                 source = _resolve_nonsymlink(inputs.get(key), project_root)
-                if source is None or not _ordinary_file(source) or input_artifacts.get(key) != _sha256(source):
+                if source is None or not _ordinary_file(source) or input_artifacts.get(key) != str(source):
                     diagnostics.append(
-                        _diagnostic("ERROR", f"result.input_{key}", f"merge input {key} changed")
+                        _diagnostic("ERROR", f"result.input_{key}", f"merge input {key} path differs")
                     )
         seen_ids: set[str] = set()
         seen_paths: set[str] = set()
@@ -2253,12 +2196,10 @@ class Adapter:
                 continue
             structure_id = record.get("id")
             relative = record.get("path")
-            fingerprint = record.get("fingerprint")
             methods = record.get("source_sampling_methods")
             sources = record.get("source_records")
             if (
-                not isinstance(structure_id, str)
-                or not re.fullmatch(r"structure-[0-9a-f]{24}", structure_id)
+                structure_id != f"structure-{index:06d}"
                 or structure_id in seen_ids
             ):
                 diagnostics.append(_diagnostic("ERROR", "result.structure_id", f"{prefix} id is invalid"))
@@ -2280,12 +2221,9 @@ class Adapter:
                 or not output.is_file()
                 or output.stat().st_size < 1
                 or output.stat().st_size > MAX_ARTIFACT_BYTES
-                or not isinstance(fingerprint, str)
-                or not re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint)
-                or _sha256(output) != fingerprint
             ):
                 diagnostics.append(
-                    _diagnostic("ERROR", "result.structure_fingerprint", f"{prefix} file changed")
+                    _diagnostic("ERROR", "result.structure_file", f"{prefix} file is invalid")
                 )
             if (
                 not isinstance(methods, list)
@@ -2327,7 +2265,6 @@ class Adapter:
             "operation": MERGE_OPERATION,
             "status": "OK",
             "result_file": str(path),
-            "structure_set_id": manifest.get("structure_set_id"),
             "counts": manifest.get("counts", {}),
             "structure_count": len(records),
             "diagnostics": diagnostics,
@@ -2510,7 +2447,7 @@ class Adapter:
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
-                        "result.identity",
+                        "result.schema",
                         f"sampling result {key} must be {expected!r}",
                     )
                 )
@@ -2539,7 +2476,7 @@ class Adapter:
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
-                        "result.parameter_identity",
+                        "result.parameter",
                         f"result parameter {key} does not match the approved plan",
                     )
                 )
@@ -2647,18 +2584,6 @@ class Adapter:
                     )
                 )
             seen_paths.add(relative)
-            if item.get("sha256") != _sha256(path):
-                diagnostics.append(
-                    _diagnostic(
-                        "ERROR", "result.artifact_hash", f"artifact hash mismatch: {relative}"
-                    )
-                )
-            if item.get("size_bytes") != path.stat().st_size:
-                diagnostics.append(
-                    _diagnostic(
-                        "ERROR", "result.artifact_size", f"artifact size mismatch: {relative}"
-                    )
-                )
             role = str(item["role"])
             role_paths.setdefault(role, []).append(path)
             artifacts.append(
@@ -2805,7 +2730,7 @@ class Adapter:
             if metadata.get(key) != expected:
                 diagnostics.append(
                     _diagnostic(
-                        "ERROR", "result.metadata_identity", f"metadata {key} is not bound"
+                        "ERROR", "result.metadata_schema", f"metadata {key} is not bound"
                     )
                 )
         if metadata.get("parameters") != dict(result_parameters):
@@ -2827,7 +2752,7 @@ class Adapter:
         ):
             diagnostics.append(
                 _diagnostic(
-                    "ERROR", "result.metadata_source", "metadata source identity is invalid"
+                    "ERROR", "result.metadata_source", "metadata source record is invalid"
                 )
             )
             raw_source_records = []
@@ -2860,13 +2785,12 @@ class Adapter:
             record = source_records.get(role, {})
             if _ordinary_file(path) and (
                 record.get("name") != path.name
-                or record.get("sha256") != _sha256(path)
-                or record.get("size_bytes") != path.stat().st_size
+                or record.get("path") != str(path)
             ):
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
-                        "result.metadata_source_hash",
+                        "result.metadata_source_path",
                         f"metadata does not match bound source file: {role}",
                     )
                 )
@@ -2915,15 +2839,14 @@ class Adapter:
                 if (
                     execution_metadata.get("performed") is not True
                     or execution_metadata.get("version") != context_parameters.get("lasp_version")
-                    or execution_metadata.get("executable_name") != executable.name
-                    or execution_metadata.get("executable_sha256") != _sha256(executable)
+                    or execution_metadata.get("executable_path") != str(executable)
                     or execution_metadata.get("returncode") != 0
                     or execution_metadata.get("command_uses_shell") is not False
                 ):
                     diagnostics.append(
                         _diagnostic(
                             "ERROR",
-                            "result.executable_identity",
+                            "result.executable",
                             "execution metadata does not match the approved LASP executable",
                         )
                     )
@@ -2934,8 +2857,7 @@ class Adapter:
                     {
                         "role": "input-structure",
                         "destination": "input.arc",
-                        "sha256": _sha256(input_structure),
-                        "size_bytes": input_structure.stat().st_size,
+                        "source": str(input_structure),
                     }
                 )
             if _ordinary_file(approved_lasp_input):
@@ -2944,8 +2866,7 @@ class Adapter:
                     {
                         "role": "lasp-input",
                         "destination": "lasp.in",
-                        "sha256": _sha256(approved_lasp_input),
-                        "size_bytes": approved_lasp_input.stat().st_size,
+                        "source": str(approved_lasp_input),
                     }
                 )
             auxiliary = _mapping(context_inputs.get("lasp_auxiliary_files"))
@@ -2963,8 +2884,7 @@ class Adapter:
                     {
                         "role": "auxiliary-input",
                         "destination": name,
-                        "sha256": _sha256(path),
-                        "size_bytes": path.stat().st_size,
+                        "source": str(path),
                     }
                 )
             raw_staged = execution_metadata.get("staged_inputs")
@@ -2981,7 +2901,7 @@ class Adapter:
                     _diagnostic(
                         "ERROR",
                         "result.staged_inputs",
-                        "staged input fingerprints differ from the approved inputs",
+                        "staged input paths differ from the approved inputs",
                     )
                 )
             if staged_valid:
@@ -3003,100 +2923,30 @@ class Adapter:
                     if (
                         _has_symlink_component(staged_path)
                         or not _ordinary_file(staged_path)
-                        or item.get("sha256") != _sha256(staged_path)
-                        or item.get("size_bytes") != staged_path.stat().st_size
                     ):
                         diagnostics.append(
                             _diagnostic(
                                 "ERROR",
-                                "result.staged_input_content",
-                                f"staged input no longer matches its pre-execution fingerprint: {destination}",
+                                "result.staged_input",
+                                f"staged input is missing: {destination}",
                             )
                         )
             launcher_value = context_resources.get("mpi_launcher")
             if launcher_value is None:
-                launcher_name = None
-                launcher_sha = None
+                launcher_path_value = None
             else:
                 launcher_path = _resolve_nonsymlink(launcher_value, project_root)
-                launcher_name = launcher_path.name if _ordinary_file(launcher_path) else None
-                launcher_sha = _sha256(launcher_path) if _ordinary_file(launcher_path) else None
+                launcher_path_value = (
+                    str(launcher_path) if _ordinary_file(launcher_path) else None
+                )
             if (
-                execution_metadata.get("mpi_launcher") != launcher_name
-                or execution_metadata.get("mpi_launcher_sha256") != launcher_sha
+                execution_metadata.get("mpi_launcher") != launcher_path_value
                 or execution_metadata.get("mpi_processes")
                 != context_parameters.get("mpi_processes")
             ):
                 diagnostics.append(
                     _diagnostic(
-                        "ERROR", "result.mpi_identity", "MPI launcher identity differs from plan"
-                    )
-                )
-
-        execution_context = (
-            _mapping(context.get("execution")) if isinstance(context, Mapping) else {}
-        )
-        approved_plan = _mapping(execution_context.get("plan"))
-        approved_fingerprints = approved_plan.get("input_fingerprints")
-        if not isinstance(approved_fingerprints, Mapping):
-            diagnostics.append(
-                _diagnostic(
-                    "ERROR",
-                    "result.approved_input_fingerprint_missing",
-                    "the approved execution plan must contain LASP input fingerprints",
-                )
-            )
-        else:
-            current_fingerprints: Dict[str, Dict[str, Any]] = {}
-
-            def capture_current(name: str, path: Optional[Path]) -> None:
-                if _ordinary_file(path):
-                    assert path is not None
-                    current_fingerprints[name] = {
-                        "sha256": _sha256(path),
-                        "size_bytes": path.stat().st_size,
-                    }
-
-            python_executable = _explicit_executable(
-                context_resources.get("python_executable"),
-                project_root,
-            )
-            capture_current("python_executable", python_executable)
-            capture_current("lasp_wrapper", BUNDLED_LASP_WRAPPER.resolve())
-            capture_current(
-                "lasp_input",
-                _resolve_nonsymlink(context_inputs.get("lasp_input"), project_root),
-            )
-            if operation == "lasp-ssw-normalize-replay":
-                capture_current("allstr.arc", source_paths.get("ssw-archive"))
-                capture_current("best.arc", source_paths.get("best-archive"))
-                capture_current("md.arc", source_paths.get("md-archive"))
-            else:
-                capture_current(
-                    "lasp_executable",
-                    _resolve_nonsymlink(context_inputs.get("lasp_executable"), project_root),
-                )
-                capture_current(
-                    "input_structure",
-                    _resolve_nonsymlink(context_inputs.get("input_structure"), project_root),
-                )
-                auxiliary = _mapping(context_inputs.get("lasp_auxiliary_files"))
-                for name in sorted(auxiliary):
-                    capture_current(
-                        f"auxiliary:{name}",
-                        _resolve_nonsymlink(auxiliary[name], project_root),
-                    )
-                launcher_value = context_resources.get("mpi_launcher")
-                if launcher_value is not None:
-                    capture_current(
-                        "mpi_launcher", _resolve_nonsymlink(launcher_value, project_root)
-                    )
-            if dict(approved_fingerprints) != current_fingerprints:
-                diagnostics.append(
-                    _diagnostic(
-                        "ERROR",
-                        "result.approved_input_fingerprint",
-                        "current LASP inputs differ from the approved execution plan",
+                        "ERROR", "result.mpi", "MPI launcher settings differ from the plan"
                     )
                 )
 
@@ -3115,7 +2965,7 @@ class Adapter:
                         _diagnostic(
                             "ERROR",
                             "result.structure_manifest",
-                            "SSW structure manifest identity or records are invalid",
+                            "SSW structure manifest schema or records are invalid",
                         )
                     )
                 else:
@@ -3141,7 +2991,7 @@ class Adapter:
                         _diagnostic(
                             "ERROR",
                             "result.selected_manifest",
-                            "selected structure manifest identity or records are invalid",
+                            "selected structure manifest schema or records are invalid",
                         )
                     )
                 else:
@@ -3191,12 +3041,10 @@ class Adapter:
         approved_stride = context_parameters.get("selection_stride")
         if not _positive_int(approved_stride):
             approved_stride = 1
-        approved_source_id = str(result.get("source_id", ""))
         for index, record in enumerate(structure_records):
             identifier = record.get("structure_id")
             frame_index = record.get("frame_index")
             energy = record.get("energy_ev")
-            digest = record.get("frame_sha256")
             if not _plain_string(identifier):
                 diagnostics.append(
                     _diagnostic("ERROR", "result.structure_id", "structure_id is required")
@@ -3218,25 +3066,17 @@ class Adapter:
                 diagnostics.append(
                     _diagnostic("ERROR", "result.energy", f"frame {index + 1} energy is invalid")
                 )
-            digest_valid = isinstance(digest, str) and bool(
-                re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
-            )
-            if not digest_valid:
-                diagnostics.append(
-                    _diagnostic("ERROR", "result.frame_hash", "frame_sha256 is invalid")
-                )
             if (
                 isinstance(frame_index, int)
                 and not isinstance(frame_index, bool)
-                and digest_valid
                 and identifier
-                != _lasp_structure_id(approved_source_id, "ssw", frame_index, str(digest))
+                != _lasp_structure_id("ssw", frame_index)
             ):
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
-                        "result.structure_id_derived",
-                        "structure_id does not match source/frame/hash identity",
+                        "result.structure_id_order",
+                        "structure_id does not match the frame order",
                     )
                 )
             if record.get("source_role") != "allstr.arc":
@@ -3247,12 +3087,12 @@ class Adapter:
                 )
             if index >= len(source_frames) or any(
                 record.get(key) != source_frames[index].get(key)
-                for key in ("frame_index", "energy_ev", "frame_sha256")
+                for key in ("frame_index", "energy_ev")
             ):
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
-                        "result.source_frame_identity",
+                        "result.source_frame",
                         "SSW record differs from the corresponding bound allstr.arc frame",
                     )
                 )
@@ -3314,18 +3154,17 @@ class Adapter:
                         "SSW structure_file is not a generated artifact",
                     )
                 )
-            elif record.get("frame_sha256") != _sha256(path):
-                diagnostics.append(
-                    _diagnostic(
-                        "ERROR", "result.generated_hash", "generated structure bytes changed"
-                    )
-                )
             else:
                 try:
                     parsed = _read_arc_frames(path, 1)
-                    if len(parsed) != 1 or any(
-                        parsed[0].get(key) != record.get(key)
-                        for key in ("energy_ev", "frame_sha256")
+                    frame_index = int(record.get("frame_index", 0))
+                    if (
+                        len(parsed) != 1
+                        or frame_index < 1
+                        or frame_index > len(source_frames)
+                        or parsed[0].get("energy_ev") != record.get("energy_ev")
+                        or parsed[0].get("payload")
+                        != source_frames[frame_index - 1].get("payload")
                     ):
                         raise ValueError("ARC structure does not match its record")
                 except (OSError, UnicodeError, ValueError) as exc:
@@ -3346,7 +3185,7 @@ class Adapter:
             diagnostics.append(
                 _diagnostic(
                     "ERROR",
-                    "result.selection_identity",
+                    "result.selection_records",
                     "selected manifest does not match selected SSW records in historical order",
                 )
             )
@@ -3376,18 +3215,17 @@ class Adapter:
                         "ERROR", "result.selected_path", "selected output_file is not an artifact"
                     )
                 )
-            elif record.get("frame_sha256") != _sha256(path):
-                diagnostics.append(
-                    _diagnostic(
-                        "ERROR", "result.selected_hash", "selected structure bytes changed"
-                    )
-                )
             else:
                 try:
                     parsed = _read_arc_frames(path, 1)
-                    if len(parsed) != 1 or any(
-                        parsed[0].get(key) != record.get(key)
-                        for key in ("energy_ev", "frame_sha256")
+                    frame_index = int(record.get("frame_index", 0))
+                    if (
+                        len(parsed) != 1
+                        or frame_index < 1
+                        or frame_index > len(source_frames)
+                        or parsed[0].get("energy_ev") != record.get("energy_ev")
+                        or parsed[0].get("payload")
+                        != source_frames[frame_index - 1].get("payload")
                     ):
                         raise ValueError("selected ARC does not match its record")
                 except (OSError, UnicodeError, ValueError) as exc:
@@ -3421,7 +3259,7 @@ class Adapter:
             role,
             count_key,
             structure_role,
-            identity_role,
+            record_role,
             source_role,
             bound_frames,
         ) in optional_manifest_counts:
@@ -3494,28 +3332,21 @@ class Adapter:
                                 diagnostics.append(
                                     _diagnostic(
                                         "ERROR",
-                                        "result.optional_identity",
+                                        "result.optional_id",
                                         f"{role} structure IDs must be unique",
                                     )
                                 )
                             elif isinstance(identifier, str):
                                 seen_optional_ids.add(identifier)
-                            digest = record.get("frame_sha256")
-                            expected_identifier = (
-                                _lasp_structure_id(
-                                    approved_source_id, identity_role, order, str(digest)
-                                )
-                                if isinstance(digest, str)
-                                else None
-                            )
+                            expected_identifier = _lasp_structure_id(record_role, order)
                             if identifier != expected_identifier or record.get(
                                 "source_role"
                             ) != source_role:
                                 diagnostics.append(
                                     _diagnostic(
                                         "ERROR",
-                                        "result.optional_derived_identity",
-                                        f"{role} identity differs from source/frame/hash",
+                                        "result.optional_source",
+                                        f"{role} ID or source role differs from its record order",
                                     )
                                 )
                             if (
@@ -3532,12 +3363,12 @@ class Adapter:
                                         f"{role} order or energy is invalid",
                                     )
                                 )
-                            if path is None or record.get("frame_sha256") != _sha256(path):
+                            if path is None:
                                 diagnostics.append(
                                     _diagnostic(
                                         "ERROR",
-                                        "result.optional_hash",
-                                        f"{role} output path or hash is invalid",
+                                        "result.optional_path",
+                                        f"{role} output path is invalid",
                                     )
                                 )
                             else:
@@ -3548,12 +3379,11 @@ class Adapter:
                                         or order > len(bound_frames)
                                         or any(
                                             record.get(key) != bound_frames[order - 1].get(key)
-                                            for key in ("frame_index", "energy_ev", "frame_sha256")
+                                            for key in ("frame_index", "energy_ev")
                                         )
-                                        or any(
-                                            parsed[0].get(key) != record.get(key)
-                                            for key in ("energy_ev", "frame_sha256")
-                                        )
+                                        or parsed[0].get("energy_ev") != record.get("energy_ev")
+                                        or parsed[0].get("payload")
+                                        != bound_frames[order - 1].get("payload")
                                     ):
                                         raise ValueError("ARC differs from bound source frame")
                                 except (OSError, UnicodeError, ValueError) as exc:

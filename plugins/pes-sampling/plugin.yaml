@@ -26,11 +26,11 @@
       "The reviewed LASP inputs and scripts did not record a random seed. LASP operations therefore require seed_status=HISTORICAL_PARAMETER_UNKNOWN and explicit acknowledgement; no seed is reconstructed.",
       "AIMD and MLIP-MD execution remain separate and out of scope. best.arc and md.arc may only be normalized as structure lineage evidence.",
       "DIRECT remains local-only. The bundled runner adapts the reviewed implementation and calls MAML DIRECTSampler with BirchClustering and SelectKFromClusters; it exposes no seed control and refuses an existing --out-dir.",
-      "lasp-input-prepare is local glue: it converts one explicitly selected frame from an ASE-readable periodic structure file into a fingerprinted input.arc. With an approved portable pseudopotential reference it also assembles a runtime-only licensed POTCAR from PMG_VASP_PSP_DIR; POTCAR is never collected or fetched.",
+      "lasp-input-prepare is local glue: it converts one explicitly selected frame from an ASE-readable periodic structure file into input.arc. With an approved portable pseudopotential reference it also assembles a runtime-only licensed POTCAR from PMG_VASP_PSP_DIR; POTCAR is never collected or fetched.",
       "merge-structures is a local glue operation: it consumes already verified DIRECT and scheduled-LASP selected artifacts, normalizes them to POSCAR, applies explicit pymatgen StructureMatcher tolerances without cell scaling, rejects invalid/overlapping structures, and emits one DFT-ready manifest with both source lineages.",
       "Scheduled LASP uses one approved ssh-slurm submission followed by scheduler observation, bounded verified fetch, and scientific checks. Dynamically selected ARC structures are returned as selected-structures.tar.gz plus manifests so the fetch allowlist remains finite.",
       "Authorized LASP numerical execution and site-specific scheduler validation must still be performed on the user's cluster; repository tests use fake scheduler/LASP fixtures and do not establish SSW numerical parity.",
-      "LASP completion is rebound to approved input fingerprints and reparsed source ARC frames; output manifests cannot replace or self-sign around the approved source files."
+      "LASP completion reparses the source ARC frames and verifies energies, ordering, selection rules, and produced structure files; output manifests cannot replace the approved source files."
     ]
   },
   "execution": {
@@ -58,10 +58,10 @@
   "inputs": [
     {"name": "input-dirs", "kind": "directory", "required": false, "description": "DIRECT only: one or more existing local structure directories; runtime key input_dirs."},
     {"name": "historical-run-dir", "kind": "directory", "required": false, "description": "LASP normalize only: read-only directory containing allstr.arc and optional best.arc/md.arc; runtime key historical_run_dir."},
-    {"name": "lasp-input", "kind": "file", "required": false, "description": "LASP operations: explicit lasp.in template that is copied or fingerprinted, never synthesized; runtime key lasp_input."},
+    {"name": "lasp-input", "kind": "file", "required": false, "description": "LASP operations: explicit lasp.in template that is copied, never synthesized; runtime key lasp_input."},
     {"name": "lasp-executable", "kind": "file", "required": false, "description": "Local LASP execute only: licensed user-supplied executable. ssh-slurm obtains the executable from the site-owned lasp-ssw/run.sh template instead of the project manifest."},
     {"name": "input-structure", "kind": "file", "required": false, "description": "lasp-input-prepare: one ASE-readable periodic source structure; LASP execute: one explicit single-frame ARC staged as input.arc."},
-    {"name": "pseudopotential-reference", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "lasp-input-prepare only: portable licensed PMG_VASP_PSP_DIR symbol/hash policy used to assemble a runtime-only non-collectable POTCAR."},
+    {"name": "pseudopotential-reference", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "lasp-input-prepare only: portable licensed PMG_VASP_PSP_DIR functional/symbol policy used to assemble a runtime-only non-collectable POTCAR."},
     {"name": "lasp-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled potential vasp only: verified lasp-input-prepare manifest used to bind and sensitively stage its sibling runtime-only POTCAR without a manual path."},
     {"name": "lasp-auxiliary-files", "kind": "value", "required": false, "description": "LASP execute: mapping of safe destination basenames to explicit project files such as INCAR/KPOINTS or non-DFT potential files. Scheduled potential vasp reserves POTCAR for verified automatic handoff."},
     {"name": "direct-manifest", "kind": "file", "required": false, "description": "merge-structures only: verified DIRECT manifest.csv beside its selected POSCAR files; runtime key direct_manifest."},
@@ -101,19 +101,19 @@
     {"name": "seed_status", "type": "string", "required": false, "description": "LASP operations: must be HISTORICAL_PARAMETER_UNKNOWN for the reviewed source."},
     {"name": "acknowledge_uncontrolled_seed", "type": "boolean", "required": false, "description": "DIRECT and LASP operations: must be true to acknowledge the source seed limitation."},
     {"name": "preserve_historical_order", "type": "boolean", "required": false, "description": "LASP operations: must be true; the normalizer never reorders structures by inferred quality."},
-    {"name": "lasp_version", "type": "string", "required": false, "description": "LASP execute: explicit version identity recorded in the approved plan and remote report."},
+    {"name": "lasp_version", "type": "string", "required": false, "description": "LASP execute: explicit version recorded in the reviewed plan and remote report."},
     {"name": "mpi_processes", "type": "integer", "required": false, "description": "Local LASP only. Scheduled LASP derives process count from resources.cpus and the site-owned template."}
   ],
   "outputs": [
     {"name": "sample-manifest", "kind": "manifest", "required": true, "description": "DIRECT manifest.csv or LASP sampling-result.json, depending on operation."},
-    {"name": "ssw-structure-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "LASP structure identities, source-frame order, energies, selection flags, and SHA-256 values."},
+    {"name": "ssw-structure-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "LASP structure IDs, source-frame order, energies, selection flags, and paths."},
     {"name": "selected-structure-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "LASP selected subset with accepted-order stride provenance."},
     {"name": "selected-structures", "kind": "artifact-reference", "required": true, "description": "DIRECT POSCAR, local LASP ARC files, or scheduled LASP selected-structures.tar.gz plus its manifest."},
-    {"name": "lasp-run-metadata", "kind": "manifest", "required": false, "media_type": "application/json", "description": "LASP template parameters, source fingerprints, execution identity, unknown seed marker, and scientific boundaries."},
+    {"name": "lasp-run-metadata", "kind": "manifest", "required": false, "media_type": "application/json", "description": "LASP template parameters, source paths, execution settings, unknown seed marker, and scientific boundaries."},
     {"name": "sampling-diagnostics", "kind": "artifact-reference", "required": false, "description": "Optional DIRECT diagnostics or LASP best/md/log lineage artifacts."},
-    {"name": "structures-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "merge-structures DFT-ready structures.json with normalized paths, fingerprints, quality/dedup statistics, and source provenance."},
+    {"name": "structures-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "merge-structures DFT-ready structures.json with normalized paths, quality/dedup statistics, and source provenance."},
     {"name": "merged-structures", "kind": "artifact-reference", "required": false, "description": "Normalized unique POSCAR files emitted by merge-structures."},
-    {"name": "lasp-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "lasp-input-prepare source/frame identity, cell diagnostics, output fingerprint, and optional non-portable POTCAR hash identity; the POTCAR itself is omitted."},
+    {"name": "lasp-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "lasp-input-prepare source path and frame selection, cell diagnostics, output path, and optional non-portable POTCAR scientific settings; the POTCAR itself is omitted."},
     {"name": "lasp-input-structure", "kind": "artifact-reference", "required": false, "media_type": "chemical/x-biosym-archive", "description": "Single-frame input.arc emitted by lasp-input-prepare for direct handoff to LASP execute."}
   ],
   "dependencies": {
@@ -135,8 +135,8 @@
     "requires_approval_before_execution": true,
     "notes": [
       "Local operations retain string-list argv and shell=false. Scheduled LASP emits scheduled_execution schema v3 with execution_model=mpi; MLIPFlow core performs approved SSH staging and Slurm submission followed by status polling, bounded fetch, and finalization.",
-      "Scheduled LASP stages only explicit project/plugin files with pinned hashes. SSH targets, work roots, partitions, modules, LASP paths, and MPI launcher paths remain outside project.yaml in the user-local site profile and remote template library.",
-      "For scheduled potential vasp, POTCAR must come from a verified lasp-input-prepare manifest. It is marked sensitive, excluded from every fetch/collect allowlist, and represented only by symbol and SHA-256 identity in portable reports.",
+      "Scheduled LASP stages only explicit project/plugin files. SSH targets, work roots, partitions, modules, LASP paths, and MPI launcher paths remain outside project.yaml in the user-local site profile and remote template library.",
+      "For scheduled potential vasp, POTCAR must come from a verified lasp-input-prepare manifest. It is marked sensitive, excluded from every fetch/collect allowlist, and represented only by its reference path, functional, elements, and symbols in portable reports.",
       "The scheduled fetch allowlist is fixed before submission. Dynamic selected structures are normalized remotely and packed into selected-structures.tar.gz; the local checker reparses fetched allstr.arc and verifies every tar member against the approved selection policy.",
       "Failed local wrapper runs retain an INCOMPLETE.json marker inside the fresh attempt; scheduled failure is additionally governed by the core scheduler completion contract.",
       "Retries use a new attempt directory and remote workspace; no historical LASP source or earlier attempt is overwritten."
@@ -146,11 +146,11 @@
     "status": "implemented",
     "checks": [
       {"id": "direct-manifest-and-structures", "implemented": true, "description": "DIRECT requires a readable manifest.csv and non-empty confined selected structures."},
-      {"id": "lasp-input-identity", "implemented": true, "description": "lasp-input-prepare rebinds the exact ASE source/frame selection, enforces a full-rank periodic cell and any explicit strict length bound, verifies input.arc, and, when approved, verifies runtime-only POTCAR component/combined hashes while omitting POTCAR from collect."},
-      {"id": "merged-structure-set", "implemented": true, "description": "merge-structures rebinds both input artifact fingerprints, validates archive membership and LASP frame hashes, verifies normalized POSCAR fingerprints, exact/near duplicate counts, rejected-structure counts, and complete source provenance."},
-      {"id": "lasp-file-contract", "implemented": true, "description": "LASP requires sampling-result identity, parsed allstr.arc evidence, complete counts, portable ordinary artifacts, and matching SHA-256/size values; stdout wording is never success evidence."},
-      {"id": "lasp-structure-lineage", "implemented": true, "description": "LASP structure IDs, finite energies, historical ordering, selection identity, selected-file hashes, and optional best/md manifest counts are cross-checked."},
-      {"id": "lasp-scheduled-finalization", "implemented": true, "description": "ssh-slurm LASP requires scheduler completion, bounded approved fetch, cluster-run-report identity, reparsed allstr.arc, recomputed energy/stride selection, and exact selected-structure tar member hashes before scientific OK."}
+      {"id": "lasp-input-record", "implemented": true, "description": "lasp-input-prepare records the ASE source path and frame selection, enforces a full-rank periodic cell and any explicit strict length bound, verifies input.arc, and records runtime-only POTCAR functional/element/symbol settings while omitting POTCAR from collect."},
+      {"id": "merged-structure-set", "implemented": true, "description": "merge-structures validates archive membership, output POSCAR files, exact/near duplicate counts, rejected-structure counts, and complete source provenance."},
+      {"id": "lasp-file-contract", "implemented": true, "description": "LASP requires a valid sampling-result schema, parsed allstr.arc evidence, complete counts, and portable ordinary artifacts; stdout wording is never success evidence."},
+      {"id": "lasp-structure-lineage", "implemented": true, "description": "LASP structure IDs, finite energies, historical ordering, selection rules, selected files, and optional best/md manifest counts are cross-checked."},
+      {"id": "lasp-scheduled-finalization", "implemented": true, "description": "ssh-slurm LASP requires scheduler completion, bounded approved fetch, a valid cluster report, reparsed allstr.arc, recomputed energy/stride selection, and selected-structure tar contents matching their source frames before scientific OK."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"
@@ -172,7 +172,7 @@
       "status": "adapter-ready",
       "operations": ["lasp-input-prepare"],
       "external_programs": [],
-      "limitations": ["Local only; converts exactly one explicit periodic frame, records geometry diagnostics and fingerprints, and performs no numerical sampling or labeling. Optional POTCAR materialization requires the user's licensed PMG_VASP_PSP_DIR and remains non-portable/non-collectable."]
+      "limitations": ["Local only; converts exactly one explicit periodic frame, records geometry diagnostics, and performs no numerical sampling or labeling. Optional POTCAR materialization requires the user's licensed PMG_VASP_PSP_DIR and remains non-portable/non-collectable."]
     },
     {
       "id": "structure-set-merge",

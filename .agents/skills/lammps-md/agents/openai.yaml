@@ -1,4 +1,4 @@
 interface:
   display_name: "LAMMPS molecular dynamics"
-  short_description: "Prepare, run, and restart fingerprinted MLIP LAMMPS jobs"
+  short_description: "Prepare, run, and restart explicit-model MLIP LAMMPS jobs"
   default_prompt: "$lammps-md Prepare, submit, verify, or resume one explicit-model LAMMPS NVT/NPT workflow using reviewed CPU/GPU inputs, site-owned ssh-slurm execution, periodic binary restart salvage, strict runtime compatibility checks, and bounded completion checks."

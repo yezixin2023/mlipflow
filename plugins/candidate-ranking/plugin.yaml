@@ -49,7 +49,7 @@
     {"name": "metric-results-manifest", "kind": "manifest", "required": true, "media_type": "application/json"}
   ],
   "parameters": [
-    {"name": "ranking-script", "type": "string", "required": false, "description": "Optional project-relative override; omitted uses the fingerprinted bundled deterministic implementation."},
+    {"name": "ranking-script", "type": "string", "required": false, "description": "Optional project-relative override; omitted uses the bundled deterministic implementation."},
     {"name": "interpreter-argv", "type": "array", "required": false, "description": "Optional one-item interpreter argv passed without a shell; defaults to the current Python interpreter."},
     {"name": "metric", "type": "string", "required": true, "description": "Finite numeric metric key used for ranking."},
     {"name": "direction", "type": "string", "required": true, "description": "minimize or maximize."},
@@ -76,8 +76,8 @@
   "completion": {
     "status": "implemented",
     "checks": [
-      {"id": "legacy-element-order", "implemented": true, "description": "The optional legacy normalizer maps labelled candidate and metric identities without positional ambiguity."},
-      {"id": "candidate-identity-and-count", "implemented": true, "description": "Require unique candidate identities and reject metric records for unknown candidates."},
+      {"id": "legacy-element-order", "implemented": true, "description": "The optional legacy normalizer maps labelled candidate and metric IDs without positional ambiguity."},
+      {"id": "candidate-ids-and-count", "implemented": true, "description": "Require unique candidate IDs and reject metric records for unknown candidates."},
       {"id": "ranking-evidence", "implemented": true, "description": "Recompute deterministic single-metric ordering, missing decisions, tie breaks, and top-k count from explicit manifests."}
     ],
     "success_state": "OK",
@@ -91,6 +91,6 @@
     "requires_approval": false,
     "max_attempts": null,
     "limit_enforced": false,
-    "notes": ["Retry preserves the candidate-manifest, metric-results, and ranking-rule digests unless a new plan is explicitly approved."]
+    "notes": ["Retry preserves the candidate manifest, metric results, and ranking rule unless a new plan is explicitly approved."]
   }
 }

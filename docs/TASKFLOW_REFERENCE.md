@@ -48,7 +48,7 @@ Taskflow 的单文件交付适合超算端零安装，但不利于跨训练框�
 
 Taskflow 的破坏性门控主要由 `AGENTS.md` 约束，有 shell 权限的 Agent 仍可绕开。MLIPFlow 将安全边界实现到代码：
 
-- 昂贵操作先生成带摘要的计划，再用匹配的 digest 批准；
+- 昂贵操作先用 dry-run 展示计划，再以显式 `--approve` 确认；
 - `stop` 始终显式确认；
 - 外部命令使用 argv 与 `shell=False`；
 - SSH 只引用用户配置 profile，仓库不保存密码、私钥路径或 token；
@@ -77,4 +77,3 @@ Taskflow 本身没有 OpenAI、Anthropic、Gemini、LangChain 或 MCP 模型调�
 因此适用对象不是某个品牌模型，而是任何能稳定调用 shell 工具、解析 JSON、保留状态差异并执行确认门控的 Agent。纯聊天模型没有终端、SSH 或定时运行能力，只能解释和提出建议。
 
 MLIPFlow 继续采用模型无关接口，并把九个 Agent Skills 与确定性计算插件彻底分开：Skills 教 Agent 如何监督，插件定义机器可验证的输入、计划、执行和结果。
-

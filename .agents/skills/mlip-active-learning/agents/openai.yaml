@@ -1,0 +1,4 @@
+interface:
+  display_name: "MLIP Active Learning"
+  short_description: "Supervise calibrated offline MLIP active learning"
+  default_prompt: "$mlip-active-learning Create or resume one finite active-learning campaign round from explicit policy and verified artifacts."

@@ -16,7 +16,7 @@ The preparation wrapper records `preparation_contract: lammps-md-input-v2` and a
 
 ## Portable model binding
 
-Generated input files never contain a cluster model path. They reference `${MODEL_FILE}`. Scheduled execution resolves `model.relative_path` only below the site-owned `MODEL_ROOT`, recomputes the approved file SHA-256 or directory `tree-sha256-v1`, and passes the resolved artifact using LAMMPS `-var MODEL_FILE`.
+Generated input files never contain a cluster model path. They reference `${MODEL_FILE}`. Scheduled execution resolves `model.relative_path` only below the site-owned `MODEL_ROOT` and passes the resolved artifact using LAMMPS `-var MODEL_FILE`.
 
 LAMMPS-ready artifact formats remain:
 
@@ -24,7 +24,7 @@ LAMMPS-ready artifact formats remain:
 - MACE: `mace-lammps-torchscript` for the reviewed ML-MACE interface.
 - M3GNet/MatGL native: `lammps_interface: matgl`, `kind: file`, and `matgl-lammps-torchscript` exported with `mgl create-lammps-model`.
 - M3GNet/MatGL Python bridges: explicit `lammps_interface: gnnp|m3gnet`, `kind: directory`, and `matgl-model-directory`. The directory must be a native `matgl.load_model` artifact, not a mislabeled single checkpoint.
-- CHGNet: intentionally unsupported by `lammps-md@0.3`; use `ase-md` until a native LAMMPS bridge is pinned and reviewed.
+- CHGNet: intentionally unsupported by `lammps-md@0.3`; use `ase-md` until a native LAMMPS bridge is supported and reviewed.
 
 ## Prepare workflow node
 
@@ -44,7 +44,7 @@ LAMMPS-ready artifact formats remain:
   resources: {}
 ```
 
-After preparation, bind the generated manifest by its full SHA-256 in a separate execute node.
+After preparation, pass the generated manifest path to a separate execute node.
 
 ## Long-running execute node
 
@@ -59,7 +59,6 @@ After preparation, bind the generated manifest by its full SHA-256 in a separate
   parameters:
     operation: execute
     target: gpu
-    input_manifest_fingerprint: sha256:REPLACE_WITH_PREPARED_MANIFEST_SHA256
     checkpoint_interval: 10000
     restart_policy: auto-from-previous-attempt
   resources:
@@ -81,7 +80,7 @@ restart 10000 checkpoint.1.restart checkpoint.2.restart
 
 LAMMPS alternates the two files. This is deliberately preferable to repeatedly overwriting one binary file: if a hard stop lands during one checkpoint write, the other file may still contain the previous complete checkpoint.
 
-Before the long LAMMPS process starts, the runner also writes `restart-runtime.json`. It binds the attempt, framework/target, prepared-manifest SHA, model SHA, checkpoint cadence, abstract resources, resolved LAMMPS executable SHA, site launcher hash, prepared launcher hash, and platform identity.
+Before the long LAMMPS process starts, the runner also writes `restart-runtime.json`. It records the attempt, framework/target, prepared-manifest and model paths, checkpoint cadence, abstract resources, resolved LAMMPS executable path and version, launcher arguments, and platform information.
 
 These three files are failure-recovery artifacts. On a normal successful run the temporary periodic pair and runtime sidecar are removed; the ordinary successful artifact remains `final.restart`.
 
@@ -108,7 +107,7 @@ attempt-1 remains FAIL/STOPPED
     ↓
 retry creates fresh attempt-2
     ↓
-new run plan binds previous checkpoint/runtime SHA values
+new run plan records the previous checkpoint and runtime paths
     ↓ approval
 compute node validates runtime compatibility, probes both binary candidates,
 chooses the newest valid periodic timestep, then resumes to the original total step
@@ -136,17 +135,17 @@ The control plane never parses LAMMPS binary restart bytes. On the compute node 
 
 Binary restart is deliberately stricter than ASE-MD JSON checkpointing. Before a resumed run may call `read_restart`, version 0.3 requires the current runtime to match the salvaged sidecar for:
 
-- LAMMPS executable SHA-256;
-- operating-system / machine / byte-order identity;
-- site launcher JSON identity;
-- prepared launcher identity;
+- LAMMPS executable path and reported version;
+- operating-system, machine, and byte order;
+- site launcher arguments;
+- prepared launcher arguments;
 - CPU/GPU/memory/walltime resource object;
 - framework and target;
-- model SHA-256;
-- prepared input-manifest SHA-256;
+- model path;
+- prepared input-manifest path;
 - checkpoint cadence.
 
-Changing one of these makes the retry plan or compute-node runner fail closed. Even when all checks match, the result records `bitwise_exact_guaranteed: false`: processor decomposition and floating-point ordering can still make a resumed trajectory numerically diverge from an uninterrupted run. The promise is state-continuous restart under the bound runtime, not universal bitwise identity.
+Changing one of these makes the retry plan or compute-node runner fail closed. Even when all checks match, the result records `bitwise_exact_guaranteed: false`: processor decomposition and floating-point ordering can still make a resumed trajectory numerically diverge from an uninterrupted run. The promise is state-continuous restart under the recorded runtime, not universal bitwise equivalence.
 
 ## CPU/GPU contracts
 
@@ -158,7 +157,7 @@ Changing one of these makes the retry plan or compute-node runner fail closed. E
 | M3GNet via GNNP bridge | `pair_style gnnp ${INTERFACE_PATH}` | unsupported |
 | M3GNet legacy Python bridge | `pair_style m3gnet ${INTERFACE_PATH}` | unsupported |
 
-DeepMD may request more than one GPU, but the site template remains responsible for at most one GPU per MPI rank. Keep the launcher stable across restart attempts because version 0.3 fingerprints it.
+DeepMD may request more than one GPU, but the site template remains responsible for at most one GPU per MPI rank. Keep the launcher arguments stable across binary-restart attempts because they are part of the runtime compatibility check.
 
 ## Site templates
 
@@ -180,10 +179,10 @@ The v0.3 example invokes the staged `lammps_cluster_restart.py` and passes the M
 On 2026-08-16, two five-step NVT jobs completed the full MLIPFlow path on the
 `cluster-a` SSH-SLURM profile:
 
-| Interface | Slurm job | LAMMPS | Model identity | Prepared manifest | Result |
+| Interface | Slurm job | LAMMPS | Model | Prepared manifest | Result |
 |---|---:|---|---|---|---|
-| DeepMD `pair_style deepmd` | `redacted` | 2 Aug 2023; executable SHA-256 `c86fd0…e856` | `deepmd-lammps-model`; SHA-256 `e137c8…89aa` | SHA-256 `c0be4b…13b8` | 5/5 steps, exit 0, checker/collect `OK` |
-| MatGL/M3GNet `pair_style gnnp ${INTERFACE_PATH}` | `redacted` | 2 Aug 2023; executable SHA-256 `adf720…8d43` | `matgl-model-directory`; tree SHA-256 `dfe3f1…425d4` | SHA-256 `b468a3…1268` | 5/5 steps, exit 0, checker/collect `OK` |
+| DeepMD `pair_style deepmd` | `redacted` | 2 Aug 2023 | `deepmd-lammps-model`; `graph.pb` | `lammps-input-manifest.json` | 5/5 steps, exit 0, checker/collect `OK` |
+| MatGL/M3GNet `pair_style gnnp ${INTERFACE_PATH}` | `redacted` | 2 Aug 2023 | `matgl-model-directory`; `finetune/finetuned_model` | `lammps-input-manifest.json` | 5/5 steps, exit 0, checker/collect `OK` |
 
 Both runs used one CPU rank, no GPU, 400 K NVT, a 1 fs timestep, and the same
 explicit `Li P S Mn Fe Ni Cu Zn` type map. The generated decks kept site paths out
@@ -192,7 +191,7 @@ completion marker, and returned only the bounded approved output set. The GNNP
 run preserved a failed first attempt caused by missing site Python initialization;
 after the canonical site family was corrected, retry created a fresh attempt.
 
-The machine-readable identities and output fingerprints are in
+The machine-readable paths, parameters, versions, and output names are in
 [`reports/lammps_cluster_cpu_functional_smokes.json`](../../reports/lammps_cluster_cpu_functional_smokes.json).
 This is execution validation only. It does not validate force-field accuracy,
 equilibration, transport, GPU execution, NPT, or binary restart. The tested GNNP
@@ -201,6 +200,6 @@ result.
 
 ## Completion and scope
 
-Normal success still requires process exit zero, the exact approved completion marker, recorded LAMMPS version, unchanged input/model identities, bounded output files, matching SHA records, and consistent execution/result manifests.
+Normal success still requires process exit zero, the exact approved completion marker, recorded LAMMPS version, matching input/model paths and parameters, bounded output files, and consistent execution/result manifests.
 
 Version 0.3 supports NVT and isotropic NPT restart for the currently prepared MLIP interfaces. It does not itself run transport analysis, replicas, or charged/molecular/hybrid force fields. `ionic-transport` now consumes collected trajectory segments across attempts, stitches them by global timestep, and accepts both older wrapped dumps and new dumps containing image flags.

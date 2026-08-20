@@ -1,7 +1,7 @@
-"""Shared read-only MLIP identity and inference runtime utilities.
+"""Shared read-only MLIP family and inference runtime utilities.
 
-Training uses the same framework-version identity function while benchmark
-uses the lazy inference loader.  Importing this module never imports a heavy
+Training records the same framework version while benchmark uses the lazy
+inference loader. Importing this module never imports a heavy
 scientific framework and never loads a model.
 """
 
@@ -125,7 +125,7 @@ class DeepMDPredictor:
             self.type_map = list(self.model.get_type_map())
         except Exception as exc:
             raise RuntimeCompatibilityError(f"failed to load DeepMD model: {exc}") from exc
-        self.runtime_identity = {
+        self.runtime_details = {
             "framework": "deepmd",
             "framework_version": framework_version("deepmd"),
             "backend": "deepmd.infer.DeepPot",
@@ -182,9 +182,9 @@ class ASECalculatorPredictor:
         "stress": "eV/angstrom^3",
     }
 
-    def __init__(self, calculator: Any, runtime_identity: dict[str, Any]):
+    def __init__(self, calculator: Any, runtime_details: dict[str, Any]):
         self.calculator = calculator
-        self.runtime_identity = runtime_identity
+        self.runtime_details = runtime_details
 
     def predict(self, sample: dict[str, Any]) -> dict[str, Any]:
         try:

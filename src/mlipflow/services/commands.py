@@ -1,9 +1,4 @@
-"""Mutating lifecycle commands: init, run, advance, retry, stop.
-
-Only execution submission crosses the cryptographic approval boundary. State
-reconciliation, bounded finalization, creation of a fresh retry attempt, and an
-explicit stop command enforce their own concrete safety checks directly.
-"""
+"""Mutating lifecycle commands: init, run, advance, retry, stop."""
 
 from __future__ import annotations
 
@@ -14,15 +9,18 @@ from ..backends import SshSlurmBackend
 from ..config import Project, load_project
 from ..errors import ApprovalError, BackendError, PluginError, StateError
 from ..hpc import TemplateLibrary, resolve_hpc_execution_plan
-from ..io import write_json_atomic
-from ..planning import action_plan, node_plan, resolve_reference, with_digest
+from ..io import load_mapping, write_json_atomic
+from ..planning import action_plan, node_plan, resolve_reference
 from ..portable import to_portable
 from ..plugins import discover_plugins, load_adapter, select_plugin
-from ..site import load_site_config
+from ..site import ClusterProfile, SiteConfig, load_site_config
 from ..state import RunState, StateStore
-from .backend_factory import SchedulerFactory, scheduler_for_node
+from .backend_factory import (
+    SchedulerFactory,
+    scheduler_for_node,
+    scheduler_from_cluster_record,
+)
 from .contracts import (
-    _adapter_command_identities,
     _adapter_context,
     _portable_roots,
     _load_result,
@@ -31,12 +29,11 @@ from .contracts import (
     _scheduled_contract,
 )
 from .execution import _execute_ready
-from .paths import state_path
+from .paths import attempt_directory, state_path
 from .scheduled import (
     _finalize_scheduled_adapter,
     _finalize_scheduler_manifest,
     _observe_scheduled_step,
-    _scheduler_expected_identity,
 )
 
 
@@ -51,9 +48,81 @@ DEFAULT_PROJECT = {
     "model_registry": "model_registry.yaml",
     "workflow": {"nodes": []},
     "routing": {"policies": {}},
-    "fingerprints": {"full_hash_max_bytes": 67108864},
     "safety": {"auto_submit": False},
 }
+
+
+def _automatic_cluster(site: SiteConfig, resources: Any) -> ClusterProfile:
+    if not isinstance(resources, dict):
+        raise BackendError("automatic cluster selection requires HPC resources")
+    best: tuple[tuple[int, int], ClusterProfile] | None = None
+    failures: list[str] = []
+    for profile in site.clusters.values():
+        scheduler = profile.scheduler
+        if scheduler is None:
+            failures.append(f"{profile.name}: no partition candidates")
+            continue
+        try:
+            backend = SshSlurmBackend(profile.ssh_profile)
+            if scheduler.memory_constraint == "unreported":
+                routing = backend.select_partition(
+                    scheduler.partition_candidates,
+                    resources,
+                    memory_constraint="unreported",
+                )
+            else:
+                routing = backend.select_partition(
+                    scheduler.partition_candidates,
+                    resources,
+                )
+            selected_partition = routing.get("selected_partition")
+            observations = routing.get("observed_partition_availability")
+            selected = next(
+                (
+                    item
+                    for item in observations
+                    if isinstance(item, dict)
+                    and item.get("partition") == selected_partition
+                ),
+                None,
+            ) if isinstance(observations, list) else None
+            availability = (
+                selected.get("observed_node_availability")
+                if isinstance(selected, dict)
+                else None
+            )
+            if not isinstance(availability, dict):
+                raise BackendError("cluster availability observation is malformed")
+            score = (
+                int(availability.get("available_now", 0)),
+                int(availability.get("capable_for_request", 0)),
+            )
+        except Exception as exc:
+            failures.append(f"{profile.name}: {exc}")
+            continue
+        if best is None or score > best[0]:
+            best = (score, profile)
+    if best is None:
+        raise BackendError(
+            "automatic cluster selection found no schedulable profile ("
+            + "; ".join(failures)
+            + ")"
+        )
+    return best[1]
+
+
+def _run_cluster(
+    site: SiteConfig, node: dict[str, Any]
+) -> tuple[ClusterProfile, dict[str, str] | None]:
+    requested = node.get("backend_profile")
+    if requested is not None:
+        return site.cluster(requested), None
+    profile = _automatic_cluster(site, node.get("resources"))
+    return profile, {
+        "mode": "automatic",
+        "selected_profile": profile.name,
+        "criterion": "most currently available capable nodes; site order breaks ties",
+    }
 
 
 def initialize(target: Path) -> dict[str, Any]:
@@ -106,17 +175,10 @@ def make_run_plan(
         adapter_plan = adapter.plan(context)
         if not isinstance(adapter_plan, dict):
             raise PluginError(f"plugin {plugin.plugin_id} plan must return a mapping")
-        unsigned = {key: value for key, value in plan.items() if key != "plan_digest"}
-        # Adapters emit this machine's absolute paths in argv, cwd, staged
-        # sources and diagnostic messages.  Approval must describe the work, not
-        # the filesystem it was planned on, so those roots become tokens here and
-        # are resolved again in ``_execute_ready`` just before anything runs.
+        # Keep the reviewed plan portable so it can be used on the selected site.
         roots = _portable_roots(project, plugin, node_id, attempt)
-        unsigned["adapter_diagnostics"] = to_portable(diagnostics, roots)
-        unsigned["adapter_plan"] = to_portable(adapter_plan, roots)
-        unsigned["adapter_command_identities"] = _adapter_command_identities(
-            project, adapter_plan, plugin=plugin, node_id=node_id, attempt=attempt
-        )
+        plan["adapter_diagnostics"] = to_portable(diagnostics, roots)
+        plan["adapter_plan"] = to_portable(adapter_plan, roots)
         if (
             str(node.get("backend", "local")) == "ssh-slurm"
             and isinstance(adapter_plan.get("scheduled_execution"), dict)
@@ -129,14 +191,17 @@ def make_run_plan(
                 attempt=attempt,
             )
             site = load_site_config(site_path)
-            profile = site.cluster(node.get("backend_profile"))
+            profile, cluster_selection = _run_cluster(site, node)
+            plan["backend_profile"] = profile.name
+            if cluster_selection is not None:
+                plan["cluster_selection"] = cluster_selection
             provider: TemplateLibrary = (
                 template_library
                 if template_library is not None
                 else SshSlurmBackend(profile.ssh_profile)
             )
             if scheduled["schema_version"] == 4:
-                unsigned["hpc_executions"] = [
+                plan["hpc_executions"] = [
                     {
                         "submission_id": submission["id"],
                         "hpc_execution": resolve_hpc_execution_plan(
@@ -159,7 +224,7 @@ def make_run_plan(
                     for submission in scheduled["submissions"]
                 ]
             else:
-                unsigned["hpc_execution"] = resolve_hpc_execution_plan(
+                plan["hpc_execution"] = resolve_hpc_execution_plan(
                     profile=profile,
                     project_id=project.project_id,
                     node_id=str(node["id"]),
@@ -168,7 +233,6 @@ def make_run_plan(
                     scheduled_execution=scheduled,
                     library=provider,
                 )
-        plan = with_digest(unsigned)
     return plan
 
 
@@ -176,7 +240,7 @@ def run_node(
     project: Project,
     node_id: str,
     plugin_root: Path,
-    approval: str | None = None,
+    approval: bool = False,
     site_path: Path | None = None,
     template_library: TemplateLibrary | None = None,
     *,
@@ -241,20 +305,23 @@ def run_node(
         if step.state != RunState.READY.value:
             raise StateError(f"node {node_id} is {step.state}, expected READY")
         step = store.bind_attempt_node(step.run_id, node)
-        store.record_intent(plan["plan_digest"], project.project_id, node_id, plan)
-        try:
-            result = _execute_ready(
-                project,
-                node,
-                plugin,
-                plan,
-                store,
-                step.run_id,
-                step.attempt,
-                factory=factory,
-            )
-        finally:
-            store.consume_intent(plan["plan_digest"])
+        execution_node = node
+        if (
+            node.get("backend") == "ssh-slurm"
+            and node.get("backend_profile") is None
+            and isinstance(plan.get("backend_profile"), str)
+        ):
+            execution_node = {**node, "backend_profile": plan["backend_profile"]}
+        result = _execute_ready(
+            project,
+            execution_node,
+            plugin,
+            plan,
+            store,
+            step.run_id,
+            step.attempt,
+            factory=factory,
+        )
     return result
 
 
@@ -366,9 +433,7 @@ def advance(
                 result_path = _project_scoped_result_path(
                     project, resolve_reference(manifest_ref, project.root)
                 )
-                result_data, artifacts = _load_result(
-                    result_path, _scheduler_expected_identity(step)
-                )
+                result_data, artifacts = _load_result(result_path)
                 raw_metrics = result_data.get("metrics", {})
                 metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
             if target == RunState.OK and RunState(step.state) in {
@@ -385,8 +450,6 @@ def advance(
                     step.run_id,
                     str(artifact.get("role", "output")),
                     str(artifact["uri"]),
-                    artifact.get("fingerprint"),
-                    artifact.get("size_bytes"),
                     artifact.get("metadata", {}),
                 )
             final_manifest = _finalize_scheduler_manifest(
@@ -465,10 +528,15 @@ def make_stop_plan(
         step = store.latest_step(project.project_id, node_id)
         node = store.node_snapshot(step.run_id)
     scheduler_target: dict[str, Any] | None = None
+    backend_profile = node.get("backend_profile")
     if step.backend == "ssh-slurm":
-        site = load_site_config(site_path)
-        profile = site.cluster(node.get("backend_profile"))
-        scheduler_target = profile.to_plan_dict()
+        if backend_profile is None and step.job_id:
+            scheduler_target = _approved_cluster_record(project, node_id, step.attempt)
+            backend_profile = scheduler_target.get("name")
+        elif backend_profile is not None:
+            site = load_site_config(site_path)
+            profile = site.cluster(backend_profile)
+            scheduler_target = profile.to_plan_dict()
     return action_plan(
         "stop",
         project,
@@ -477,7 +545,7 @@ def make_stop_plan(
             "run_id": step.run_id,
             "state": step.state,
             "backend": step.backend,
-            "backend_profile": node.get("backend_profile"),
+            "backend_profile": backend_profile,
             "scheduler_target": scheduler_target,
             "job_id": step.job_id,
             "job_ids": step.job_id.split(",") if step.job_id else [],
@@ -503,9 +571,15 @@ def stop(
         if state in {RunState.OK, RunState.FAIL, RunState.STOPPED}:
             raise StateError(f"cannot stop node in terminal state {state.value}")
         if step.job_id:
-            scheduler = scheduler_for_node(
-                str(step.backend), node, site_path, factory=factory
-            )
+            if step.backend == "ssh-slurm" and node.get("backend_profile") is None:
+                scheduler = scheduler_from_cluster_record(
+                    _approved_cluster_record(project, node_id, step.attempt),
+                    factory=factory,
+                )
+            else:
+                scheduler = scheduler_for_node(
+                    str(step.backend), node, site_path, factory=factory
+                )
             for job_id in step.job_id.split(","):
                 result = scheduler.cancel(job_id)
                 if result.returncode != 0:
@@ -520,8 +594,30 @@ def stop(
     return {"step": updated.to_dict()}
 
 
-def _require_approval(plan: dict[str, Any], approval: str | None) -> None:
-    expected = plan["plan_digest"]
-    required = plan.get("approval_required") is True
-    if (required or approval is not None) and approval != expected:
-        raise ApprovalError("approval token mismatch; generate a fresh dry-run")
+def _approved_cluster_record(
+    project: Project, node_id: str, attempt: int
+) -> dict[str, Any]:
+    path = attempt_directory(project, node_id, attempt) / "approved-plan.json"
+    if path.is_symlink() or not path.is_file():
+        raise StateError("approved scheduled plan is missing or is a symlink")
+    plan = load_mapping(path)
+    records: list[dict[str, Any]] = []
+    execution = plan.get("hpc_execution")
+    if isinstance(execution, dict) and isinstance(execution.get("cluster_profile"), dict):
+        records.append(execution["cluster_profile"])
+    executions = plan.get("hpc_executions")
+    if isinstance(executions, list):
+        for item in executions:
+            resolved = item.get("hpc_execution") if isinstance(item, dict) else None
+            cluster = resolved.get("cluster_profile") if isinstance(resolved, dict) else None
+            if isinstance(cluster, dict):
+                records.append(cluster)
+    names = {record.get("name") for record in records}
+    if not records or len(names) != 1:
+        raise StateError("approved scheduled plan lacks one unambiguous cluster profile")
+    return records[0]
+
+
+def _require_approval(plan: dict[str, Any], approval: bool) -> None:
+    if plan.get("approval_required") is True and approval is not True:
+        raise ApprovalError("review the dry-run, then confirm with --approve")

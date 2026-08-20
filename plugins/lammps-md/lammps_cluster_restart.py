@@ -3,14 +3,12 @@
 This facade preserves the reviewed v0.2 execution checks while adding periodic
 binary restart files and state-continuous retry after scheduler interruption.
 Binary restarts are deliberately treated as site-runtime-bound artifacts: a
-retry must match the previous LAMMPS executable fingerprint, platform, launcher
-identity, resources, prepared bundle, model, target, and checkpoint cadence.
+retry must match the previous LAMMPS executable path, platform, launcher
+arguments, resources, prepared bundle, model path, target, and checkpoint cadence.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import os
 import platform
 import re
@@ -36,13 +34,6 @@ RESTART_STEP = re.compile(
     r"Current\s+(?:time\s*)?step(?:\s+number)?\s*(?:=|:)\s*([0-9]+)",
     re.IGNORECASE,
 )
-
-
-def _json_sha(value: Any) -> str:
-    payload = json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("utf-8")
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
 def _attempt(value: str | None, output_dir: Path) -> int:
@@ -81,14 +72,14 @@ def _resolve_executable(value: str) -> Path:
     return resolved
 
 
-def _runtime_identity(
+def _runtime_record(
     *,
     attempt: int,
     node: dict[str, Any],
     framework: str,
     target: str,
-    manifest_sha: str,
-    model_sha: str,
+    manifest_path: str,
+    model_path: str,
     model_kind: str,
     lammps_interface: str | None,
     interval: int,
@@ -105,17 +96,15 @@ def _runtime_identity(
         "attempt": attempt,
         "framework": framework,
         "target": target,
-        "input_manifest_fingerprint": manifest_sha,
-        "model_fingerprint": model_sha,
+        "input_manifest_path": manifest_path,
+        "model_path": model_path,
         "model_kind": model_kind,
         "lammps_interface": lammps_interface,
         "checkpoint_interval": interval,
         "resources": resources,
-        "lammps_executable_sha256": base._sha256(executable),
-        "launcher_prefix_sha256": _json_sha(launcher_prefix),
-        "prepared_launcher_sha256": _json_sha(
-            prepared_launcher.get("argv_after_executable", [])
-        ),
+        "lammps_executable": str(executable),
+        "launcher_prefix": launcher_prefix,
+        "prepared_launcher": prepared_launcher.get("argv_after_executable", []),
         "platform": {
             "system": platform.system(),
             "machine": platform.machine(),
@@ -139,15 +128,15 @@ def _validate_previous_runtime(
     for key in (
         "framework",
         "target",
-        "input_manifest_fingerprint",
-        "model_fingerprint",
+        "input_manifest_path",
+        "model_path",
         "model_kind",
         "lammps_interface",
         "checkpoint_interval",
         "resources",
-        "lammps_executable_sha256",
-        "launcher_prefix_sha256",
-        "prepared_launcher_sha256",
+        "lammps_executable",
+        "launcher_prefix",
+        "prepared_launcher",
         "platform",
     ):
         if previous.get(key) != current.get(key):
@@ -216,10 +205,10 @@ def _select_restart(
         raise ValueError(
             "no valid approved periodic LAMMPS restart candidate can be resumed"
         )
-    step, _name, path = sorted(
+    step, name, path = sorted(
         candidates, key=lambda item: (item[0], item[1])
     )[-1]
-    return path, step, base._sha256(path)
+    return path, step, name
 
 
 def _active_launcher(
@@ -312,13 +301,12 @@ def run(args: argparse.Namespace) -> int:
 
         manifest_path = input_dir / "lammps-input-manifest.json"
         manifest = base._read_mapping(manifest_path)
-        expected_manifest_sha = base._fingerprint(
-            parameters.get("input_manifest_fingerprint")
-        )
-        if base._sha256(manifest_path) != expected_manifest_sha:
-            raise ValueError(
-                "staged LAMMPS input manifest fingerprint differs from approved parameters"
-            )
+        node_inputs = node.get("inputs")
+        if not isinstance(node_inputs, dict) or not isinstance(
+            node_inputs.get("lammps_input_manifest"), str
+        ):
+            raise ValueError("scheduled LAMMPS node must record its input manifest path")
+        input_manifest_path = str(node_inputs["lammps_input_manifest"])
         if (
             manifest.get("schema_version") != 1
             or manifest.get("plugin_id") != "lammps-md"
@@ -334,7 +322,7 @@ def run(args: argparse.Namespace) -> int:
         model = manifest.get("model")
         md = manifest.get("md")
         if not isinstance(model, dict) or not isinstance(md, dict):
-            raise ValueError("input manifest model/md identity is incomplete")
+            raise ValueError("input manifest model/MD record is incomplete")
         framework = model.get("framework")
         if framework not in base.FRAMEWORKS:
             raise ValueError("unsupported LAMMPS framework")
@@ -374,13 +362,6 @@ def run(args: argparse.Namespace) -> int:
                 staged, base.MAX_INPUT_BYTES
             ):
                 raise ValueError(f"staged prepared input is missing: {name}")
-            if (
-                staged.stat().st_size != record["size_bytes"]
-                or base._sha256(staged) != record["sha256"]
-            ):
-                raise ValueError(
-                    f"staged prepared input fingerprint differs: {name}"
-                )
         source_deck = (input_dir / "lammps" / selected_name).read_text(
             encoding="utf-8"
         )
@@ -403,7 +384,6 @@ def run(args: argparse.Namespace) -> int:
             "MLIPFLOW_MODEL_ROOT", ""
         )
         model_path = base._resolve_model(model_root, model)
-        model_before = base.fingerprint(model_path)
         prepared_launcher = base._launcher(manifest, str(target))
         interface_value = args.interface_path or os.environ.get(
             "MLIPFLOW_LAMMPS_INTERFACE_PATH", ""
@@ -419,16 +399,16 @@ def run(args: argparse.Namespace) -> int:
             raise ValueError("restart attempt lacks checkpoint interval")
         segment_start_step = 0
         restart_path: Path | None = None
-        restart_sha: str | None = None
+        restart_name: str | None = None
         restart_from_attempt: int | None = None
 
-        current_runtime = _runtime_identity(
+        current_runtime = _runtime_record(
             attempt=attempt,
             node=node,
             framework=str(framework),
             target=str(target),
-            manifest_sha=expected_manifest_sha,
-            model_sha=model_before,
+            manifest_path=input_manifest_path,
+            model_path=str(model.get("relative_path")),
             model_kind=str(model.get("kind")),
             lammps_interface=str(interface) if interface is not None else None,
             interval=int(interval or steps),
@@ -441,7 +421,7 @@ def run(args: argparse.Namespace) -> int:
                 input_dir / "restart" / "restart-runtime.json"
             )
             _validate_previous_runtime(previous_runtime, current_runtime, attempt)
-            restart_path, segment_start_step, restart_sha = _select_restart(
+            restart_path, segment_start_step, restart_name = _select_restart(
                 input_dir, executable, prepared_launcher, int(interval), steps
             )
             restart_from_attempt = attempt - 1
@@ -471,8 +451,8 @@ def run(args: argparse.Namespace) -> int:
                 "resumed": resumed,
                 "segment_start_step": segment_start_step,
                 "restart_from_attempt": restart_from_attempt,
-                "selected_restart_sha256": restart_sha,
-                "active_deck_sha256": base._sha256(active_path),
+                "selected_restart": restart_name,
+                "active_deck_path": str(active_path),
             }
         )
         runtime_path = output_dir / "restart-runtime.json"
@@ -518,9 +498,6 @@ def run(args: argparse.Namespace) -> int:
         lammps_version = base._version_from_logs(
             log_path, screen_path, stdout_path
         )
-        if base.fingerprint(model_path) != model_before:
-            raise ValueError("LAMMPS model artifact changed during execution")
-
         artifacts = [
             base._artifact(
                 output_dir / "trajectory.lammpstrj",
@@ -565,10 +542,10 @@ def run(args: argparse.Namespace) -> int:
             "framework": framework,
             "target": target,
             "lammps_version": lammps_version,
-            "input_manifest_fingerprint": expected_manifest_sha,
+            "input_manifest_path": input_manifest_path,
             "model": {
                 "id": model.get("model_id"),
-                "fingerprint": model_before,
+                "path": model.get("relative_path"),
                 "kind": model.get("kind"),
                 "artifact_format": model.get("artifact_format"),
                 "lammps_interface": interface,
@@ -578,7 +555,7 @@ def run(args: argparse.Namespace) -> int:
             "timestep_fs": md.get("timestep_fs"),
             "dump_interval": md.get("dump_interval"),
             "type_map": md.get("type_map"),
-            "structure_identity": manifest.get("input_fingerprints", {}).get("structure"),
+            "structure_path": manifest.get("input_paths", {}).get("structure"),
             "steps_requested": steps,
             "steps_completed": steps,
             "segment_start_step": segment_start_step,
@@ -597,11 +574,11 @@ def run(args: argparse.Namespace) -> int:
                 "checkpoint_interval": interval,
                 "resumed": resumed,
                 "from_attempt": restart_from_attempt,
-                "selected_checkpoint_sha256": restart_sha,
+                "selected_checkpoint": restart_name,
                 "runtime_compatibility_checked": resumed,
-                "lammps_executable_sha256": current_runtime[
-                    "lammps_executable_sha256"
-                ],
+                "lammps_executable": current_runtime["lammps_executable"],
+                "launcher_prefix": current_runtime["launcher_prefix"],
+                "prepared_launcher": current_runtime["prepared_launcher"],
                 "platform": current_runtime["platform"],
                 "bitwise_exact_guaranteed": False,
             },
@@ -615,16 +592,15 @@ def run(args: argparse.Namespace) -> int:
                 "framework": framework,
                 "target": target,
                 "model_id": model.get("model_id"),
-                "model_fingerprint": model_before,
+                "model_path": model.get("relative_path"),
                 "model_kind": model.get("kind"),
                 "lammps_interface": interface,
-                "input_manifest_fingerprint": expected_manifest_sha,
+                "input_manifest_path": input_manifest_path,
                 "steps_completed": steps,
                 "segment_start_step": segment_start_step,
                 "restart_from_attempt": restart_from_attempt,
-                "selected_checkpoint_sha256": restart_sha,
+                "selected_checkpoint": restart_name,
                 "lammps_version": lammps_version,
-                "result_sha256": base._sha256(result_path),
             }
         )
         base._write_json(output_dir / "cluster-run-report.json", report)

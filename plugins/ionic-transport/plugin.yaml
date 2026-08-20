@@ -25,7 +25,7 @@
     ],
     "limitations": [
       "operation=analyze-existing post-processes collected MLIPFlow ASE-MD/LAMMPS-MD artifacts or explicit historical ASE/LAMMPS/VASP trajectories/MSD tables and does not launch MD or submit jobs.",
-      "Native ASE-MD and LAMMPS-MD handoff reads timing, temperature, species/type mapping, ensemble, model and structure identities from upstream artifacts; preserved restart attempts are ordered by global step and duplicate boundary frames are removed.",
+      "Native ASE-MD and LAMMPS-MD handoff reads timing, temperature, species/type mapping, ensemble, and model/structure paths from upstream artifacts; preserved restart attempts are ordered by global step and duplicate boundary frames are removed.",
       "LAMMPS ingestion accepts xu/yu/zu, xsu/ysu/zsu, wrapped x/y/z, and wrapped xs/ys/zs; image flags are preferred and otherwise fractional minimum-image continuity restores the unwrapped trajectory.",
       "Formal analysis requires pymatgen-analysis-diffusion. The packaged runner converts reliable ASE/LAMMPS/VASP trajectories to ordered pymatgen Structures and uses DiffusionAnalyzer without a NumPy/MLIPFlow fallback.",
       "MLIPFlow core remains Python >=3.9; the formal transport extra and execution path require Python >=3.10.",
@@ -38,13 +38,13 @@
       "The MD handoff overrides only the historical source's exposed module configuration and calls its run_single_temperature_md entrypoint; formal MSD, diffusivity, conductivity, charge transport, Haven ratio, and Arrhenius values come from pymatgen-analysis-diffusion public APIs.",
       "The explicit seed controls the historical NumPy velocity RNG per temperature. Calculator/framework RNGs and GPU/MPS kernels are not guaranteed bitwise deterministic.",
       "MACE, CHGNet, MatGL, and M3GNet require an explicit local model; only EMT/LJ accept the explicit default marker, so implicit network or package-cache model loading is blocked.",
-      "The plugin-local manuscript wrapper reads existing target.msd/Li10 stdout only, fingerprints every source, and never starts a calculator, MD process, scheduler, or network operation.",
+      "The plugin-local manuscript wrapper reads existing target.msd/Li10 stdout only, records source paths, and never starts a calculator, MD process, scheduler, or network operation.",
       "Historical Li10 MACE scripts used N=7 although the Li10 composition contains 10 mobile Li ions. legacy_script preserves N=7 strictly for numerical parity; composition_corrected requires an explicit/structure-derived carrier count and never silently reuses N=7.",
       "The parity wrapper retains the historical rounded q=1.6e-19 C and kB=1.38e-23 J/K in both carrier modes so an N=10/N=7 comparison isolates the carrier-count correction.",
       "Formal trajectory results directly record DiffusionAnalyzer dt, msd, diffusivity/std-dev, conductivity/std-dev, charge diffusivity/conductivity, and Haven ratio.",
       "analyze-existing exposes no stochastic stage, so a non-null seed is rejected there; md-smoke-and-analyze requires a non-negative seed and records its limited scope.",
       "The formal workflow permits only a single-line ln(D) versus 1/T Arrhenius fit; piecewise fitting is outside this contract.",
-      "Completion rehashes source/result artifacts and reruns the same pymatgen public APIs from original sources; the checker does not clone pymatgen equations. It rejects partial results unless allow_partial_results=true is explicitly reviewed."
+      "Completion verifies source/result paths and reruns the same pymatgen public APIs from original sources; the checker does not clone pymatgen equations. It rejects partial results unless allow_partial_results=true is explicitly reviewed."
     ]
   },
   "execution": {
@@ -130,13 +130,13 @@
     {"name": "allow_partial_results", "type": "boolean", "required": true, "description": "Adapter-only policy; false rejects any source-reported skipped run."}
   ],
   "outputs": [
-    {"name": "transport-results", "kind": "file", "required": true, "media_type": "text/csv", "description": "diffusion_results_by_temperature.csv with pymatgen method identities and per-run values; MSD-only conductivity may be null without a Structure."},
+    {"name": "transport-results", "kind": "file", "required": true, "media_type": "text/csv", "description": "diffusion_results_by_temperature.csv with pymatgen method names and per-run values; MSD-only conductivity may be null without a Structure."},
     {"name": "arrhenius-summary", "kind": "file", "required": true, "media_type": "application/json", "description": "arrhenius_summary.json; may explicitly record that a fit was skipped for insufficient temperatures."},
     {"name": "postprocess-failures", "kind": "file", "required": true, "media_type": "application/json", "description": "Explicit list of skipped inputs; non-empty is rejected unless partial results are approved."},
-    {"name": "analysis-manifest", "kind": "file", "required": true, "media_type": "application/json", "description": "Pinned analysis parameters plus SHA-256/size provenance for source and result artifacts."},
+    {"name": "analysis-manifest", "kind": "file", "required": true, "media_type": "application/json", "description": "Analysis parameters, source paths, software versions, and result paths."},
     {"name": "msd-diagnostics", "kind": "artifact-reference", "required": true, "description": "Per-run CSV/HTML paths explicitly listed in the transport results CSV."},
     {"name": "production-trajectories", "kind": "artifact-reference", "required": false, "description": "Confined production.traj artifacts created only by md-smoke-and-analyze."},
-    {"name": "md-integration-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "integration-smoke-only manifest with source, input, trajectory, result, and wrapper SHA-256 records."}
+    {"name": "md-integration-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "integration-smoke-only manifest with source, input, trajectory, result, and wrapper paths."}
   ],
   "dependencies": {
     "upstream_plugins": ["ase-md", "lammps-md", "pes-sampling", "mlip-benchmark"],
@@ -145,7 +145,7 @@
       {"name": "pandas", "required": true, "bundled": false, "purpose": "Input tables and CSV output in the reviewed script."},
       {"name": "plotly", "required": true, "bundled": false, "purpose": "The script imports Plotly at startup and writes HTML diagnostics."},
       {"name": "pymatgen-analysis-diffusion", "required": true, "bundled": false, "purpose": "Formal DiffusionAnalyzer, MSD diffusivity, conductivity conversion, and linear Arrhenius APIs; install MLIPFlow with the transport extra."},
-      {"name": "pymatgen", "required": true, "bundled": false, "purpose": "Transitive formal dependency providing Structure conversion and identity."},
+      {"name": "pymatgen", "required": true, "bundled": false, "purpose": "Transitive formal dependency providing Structure conversion."},
       {"name": "ase", "required": false, "bundled": false, "purpose": "Source/operation-specific hard dependency for native trajectory.traj, historical production.traj, and md-smoke-and-analyze; pure MSD and non-ASE sources remain independent."},
       {"name": "torch", "required": false, "bundled": false, "purpose": "Calculator runtime for supported learned-potential smoke paths when selected."},
       {"name": "mace-torch", "required": false, "bundled": false, "purpose": "Required only when the smoke explicitly selects a local MACE model."},
@@ -173,7 +173,7 @@
       {"id": "pymatgen-formal-parity", "implemented": true, "description": "Rerun DiffusionAnalyzer/get_diffusivity_from_msd/get_conversion_factor/fit_arrhenius from original inputs and compare saved values; allow explicit null conductivity only for MSD without Structure."},
       {"id": "row-artifacts-confined", "implemented": true, "description": "Require every row-referenced MSD CSV/HTML artifact to exist inside the explicit output directory."},
       {"id": "partial-results-policy", "implemented": true, "description": "Reject skipped inputs by default; allow only with explicit allow_partial_results=true."},
-      {"id": "md-smoke-handoff-integrity", "implemented": true, "description": "Require fresh confined MD/analysis outputs, shell=false analysis execution, exact temperature coverage, completed Arrhenius fit, explicit integration-smoke-only boundaries, and verified source/input/trajectory/result hashes."},
+      {"id": "md-smoke-handoff-integrity", "implemented": true, "description": "Require fresh confined MD/analysis outputs, shell=false analysis execution, exact temperature coverage, completed Arrhenius fit, explicit integration-smoke-only boundaries, and verified source/input/trajectory/result paths."},
       {"id": "historical-li10-parity", "implemented": true, "description": "Read-only target.msd/Li10 stdout normalization reproduces both historical diffusivity methods, tags sampling/fit/units/provenance, and separates legacy N=7 from explicit or POSCAR-derived corrected carrier counts."}
     ],
     "success_state": "OK",

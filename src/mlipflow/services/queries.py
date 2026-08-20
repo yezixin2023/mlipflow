@@ -129,12 +129,7 @@ def query_route(
     if not isinstance(policy, dict):
         raise ConfigError(f"no routing policy for task {task!r}")
     return route_models(
-        load_registry(
-            registry_path,
-            full_hash_max_bytes=int(
-                project.raw.get("fingerprints", {}).get("full_hash_max_bytes", 67108864)
-            ),
-        ),
+        load_registry(registry_path),
         task=task,
         elements=set(elements),
         scenario=scenario,
@@ -211,13 +206,27 @@ def query_doctor(
                     site.cluster(node.get("backend_profile")).name
                     for node in project.nodes
                     if node.get("backend") == "ssh-slurm"
+                    and node.get("backend_profile") is not None
                 }
             )
+            automatic = any(
+                node.get("backend") == "ssh-slurm"
+                and node.get("backend_profile") is None
+                for node in project.nodes
+            )
+            detail = f"{site.path}; selected profiles: {', '.join(selected) or 'none'}"
+            if automatic:
+                candidates = [
+                    profile.name
+                    for profile in site.clusters.values()
+                    if profile.scheduler is not None
+                ]
+                detail += "; automatic candidates: " + ", ".join(candidates)
             diagnostics.append(
                 {
                     "check": "site-config",
                     "ok": True,
-                    "detail": f"{site.path}; selected profiles: {', '.join(selected)}",
+                    "detail": detail,
                 }
             )
         except Exception as exc:

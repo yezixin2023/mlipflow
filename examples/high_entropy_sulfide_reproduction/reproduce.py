@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reconstruct manuscript model-selection conclusions from pinned evidence.
+"""Reconstruct manuscript model-selection conclusions from recorded evidence.
 
 This example driver never imports an MLIP framework and never runs a model.
 It verifies the read-only transcriptions, independently recomputes transparent
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import importlib.util
 import json
 import math
@@ -38,26 +37,18 @@ BENCHMARK_WRAPPER_LOCATOR = "plugins/mlip-benchmark/benchmark_wrapper.py"
 BENCHMARK_NORMALIZATION_LOCATOR = "plugins/mlip-benchmark/benchmark_normalization.py"
 MODEL_RUNTIME_LOCATOR = "src/mlipflow/science/model_runtime.py"
 BENCHMARK_MANIFEST_LOCATOR = "plugins/mlip-benchmark/plugin.yaml"
-LEGACY_RANKING_IMPLEMENTATION = {
-    "plugins/composition-screening/screen.py": (
-        "sha256:18fab4cb37aae5c485277050a8ba0d2df03b27545082e75cd342df495b15d335"
-    ),
-    "plugins/composition-screening/normalize_legacy.py": (
-        "sha256:783a6db77ea116e045e4c4ad7a6f56b3a08b5ff5915e673d23389bec84af4d0b"
-    ),
-    "plugins/composition-screening/adapter.py": (
-        "sha256:ad43b2a8a12873eb188760ebfaeed4bb018925b3cbbd85890c4d8f9c0002edb5"
-    ),
-    "plugins/composition-screening/plugin.yaml": (
-        "sha256:413c0985d43df3cfa76bc3005ffcbb77178944a88bd17e619f7c938b3eec022e"
-    ),
-}
+LEGACY_RANKING_IMPLEMENTATION = (
+    "plugins/composition-screening/screen.py",
+    "plugins/composition-screening/normalize_legacy.py",
+    "plugins/composition-screening/adapter.py",
+    "plugins/composition-screening/plugin.yaml",
+)
 CURRENT_RANKING_MANIFEST_LOCATOR = "plugins/candidate-ranking/plugin.yaml"
 CURRENT_RANKER_LOCATOR = "plugins/candidate-ranking/rank.py"
 
 
 class ReproductionEvidenceError(ValueError):
-    """Raised when a pinned transcription or deterministic reduction drifts."""
+    """Raised when recorded evidence or a deterministic reduction is invalid."""
 
 
 def _json(path: Path) -> Any:
@@ -67,15 +58,6 @@ def _json(path: Path) -> Any:
 def _csv(path: Path) -> List[Dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as stream:
         return list(csv.DictReader(stream))
-
-
-def _sha256(path: Path, prefix: bool = False) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    value = digest.hexdigest()
-    return "sha256:" + value if prefix else value
 
 
 def _repository_file(repository_root: Path, locator: Any, label: str) -> Path:
@@ -97,23 +79,6 @@ def _repository_file(repository_root: Path, locator: Any, label: str) -> Path:
     if not path.is_file():
         raise ReproductionEvidenceError(
             "{} locator does not resolve to a file: {}".format(label, locator)
-        )
-    return path
-
-
-def _verify_repository_file_hash(
-    repository_root: Path, locator: Any, recorded_sha256: Any, label: str
-) -> Path:
-    """Verify a recorded digest against the bytes addressed by its locator."""
-
-    path = _repository_file(repository_root, locator, label)
-    _require_sha256_tag(recorded_sha256, label)
-    actual_sha256 = _sha256(path, prefix=True)
-    if recorded_sha256 != actual_sha256:
-        raise ReproductionEvidenceError(
-            "{} SHA-256 mismatch for {}: recorded {}, actual {}".format(
-                label, locator, recorded_sha256, actual_sha256
-            )
         )
     return path
 
@@ -175,11 +140,10 @@ def _verify_transcription_files(root: Path) -> Dict[str, Any]:
         item["id"]: item for item in provenance.get("source_documents", [])
     }
     if len(source_documents) != 2:
-        raise ReproductionEvidenceError("exactly the supplied main manuscript and SI must be pinned")
+        raise ReproductionEvidenceError("exactly the supplied main manuscript and SI must be recorded")
     for item in source_documents.values():
-        digest = item.get("sha256", "")
-        if not isinstance(digest, str) or len(digest) != 64:
-            raise ReproductionEvidenceError("source document requires a full SHA-256 digest")
+        if not isinstance(item.get("basename"), str) or not item["basename"]:
+            raise ReproductionEvidenceError("source document requires a basename")
         if item.get("included_in_example") is not False or item.get("read_only") is not True:
             raise ReproductionEvidenceError("source documents must remain external and read-only")
 
@@ -191,10 +155,6 @@ def _verify_transcription_files(root: Path) -> Dict[str, Any]:
         path = evidence_root / relative
         if not path.is_file():
             raise ReproductionEvidenceError("missing evidence file: {}".format(relative))
-        if path.stat().st_size != item.get("size_bytes"):
-            raise ReproductionEvidenceError("evidence size mismatch: {}".format(relative))
-        if _sha256(path) != item.get("sha256"):
-            raise ReproductionEvidenceError("evidence SHA-256 mismatch: {}".format(relative))
         if relative in evidence_files:
             raise ReproductionEvidenceError("duplicate evidence provenance: {}".format(relative))
         evidence_files[relative] = item
@@ -213,7 +173,7 @@ def _prepared_lookup(root: Path) -> Tuple[List[Dict[str, Any]], Dict[Tuple[str, 
     for record in records:
         key = (record["model"], record["task"], record["metric"])
         if key in lookup and record["task"] != "simulation-efficiency":
-            raise ReproductionEvidenceError("duplicate prepared benchmark identity: {}".format(key))
+            raise ReproductionEvidenceError("duplicate prepared benchmark record: {}".format(key))
         if record["task"] != "simulation-efficiency":
             lookup[key] = record
     return records, lookup
@@ -352,15 +312,6 @@ def _verify_prepared_benchmark_reductions(root: Path) -> Dict[str, Any]:
     }
 
 
-def _require_sha256_tag(value: Any, label: str) -> None:
-    if not isinstance(value, str) or not value.startswith("sha256:") or len(value) != 71:
-        raise ReproductionEvidenceError("{} requires a full sha256: digest".format(label))
-    try:
-        int(value[7:], 16)
-    except ValueError as exc:
-        raise ReproductionEvidenceError("{} has a non-hex SHA-256 digest".format(label)) from exc
-
-
 def _require_portable_evidence(value: Any, label: str) -> None:
     if isinstance(value, Mapping):
         for key, item in value.items():
@@ -407,7 +358,7 @@ def _verify_screening_evidence(
 
     if screening.get("status") != "REPLAY_VERIFIED":
         raise ReproductionEvidenceError("large-supercell screening is not replay-verified")
-    if screening.get("evidence_level") != "PINNED_LOCAL_RESULT_ARTIFACT":
+    if screening.get("evidence_level") != "RECORDED_LOCAL_RESULT_ARTIFACT":
         raise ReproductionEvidenceError("large-supercell screening evidence level drift")
     inputs = screening.get("input_set", {})
     expected_counts = {
@@ -433,21 +384,13 @@ def _verify_screening_evidence(
 
     source_artifacts = screening.get("source_artifacts", {})
     expected_artifacts = {
-        "ranking": ("30ada4653684618ab1594b4b428502ba324908b208028910d68b8e4785f5793a", 1813),
-        "candidate_manifest": (
-            "d030d2fdbd9c042b13a1a15c6a124ef2b953d62ca1170e963c272a57b43aa90d",
-            76042,
-        ),
-        "transport_results_manifest": (
-            "e3c4f4466b872b575345e4a10560b311fff19a8ed049383a82c18132534cd1c0",
-            129776,
-        ),
+        "ranking": "external-screening-artifact/ranking.json",
+        "candidate_manifest": "external-screening-artifact/candidates.json",
+        "transport_results_manifest": "external-screening-artifact/transport.json",
     }
-    for name, (digest, size) in expected_artifacts.items():
+    for name, locator in expected_artifacts.items():
         item = source_artifacts.get(name, {})
-        if item.get("sha256") != "sha256:" + digest or item.get("size_bytes") != size:
-            raise ReproductionEvidenceError("pinned screening {} fingerprint drift".format(name))
-        if item.get("read_only") is not True:
+        if item.get("locator") != locator or item.get("read_only") is not True:
             raise ReproductionEvidenceError("screening source artifacts must be read-only")
 
     collection = screening.get("legacy_source_collection", {})
@@ -464,9 +407,6 @@ def _verify_screening_evidence(
             basename = item.get("basename")
             if not isinstance(basename, str) or Path(basename).name != basename:
                 raise ReproductionEvidenceError("screening source requires basename-only locator")
-            _require_sha256_tag(item.get("sha256"), "screening source")
-            if not isinstance(item.get("size_bytes"), int) or item["size_bytes"] <= 0:
-                raise ReproductionEvidenceError("screening source requires a positive byte size")
 
     metric = screening.get("metric", {})
     if metric != {
@@ -495,9 +435,9 @@ def _verify_screening_evidence(
     implementation_files = implementation.get("files", [])
     if len(implementation_files) != 4:
         raise ReproductionEvidenceError("screening implementation file provenance is incomplete")
-    observed_legacy_implementation = {
-        item.get("locator"): item.get("sha256") for item in implementation_files
-    }
+    observed_legacy_implementation = tuple(
+        item.get("locator") for item in implementation_files
+    )
     if observed_legacy_implementation != LEGACY_RANKING_IMPLEMENTATION:
         raise ReproductionEvidenceError("legacy screening implementation provenance drift")
 
@@ -538,7 +478,7 @@ def _verify_screening_evidence(
         or current_manifest.get("display_name") != "Candidate ranking"
         or current_manifest.get("execution", {}).get("operations") != ["rank-candidates"]
     ):
-        raise ReproductionEvidenceError("current candidate-ranking manifest identity drift")
+        raise ReproductionEvidenceError("current candidate-ranking manifest contract drift")
 
     ranker_path = _repository_file(
         repository_root,
@@ -586,15 +526,15 @@ def _verify_screening_evidence(
     ):
         raise ReproductionEvidenceError("current candidate-ranking compatibility replay drift")
 
-    identity = top_link.get("identity_link", {})
+    candidate_mapping = top_link.get("candidate_mapping", {})
     top_candidate = top_candidates[0]
-    if identity.get("status") != "EXACT_IDENTITY_MAPPING":
-        raise ReproductionEvidenceError("top-candidate identity link is not exact")
-    if identity.get("ranked_candidate_id") != top_candidate["candidate_id"]:
-        raise ReproductionEvidenceError("top-candidate identity does not match screening rank 1")
-    if identity.get("historical_token_order") != canonical_order:
+    if candidate_mapping.get("status") != "EXACT_COMPOSITION_MAPPING":
+        raise ReproductionEvidenceError("top-candidate composition mapping is not exact")
+    if candidate_mapping.get("ranked_candidate_id") != top_candidate["candidate_id"]:
+        raise ReproductionEvidenceError("top-candidate mapping does not match screening rank 1")
+    if candidate_mapping.get("historical_token_order") != canonical_order:
         raise ReproductionEvidenceError("historical folder token order drift")
-    historical_tokens = str(identity.get("historical_folder_id", "")).split("_")
+    historical_tokens = str(candidate_mapping.get("historical_folder_id", "")).split("_")
     if len(historical_tokens) != len(canonical_order) or any(
         not token.isdigit() or int(token) <= 0 for token in historical_tokens
     ):
@@ -602,7 +542,10 @@ def _verify_screening_evidence(
     mapped = {
         element: int(token) for element, token in zip(canonical_order, historical_tokens)
     }
-    if mapped != identity.get("parsed_composition") or mapped != top_candidate["composition"]:
+    if (
+        mapped != candidate_mapping.get("parsed_composition")
+        or mapped != top_candidate["composition"]
+    ):
         raise ReproductionEvidenceError("historical folder/canonical candidate mapping drift")
 
     screening_metric = top_link.get("screening_metric", {})
@@ -665,8 +608,7 @@ def _verify_screening_evidence(
     if len(parity_sources) != 4:
         raise ReproductionEvidenceError("historical transport source provenance is incomplete")
     for item in parity_sources:
-        _require_sha256_tag(item.get("sha256"), "historical transport source")
-        if item.get("read_only") is not True:
+        if not isinstance(item.get("locator"), str) or item.get("read_only") is not True:
             raise ReproductionEvidenceError("historical transport sources must be read-only")
     parity_implementation = parity.get("implementation_provenance", {})
     if (
@@ -677,24 +619,17 @@ def _verify_screening_evidence(
         != "plugins/ionic-transport/adapter.py"
     ):
         raise ReproductionEvidenceError("historical transport wrapper provenance drift")
-    _verify_repository_file_hash(
+    _repository_file(
         repository_root,
         parity_implementation.get("wrapper_locator"),
-        parity_implementation.get("wrapper_sha256"),
         "historical transport wrapper",
     )
     historical_scripts = parity_implementation.get("historical_scripts", [])
-    expected_script_hashes = {
-        "historical-transport/code/get_MSD_Li10.py": (
-            "sha256:584c8f1f94d072cbd43902ff5d2ec2ec3299bdaa6f5af1340e3ab2dd1ce343a5"
-        ),
-        "historical-transport/code/get_sigma.py": (
-            "sha256:9294764155f5cca395d7d0ba8165543c8cf8e87746ff18c67a89bb721fa96f6d"
-        ),
-    }
-    if {
-        item.get("locator"): item.get("sha256") for item in historical_scripts
-    } != expected_script_hashes:
+    expected_script_locators = (
+        "historical-transport/code/get_MSD_Li10.py",
+        "historical-transport/code/get_sigma.py",
+    )
+    if tuple(item.get("locator") for item in historical_scripts) != expected_script_locators:
         raise ReproductionEvidenceError("historical transport script provenance drift")
 
     high_fidelity = top_link.get("high_fidelity_validation", {})
@@ -716,8 +651,6 @@ def _verify_screening_evidence(
     if (
         unseen_source.get("id") != "manuscript-main"
         or unseen_source.get("basename") != main_source["basename"]
-        or unseen_source.get("sha256") != "sha256:" + main_source["sha256"]
-        or unseen_source.get("size_bytes") != main_source["size_bytes"]
         or unseen_source.get("read_only") is not True
     ):
         raise ReproductionEvidenceError("unseen/transfer source-document pin drift")
@@ -749,7 +682,7 @@ def _verify_screening_evidence(
         "large_supercell_screening": screening,
         "top_candidate_validation": {
             "status": top_link["status"],
-            "identity_link": identity,
+            "candidate_mapping": candidate_mapping,
             "screening_metric": screening_metric,
             "historical_transport_parity": parity,
             "high_fidelity_validation": high_fidelity,
@@ -845,17 +778,14 @@ def _source_chain(
         source_document = evidence_context["source_documents"][file_record["source_document_id"]]
         entry = {
             "evidence_file": "evidence/" + relative,
-            "evidence_file_sha256": "sha256:" + file_record["sha256"],
             "source_location": file_record["source_location"],
             "source_document": source_document["basename"],
-            "source_document_sha256": "sha256:" + source_document["sha256"],
             "transcription": file_record["transformation"],
         }
         unit_source_id = file_record.get("unit_source_document_id")
         if unit_source_id:
             unit_source = evidence_context["source_documents"][unit_source_id]
             entry["unit_source_document"] = unit_source["basename"]
-            entry["unit_source_document_sha256"] = "sha256:" + unit_source["sha256"]
         result.append(entry)
     return result
 
@@ -889,15 +819,11 @@ def _compact_route(
                 "score": item["score"],
                 "metrics": item["metrics"],
                 "contributions": item["contributions"],
-                "evidence_status": item["evidence_status"],
             }
             for index, item in enumerate(route["ranking"], start=1)
         ],
         "decision_provenance": {
             "prepared_benchmark_input": BENCHMARK_INPUT,
-            "prepared_benchmark_sha256": _sha256(
-                Path(evidence_context["root"]) / BENCHMARK_INPUT, prefix=True
-            ),
             "source_chain": _source_chain(
                 task, selected, normalized_records, evidence_context
             ),
@@ -933,29 +859,17 @@ def _build_summary(
         {
             "id": item["id"],
             "basename": item["basename"],
-            "sha256": "sha256:" + item["sha256"],
-            "size_bytes": item["size_bytes"],
             "included_in_example": False,
             "read_only": True,
         }
         for item in evidence_context["manifest"]["source_documents"]
     ]
     artifact_records = [
-        {
-            "path": "benchmark/" + name,
-            "sha256": _sha256(path, prefix=True),
-            "size_bytes": path.stat().st_size,
-        }
-        for name, path in sorted(normalized_outputs.items())
+        {"path": "benchmark/" + name}
+        for name in sorted(normalized_outputs)
     ]
     benchmark_implementation_files = [
-        {
-            "locator": locator,
-            "sha256": _sha256(
-                _repository_file(repository_root, locator, "benchmark implementation"),
-                prefix=True,
-            ),
-        }
+        {"locator": locator}
         for locator in (
             BENCHMARK_WRAPPER_LOCATOR,
             BENCHMARK_NORMALIZATION_LOCATOR,
@@ -977,12 +891,11 @@ def _build_summary(
             "transcription_manifest": "evidence/transcription_provenance.json",
             "verified_evidence_file_count": len(evidence_context["evidence_files"]),
             "prepared_benchmark_record_count": reduction_context["record_count"],
-            "all_transcriptions_sha256_verified": True,
+            "all_evidence_paths_present": True,
             "all_transparent_reductions_recomputed": True,
         },
         "benchmark_normalization": {
             "implementation": BENCHMARK_WRAPPER_LOCATOR,
-            "implementation_sha256": benchmark_implementation_files[0]["sha256"],
             "implementation_files": benchmark_implementation_files,
             "wrapper_version": normalized_provenance["wrapper_version"],
             "mode": normalized_provenance["mode"],
@@ -1069,16 +982,14 @@ def _markdown(summary: Mapping[str, Any]) -> str:
         "",
         summary["calculation_claim"],
         "",
-        "## Pinned source revisions",
+        "## Source documents",
         "",
-        "| Document | SHA-256 | Included |",
-        "| --- | --- | --- |",
+        "| Document | Included |",
+        "| --- | --- |",
     ]
     for item in summary["source_documents"]:
         lines.append(
-            "| {} | `{}` | no; read-only external source |".format(
-                item["basename"], item["sha256"]
-            )
+            "| {} | no; read-only external source |".format(item["basename"])
         )
     lines.extend(
         [
@@ -1130,12 +1041,12 @@ def _markdown(summary: Mapping[str, Any]) -> str:
                 screening_inputs["excluded_missing_count"],
             ),
             "",
-            "Metric: `{}` ({}; direction `{}`). The candidate and transport manifests are pinned as `{}` and `{}`.".format(
+            "Metric: `{}` ({}; direction `{}`). Candidate and transport records: `{}` and `{}`.".format(
                 screening["metric"]["name"],
                 screening["metric"]["unit"],
                 screening["rule"]["direction"],
-                screening["source_artifacts"]["candidate_manifest"]["sha256"],
-                screening["source_artifacts"]["transport_results_manifest"]["sha256"],
+                screening["source_artifacts"]["candidate_manifest"]["locator"],
+                screening["source_artifacts"]["transport_results_manifest"]["locator"],
             ),
             "",
             "| Rank | Candidate | Composition (Mn/Fe/Ni/Cu/Zn) | Conductivity (S/m) |",
@@ -1152,7 +1063,7 @@ def _markdown(summary: Mapping[str, Any]) -> str:
         )
 
     top_validation = summary["top_candidate_validation"]
-    identity = top_validation["identity_link"]
+    candidate_mapping = top_validation["candidate_mapping"]
     historical = top_validation["historical_transport_parity"]
     high_fidelity = top_validation["high_fidelity_validation"]
     lines.extend(
@@ -1161,7 +1072,8 @@ def _markdown(summary: Mapping[str, Any]) -> str:
             "## Top-candidate validation status",
             "",
             "`{}` maps exactly to historical folder ID `{}` under the declared Mn/Fe/Ni/Cu/Zn token order.".format(
-                identity["ranked_candidate_id"], identity["historical_folder_id"]
+                candidate_mapping["ranked_candidate_id"],
+                candidate_mapping["historical_folder_id"],
             ),
             "",
             "Historical transport status: **{}** (`{}`). The exact match is limited to read-only replay of existing target.msd/stdout post-processing; it is **not** AIMD/DFT high-fidelity validation.".format(
@@ -1186,9 +1098,8 @@ def _markdown(summary: Mapping[str, Any]) -> str:
                 unseen["numerical_parity"]["status"],
             ),
             "",
-            "Pinned source: `{}` (`{}`). The document reports 787 AIMD configurations for Li24M12(PS4)16 and three qualitative conductivity comparisons, but supplies no paired values needed for numerical parity.".format(
-                unseen["source_document"]["basename"],
-                unseen["source_document"]["sha256"],
+            "Recorded source: `{}`. The document reports 787 AIMD configurations for Li24M12(PS4)16 and three qualitative conductivity comparisons, but supplies no paired values needed for numerical parity.".format(
+                unseen["source_document"]["basename"]
             ),
             "",
             "Blocking evidence:",

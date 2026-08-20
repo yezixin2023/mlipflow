@@ -1,9 +1,8 @@
 """ASE MD adapter facade adding isotropic MTK NPT to the stable NVT contract.
 
 NVT remains delegated to adapter.py. NPT reuses the same staging, model-reference
-and bounded-fetch machinery, but has its own pressure/barostat identity and
-scientific checker. The delegated adapter source is itself staged and hashed so
-scheduled approvals pin the helper implementation as well as this facade.
+and bounded-fetch machinery, but has its own pressure/barostat parameters and
+scientific checker. The delegated adapter source is staged with the calculation.
 """
 from __future__ import annotations
 
@@ -115,9 +114,9 @@ def _pin_legacy_helper(plan: dict[str, Any]) -> dict[str, Any]:
         )
     if not any(item.get("remote_name") == "adapter-legacy.py" for item in staged if isinstance(item, dict)):
         staged.append(legacy._staged_record(path, "adapter-legacy.py"))
-    fingerprints = plan.setdefault("input_fingerprints", {})
-    if isinstance(fingerprints, dict):
-        fingerprints["legacy_adapter"] = legacy._sha256(path)
+    input_paths = plan.setdefault("input_paths", {})
+    if isinstance(input_paths, dict):
+        input_paths["legacy_adapter"] = str(path)
     return plan
 
 
@@ -129,10 +128,10 @@ def _plan_npt(context: dict[str, Any]) -> dict[str, Any]:
     if base.get("status") != "READY":
         return base
     parameters = _mapping(context["parameters"])
-    identity = _mapping(base.get("md_identity"))
-    identity["ensemble"] = NPT
-    identity.pop("friction_per_fs", None)
-    identity.update(
+    settings = _mapping(base.get("md_parameters"))
+    settings["ensemble"] = NPT
+    settings.pop("friction_per_fs", None)
+    settings.update(
         {
             "pressure_gpa": float(parameters["pressure_gpa"]),
             "thermostat_damping_fs": float(parameters["thermostat_damping_fs"]),
@@ -149,9 +148,9 @@ def _plan_npt(context: dict[str, Any]) -> dict[str, Any]:
     summary.update(
         {
             "ensemble": NPT,
-            "pressure_GPa": identity["pressure_gpa"],
-            "thermostat_damping_fs": identity["thermostat_damping_fs"],
-            "barostat_damping_fs": identity["barostat_damping_fs"],
+            "pressure_GPa": settings["pressure_gpa"],
+            "thermostat_damping_fs": settings["thermostat_damping_fs"],
+            "barostat_damping_fs": settings["barostat_damping_fs"],
             "stress_required": True,
             "cell_mode": "isotropic-volume",
             "constraints_allowed": False,
@@ -163,7 +162,7 @@ def _plan_npt(context: dict[str, Any]) -> dict[str, Any]:
             },
         }
     )
-    base["md_identity"] = identity
+    base["md_parameters"] = settings
     base["approval_summary"] = summary
     return _pin_legacy_helper(base)
 
@@ -185,11 +184,11 @@ def _npt_thermo_header() -> list[str]:
 
 
 def _check_npt_thermo(
-    path: Path, identity: dict[str, Any]
+    path: Path, settings: dict[str, Any]
 ) -> tuple[str | None, dict[str, float] | None]:
     if not legacy._ordinary_file(path, legacy.MAX_THERMO_BYTES):
         return "thermo.csv is missing, empty, unsafe or oversized", None
-    expected_steps = identity.get("thermo_steps")
+    expected_steps = settings.get("thermo_steps")
     if not isinstance(expected_steps, list):
         return "approved plan lacks thermo step schedule", None
     header = _npt_thermo_header()
@@ -212,7 +211,7 @@ def _check_npt_thermo(
                     return "thermo.csv contains a non-finite value", None
                 if not math.isclose(
                     numeric["time_fs"],
-                    step * float(identity["timestep_fs"]),
+                    step * float(settings["timestep_fs"]),
                     rel_tol=1e-12,
                     abs_tol=1e-9,
                 ):
@@ -235,10 +234,10 @@ def _check_npt(
 ) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
     diagnostics: list[dict[str, str]] = []
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
-    identity = _mapping(legacy._scheduled_plan(context).get("md_identity"))
-    if identity.get("ensemble") != NPT:
+    settings = _mapping(legacy._scheduled_plan(context).get("md_parameters"))
+    if settings.get("ensemble") != NPT:
         return [
-            _diagnostic("error", "ase_md.plan_identity", "pinned plan is not isotropic MTK NPT")
+            _diagnostic("error", "ase_md.plan_parameters", "plan is not isotropic MTK NPT")
         ], None
     try:
         result = legacy._read_bounded_json(attempt / "md-result.json")
@@ -251,25 +250,25 @@ def _check_npt(
         "schema_version": 1,
         "plugin_id": PLUGIN_ID,
         "status": "OK",
-        "calculator": identity.get("calculator"),
+        "calculator": settings.get("calculator"),
         "ensemble": NPT,
-        "structure_fingerprint": identity.get("structure_fingerprint"),
-        "temperature_K": identity.get("temperature_k"),
-        "timestep_fs": identity.get("timestep_fs"),
-        "steps_requested": identity.get("steps"),
-        "steps_completed": identity.get("steps"),
-        "trajectory_interval": identity.get("trajectory_interval"),
-        "thermo_interval": identity.get("thermo_interval"),
-        "trajectory_frames": len(identity.get("trajectory_steps", [])),
-        "thermo_records": len(identity.get("thermo_steps", [])),
-        "seed": identity.get("seed"),
+        "structure_path": settings.get("structure_path"),
+        "temperature_K": settings.get("temperature_k"),
+        "timestep_fs": settings.get("timestep_fs"),
+        "steps_requested": settings.get("steps"),
+        "steps_completed": settings.get("steps"),
+        "trajectory_interval": settings.get("trajectory_interval"),
+        "thermo_interval": settings.get("thermo_interval"),
+        "trajectory_frames": len(settings.get("trajectory_steps", [])),
+        "thermo_records": len(settings.get("thermo_steps", [])),
+        "seed": settings.get("seed"),
         "stochastic_scope": "velocity-initialization-only",
-        "device": identity.get("device"),
-        "default_dtype": identity.get("default_dtype"),
+        "device": settings.get("device"),
+        "default_dtype": settings.get("default_dtype"),
         "fix_com": False,
-        "pressure_GPa": identity.get("pressure_gpa"),
-        "thermostat_damping_fs": identity.get("thermostat_damping_fs"),
-        "barostat_damping_fs": identity.get("barostat_damping_fs"),
+        "pressure_GPa": settings.get("pressure_gpa"),
+        "thermostat_damping_fs": settings.get("thermostat_damping_fs"),
+        "barostat_damping_fs": settings.get("barostat_damping_fs"),
         "thermostat_chain_length": NPT_TCHAIN,
         "barostat_chain_length": NPT_PCHAIN,
         "thermostat_substeps": NPT_TLOOP,
@@ -284,7 +283,7 @@ def _check_npt(
                     f"md-result.json field {key} differs from the approved NPT plan",
                 )
             )
-    diagnostics.extend(legacy._check_structure_summary(result, identity))
+    diagnostics.extend(legacy._check_structure_summary(result, settings))
     initial_pressure = result.get("initial_pressure_GPa")
     if not _finite(initial_pressure):
         diagnostics.append(
@@ -296,11 +295,11 @@ def _check_npt(
         )
     model = _mapping(result.get("model"))
     if (
-        model.get("id") != identity.get("model_id")
-        or model.get("fingerprint") != identity.get("model_fingerprint")
+        model.get("id") != settings.get("model_id")
+        or model.get("path") != settings.get("model_path")
     ):
         diagnostics.append(
-            _diagnostic("error", "ase_md.result_model", "md-result model identity differs")
+            _diagnostic("error", "ase_md.result_model", "md-result model record differs")
         )
     if not legacy._plain_string(result.get("calculator_version")) or not legacy._plain_string(
         result.get("ase_version")
@@ -330,10 +329,10 @@ def _check_npt(
             if error:
                 diagnostics.append(_diagnostic("error", f"ase_md.artifact_{role}", error))
 
-    index_error = legacy._check_trajectory_index(attempt / "trajectory-index.json", identity)
+    index_error = legacy._check_trajectory_index(attempt / "trajectory-index.json", settings)
     if index_error:
         diagnostics.append(_diagnostic("error", "ase_md.trajectory_index", index_error))
-    thermo_error, final_thermo = _check_npt_thermo(attempt / "thermo.csv", identity)
+    thermo_error, final_thermo = _check_npt_thermo(attempt / "thermo.csv", settings)
     if thermo_error:
         diagnostics.append(_diagnostic("error", "ase_md.thermo", thermo_error))
 
@@ -348,39 +347,39 @@ def _check_npt(
         report = {}
     if (
         report.get("status") != "OK"
-        or report.get("calculator") != identity.get("calculator")
+        or report.get("calculator") != settings.get("calculator")
         or report.get("ensemble") != NPT
-        or report.get("steps_completed") != identity.get("steps")
+        or report.get("steps_completed") != settings.get("steps")
     ):
         diagnostics.append(
             _diagnostic(
                 "error",
-                "ase_md.cluster_identity",
-                "cluster report does not describe the approved completed NPT run",
+                "ase_md.cluster_run",
+                "cluster report does not describe the planned completed NPT run",
             )
         )
-    for key, identity_key in (
+    for key, setting_key in (
         ("pressure_GPa", "pressure_gpa"),
         ("thermostat_damping_fs", "thermostat_damping_fs"),
         ("barostat_damping_fs", "barostat_damping_fs"),
     ):
-        if report.get(key) != identity.get(identity_key):
+        if report.get(key) != settings.get(setting_key):
             diagnostics.append(
                 _diagnostic("error", f"ase_md.cluster_{key}", f"cluster report {key} differs")
             )
     report_model = _mapping(report.get("model"))
     if (
-        report_model.get("id") != identity.get("model_id")
-        or report_model.get("observed_fingerprint") != identity.get("model_fingerprint")
+        report_model.get("id") != settings.get("model_id")
+        or report_model.get("path") != settings.get("model_path")
     ):
         diagnostics.append(
-            _diagnostic("error", "ase_md.cluster_model", "cluster report model identity differs")
+            _diagnostic("error", "ase_md.cluster_model", "cluster report model record differs")
         )
-    if report.get("structure_fingerprint") != identity.get("structure_fingerprint"):
+    if report.get("structure_path") != settings.get("structure_path"):
         diagnostics.append(
             _diagnostic("error", "ase_md.cluster_structure", "cluster report structure differs")
         )
-    if "supercell_repeat" in identity:
+    if "supercell_repeat" in settings:
         for key in (
             "supercell_repeat",
             "source_atom_count",
@@ -397,22 +396,15 @@ def _check_npt(
                         f"cluster report {key} differs",
                     )
                 )
-    result_path = attempt / "md-result.json"
-    if legacy._ordinary_file(result_path, legacy.MAX_JSON_BYTES) and report.get(
-        "result_sha256"
-    ) != legacy._sha256(result_path):
-        diagnostics.append(
-            _diagnostic("error", "ase_md.cluster_result_hash", "cluster report result hash differs")
-        )
     if diagnostics:
         return diagnostics, None
     return diagnostics, {"result": result, "final_thermo": final_thermo or {}}
 
 
 def _check_ensemble(context: dict[str, Any]) -> str | None:
-    plan_identity = _mapping(legacy._scheduled_plan(context).get("md_identity"))
-    if plan_identity:
-        return plan_identity.get("ensemble")
+    plan_parameters = _mapping(legacy._scheduled_plan(context).get("md_parameters"))
+    if plan_parameters:
+        return plan_parameters.get("ensemble")
     return _mapping(context.get("parameters")).get("ensemble")
 
 

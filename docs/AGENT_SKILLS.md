@@ -5,6 +5,7 @@
 | Skill | 何时使用 | 对应计算插件 |
 |---|---|---|
 | `$mlip-workflow` | 拆解和监督端到端流程 | 组合全部插件 |
+| `$mlip-active-learning` | 监督单模型 committee 或双模型校准风险并集的离线 round-based 主动学习 | `active-learning`，并复用 training/MD/DIRECT/DFT/benchmark |
 | `$high-entropy-structure` | 构造无序/SQS 高熵候选 | `high-entropy-structure` |
 | `$pes-sampling` | 监督 DIRECT 代表构型选择、LASP/SSW 随机行走采样、历史 archive 归一化和受控 SSH-SLURM 执行 | `pes-sampling` |
 | `$dft-labeling` | 用 pymatgen 准备 static/relax/AIMD VASP 输入，并以独立审批监督 local 或受控 SSH-SLURM static 标注 | `dft-labeling` |
@@ -23,7 +24,7 @@ Skills 是监督说明，不是计算实现。更新 Skill 时，应以当前 CL
 
 ## Ionic transport
 
-`$ionic-transport` 是 local-only 分析 Skill，不提供 `ssh-slurm`。正式 `analyze-existing` 使用 MLIPFlow 打包的 `ionic_conductivity.py` 与 `pymatgen-analysis-diffusion` public API；项目只绑定已有 trajectory/MSD，不提供或覆盖 `analysis_script`。它原生消费 `ase-md` 的 `trajectory.traj`/index/result 与 `lammps-md` 的 `trajectory.lammpstrj`/result/manifest，自动取得 temperature、timestep、interval、type map、model/structure identity，并按 global step 拼接同一节点的 restart attempts。历史 `production.traj`、`traj.lammpstrj`、VASP AIMD `vasprun.xml` 和显式 MSD 表仍兼容。
+`$ionic-transport` 是 local-only 分析 Skill，不提供 `ssh-slurm`。正式 `analyze-existing` 使用 MLIPFlow 打包的 `ionic_conductivity.py` 与 `pymatgen-analysis-diffusion` public API；项目只绑定已有 trajectory/MSD，不提供或覆盖 `analysis_script`。它原生消费 `ase-md` 的 `trajectory.traj`/index/result 与 `lammps-md` 的 `trajectory.lammpstrj`/result/manifest，自动取得 temperature、timestep、interval、type map 以及 model/structure 路径，并按 global step 拼接同一节点的 restart attempts。历史 `production.traj`、`traj.lammpstrj`、VASP AIMD `vasprun.xml` 和显式 MSD 表仍兼容。
 
 LAMMPS ingestion 同时支持 `xu/yu/zu`、`xsu/ysu/zsu`、wrapped `x/y/z` 与 `xs/ys/zs`；有 `ix/iy/iz` 时优先精确展开，否则用相邻 fractional displacement 的 minimum-image continuity 展开。用户不需要 rename、copy、concatenate、写 metadata 或重填上游已经记录的 timestep/temperature/type map。
 
@@ -31,7 +32,7 @@ LAMMPS ingestion 同时支持 `xu/yu/zu`、`xsu/ysu/zsu`、wrapped `x/y/z` 与 `
 
 Formal 不接收 user `charge`、`dimensions`、`haven_ratio`、`drift_correction` 或 `msd_mode`；trajectory Haven ratio 只来自 analyzer。`fit_start_ps`/`fit_end_ps` 仅是可选的 MSD-table subset，不能用于 trajectory。
 
-Runner 的 `analysis_manifest.json` 固定科学参数、运行环境与 source/result identity。Checker 从原始输入重新调用相同 pymatgen public API，不复制其数学公式。历史 Li10 `N=7`、旧常数、旧 OLS/mean(MSD/t) 与旧 Arrhenius convention 只存在于隔离的 historical reproduction，formal 结果不与其混用。
+Runner 的 `analysis_manifest.json` 记录科学参数、运行环境、source 路径与 result 输出。Checker 从原始输入重新调用相同 pymatgen public API，不复制其数学公式。历史 Li10 `N=7`、旧常数、旧 OLS/mean(MSD/t) 与旧 Arrhenius convention 只存在于隔离的 historical reproduction，formal 结果不与其混用。
 
 ## PES sampling / LASP
 
@@ -43,13 +44,13 @@ Runner 的 `analysis_manifest.json` 固定科学参数、运行环境与 source/
 
 ## MLIP training / fine-tuning
 
-`$mlip-training` 对应统一的四框架 scheduler contract。DeepMD、M3GNet/MatGL、CHGNet、MACE 都可通过 `ssh-slurm` 计划 `train` 或 `finetune`。大数据和 foundation model 不经控制面复制，而由 project-scoped `dataset_reference` / `foundation_model_reference` 绑定逻辑 ID、site-root 下相对路径、file/directory kind 和可验证内容 identity。集群模板族为 `mlip-deepmd`、`mlip-m3gnet`、`mlip-chgnet`、`mlip-mace`。
+`$mlip-training` 对应统一的四框架 scheduler contract。DeepMD、M3GNet/MatGL、CHGNet、MACE 都可通过 `ssh-slurm` 计划 `train` 或 `finetune`。大数据和 foundation model 不经控制面复制，而由 project-scoped `dataset_reference` / `foundation_model_reference` 记录逻辑 ID、site-root 下相对路径和 file/directory kind。集群模板族为 `mlip-deepmd`、`mlip-m3gnet`、`mlip-chgnet`、`mlip-mace`。
 
-Agent 负责根据用户选择或 benchmark/routing 证据提出 framework/operation、绑定实际 config/data/model、声明 seed/device/precision 和抽象资源；不得猜 cluster path、conda/module、foundation model 或超参数。scheduler 完成后普通 `advance` fetch/check/collect。模型或数据 identity、framework/operation/seed/device/precision 不一致都必须 `FAIL`。
+Agent 负责根据用户选择或 benchmark/routing 证据提出 framework/operation、绑定实际 config/data/model、声明 seed/device/precision 和抽象资源；不得猜 cluster path、conda/module、foundation model 或超参数。scheduler 完成后普通 `advance` fetch/check/collect。模型/数据路径或 framework/operation/seed/device/precision 不一致都必须 `FAIL`。
 
 ## ASE molecular dynamics
 
-`$ase-md` 是独立的 trajectory 生成能力，不是 `$ionic-transport` 的别名。0.3 版支持单温度 `nvt-langevin` 与 `npt-isotropic-mtk`，支持 DeepMD、M3GNet/MatGL、CHGNet、MACE 四种显式本地模型，并可通过周期 checkpoint 在 fresh scheduler attempts 之间断点续跑。项目绑定实际结构与显式 `model_reference`；后者包含逻辑 model id、site-owned `MODEL_ROOT` 下的相对路径、file/directory kind 和可验证内容 identity。任何会触发 Hub/网络/包缓存自动下载的模型名都不能进入 scheduled contract。
+`$ase-md` 是独立的 trajectory 生成能力，不是 `$ionic-transport` 的别名。0.3 版支持单温度 `nvt-langevin` 与 `npt-isotropic-mtk`，支持 DeepMD、M3GNet/MatGL、CHGNet、MACE 四种显式本地模型，并可通过周期 checkpoint 在 fresh scheduler attempts 之间断点续跑。项目绑定实际结构与显式 `model_reference`；后者包含逻辑 model id、site-owned `MODEL_ROOT` 下的相对路径和 file/directory kind。任何会触发 Hub/网络/包缓存自动下载的模型名都不能进入 scheduled contract。
 
 每个 calculator 使用独立 site template family：`ase-md-deepmd`、`ase-md-m3gnet`、`ase-md-chgnet`、`ase-md-mace`。两种 ensemble 都必须显式声明温度、timestep、总 `steps`、trajectory/thermo interval、seed、COM policy、device/dtype 和抽象资源。NVT 额外要求 Langevin friction；NPT 不接受 friction，而要求显式 `pressure_gpa`、`thermostat_damping_fs`、`barostat_damping_fs`，并固定为各向同性 MTK volume fluctuation。
 
@@ -59,7 +60,7 @@ NPT 只能用于 full-rank 3D 周期 cell，`fix_com` 必须为 false，且不�
 
 当 Slurm 因 `TIMEOUT`、`PREEMPTED` 等终止时，core 不会直接把远端 checkpoint 当可信输入。普通 `advance` 只对该 run 中 adapter 声明的 `failure_salvage` 子集做 bounded fetch 与 transport 验证；原 attempt 保持 `FAIL/STOPPED`。随后 `retry` 创建 fresh attempt；新 run 只能 stage 立即上一 attempt 已经本地 salvage 的 checkpoint，并显示来源 attempt、segment start/remaining steps。Scheduler `COMPLETED` 的普通科学 FAIL 不自动 resume。
 
-每个 retry attempt 都生成独立 trajectory/thermo segment，使用连续的 global step/time 编号；producer 不生成单体拼接文件，但 `$ionic-transport` 会直接消费 collected attempts、按 global step 拼接并去除重复边界帧。成功完成后普通 `advance` 会核对 total completed steps、segment schedule、模型/结构/restart identity，以及 NVT/NPT 对应热力学约束。多个温度节点可一起交给 transport 做 Arrhenius。
+每个 retry attempt 都生成独立 trajectory/thermo segment，使用连续的 global step/time 编号；producer 不生成单体拼接文件，但 `$ionic-transport` 会直接消费 collected attempts、按 global step 拼接并去除重复边界帧。成功完成后普通 `advance` 会核对 total completed steps、segment schedule、模型/结构/restart 路径与参数，以及 NVT/NPT 对应热力学约束。多个温度节点可一起交给 transport 做 Arrhenius。
 
 ## LAMMPS molecular dynamics
 
@@ -67,15 +68,15 @@ NPT 只能用于 full-rank 3D 周期 cell，`fix_com` 必须为 false，且不�
 
 Prepared deck 永远只引用 `${MODEL_FILE}`，并在 `final.data` 与 `final.restart` 写完之后才输出绑定全局总 step 的 completion marker。Execute plan 绑定 prepared manifest、`structure.data` 和所选 deck；MODEL_ROOT、LAMMPS executable、MPI/srun launcher、module/conda、CUDA/Kokkos 与远端目录都留在 site-owned `run.sh`。
 
-长作业可显式设置 `checkpoint_interval` 和 `restart_policy: auto-from-previous-attempt`。Runner 不修改用户物理参数，只在 reviewed fresh deck 的 run 前增加 `restart N checkpoint.1.restart checkpoint.2.restart`，让两个 fixed binary restart 文件轮换。长进程开始前还写 `restart-runtime.json`，绑定 framework/target、prepared/model identity、checkpoint cadence、resources、executable/launcher identity 与平台信息。
+长作业可显式设置 `checkpoint_interval` 和 `restart_policy: auto-from-previous-attempt`。Runner 不修改用户物理参数，只在 reviewed fresh deck 的 run 前增加 `restart N checkpoint.1.restart checkpoint.2.restart`，让两个 fixed binary restart 文件轮换。长进程开始前还写 `restart-runtime.json`，记录 framework/target、prepared/model 路径、checkpoint cadence、resources、executable/launcher 路径与平台信息。
 
-当 Slurm `TIMEOUT`、`PREEMPTED`、`NODE_FAIL`、`OUT_OF_MEMORY` 等 scheduler terminal failure 发生时，普通 `advance` 从 bounded failure-salvage allowlist fetch 可用的两个 checkpoint、runtime sidecar 和 diagnostics。原 attempt 仍保持 `FAIL/STOPPED`。之后 `retry` 创建 fresh attempt，只接受立即上一 attempt 已经本地 salvage 的 runtime/checkpoint；后续 run 绑定其来源 attempt 和 executable/platform identity。Scheduler `COMPLETED` 后的普通科学 FAIL 不自动 resume；首个 checkpoint 之前就中断则 retry 必须 BLOCKED，不能偷偷 fresh-start。
+当 Slurm `TIMEOUT`、`PREEMPTED`、`NODE_FAIL`、`OUT_OF_MEMORY` 等 scheduler terminal failure 发生时，普通 `advance` 从 bounded failure-salvage allowlist fetch 可用的两个 checkpoint、runtime sidecar 和 diagnostics。原 attempt 仍保持 `FAIL/STOPPED`。之后 `retry` 创建 fresh attempt，只接受立即上一 attempt 已经本地 salvage 的 runtime/checkpoint；后续 run 记录其来源 attempt、executable 与平台版本。Scheduler `COMPLETED` 后的普通科学 FAIL 不自动 resume；首个 checkpoint 之前就中断则 retry 必须 BLOCKED，不能偷偷 fresh-start。
 
 控制面不解析 LAMMPS binary restart。新 attempt 在 compute node 上先要求 executable、平台、launcher、resources、model/prepared manifest、target 与 cadence 和 salvaged runtime 完全匹配，再用同一个 LAMMPS executable 探测候选，选择 timestep 最大且落在 checkpoint cadence、低于 global target 的有效 restart。Resume deck 使用 `read_restart ${RESTART_FILE}`，重新声明 MLIP `pair_style/pair_coeff`，原样复用同一 `fix mlipflow all nvt/npt ...` ID/style/参数，不执行原 fresh `velocity create`，并用 `run <original-total-steps> upto` 继续到原总步数。
 
-成功 completion 由普通 `advance` fetch/check。Checker 继续核对 result/report、trajectory、`final.data`、`final.restart`、logs、LAMMPS version、completion marker 和内容 identity；resume 另外核对 selected checkpoint 来自当前 attempt 的 restart inputs、segment start 合法、source attempt/runtime identity 一致。正常成功后临时 periodic checkpoint 与 runtime sidecar 被移除，只保留 `final.restart`；失败时它们才作为 recovery artifacts salvage。
+成功 completion 由普通 `advance` fetch/check。Checker 继续核对 result/report、trajectory、`final.data`、`final.restart`、logs、LAMMPS version 和 completion marker；resume 另外核对 selected checkpoint 来自当前 attempt 的 restart inputs、segment start 合法、source attempt/runtime 参数一致。正常成功后临时 periodic checkpoint 与 runtime sidecar 被移除，只保留 `final.restart`；失败时它们才作为 recovery artifacts salvage。
 
-LAMMPS binary restart 不被描述为跨平台 portable checkpoint。即使 executable/platform/launcher/resources 都一致，MPI decomposition 和浮点顺序仍可能导致恢复轨迹与 uninterrupted run 数值分叉，所以 0.3 显式记录 `bitwise_exact_guaranteed: false`。能力定义是 **pinned compatible runtime 下的 state-continuous restart**。producer 仍保持多 attempt 文件分离；`$ionic-transport` 负责原生 trajectory stitching 和后续科学分析。新 dump 带 `x/y/z + ix/iy/iz`，旧 wrapped/unwrapped dump 均继续可读。
+LAMMPS binary restart 不被描述为跨平台 portable checkpoint。即使 executable/platform/launcher/resources 都一致，MPI decomposition 和浮点顺序仍可能导致恢复轨迹与 uninterrupted run 数值分叉，所以 0.3 显式记录 `bitwise_exact_guaranteed: false`。能力定义是 **compatible runtime 下的 state-continuous restart**。producer 仍保持多 attempt 文件分离；`$ionic-transport` 负责原生 trajectory stitching 和后续科学分析。新 dump 带 `x/y/z + ix/iy/iz`，旧 wrapped/unwrapped dump 均继续可读。
 
 ## Skill validation
 

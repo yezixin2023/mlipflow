@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import uuid
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -119,8 +118,6 @@ CREATE TABLE IF NOT EXISTS artifacts (
   run_id TEXT NOT NULL REFERENCES step_runs(run_id),
   role TEXT NOT NULL,
   uri TEXT NOT NULL,
-  fingerprint TEXT,
-  size_bytes INTEGER,
   metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -129,14 +126,6 @@ CREATE TABLE IF NOT EXISTS events (
   event_type TEXT NOT NULL,
   at TEXT NOT NULL,
   payload_json TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS submission_intents (
-  digest TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
-  node_id TEXT NOT NULL,
-  plan_json TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  consumed_at TEXT
 );
 """
 
@@ -195,7 +184,7 @@ class StateStore:
             for node in nodes:
                 needs = list(node.get("needs", []))
                 initial = RunState.WAIT if needs else RunState.READY
-                run_id = str(uuid.uuid4())
+                run_id = f"{project_id}:{node['id']}:attempt-1"
                 connection.execute(
                     """INSERT OR IGNORE INTO step_runs(
                          run_id, project_id, node_id, plugin_id, attempt, state, backend,
@@ -274,7 +263,7 @@ class StateStore:
             if row["state"] != RunState.READY.value:
                 raise StateError("only an unstarted READY attempt may bind execution config")
             if row["node_id"] != str(node["id"]):
-                raise StateError("attempt node identity cannot change")
+                raise StateError("attempt node assignment cannot change")
             connection.execute(
                 """UPDATE step_runs
                    SET plugin_id=?, backend=?, node_json=?, updated_at=?
@@ -398,7 +387,8 @@ class StateStore:
             raise StateError(f"retry requires FAIL or STOPPED, got {previous.state}")
         node = self.node_snapshot(previous.run_id)
         now = utc_now()
-        run_id = str(uuid.uuid4())
+        attempt = previous.attempt + 1
+        run_id = f"{project_id}:{node_id}:attempt-{attempt}"
         with self.transaction() as connection:
             connection.execute(
                 """INSERT INTO step_runs(
@@ -410,7 +400,7 @@ class StateStore:
                     project_id,
                     node_id,
                     previous.plugin_id,
-                    previous.attempt + 1,
+                    attempt,
                     RunState.READY.value,
                     previous.backend,
                     now,
@@ -441,52 +431,26 @@ class StateStore:
         run_id: str,
         role: str,
         uri: str,
-        fingerprint: Optional[str] = None,
-        size_bytes: Optional[int] = None,
         metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         if self.readonly:
             raise StateError("cannot add artifact in read-only mode")
         with self.transaction() as connection:
             connection.execute(
-                """INSERT INTO artifacts(run_id, role, uri, fingerprint, size_bytes, metadata_json)
-                   VALUES(?, ?, ?, ?, ?, ?)""",
-                (run_id, role, uri, fingerprint, size_bytes, json.dumps(metadata or {}, sort_keys=True)),
+                """INSERT INTO artifacts(run_id, role, uri, metadata_json)
+                   VALUES(?, ?, ?, ?)""",
+                (run_id, role, uri, json.dumps(metadata or {}, sort_keys=True)),
             )
-
-    def record_intent(self, digest: str, project_id: str, node_id: str, plan: dict[str, Any]) -> None:
-        if self.readonly:
-            raise StateError("cannot record an intent in read-only mode")
-        with self.transaction() as connection:
-            connection.execute(
-                """INSERT OR REPLACE INTO submission_intents(
-                     digest, project_id, node_id, plan_json, created_at, consumed_at
-                   ) VALUES(?, ?, ?, ?, ?, NULL)""",
-                (digest, project_id, node_id, json.dumps(plan, sort_keys=True), utc_now()),
-            )
-
-    def consume_intent(self, digest: str) -> None:
-        if self.readonly:
-            raise StateError("cannot consume an intent in read-only mode")
-        with self.transaction() as connection:
-            cursor = connection.execute(
-                "UPDATE submission_intents SET consumed_at=? WHERE digest=? AND consumed_at IS NULL",
-                (utc_now(), digest),
-            )
-            if cursor.rowcount != 1:
-                raise StateError(f"submission intent is missing or already consumed: {digest}")
 
     def artifacts(self, run_id: str) -> list[dict[str, Any]]:
         rows = self.connection.execute(
-            "SELECT role, uri, fingerprint, size_bytes, metadata_json FROM artifacts WHERE run_id=?",
+            "SELECT role, uri, metadata_json FROM artifacts WHERE run_id=?",
             (run_id,),
         ).fetchall()
         return [
             {
                 "role": row["role"],
                 "uri": row["uri"],
-                "fingerprint": row["fingerprint"],
-                "size_bytes": row["size_bytes"],
                 "metadata": json.loads(row["metadata_json"]),
             }
             for row in rows

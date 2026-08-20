@@ -2,14 +2,13 @@
 
 The reviewed v0.1 generator remains the source of the scientific input deck. This
 facade adds one machine-readable completion marker after the final restart write
-and rebinds the generated-file fingerprints. The marker lets scheduled execution
+and records a completion marker. The marker lets scheduled execution
 prove that LAMMPS reached the end of the approved input script without parsing
 human-oriented log formatting.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -29,14 +28,6 @@ def _load_legacy():
 
 
 legacy = _load_legacy()
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
@@ -89,8 +80,6 @@ def prepare(
             text += "\n"
         text += f'print           "{marker}"\n'
         path.write_text(text, encoding="utf-8")
-        by_name[name]["sha256"] = _sha256(path)
-        by_name[name]["size_bytes"] = path.stat().st_size
 
     manifest["preparation_contract"] = PREPARATION_CONTRACT
     manifest["completion_marker"] = marker

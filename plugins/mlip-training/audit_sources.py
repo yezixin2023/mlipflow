@@ -1,6 +1,6 @@
 """Static, read-only audit of historical MLIP training entrypoints.
 
-The audit records source hashes and extracts enough Python/shell structure to
+The audit records source paths and extracts enough Python/shell structure to
 decide whether a historical script is suitable for a production wrapper.  It
 never imports a training framework and never executes the inspected source.
 """
@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import hashlib
 import json
 import os
 import re
@@ -20,14 +19,6 @@ from typing import Any
 
 PLUGIN_ID = "mlip-training"
 ABSOLUTE_PATH = re.compile(r"/(?:public|home|Users|opt|usr|data|scratch)/[^\s\"']+")
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return f"sha256:{digest.hexdigest()}"
 
 
 def _literal(node: ast.AST) -> Any:
@@ -59,11 +50,10 @@ def _system_summary(value: Any) -> dict[str, Any]:
     if not isinstance(systems, list) or not all(isinstance(item, str) for item in systems):
         systems = []
     portable_ids = sorted(Path(item.rstrip("/")).name for item in systems)
-    digest = hashlib.sha256("\n".join(portable_ids).encode("utf-8")).hexdigest()
     return {
         "system_count": len(systems),
         "unique_system_id_count": len(set(portable_ids)),
-        "system_ids_sha256": f"sha256:{digest}",
+        "system_names": portable_ids,
         "batch_size": _mapping(value).get("batch_size"),
     }
 
@@ -448,14 +438,12 @@ def audit_source(framework: str, path: Path) -> dict[str, Any]:
     return {
         "framework": framework,
         "source_name": path.name,
-        "size_bytes": path.stat().st_size,
-        "sha256": _sha256(path),
         **detail,
     }
 
 
 def _redact_private_paths(value: Any) -> Any:
-    """Remove host/user path values while preserving issue structure and hashes."""
+    """Remove host/user path values while preserving issue structure."""
 
     if isinstance(value, dict):
         result = {
@@ -498,7 +486,7 @@ def build_report(sources: list[tuple[str, Path]]) -> dict[str, Any]:
         },
         "redaction": {
             "private_absolute_path_values_removed": True,
-            "source_identity": "basename + size + sha256",
+            "source_record": "basename",
         },
     }
 

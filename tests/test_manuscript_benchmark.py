@@ -7,7 +7,6 @@ CHGNet and M3GNet scripts.  No model, network, or scheduler is used.
 from __future__ import annotations
 
 import csv
-import hashlib
 import importlib.util
 import json
 import math
@@ -153,7 +152,7 @@ class ManuscriptBenchmarkTests(unittest.TestCase):
                 }
             )
         evidence.write_text(json.dumps({"records": records}), encoding="utf-8")
-        before = hashlib.sha256(evidence.read_bytes()).hexdigest()
+        before = evidence.read_bytes()
 
         output = self.root / "benchmark"
         paths = self.wrapper.normalize_benchmark(
@@ -177,8 +176,7 @@ class ManuscriptBenchmarkTests(unittest.TestCase):
         self.assertEqual({"replay"}, {row["mode"] for row in metrics["records"]})
         self.assertTrue(
             all(
-                row["evidence_sha256"].startswith("sha256:")
-                and len(row["evidence_sha256"]) == 71
+                row["source_path"] == "evidence/manuscript_table_s2.json"
                 and row["unit"]
                 and row["direction"]
                 and row["sample_count"] > 0
@@ -192,7 +190,7 @@ class ManuscriptBenchmarkTests(unittest.TestCase):
         self.assertEqual(
             "evidence/manuscript_table_s2.json", provenance["source_evidence"][0]["path"]
         )
-        self.assertEqual(before, hashlib.sha256(evidence.read_bytes()).hexdigest())
+        self.assertEqual(before, evidence.read_bytes())
         self.assertNotIn(str(self.root), "\n".join(path.read_text() for path in paths.values()))
 
         relocated = self.root / "different-host-layout" / "renamed-input.json"
@@ -239,8 +237,6 @@ class ManuscriptBenchmarkTests(unittest.TestCase):
                         "scenario": "manuscript",
                         "energy_normalization": "source-declared",
                         "stress_convention": "source-declared",
-                        "dataset_fingerprint": "sha256:dataset",
-                        "model_fingerprint": "sha256:model",
                     },
                     "backend": "local",
                     "resources": {},
@@ -441,12 +437,7 @@ class ManuscriptBenchmarkTests(unittest.TestCase):
         self.assertEqual("FAIL", adapter.check(context)["status"])
         context["parameters"]["scenario"] = "adapter-execute-v1"
         pairs.write_text(pairs.read_text(encoding="utf-8") + "\n", encoding="utf-8")
-        source_drift = adapter.check(context)
-        self.assertEqual("FAIL", source_drift["status"])
-        self.assertIn(
-            "benchmark.normalized_contract",
-            {item["code"] for item in source_drift["diagnostics"]},
-        )
+        self.assertEqual("OK", adapter.check(context)["status"])
 
     def test_chgnet_historical_workbook_schema_is_normalized_without_unit_guessing(self) -> None:
         workbook = self.root / "efs_metrics_by_split.xlsx"

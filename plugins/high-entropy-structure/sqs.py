@@ -12,7 +12,6 @@ hosts without the optional scientific dependencies.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import math
@@ -23,21 +22,13 @@ from typing import Any
 
 
 PLUGIN_ID = "high-entropy-structure"
-GENERATOR_IDENTITY = "mlipflow-bundled:icet.generate_sqs_from_supercells"
+GENERATOR_NAME = "icet.generate_sqs_from_supercells"
 SEED_POLICY = "base-seed-plus-candidate-index"
 IDENTIFIER = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 FORMATS = {
     "vasp": (".vasp", "chemical/x-vasp-poscar"),
     "cif": (".cif", "chemical/x-cif"),
 }
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return f"sha256:{digest.hexdigest()}"
 
 
 def _load_object(path: Path) -> dict[str, Any]:
@@ -268,7 +259,6 @@ def generate(
             {
                 "id": candidate["id"],
                 "path": relative.as_posix(),
-                "fingerprint": _sha256(output_path),
                 "composition": dict(candidate["counts"]),
                 "media_type": media_type,
                 "random_seed": candidate_seed,
@@ -284,12 +274,11 @@ def generate(
         "status": "OK",
         "seed": seed,
         "candidate_count": len(structures),
-        "prototype_fingerprint": _sha256(prototype_path),
-        "composition_manifest_fingerprint": _sha256(composition_path),
-        "generator": {
-            "identity": GENERATOR_IDENTITY,
-            "fingerprint": _sha256(Path(__file__).resolve()),
+        "input_paths": {
+            "prototype": str(prototype_path.resolve()),
+            "composition_manifest": str(composition_path.resolve()),
         },
+        "generator": {"name": GENERATOR_NAME},
         "structures": structures,
         "method": {
             "library": "icet",

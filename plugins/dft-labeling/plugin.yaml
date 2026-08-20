@@ -4,7 +4,7 @@
   "id": "dft-labeling",
   "name": "DFT input preparation, labeling, and dataset assembly",
   "display_name": "DFT input preparation, labeling, and dataset assembly",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "api_version": 1,
   "description": "Deterministic VASP preparation and failure-isolating labeling, canonical label provenance, and reviewed SSH-SLURM conversion to shared-split training datasets plus a canonical held-out benchmark JSON.",
   "category": "labeling",
@@ -26,12 +26,13 @@
     ],
     "limitations": [
       "vasp-prepare generates POSCAR, INCAR, KPOINTS, and runtime-only POTCAR files in a fresh local attempt but never launches VASP or submits a scheduler job.",
-      "POTCAR is assembled only from the user's licensed PMG_VASP_PSP_DIR, is fingerprinted, and is explicitly excluded from portable collection, reports, packages, and repository content.",
+      "POTCAR is assembled only from the user's licensed PMG_VASP_PSP_DIR and is explicitly excluded from portable collection, reports, packages, and repository content.",
       "Scheduled labeling supports bounded multi-structure static, relax, and AIMD batches. With calculation-concurrency=1 it uses one sequential allocation; a larger approved value submits every declared calculation as an independent Slurm job with the full per-job resource contract, so jobs may run or queue separately and routing may select different site-owned partitions.",
-      "SSH-SLURM staging accepts only an input allowlist, verifies every staged SHA-256, never fetches POTCAR, and performs bounded output fetch and scientific checks as continuation of the approved run.",
+      "SSH-SLURM staging accepts only an input allowlist, never fetches POTCAR, and performs bounded output fetch and scientific checks as continuation of the approved run.",
       "Cluster-specific modules, executable paths, launchers, partitions, and environment initialization belong only to the selected remote vasp/run.sh or vasp-batch/run.sh and slurm templates, not plugin or project parameters.",
       "dataset-assemble converts only already verified canonical labels on the selected cluster, publishes below the site's canonical data root, and never launches VASP or training.",
-      "A dataset-assemble retry may recollect an already published immutable dataset only after exact canonical/split checks, tolerant derived-coordinate comparison, and fresh framework-tree and benchmark-file fingerprint verification against the prior approved attempt; it never overwrites the dataset target.",
+      "For cumulative training, dataset-assemble may consume a canonical-dataset-merge manifest of explicit source paths. It concatenates source records in declared order, rejects duplicate record IDs or incompatible conventions, and preserves each record's actual DFT-attempt lineage; it never reruns the source DFT calculations.",
+      "A dataset-assemble retry may recollect an already published dataset only after exact canonical/split checks and tolerant derived-coordinate comparison against the prior attempt; it never overwrites the dataset target.",
       "dataset-assemble exports benchmark/test.json from the exact shared held-out record IDs using total eV, force eV/angstrom, and ASE Voigt stress in eV/angstrom^3 with the explicit VASP-kbar sign/unit conversion.",
       "DeepMD conversion requires dpdata/NumPy and MACE conversion requires ASE in the reviewed remote conversion environment; missing dependencies fail the conversion node without invalidating the canonical label artifacts.",
       "Real historical VASP numerical parity remains pending even when a local integration smoke succeeds.",
@@ -52,14 +53,14 @@
     "supported": true,
     "behavior": "parse-existing-artifacts",
     "accepted_media_types": ["application/json"],
-    "reason": "Replay verifies an existing dft-input-manifest or standardized labeling result and its explicit fingerprints; it never prepares inputs, launches VASP, or parses OUTCAR heuristically."
+    "reason": "Replay verifies an existing dft-input-manifest or standardized labeling result; it never prepares inputs, launches VASP, or parses OUTCAR heuristically."
   },
   "inputs": [
     {"name": "structures-manifest", "kind": "manifest", "required": true, "media_type": "application/json"},
     {"name": "labeling-config", "kind": "manifest", "required": true, "media_type": "application/json"},
-    {"name": "pseudopotential-reference", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "Required by vasp-prepare: portable symbol/hash policy only; contains no POTCAR data or filesystem path."},
+    {"name": "pseudopotential-reference", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "Required by vasp-prepare: portable functional and symbol policy only; contains no POTCAR data or filesystem path."},
     {"name": "dft-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Optional prepared-input binding consumed by the separate label operation."},
-    {"name": "canonical-dataset", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "Required by dataset-assemble: canonical labels emitted by a verified scheduled label attempt."}
+    {"name": "canonical-dataset", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "Required by dataset-assemble: either canonical labels emitted by a verified scheduled label attempt or a canonical-dataset-merge manifest whose ordered source paths are project-scoped."}
   ],
   "parameters": [
     {"name": "operation", "type": "string", "required": true, "description": "vasp-prepare generates inputs; label runs a reviewed DFT calculation; dataset-assemble converts verified canonical labels on SSH-SLURM."},
@@ -89,7 +90,7 @@
     {"name": "chgnet-dataset", "kind": "artifact-reference", "required": false},
     {"name": "mace-dataset", "kind": "artifact-reference", "required": false}
     ,{"name": "benchmark-test", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "Canonical held-out test JSON containing the exact shared split record IDs and explicit E/F/S conventions."}
-    ,{"name": "benchmark-dataset-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Logical site-data reference and fingerprint for benchmark/test.json, consumed by scheduled mlip-benchmark."}
+    ,{"name": "benchmark-dataset-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Logical site-data path for benchmark/test.json, consumed by scheduled mlip-benchmark."}
   ],
   "dependencies": {
     "upstream_plugins": ["pes-sampling"],
@@ -116,15 +117,16 @@
   "completion": {
     "status": "implemented",
     "checks": [
-      {"id": "vasp-input-integrity", "implemented": true, "description": "Bind structure/config/pseudopotential fingerprints; verify calculation type, INCAR semantics, KPOINTS rule, POTCAR symbols/hashes, and fresh per-structure files."},
-      {"id": "potcar-non-portability", "implemented": true, "description": "Require POTCAR collectable=false and omit every POTCAR from collect output while retaining symbols and hashes in dft-input-manifest.json."},
+      {"id": "vasp-input-integrity", "implemented": true, "description": "Verify calculation type, INCAR semantics, KPOINTS rule, POTCAR functional/symbols, and fresh per-structure files."},
+      {"id": "potcar-non-portability", "implemented": true, "description": "Require POTCAR collectable=false and omit every POTCAR from collect output while retaining functional and symbols in dft-input-manifest.json."},
       {"id": "dft-convergence", "implemented": true, "description": "For label, require scheduler/process success, electronic convergence, applicable ionic convergence, and explicit non-truncation."},
       {"id": "dataset-shape-and-units", "implemented": true, "description": "Bind every label to a stable record ID and preserve atom order, species mapping, energy, force, and stress conventions."},
+      {"id": "cumulative-canonical-merge", "implemented": true, "description": "Read and concatenate declared canonical source paths in order, reject duplicate records or convention drift, and preserve record-level source DFT attempts without recomputation."},
       {"id": "shared-split", "implemented": true, "description": "Create one deterministic or source-group-aware train/validation/test split and use its exact record IDs for all requested views."},
       {"id": "framework-dataset-views", "implemented": true, "description": "Remote conversion creates split-preserving DeepMD, M3GNet, CHGNet, and MACE directories plus the dataset references required by mlip-training."}
-      ,{"id": "held-out-benchmark-export", "implemented": true, "description": "Regenerate benchmark/test.json from the exact split test IDs and verify its site reference, total-energy convention, force units, stress sign/unit conversion, and fingerprint."}
+      ,{"id": "held-out-benchmark-export", "implemented": true, "description": "Regenerate benchmark/test.json from the exact split test IDs and verify its site path, total-energy convention, force units, and stress sign/unit conversion."}
       ,{"id": "independent-calculation-jobs", "implemented": true, "description": "Submit a reviewed multi-calculation label as independently tracked Slurm jobs with full resources per calculation, aggregate terminal state and completions, and fetch each workspace through its own allowlist."}
-      ,{"id": "immutable-dataset-recollection", "implemented": true, "description": "On a fresh dataset-assemble retry, verify and recollect an existing immutable publication without rewriting it; tolerate only insignificant cross-platform floating differences in regenerated derived coordinates while retaining exact identities and fresh artifact fingerprints."}
+      ,{"id": "dataset-recollection", "implemented": true, "description": "On a fresh dataset-assemble retry, compare and recollect an existing publication without rewriting it; tolerate only insignificant cross-platform floating differences in regenerated derived coordinates."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"

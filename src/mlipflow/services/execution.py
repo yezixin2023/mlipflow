@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import fingerprint
+from ..artifacts import artifact as artifact_record
 from ..backends import LocalBackend
 from ..config import Project
 from ..errors import BackendError, ConfigError, PluginError
@@ -73,7 +73,6 @@ def _execute_ready(
                 plugin_version=str(plugin.raw["version"]),
                 mode=mode,
                 backend=backend,
-                plan_digest=plan["plan_digest"],
                 inputs=node.get("inputs", {}),
                 parameters=node.get("parameters", {}),
                 artifacts=artifacts,
@@ -90,25 +89,17 @@ def _execute_ready(
                     run_id,
                     str(artifact.get("role", "output")),
                     str(artifact["uri"]),
-                    artifact.get("fingerprint"),
-                    artifact.get("size_bytes"),
                     artifact.get("metadata", {}),
                 )
             updated = store.transition(
                 run_id, RunState.OK, manifest_path=str(manifest_path), diagnostic="replay collected"
             )
-            return {
-                "plan_digest": plan["plan_digest"],
-                "step": updated.to_dict(),
-                "result": result_data,
-            }
+            return {"step": updated.to_dict(), "result": result_data}
         if plugin.kind == "replay-only":
             raise PluginError(f"plugin {plugin.plugin_id} only supports replay")
         if backend == "local":
             store.transition(run_id, RunState.RUNNING)
-            # The signed plan holds portable tokens; runtime path resolution
-            # happens here, so the adapter still sees this machine's absolute
-            # paths in argv, cwd and its own echoed plan.
+            # Resolve portable plan paths on the execution machine.
             adapter_plan = to_runtime(
                 plan.get("adapter_plan"),
                 _portable_roots(project, plugin, node_id, attempt),
@@ -135,7 +126,7 @@ def _execute_ready(
             result = LocalBackend().run(argv, directory, environment)
             write_text_atomic(directory / "stdout.log", result.stdout)
             write_text_atomic(directory / "stderr.log", result.stderr)
-            artifacts = [fingerprint(path) | {"role": path.stem} for path in directory.glob("*.log")]
+            artifacts = [artifact_record(path) | {"role": path.stem} for path in directory.glob("*.log")]
             check_result: dict[str, Any] | None = None
             collected: dict[str, Any] | None = None
             metrics: dict[str, Any] = {}
@@ -183,7 +174,6 @@ def _execute_ready(
                 plugin_version=str(plugin.raw["version"]),
                 mode=mode,
                 backend=backend,
-                plan_digest=plan["plan_digest"],
                 inputs=node.get("inputs", {}),
                 parameters=node.get("parameters", {}),
                 artifacts=artifacts,
@@ -200,8 +190,6 @@ def _execute_ready(
                     run_id,
                     str(artifact.get("role", "output")),
                     str(artifact["uri"]),
-                    artifact.get("fingerprint"),
-                    artifact.get("size_bytes"),
                     artifact.get("metadata", {}),
                 )
             updated = store.transition(
@@ -210,7 +198,7 @@ def _execute_ready(
                 manifest_path=str(manifest_path),
                 diagnostic=None if final == RunState.OK else reason,
             )
-            return {"plan_digest": plan["plan_digest"], "step": updated.to_dict(), "result": result_data}
+            return {"step": updated.to_dict(), "result": result_data}
         command: list[str]
         if backend != "ssh-slurm":
             raise BackendError(
@@ -255,9 +243,8 @@ def _execute_ready(
                 remote_dir=remote_dir,
             )
             control_artifacts = [
-                fingerprint(directory / "approved-plan.json")
-                | {"role": "approved-plan"},
-                fingerprint(directory / _HPC_SUBMISSIONS)
+                artifact_record(directory / "approved-plan.json") | {"role": "run-plan"},
+                artifact_record(directory / _HPC_SUBMISSIONS)
                 | {"role": "scheduler-submissions"},
             ]
             for submission in submissions:
@@ -266,9 +253,9 @@ def _execute_ready(
                 )
                 control_artifacts.extend(
                     [
-                        fingerprint(control_dir / _HPC_SUBMIT_SCRIPT)
+                        artifact_record(control_dir / _HPC_SUBMIT_SCRIPT)
                         | {"role": "scheduler-script"},
-                        fingerprint(control_dir / _HPC_RUN_SCRIPT)
+                        artifact_record(control_dir / _HPC_RUN_SCRIPT)
                         | {"role": "application-script"},
                     ]
                 )
@@ -281,7 +268,6 @@ def _execute_ready(
                 plugin_version=str(plugin.raw["version"]),
                 mode=mode,
                 backend=backend,
-                plan_digest=plan["plan_digest"],
                 inputs=node.get("inputs", {}),
                 parameters=node.get("parameters", {}),
                 artifacts=control_artifacts,
@@ -313,8 +299,6 @@ def _execute_ready(
                     run_id,
                     str(artifact["role"]),
                     str(artifact["uri"]),
-                    artifact.get("fingerprint"),
-                    artifact.get("size_bytes"),
                     artifact.get("metadata", {}),
                 )
             updated = store.transition(
@@ -324,11 +308,7 @@ def _execute_ready(
                 remote_dir=remote_dir,
                 manifest_path=str(manifest_path),
             )
-            return {
-                "plan_digest": plan["plan_digest"],
-                "step": updated.to_dict(),
-                "submissions": submissions,
-            }
+            return {"step": updated.to_dict(), "submissions": submissions}
         hpc_execution = plan.get("hpc_execution")
         workspace = hpc_execution.get("workspace")
         if not isinstance(workspace, dict) or not isinstance(workspace.get("run_dir"), str):
@@ -353,7 +333,7 @@ def _execute_ready(
             (directory / _HPC_SUBMIT_SCRIPT, "scheduler-script"),
             (directory / _HPC_RUN_SCRIPT, "application-script"),
         ):
-            control_artifacts.append(fingerprint(path) | {"role": role})
+            control_artifacts.append(artifact_record(path) | {"role": role})
         manifest = run_manifest(
             project_id=project.project_id,
             node_id=node_id,
@@ -363,7 +343,6 @@ def _execute_ready(
             plugin_version=str(plugin.raw["version"]),
             mode=mode,
             backend=backend,
-            plan_digest=plan["plan_digest"],
             inputs=node.get("inputs", {}),
             parameters=node.get("parameters", {}),
             artifacts=control_artifacts,
@@ -386,8 +365,6 @@ def _execute_ready(
                 run_id,
                 str(artifact["role"]),
                 str(artifact["uri"]),
-                artifact.get("fingerprint"),
-                artifact.get("size_bytes"),
                 artifact.get("metadata", {}),
             )
         updated = store.transition(
@@ -397,7 +374,7 @@ def _execute_ready(
             remote_dir=remote_dir,
             manifest_path=str(manifest_path),
         )
-        return {"plan_digest": plan["plan_digest"], "step": updated.to_dict()}
+        return {"step": updated.to_dict()}
     except Exception as exc:
         try:
             current = store.step_by_run_id(run_id)

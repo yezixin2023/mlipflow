@@ -49,6 +49,7 @@ def test_skill_is_control_plane_only_and_lists_current_capabilities() -> None:
         "$lammps-md",
         "$ionic-transport",
         "$candidate-ranking",
+        "$mlip-active-learning",
     ):
         assert specialist in skill + reference
     assert "`electrochemical-voltage` plugin" in skill + reference
