@@ -121,7 +121,12 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _project_file(root: Path) -> Path:
+def _project_file(root: Path, selected: Any = None) -> Path:
+    if isinstance(selected, str) and selected:
+        path = Path(selected).expanduser().absolute()
+        if path.is_file() and not path.is_symlink() and path.resolve().parent == root.resolve():
+            return path.resolve()
+        raise ValueError("selected project file is invalid")
     found = [
         root / name
         for name in ("project.yaml", "project.yml", "project.json")
@@ -175,7 +180,7 @@ def _scheduled_inputs(
     policy_path = _input_path(context, inputs.get("policy"))
     index_path = _input_path(context, inputs.get("committee_model_index"))
     dataset_path = _input_path(context, inputs.get("evaluation_dataset"))
-    project = _project_file(root)
+    project = _project_file(root, context.get("project_path"))
     policy = _runner_module().load_mapping(policy_path)
     policy_info = active_science.validate_policy(policy)
     index = _read_json(index_path)

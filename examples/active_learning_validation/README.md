@@ -96,6 +96,12 @@ metrics file and matching prediction-evidence file per retrained member. Every
 member must contain the same immutable audit sample IDs and units. The handoff
 preserves all member values and uses the conservative maximum error for each
 declared audit gate, so no arbitrary seed is promoted to the production result.
+It also writes the current campaign handoff with the exact cumulative split and
+a pre-assessment `PENDING` decision. If a selected QUERY static calculation has
+failed, the helper accepts only the verified canonical subset, records each
+missing selection as `DFT_FAIL`, and marks labeling `INCOMPLETE`; it never creates
+a label or treats scheduler completion as scientific convergence. The plugin then
+returns `SCIENTIFIC_REVIEW_REQUIRED` rather than silently dropping the failure.
 The reported cumulative DFT-label count includes SAFE spot checks even when the
 policy keeps them out of the cumulative training dataset; the canonical training
 record count is therefore reported separately in the final validation summary.

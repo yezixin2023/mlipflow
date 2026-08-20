@@ -714,22 +714,29 @@ def normalize_legacy_canonical(args: argparse.Namespace) -> None:
     structures = []
     labels = []
     raw_outputs: dict[str, Any] = {}
-    for record in records:
+    for record_index, record in enumerate(records, start=1):
         structure = dict(record["source_structure"])
         structure.pop("fingerprint", None)
+        structure_id = f"initial-label-{record_index:04d}"
+        structure["structure_id"] = structure_id
         if "source_records" in structure:
             structure["source_records"] = [
                 {
-                    key: value
-                    for key, value in source_record.items()
-                    if key != "source_sha256"
+                    **{
+                        key: value
+                        for key, value in source_record.items()
+                        if key not in {"source_id", "source_sha256"}
+                    },
+                    "source_id": f"source-record-{record_index:04d}-{source_index:04d}",
                 }
-                for source_record in structure["source_records"]
+                for source_index, source_record in enumerate(
+                    structure["source_records"], start=1
+                )
             ]
         structures.append(structure)
         labels.append(
             {
-                "structure_id": record["source_structure_id"],
+                "structure_id": structure_id,
                 "calculation_id": record["calculation_id"],
                 "ionic_step": record["ionic_step"],
                 "species": record["species"],
@@ -940,6 +947,19 @@ def direct_selection_replay(args: argparse.Namespace) -> None:
     )
 
 
+def explicit_spot_training_policy(args: argparse.Namespace) -> None:
+    """Make the reviewed SAFE spot-training choice explicit in continuation inputs."""
+
+    policy = _read_json(Path(args.policy).resolve())
+    selection = _read_json(Path(args.selection_result).resolve())
+    policy.setdefault("selection", {})[
+        "include_safe_spot_checks_in_training"
+    ] = args.include
+    selection["include_safe_spot_checks_in_training"] = args.include
+    _write_json(Path(args.policy_output).resolve(), policy)
+    _write_json(Path(args.selection_output).resolve(), selection)
+
+
 def _audit_handoff(
     metric_values: list[str], evidence_values: list[str], audit_ids: list[str]
 ) -> dict[str, Any]:
@@ -1032,6 +1052,7 @@ def assessment_inputs(args: argparse.Namespace) -> None:
     spot = _read_json(Path(args.spot_canonical).resolve())
     cumulative_split = _read_json(Path(args.cumulative_split).resolve())
     policy = _read_json(Path(args.policy).resolve())
+    campaign = _read_json(Path(args.campaign).resolve())
     include_spot = policy.get("selection", {}).get(
         "include_safe_spot_checks_in_training"
     )
@@ -1055,8 +1076,9 @@ def assessment_inputs(args: argparse.Namespace) -> None:
     spot_records = {
         source_id: record["record_id"] for source_id, record in spot_by_id.items()
     }
-    if query_ids != selected_query or set(spot_by_id) != selected_spot:
+    if not query_ids <= selected_query or set(spot_by_id) != selected_spot:
         raise ValueError("collected DFT structures differ from active-learning selection")
+    failed_query_ids = selected_query - query_ids
 
     training_ids, validation_ids, test_ids = _canonical_split_ids(cumulative_split)
     cumulative_record_ids = set(training_ids) | set(validation_ids)
@@ -1113,10 +1135,18 @@ def assessment_inputs(args: argparse.Namespace) -> None:
         Path(args.labeling_output).resolve(),
         {
             "schema_version": 1,
-            "status": "OK",
+            "status": "OK" if not failed_query_ids else "INCOMPLETE",
             "successful_query_records": [
                 {"sample_id": sample_id, "record_id": query_records[sample_id]}
-                for sample_id in sorted(selected_query)
+                for sample_id in sorted(query_ids)
+            ],
+            "failed_query_records": [
+                {
+                    "sample_id": sample_id,
+                    "status": "DFT_FAIL",
+                    "reason": "not-present-in-verified-canonical-labels",
+                }
+                for sample_id in sorted(failed_query_ids)
             ],
             "successful_spot_check_records": [
                 {"sample_id": sample_id, "record_id": spot_records[sample_id]}
@@ -1136,6 +1166,14 @@ def assessment_inputs(args: argparse.Namespace) -> None:
         },
     )
     _write_json(Path(args.dataset_split_output).resolve(), assessment_split)
+    campaign["policy_id"] = policy["policy_id"]
+    campaign["current_cumulative_dataset"] = {
+        "dataset_id": cumulative_split["dataset_id"],
+        "split_id": cumulative_split["split_id"],
+        "reference": str(Path(args.cumulative_split).resolve()),
+    }
+    campaign["current_decision"] = "PENDING"
+    _write_json(Path(args.campaign_output).resolve(), campaign)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -1198,6 +1236,14 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--output", required=True)
     command.set_defaults(function=direct_selection_replay)
 
+    command = subparsers.add_parser("explicit-spot-training-policy")
+    command.add_argument("--policy", required=True)
+    command.add_argument("--selection-result", required=True)
+    command.add_argument("--include", action="store_true")
+    command.add_argument("--policy-output", required=True)
+    command.add_argument("--selection-output", required=True)
+    command.set_defaults(function=explicit_spot_training_policy)
+
     command = subparsers.add_parser("direct-input")
     command.add_argument("--committee-evaluation", required=True)
     command.add_argument("--candidate-manifest", required=True)
@@ -1247,10 +1293,12 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--audit-metrics", action="append", required=True)
     command.add_argument("--audit-evidence", action="append", required=True)
     command.add_argument("--cumulative-split", required=True)
+    command.add_argument("--campaign", required=True)
     command.add_argument("--audit-output", required=True)
     command.add_argument("--spot-output", required=True)
     command.add_argument("--labeling-output", required=True)
     command.add_argument("--dataset-split-output", required=True)
+    command.add_argument("--campaign-output", required=True)
     command.set_defaults(function=assessment_inputs)
     return result
 

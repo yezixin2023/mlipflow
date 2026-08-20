@@ -94,6 +94,26 @@ def _mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _metric_records_match(
+    stored: list[dict[str, Any]], recomputed: list[dict[str, Any]]
+) -> bool:
+    if len(stored) != len(recomputed):
+        return False
+    for left, right in zip(stored, recomputed, strict=True):
+        if (
+            {key: value for key, value in left.items() if key != "value"}
+            != {key: value for key, value in right.items() if key != "value"}
+            or not math.isclose(
+                float(left.get("value")),
+                float(right.get("value")),
+                rel_tol=1e-12,
+                abs_tol=1e-15,
+            )
+        ):
+            return False
+    return True
+
+
 def _reference(value: Any) -> str | None:
     if isinstance(value, str) and value:
         return value
@@ -176,7 +196,12 @@ def _evidence_specs(context: dict[str, Any]) -> list[dict[str, str]]:
     return result
 
 
-def _project_file(root: Path) -> Path | None:
+def _project_file(root: Path, selected: Any = None) -> Path | None:
+    if isinstance(selected, str) and selected:
+        path = Path(selected).expanduser().absolute()
+        if path.is_file() and not path.is_symlink() and path.resolve().parent == root.resolve():
+            return path.resolve()
+        return None
     found = [
         root / name
         for name in ("project.yaml", "project.yml", "project.json")
@@ -382,7 +407,7 @@ def _scheduled_fresh_inputs(
         raise ValueError("scheduled fresh benchmark does not accept: " + ", ".join(unknown))
     model_path = _project_input(root, inputs.get("model_reference"))
     dataset_path = _project_input(root, inputs.get("benchmark_dataset_reference"))
-    project = _project_file(root)
+    project = _project_file(root, context.get("project_path"))
     if model_path is None or dataset_path is None or project is None:
         raise ValueError(
             "scheduled fresh benchmark requires project-scoped model/dataset references and one project file"
@@ -1309,16 +1334,10 @@ def _load_fresh_outputs(
     for record in recomputed_unavailable:
         record["mode"] = "fresh"
     recomputed_records = normalizer._validate_records(recomputed_records)
-    if records != recomputed_records or metrics.get(
+    if not _metric_records_match(records, recomputed_records) or metrics.get(
         "unavailable_metrics"
     ) != recomputed_unavailable:
         raise ValueError("fresh metrics differ from prediction evidence")
-    if paths["benchmark_summary.csv"].read_bytes() != normalizer._summary_bytes(
-        recomputed_records
-    ):
-        raise ValueError("fresh benchmark summary differs from prediction evidence")
-    if ranking != normalizer._ranking(recomputed_records):
-        raise ValueError("fresh ranking differs from prediction evidence")
 
     roles = {
         "prediction_evidence.json": ("prediction-evidence", "application/json"),

@@ -56,6 +56,7 @@ def test_explicit_artifact_binding_uses_final_ok_attempt_and_parent(tmp_path: Pa
         store.transition(successful.run_id, RunState.OK)
 
     context = _adapter_context(project, nodes[1], 1)
+    assert context["project_path"] == str(project.path)
     assert context["inputs"]["input_dirs"] == [str(successful_dir.resolve())]
 
 

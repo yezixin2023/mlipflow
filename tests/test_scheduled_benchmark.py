@@ -149,8 +149,11 @@ class ScheduledBenchmarkPlanTests(unittest.TestCase):
         adapter = load_adapter(plugin)
         node = self.project.node("benchmark-chgnet")
         parameters = dict(node["parameters"])
+        selected_project = self.root / "continuation.project.json"
+        selected_project.write_bytes((self.root / "project.yaml").read_bytes())
         context = {
             "project_root": str(self.root),
+            "project_path": str(selected_project),
             "attempt_dir": str(self.root / ".mlipflow/runs/benchmark-chgnet/attempt-1"),
             "backend": "ssh-slurm",
             "inputs": {
@@ -177,6 +180,11 @@ class ScheduledBenchmarkPlanTests(unittest.TestCase):
             "loop-test-dataset/benchmark/test.json",
             calculation["dataset"]["relative_path"],
         )
+        staged = {
+            item["remote_name"]: item["source"]
+            for item in plan["scheduled_execution"]["staged_files"]
+        }
+        self.assertEqual(staged["project.yaml"], str(selected_project.resolve()))
 
 
 if __name__ == "__main__":

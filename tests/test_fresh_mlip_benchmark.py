@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import subprocess
 import tempfile
 import unittest
@@ -23,6 +24,22 @@ def _load(path: Path, name: str):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_metric_recomputation_accepts_only_floating_roundoff() -> None:
+    adapter = _load(ADAPTER_PATH, "test_benchmark_metric_tolerance")
+    stored = [{"metric": "force_mae", "sample_count": 3, "value": 0.3}]
+    recomputed = [
+        {
+            "metric": "force_mae",
+            "sample_count": 3,
+            "value": math.nextafter(0.3, math.inf),
+        }
+    ]
+    assert adapter._metric_records_match(stored, recomputed)
+
+    recomputed[0]["value"] += 1e-6
+    assert not adapter._metric_records_match(stored, recomputed)
 
 
 class FakePredictor:

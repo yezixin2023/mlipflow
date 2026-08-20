@@ -97,7 +97,10 @@ def test_assessment_helper_does_not_fold_test_records_into_training_pool(
     args = SimpleNamespace(
         policy=write(
             "policy.json",
-            {"selection": {"include_safe_spot_checks_in_training": False}},
+            {
+                "policy_id": "policy-1",
+                "selection": {"include_safe_spot_checks_in_training": False},
+            },
         ),
         committee_evaluation=write(
             "evaluation.json",
@@ -137,14 +140,137 @@ def test_assessment_helper_does_not_fold_test_records_into_training_pool(
                 "test_record_ids": ["record-query"],
             },
         ),
+        campaign=write("campaign.json", {"campaign_id": "campaign-1"}),
         audit_output=str(tmp_path / "audit.json"),
         spot_output=str(tmp_path / "spot-output.json"),
         labeling_output=str(tmp_path / "labeling.json"),
         dataset_split_output=str(tmp_path / "assessment-split.json"),
+        campaign_output=str(tmp_path / "campaign-output.json"),
     )
 
     with pytest.raises(ValueError, match="train/validation"):
         module.assessment_inputs(args)
+
+
+def test_assessment_helper_records_partial_query_labeling(tmp_path: Path) -> None:
+    helper = (
+        Path(__file__).resolve().parents[1]
+        / "examples"
+        / "active_learning_validation"
+        / "prepare_round_inputs.py"
+    )
+    spec = importlib.util.spec_from_file_location("active_learning_partial_helper", helper)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def write(name: str, value: object) -> str:
+        path = tmp_path / name
+        path.write_text(json.dumps(value), encoding="utf-8")
+        return str(path)
+
+    metrics = [
+        {"metric": name, "value": 0.0, "unit": "test-unit"}
+        for name in (
+            "energy_mae",
+            "energy_rmse",
+            "force_mae",
+            "force_rmse",
+            "maximum_atomic_force_error",
+        )
+    ]
+    labeling_output = tmp_path / "labeling.json"
+    module.assessment_inputs(
+        SimpleNamespace(
+            policy=write(
+                "policy.json",
+                {
+                    "policy_id": "policy-1",
+                    "selection": {"include_safe_spot_checks_in_training": False},
+                },
+            ),
+            committee_evaluation=write(
+                "evaluation.json",
+                {
+                    "dataset_split": {
+                        "calibration_ids": [],
+                        "audit_ids": ["audit-1"],
+                    },
+                    "candidates": [],
+                },
+            ),
+            committee_predictions=write(
+                "predictions.json",
+                {"models": [{"model_id": "chgnet-primary", "members": []}]},
+            ),
+            selection_result=write(
+                "selection.json",
+                {
+                    "selected_query_candidates": [
+                        {"sample_id": "query-ok"},
+                        {"sample_id": "query-failed"},
+                    ],
+                    "selected_safe_spot_checks": [],
+                },
+            ),
+            query_canonical=write(
+                "query.json",
+                {
+                    "records": [
+                        {
+                            "source_structure_id": "query-ok",
+                            "record_id": "record-query-ok",
+                        }
+                    ]
+                },
+            ),
+            spot_canonical=write("spot.json", {"records": []}),
+            audit_metrics=[f"seed-11={write('metrics.json', {'records': metrics})}"],
+            audit_evidence=[
+                "seed-11="
+                + write(
+                    "evidence.json",
+                    {
+                        "split": "test",
+                        "records": [{"sample_id": "audit-1", "target": "energy"}],
+                    },
+                )
+            ],
+            cumulative_split=write(
+                "split.json",
+                {
+                    "dataset_id": "dataset-1",
+                    "split_id": "split-1",
+                    "train_record_ids": ["record-query-ok"],
+                    "validation_record_ids": ["record-validation"],
+                    "test_record_ids": ["record-test"],
+                },
+            ),
+            campaign=write("campaign.json", {"campaign_id": "campaign-1"}),
+            audit_output=str(tmp_path / "audit.json"),
+            spot_output=str(tmp_path / "spot-output.json"),
+            labeling_output=str(labeling_output),
+            dataset_split_output=str(tmp_path / "assessment-split.json"),
+            campaign_output=str(tmp_path / "campaign-output.json"),
+        )
+    )
+
+    result = json.loads(labeling_output.read_text(encoding="utf-8"))
+    assert result["status"] == "INCOMPLETE"
+    assert result["successful_query_records"] == [
+        {"sample_id": "query-ok", "record_id": "record-query-ok"}
+    ]
+    assert result["failed_query_records"] == [
+        {
+            "sample_id": "query-failed",
+            "status": "DFT_FAIL",
+            "reason": "not-present-in-verified-canonical-labels",
+        }
+    ]
+    campaign = json.loads((tmp_path / "campaign-output.json").read_text(encoding="utf-8"))
+    assert campaign["policy_id"] == "policy-1"
+    assert campaign["current_decision"] == "PENDING"
+    assert campaign["current_cumulative_dataset"]["dataset_id"] == "dataset-1"
 
 
 def test_evaluation_split_keeps_canonical_test_records_excluded() -> None:
@@ -275,6 +401,41 @@ def test_direct_selection_replay_preserves_exact_candidate_ids(tmp_path: Path) -
     assert result["input_candidate_ids"] == ["candidate-1", "candidate-2"]
     assert result["selected_candidate_ids"] == ["candidate-2"]
     assert result["parameters"]["replay_mode"] == "existing-result-structured-capture"
+
+
+def test_explicit_spot_training_policy_defaults_to_excluded(tmp_path: Path) -> None:
+    helper = (
+        Path(__file__).resolve().parents[1]
+        / "examples"
+        / "active_learning_validation"
+        / "prepare_round_inputs.py"
+    )
+    spec = importlib.util.spec_from_file_location("active_learning_policy_helper", helper)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    policy_path = tmp_path / "policy.json"
+    selection_path = tmp_path / "selection.json"
+    policy_output = tmp_path / "policy-explicit.json"
+    selection_output = tmp_path / "selection-explicit.json"
+    policy_path.write_text(json.dumps({"selection": {}}), encoding="utf-8")
+    selection_path.write_text(json.dumps({"selected_query_ids": []}), encoding="utf-8")
+
+    module.explicit_spot_training_policy(
+        SimpleNamespace(
+            policy=str(policy_path),
+            selection_result=str(selection_path),
+            include=False,
+            policy_output=str(policy_output),
+            selection_output=str(selection_output),
+        )
+    )
+
+    policy = json.loads(policy_output.read_text(encoding="utf-8"))
+    selection = json.loads(selection_output.read_text(encoding="utf-8"))
+    assert policy["selection"]["include_safe_spot_checks_in_training"] is False
+    assert selection["include_safe_spot_checks_in_training"] is False
 
 
 def test_audit_handoff_uses_conservative_committee_maximum(tmp_path: Path) -> None:

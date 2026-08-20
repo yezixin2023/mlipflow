@@ -110,6 +110,29 @@ def test_generic_scheduler_matrix_is_ready(
     assert {"training-result.json", "model-artifact", "cluster-run-report.json"} <= required
 
 
+def test_generic_scheduler_stages_the_selected_project_file(tmp_path: Path) -> None:
+    module = _load("mlip_training_selected_project", PLUGIN / "adapter_cluster.py")
+    context = _context(tmp_path, "chgnet", "finetune")
+    selected = tmp_path / "continuation.project.json"
+    _write_json(
+        selected,
+        {
+            "schema_version": 1,
+            "project": {"id": "continuation"},
+            "workflow": {"nodes": []},
+        },
+    )
+    context["project_path"] = str(selected)
+
+    plan = module.Adapter().plan(context)
+
+    staged = {
+        item["remote_name"]: item["source"]
+        for item in plan["scheduled_execution"]["staged_files"]
+    }
+    assert staged["project.yaml"] == str(selected)
+
+
 def test_cluster_runner_records_resolved_dataset_path(tmp_path: Path, monkeypatch) -> None:
     cluster = _load("mlip_training_cluster_handoff", PLUGIN / "training_cluster.py")
     input_dir = tmp_path / "input"

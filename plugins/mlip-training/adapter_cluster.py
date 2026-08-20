@@ -80,7 +80,12 @@ def _safe_relative(value: Any, *, plain_name: bool = False) -> bool:
     return not plain_name or len(path.parts) == 1
 
 
-def _project_file(root: Path) -> Path | None:
+def _project_file(root: Path, selected: Any = None) -> Path | None:
+    if isinstance(selected, str) and selected:
+        path = Path(selected).expanduser().absolute()
+        if path.is_file() and not path.is_symlink() and path.resolve().parent == root.resolve():
+            return path.resolve()
+        return None
     for name in ("project.yaml", "project.yml", "project.json"):
         path = root / name
         if path.is_file() and not path.is_symlink():
@@ -385,7 +390,7 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
                 "result_manifest must be a plain relative file name",
             )
         )
-    if _project_file(root) is None:
+    if _project_file(root, context.get("project_path")) is None:
         diagnostics.append(
             _diag(
                 "error",
@@ -418,7 +423,7 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
     parameters = dict(context.get("parameters", {}))
     framework = str(parameters["framework"])
     operation = str(parameters.get("operation", "train"))
-    project = _project_file(root)
+    project = _project_file(root, context.get("project_path"))
     config = _resolve_project_file(root, inputs["training_config"])
     dataset_path = _resolve_project_file(root, inputs["dataset_reference"])
     assert project is not None and config is not None and dataset_path is not None

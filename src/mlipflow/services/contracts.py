@@ -490,6 +490,7 @@ def _adapter_context(project: Project, node: dict[str, Any], attempt: int) -> di
             inputs["input_paths"] = list(dict.fromkeys(input_paths))
     return {
         "project_root": str(project.root),
+        "project_path": str(project.path),
         "attempt_dir": str(attempt_directory(project, str(node["id"]), attempt)),
         "inputs": inputs,
         "parameters": node.get("parameters", {}),

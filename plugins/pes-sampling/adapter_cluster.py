@@ -83,7 +83,12 @@ def _within(path: Path, root: Path) -> bool:
         return False
 
 
-def _project_file(root: Path) -> Path | None:
+def _project_file(root: Path, selected: Any = None) -> Path | None:
+    if isinstance(selected, str) and selected:
+        path = Path(selected).expanduser().absolute()
+        if path.is_file() and not path.is_symlink() and path.resolve().parent == root.resolve():
+            return path.resolve()
+        return None
     for name in ("project.yaml", "project.yml", "project.json"):
         candidate = root / name
         if _ordinary(candidate):
@@ -215,7 +220,7 @@ def _validate_scheduled(context: Any) -> list[dict[str, str]]:
     if not root.is_dir():
         diagnostics.append(_diag("ERROR", "path.project_root", "project_root must be an existing directory"))
         return diagnostics
-    project_path = _project_file(root)
+    project_path = _project_file(root, context.get("project_path"))
     if project_path is None:
         diagnostics.append(_diag("ERROR", "path.project_file", "scheduled LASP requires project.yaml/project.yml/project.json"))
 
@@ -373,7 +378,7 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
     root = Path(str(context["project_root"])).expanduser().absolute().resolve()
     inputs = dict(context.get("inputs", {}))
     parameters = dict(context.get("parameters", {}))
-    project_path = _project_file(root)
+    project_path = _project_file(root, context.get("project_path"))
     structure = _resolve_input(inputs["input_structure"], root)
     lasp_input = _resolve_input(inputs["lasp_input"], root)
     assert project_path is not None and structure is not None and lasp_input is not None
