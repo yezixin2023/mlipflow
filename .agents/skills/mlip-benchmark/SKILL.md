@@ -1,12 +1,12 @@
 ---
 name: mlip-benchmark
-description: Supervise MLIPFlow energy, force, and stress benchmarks and model ranking. Use when running fresh inference from an explicit model plus labeled dataset, recomputing metrics from supplied reference/prediction pairs, replaying historical JSON/CSV/XLSX benchmark evidence, comparing exact MLIP families, or verifying benchmark identities, provenance, units, conventions, and scientific claim boundaries.
+description: Supervise MLIPFlow energy, force, and stress benchmarks and model ranking. Use when running fresh inference from an explicit model plus labeled dataset, recomputing metrics from supplied reference/prediction pairs, replaying historical JSON/CSV/XLSX benchmark evidence, comparing exact MLIP families, or verifying benchmark IDs, paths, provenance, units, conventions, and scientific claim boundaries.
 ---
 
 # MLIP benchmark
 
 Use `plugins/mlip-benchmark` as the deterministic execution layer. Do not
-reimplement inference, metrics, ranking, parsing, or fingerprinting in this
+reimplement inference, metrics, ranking, or parsing in this
 Skill. Read [references/benchmark-contract.md](references/benchmark-contract.md)
 before planning or interpreting a benchmark.
 
@@ -16,8 +16,9 @@ before planning or interpreting a benchmark.
   dataset. It must load the model, generate predictions, and produce provenance
   with `model_execution=true`.
 - Choose `normalize-execute` for supplied reference/prediction pairs. Recompute
-  MAE, RMSE, Pearson r, and ranking without loading a model; describe this as
-  metric-only evaluation.
+  MAE, RMSE, Pearson r, and ranking without loading a model. When force evidence
+  retains explicit N×3 vectors, also compute the maximum atomic L2 force error;
+  describe this as metric-only evaluation.
 - Choose `normalize-replay` for historical JSON, CSV, XLSX, workbook, or metric
   evidence. Describe it as read-only evidence normalization/verification with
   `model_execution=false`, never as fresh inference or fresh numerical parity.
@@ -39,17 +40,17 @@ Skill, accept an under-specified DeepMD family, or choose a model by brand.
 
 Require the inputs appropriate to the selected mode:
 
-- Fresh local: model, canonical labeled dataset, exact family, model and dataset
-  fingerprints, task/scenario/split, targets, target units, total/per-atom
+- Fresh local: model path, canonical labeled dataset path, exact family,
+  task/scenario/split, targets, target units, total/per-atom
   energy convention, and an explicit stress convention when stress is selected.
 - Fresh SSH-SLURM: collected `model-reference.json` and
   `benchmark-dataset-reference.json` pointing below the selected site's canonical roots,
-  with the same exact family, fingerprints, task/scenario/split, targets, units, and
+  with the same exact family, task/scenario/split, targets, units, and
   conventions. The reviewed `benchmark-<framework>/run.sh` owns the environment and
   root paths.
 - Metric-only: reference/prediction evidence plus explicit or evidence-backed
-  model/task/scenario/split/unit identities.
-- Replay: historical evidence, portable evidence locator, exact identities, and
+  model/task/scenario/split/unit IDs and values.
+- Replay: historical evidence, portable evidence locator, exact IDs/paths, and
   optional read-only historical source reference for provenance.
 
 Do not guess units, total/per-atom normalization, stress ordering/sign, split,
@@ -57,9 +58,7 @@ or scalar-count semantics. Ask for the missing value when execution requires it;
 otherwise preserve the contract's unknown or `source-unit-unspecified` value.
 
 For scheduled upstream artifact bindings, accept the project-scoped resolved reference
-paths produced by core and take their immutable fingerprints as authoritative in the
-approved fresh identity. Optional redundant model/dataset fingerprint parameters must
-match when supplied, but a predeclared DAG need not know those future values. Use the
+paths produced by core. A predeclared DAG can consume those collected references directly. Use the
 site's `benchmark-<framework>-canonical/run.sh` family so inference resolves the
 published model and held-out dataset below canonical MLIPFlow roots, not historical
 research directories.
@@ -68,8 +67,8 @@ research directories.
 
 Never call the bundled runner, wrapper, framework, or historical script as a
 substitute for the Adapter lifecycle. Use MLIPFlow's ordinary plan, dry-run and
-approval flow. Confirm `shell=false`, argv-based execution, pinned input
-identities, and a fresh empty output directory. Do not overwrite or delete an
+approval flow. Confirm `shell=false`, argv-based execution, explicit input
+paths/parameters, and a fresh empty output directory. Do not overwrite or delete an
 existing result; retry must create a new attempt.
 
 For SSH-SLURM, declare only a named backend profile and abstract `cpus`, `gpus`,
@@ -89,7 +88,7 @@ evidence, but never use it to declare that model the winner over a model lacking
 metric.
 
 After execution, require Adapter `check` and `collect` to return `OK`. Treat
-partial output, model/dataset/evidence drift, unsupported identity, non-finite
+partial output, model/dataset/evidence mismatch, unsupported scientific fields, non-finite
 metrics, or provenance mismatch as `FAIL`. Scheduler or process completion alone
 is not scientific success.
 
@@ -97,13 +96,16 @@ MAE and RMSE are required for every selected target. Pearson correlation is only
 numeric when at least two scalar pairs exist and neither side is constant. When it is
 mathematically undefined, require an explicit unavailable record and reason; never
 invent a value, emit NaN as a ranking value, or discard the valid MAE/RMSE evidence.
+For a force audit, require `maximum_atomic_force_error` from explicit N×3 vectors;
+do not reconstruct it from flattened force components or substitute a componentwise
+maximum.
 
 ## Report the result
 
 Lead with success/failure, selected mode, and whether a model actually ran. Then
 report the exact family, dataset/scenario/split, comparable MAE/RMSE/Pearson
 values, metric direction and ranking, units/conventions, and the important
-model/dataset/evidence/output fingerprints. State missing or unknown scientific
+model/dataset/evidence/output paths. State missing or unknown scientific
 information explicitly. Keep the default answer concise and provide full JSON
 only when requested.
 

@@ -1,6 +1,6 @@
 # 论文工作流复现
 
-最后更新：2026-08-11。
+最后更新：2026-08-20。
 
 ## 复现定义
 
@@ -10,11 +10,11 @@
 
 `REPLAY_VERIFIED` 在这里表示：
 
-1. 小型转录/派生证据的 schema、单位、行数与 SHA-256 已校验；
+1. 小型转录/派生证据的 schema、单位、行数与来源路径已校验；
 2. MAE、speedup、排序和 routing 等透明 reduction 被重新计算；
 3. 每个决定保留 source document/artifact → compact evidence → normalized metric →
    policy → route 的来源链；
-4. 相同证据在不同本地目录产生相同结果，篡改会使检查失败。
+4. 相同证据在不同本地目录产生相同科学 reduction；不一致的表值会使检查失败。
 
 它不表示底层模型预测已独立验证，也不替代原始轨迹、训练集或生产计算。
 
@@ -44,12 +44,12 @@ PYTHONPATH=../../src python3 reproduce.py --check
 
 ## 证据包
 
-原始 Word 文档不进入 example；只记录 basename、size、read-only 标记和摘要：
+原始 Word 文档不进入 example；只记录 basename、read-only 标记和用途：
 
-| source | SHA-256 | repository inclusion |
+| source | recorded name | repository inclusion |
 |---|---|---|
-| main manuscript | `22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b` | 不包含原文 |
-| supporting information | `0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732` | 不包含原文 |
+| main manuscript | manuscript basename | 不包含原文 |
+| supporting information | supplement basename | 不包含原文 |
 
 紧凑证据及其用途：
 
@@ -60,14 +60,14 @@ PYTHONPATH=../../src python3 reproduce.py --check
 | `table_s3_ionic_conductivity.csv` | 10 个成分的 AIMD/六模型 conductivity | source-document transcription |
 | `table_s8_runtime.json`、`table_s9_runtime.json`、`table_s10_runtime.json` | prototype I–III 的 AIMD/MLIP timing | source-document transcription |
 | `table_s11_voltage.csv`、`table_s11_voltage_long.csv` | 9 个体系×2 stage 的 DFT/六模型 voltage | source-document transcription |
-| `large_supercell_screening_top10.json` | 247/247 历史 Li10 大超胞候选的 deterministic top-10 | pinned local result artifact；REPLAY_VERIFIED |
+| `large_supercell_screening_top10.json` | 247/247 历史 Li10 大超胞候选的 deterministic top-10 | local result record；REPLAY_VERIFIED |
 | `top_candidate_transport_link.json` | top-1 ID 到历史 `6_3_8_4_7` MSD/stdout parity 的来源连接 | read-only historical post-process parity；高保真例外见下文 |
 | `unseen_transfer_claim.json` | 论文对 unseen Li24M12(PS4)16 与 composition transfer 的文字主张 | claim-level document evidence；非 numerical evidence |
-| `transcription_provenance.json` | 每个转录文件、source location 和 digest | provenance index |
+| `transcription_provenance.json` | 每个转录文件与 source location | provenance index |
 | `benchmark_records.json` | 从上述表透明派生的 27 条 routing records | prepared replay input |
 
 仓库不包含原始文档、完整 247 候选 manifest、完整轨迹、模型、训练数据或 DFT
-输出。大文件只以 portable locator、size 和 SHA-256 指向用户可提供的外部 artifact。
+输出。大文件只以 portable locator 指向用户可提供的外部 artifact。
 
 训练只读审计另见 `reports/training_source_audit_summary.json`：它固定 5 份历史
 入口/最终配置，包括 `deepmd-se_atten_v2` 的最终配置摘要（seeds=1/1/10、
@@ -85,12 +85,12 @@ structure parity。
 `operation=md-smoke-and-analyze` 的真实 MLIP bounded handoff：ASE 3.28.0、MACE
 0.3.15 + 外部 model、Li3YCl6 在 400/600/800 K 各 10 steps。三个
 trajectory/metadata 经当时外部审阅的 `ionic_conductivity.py` 生成 MSD/D/σ/Arrhenius，标准
-Adapter 的 plan→execute→check→collect 全部成功；外部 79,462,305-byte model 只固定
-SHA-256，没有复制入仓库。reproduction example 不调用该 smoke；0.01 ps/温度的轨迹
+Adapter 的 plan→execute→check→collect 全部成功；外部 model 只记录
+为路径引用，没有复制入仓库。reproduction example 不调用该 smoke；0.01 ps/温度的轨迹
 也没有独立科学 baseline 或收敛性，所以只证明 integration handoff，科学 parity 状态
 仍为 `EXTERNAL_VALIDATION_PENDING`。
 
-该报告固定的是历史 smoke 当时的 adapter/source digest，不能冒充当前代码重跑。当前 `ionic-transport` formal runner 使用 `pymatgen-analysis-diffusion` public API，checker 从原始输入重跑相同 API；隔离的 historical reproduction 仍保留旧 MLIPFlow/脚本算法与数值 parity，本轮迁移不改变旧 smoke 的科学等级。
+该报告记录的是历史 smoke 当时的 adapter/source 路径与版本，不能冒充当前代码重跑。当前 `ionic-transport` formal runner 使用 `pymatgen-analysis-diffusion` public API，checker 从原始输入重跑相同 API；隔离的 historical reproduction 仍保留旧 MLIPFlow/脚本算法与数值 parity，本轮迁移不改变旧 smoke 的科学等级。
 
 ## LASP/SSW 对历史数据生成的贡献与边界
 
@@ -99,7 +99,7 @@ SHA-256，没有复制入仓库。reproduction example 不调用该 smoke；0.01
 按接受顺序抽样并生成后续单点输入；`best.arc` 则提供候选结构。这个结论补充了数据
 lineage，但不证明仓库中的全部论文训练数据都由这一条链生成。
 
-代表性初始目录 `Li10M7P8S32/run/11113` 的源哈希已核对：`allstr.arc` 含 6 frame，
+代表性初始目录 `Li10M7P8S32/run/11113` 的来源路径与参数已核对：`allstr.arc` 含 6 frame，
 `energy<=0` 接受 5，accepted-order stride 1 选中 5，`best.arc` 含 2 frame；临时本地
 副本实际运行 `lasp-ssw-normalize-replay` 后得到 generated/accepted/selected/best/md=
 6/5/5/2/0，wrapper rc=0、Adapter check=`OK`。代表性重采样目录的
@@ -116,7 +116,7 @@ lineage，但不证明仓库中的全部论文训练数据都由这一条链生�
 `HISTORICAL_POSTPROCESS_REPLAY_PASS`；它不含原始结构、远端实际路径或凭据，临时副本已
 在审计后删除。`reproduce.py --check` 不执行 LASP；
 另行通过的 fake executable local contract smoke 只证明 `shell=False` staging、直接或
-显式可指纹化 `mpirun`/`mpiexec` 路径加 `-np` argv、结果采集和失败边界。此后一个
+显式 `mpirun`/`mpiexec` 路径加 `-np` argv、结果采集和失败边界。此后一个
 真实 LASP 3.6.0 NN 14-atom CPU tiny case 已经通过 scheduled lifecycle、bounded fetch
 与 checker/collect 到 `OK`；它是 functional smoke，不建立 SSW trajectory numerical
 parity 或生产能力。LASP/SSW 采样、LASP 势训练、以及
@@ -136,7 +136,7 @@ DFT→LASP `TrainStr`/`TrainFor` 导出是三个独立能力，不能相互代�
 
 由此可重建论文的重要工作流逻辑：static 最优模型不必等于 transport 最优模型，
 transport 最优模型也不必等于 voltage 最优模型。每条 route 保存 registry、policy、
-prepared benchmark、source table 和 source document 的摘要链。
+prepared benchmark、source table 和 source document 的路径链。
 
 ## 可重建的 timing 结论
 
@@ -151,8 +151,8 @@ prepared benchmark、source table 和 source document 的摘要链。
 
 ## 大超胞筛选与 top candidate
 
-`large_supercell_screening_top10.json` 固定了 11 个候选源文件、11 个 metric 源文件
-及三个完整外部 result artifact 的摘要。校验结论为：
+`large_supercell_screening_top10.json` 记录了 11 个候选源文件、11 个 metric 源文件
+及三个完整外部 result artifact 的路径。校验结论为：
 
 - candidate_count=247、evaluated_count=247、missing=0、unique=247；
 - 每个候选含 28 个金属位，源顺序 `Zn,Fe,Cu,Ni,Mn` 被显式转换为 canonical
@@ -164,11 +164,11 @@ prepared benchmark、source table 和 source document 的摘要链。
 该 artifact 重放已经完成的 ranking。它没有重新生成 247 个 SQS，也没有执行
 247 次模型推理或 MD。
 
-现行实现为 `candidate-ranking`。artifact 中原 `composition-screening` plugin ID、
-旧 locator 与 SHA-256 作为历史 provenance 原样保留；`reproduce.py` 固定校验这些
+现行实现为 `candidate-ranking`。artifact 中原 `composition-screening` plugin ID 与
+旧 locator 作为历史 provenance 原样保留；`reproduce.py` 校验这些
 legacy 记录，并用现行 `rank.py` 对紧凑 top-10 再做兼容排序检查。
 
-top-1 的 canonical composition 与历史目录 token `6_3_8_4_7` 形成精确身份映射。
+top-1 的 canonical composition 与历史目录 token `6_3_8_4_7` 形成精确 composition 映射。
 三个既有 `target.msd` 经历史 sampling/Arrhenius convention 后，对历史 stdout 达到
 `EXACT_NUMERICAL_PARITY`，300 K mean-MSD conductivity 同样为
 18.420176685825222 S/m。这证明筛选值与同一历史 MLIP transport artifact 的
@@ -200,10 +200,10 @@ post-processing 链接正确。
 | 2. static and transport rankings differ | REPLAY_VERIFIED | 分别选择 DPA-2 与 se_atten_v2；由证据/策略产生 |
 | 3. transport route selects se_atten_v2 | REPLAY_VERIFIED | Table S3 MAE 与完整 decision provenance |
 | 4. voltage route selects CHGNet | REPLAY_VERIFIED | Table S11 18-row errors 与完整 decision provenance |
-| 5. large-supercell screening replay | REPLAY_VERIFIED | 247/247、top-10、单位、规则、输入/实现 digests 均校验；不运行筛选计算 |
+| 5. large-supercell screening replay | REPLAY_VERIFIED | 247/247、top-10、单位、规则、输入路径与实现版本均校验；不运行筛选计算 |
 | 6. top candidate validation evidence connected | BOUNDED_CONNECTION | top-1 ↔ `6_3_8_4_7` historical MLIP post-process parity 已连接；AIMD/DFT 高保真仍 `EXTERNAL_VALIDATION_PENDING` |
-| 7. unseen/transfer represented | CLAIM_LEVEL_ONLY | claim/source digest 已连接；numerical parity=`NOT_TESTABLE_WITH_AVAILABLE_DATA` |
-| 8. every decision has provenance | REPLAY_VERIFIED | evidence、policy、registry、routing 和 source digests 均存在，证据篡改被拒绝 |
+| 7. unseen/transfer represented | CLAIM_LEVEL_ONLY | claim/source path 已连接；numerical parity=`NOT_TESTABLE_WITH_AVAILABLE_DATA` |
+| 8. every decision has provenance | REPLAY_VERIFIED | evidence、policy、registry、routing 和 source path 均存在，科学表值不一致会被拒绝 |
 
 因此，自动验收可以通过其明示的 evidence-replay contract；它没有把第 6、7 项的
 外部科学缺口提升为验证完成。
@@ -231,17 +231,17 @@ post-processing 链接正确。
 
 ## 外部 artifact 接入
 
-若用户希望把 replay 提升为新执行/parity，应通过项目配置提供明确本地路径与可选
-SHA-256，而不是把大文件复制进仓库：
+若用户希望把 replay 提升为新执行/parity，应通过项目配置提供明确本地路径，
+而不是把大文件复制进仓库：
 
 | artifact | purpose | minimum metadata |
 |---|---|---|
-| reference/prediction pairs | fresh benchmark metric execution | model、dataset、split、target、unit、normalization、SHA-256 |
-| model checkpoint | prediction/MD | family/config、framework version、elements、training provenance、SHA-256 |
+| reference/prediction pairs | fresh benchmark metric execution | model、dataset、split、target、unit、normalization、路径 |
+| model checkpoint | prediction/MD | family/config、framework version、elements、training provenance、路径 |
 | trajectory / MSD | transport | timestep/time unit、MSD unit、temperature、carrier count、volume、sampling profile |
-| LASP/SSW executable or archive | fresh SSW execution / historical normalization | explicit LASP version、executable/input/auxiliary SHA-256、`lasp.in`、`allstr.arc`、可选 `best.arc`/`md.arc`、selection policy、seed status |
-| matched AIMD/DFT top-candidate result | high-fidelity validation | exact composition/structure ID、method、unit、paired metric、source digest |
-| unseen/transfer compact table | numerical generalization parity | split definition、787-config aggregation或逐项值、三 composition IDs、reference/prediction values、units、source digest |
+| LASP/SSW executable or archive | fresh SSW execution / historical normalization | explicit LASP version、executable/input/auxiliary 路径、`lasp.in`、`allstr.arc`、可选 `best.arc`/`md.arc`、selection policy、seed status |
+| matched AIMD/DFT top-candidate result | high-fidelity validation | exact composition/structure ID、method、unit、paired metric、source path |
+| unseen/transfer compact table | numerical generalization parity | split definition、787-config aggregation或逐项值、三 composition IDs、reference/prediction values、units、source path |
 
 模型权重、完整数据集、轨迹、VASP 大文件、POTCAR、私有 site config 与凭据仍不得
 进入开源仓库。

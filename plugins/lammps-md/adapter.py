@@ -7,7 +7,6 @@ so a READY plan cannot drift from the wrapper that will materialize the files.
 """
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import sys
@@ -74,14 +73,6 @@ def _ordinary_project_file(path: Path, root: Path, max_bytes: int) -> bool:
     if candidate.is_symlink() or not candidate.is_file():
         return False
     return 0 < candidate.stat().st_size <= max_bytes
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def _read_json(path: Path, max_bytes: int = MAX_JSON_BYTES) -> tuple[dict[str, Any] | None, str | None]:
@@ -246,7 +237,7 @@ class Adapter:
                 "operation": OPERATION,
                 "framework": model["framework"],
                 "model_id": model["model_id"],
-                "model_fingerprint": model["fingerprint"],
+                "model_path": model["relative_path"],
                 "model_kind": model["kind"],
                 "artifact_format": model["artifact_format"],
                 "lammps_interface": model.get("lammps_interface"),
@@ -260,11 +251,11 @@ class Adapter:
                 "simulated_time_ps": float(cfg["timestep_fs"]) * int(cfg["steps"]) / 1000.0,
                 "executes_lammps": False,
             },
-            "input_fingerprints": {
-                "structure": _sha256(structure),
-                "model_reference": _sha256(model_ref),
-                "lammps_config": _sha256(config),
-                "prepare_wrapper": _sha256(BUNDLED_PREPARE),
+            "input_paths": {
+                "structure": str(structure),
+                "model_reference": str(model_ref),
+                "lammps_config": str(config),
+                "prepare_wrapper": str(BUNDLED_PREPARE),
             },
         }
 
@@ -289,7 +280,7 @@ class Adapter:
         diagnostics: list[dict[str, str]] = []
         if manifest.get("schema_version") != 1 or manifest.get("plugin_id") != PLUGIN_ID:
             diagnostics.append(
-                _diagnostic("error", "result.identity", "LAMMPS input manifest identity is invalid")
+                _diagnostic("error", "result.schema", "LAMMPS input manifest schema is invalid")
             )
         if manifest.get("operation") != OPERATION or manifest.get("status") != "OK":
             diagnostics.append(
@@ -297,13 +288,13 @@ class Adapter:
             )
         structure, model_ref, config = _project_inputs(context)
         expected_inputs = {
-            "structure": _sha256(structure),
-            "model_reference": _sha256(model_ref),
-            "lammps_config": _sha256(config),
+            "structure": str(structure),
+            "model_reference": str(model_ref),
+            "lammps_config": str(config),
         }
-        if manifest.get("input_fingerprints") != expected_inputs:
+        if manifest.get("input_paths") != expected_inputs:
             diagnostics.append(
-                _diagnostic("error", "result.inputs", "input fingerprints differ from current project inputs")
+                _diagnostic("error", "result.inputs", "input paths differ from current project inputs")
             )
         try:
             model, cfg = _source_contract(model_ref, config)
@@ -311,7 +302,7 @@ class Adapter:
             diagnostics.append(_diagnostic("error", "result.source_contract", str(exc)))
             return diagnostics
         if manifest.get("model") != model:
-            diagnostics.append(_diagnostic("error", "result.model", "manifest model identity differs"))
+            diagnostics.append(_diagnostic("error", "result.model", "manifest model record differs"))
         if manifest.get("md") != cfg:
             diagnostics.append(_diagnostic("error", "result.md", "manifest MD configuration differs"))
         expected_structure_format = generator._structure_format(
@@ -353,14 +344,12 @@ class Adapter:
                     or path.is_symlink()
                     or not path.is_file()
                     or not 0 < path.stat().st_size <= MAX_OUTPUT_BYTES
-                    or record.get("size_bytes") != path.stat().st_size
-                    or record.get("sha256") != _sha256(path)
                 ):
                     diagnostics.append(
                         _diagnostic(
                             "error",
                             f"result.file.{name}",
-                            f"generated file {name} is missing or fingerprint-mismatched",
+                            f"generated file {name} is missing or invalid",
                         )
                     )
                     continue

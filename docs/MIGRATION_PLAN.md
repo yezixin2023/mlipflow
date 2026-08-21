@@ -5,7 +5,7 @@
 - 新实现只存在于 `mlipflow/`，不修改原 taskflow、远端 MLP 或工作区 claw。
 - LLM 只负责观察、解释、规划建议和经授权调用；数值结果由确定性插件产生。
 - 先包装、后重写；先回放、后执行；先结构化证据、后自动路由。
-- 大数据、轨迹、模型、POTCAR 和私钥不进入仓库，只存引用与指纹。
+- 大数据、轨迹、模型、POTCAR 和私钥不进入仓库，只存路径引用和必要元数据。
 - 每一阶段更新 `docs/IMPLEMENTATION_STATUS.md`，未验证能力不得写成“已支持”。
 
 ## 目标架构
@@ -14,7 +14,7 @@
 Agent Skills (.agents/skills)       人类/LLM 的监督说明
               │
               ▼
-CLI + Query/Command services        严格 CQRS、计划摘要与批准
+CLI + Query/Command services        严格 CQRS、计划展示与布尔批准
               │
      ┌────────┼────────┐
      ▼        ▼        ▼
@@ -49,7 +49,7 @@ CLI + Query/Command services        严格 CQRS、计划摘要与批准
 - SQLite 显式状态：`PREP READY SUBMITTED PENDING RUNNING OK FAIL WAIT BLOCKED STOPPED`；
 - run、attempt、dependency、artifact、event 和 submission intent；
 - `list/status/json/inspect/logs/route/doctor` 严格只读；
-- `init/run/advance/retry/stop` 显式写入；昂贵/破坏性操作使用 plan digest；
+- `init/run/advance/retry/stop` 显式写入；昂贵/外部操作先 dry-run，再用布尔 `--approve`；
 - 配置优先级和来源追踪。
 
 阶段门：只读命令在空目录、已有项目和只读数据库上均零文件/进程/提交副作用；非法状态迁移被拒绝。
@@ -125,11 +125,11 @@ completed/failed/cancelled、fetch/check/collect；重启后能恢复。真实 c
 
 ### 4.4 PES 采样
 
-已把 sampler、snapshot policy 和 DFT labeling 拆开。当前 `pes-sampling` 有三个显式操作：插件内置、local-only 且继续调用 MAML DIRECT 的 `direct-select`；对用户自备 LASP 的 local/`ssh-slurm` `lasp-ssw-execute`；以及只解析现有 `allstr.arc`、可选 `best.arc`/`md.arc` 的 `lasp-ssw-normalize-replay`。DIRECT 不再接受外部脚本路径并拒绝复用已有输出目录。LASP execute 要求显式 LASP 版本与输入文件；local MPI 仅接受显式、可指纹化且 basename 为 `mpirun`/`mpiexec` 的普通可执行文件路径与 `-np` 数量，scheduled 路径则由 site template 提供 executable/MPI。历史 normalization 的 frame/过滤/stride 链已经按源哈希重放；一个真实 LASP 3.6.0 NN 14-atom CPU tiny case 已完成 scheduled functional closure（job `redacted`，14/14/14，bounded fetch + checker/collect=`OK`）。AIMD、MLP-MD、生产 LASP 和完整科学数值 parity 仍待外部验证。
+已把 sampler、snapshot policy 和 DFT labeling 拆开。当前 `pes-sampling` 有三个显式操作：插件内置、local-only 且继续调用 MAML DIRECT 的 `direct-select`；对用户自备 LASP 的 local/`ssh-slurm` `lasp-ssw-execute`；以及只解析现有 `allstr.arc`、可选 `best.arc`/`md.arc` 的 `lasp-ssw-normalize-replay`。DIRECT 不再接受外部脚本路径并拒绝复用已有输出目录。LASP execute 要求显式 LASP 版本与输入文件；local MPI 仅接受显式、basename 为 `mpirun`/`mpiexec` 的普通可执行文件路径与 `-np` 数量，scheduled 路径则由 site template 提供 executable/MPI。历史 normalization 的 frame/过滤/stride 链已经按来源路径和记录字段重放；一个真实 LASP 3.6.0 NN 14-atom CPU tiny case 已完成 scheduled functional closure（job `redacted`，14/14/14，bounded fetch + checker/collect=`OK`）。AIMD、MLP-MD、生产 LASP 和完整科学数值 parity 仍待外部验证。
 
 ### 4.5 SQS 与组分枚举
 
-保留 icet/pymatgen/ASE 算法，外置位点映射与组分约束，强制 seed 和原型指纹。大规模枚举只在 dry-run 估算后批准。
+保留 icet/pymatgen/ASE 算法，外置位点映射与组分约束，强制 seed 并记录原型路径。大规模枚举只在 dry-run 估算后批准。
 
 ### 4.6 离子输运
 
@@ -147,13 +147,13 @@ DeepMD、M3GNet、CHGNet、MACE 为计划中的四个主后端。NequIP、LASP�
 
 Registry 每条模型记录：
 
-- artifact URI/fingerprint、family、版本和元素覆盖；
+- artifact 路径、family、版本和元素覆盖；
 - 支持任务（静态 E/F/S、MD、离子输运、结构优化、电压代理等）；
 - 训练数据版本和已知限制；
 - benchmark run 与指标；
 - 环境/后端兼容性。
 
-Routing 先按元素、任务、场景、限制和关键指标完整性过滤，再按项目策略中的指标方向/权重评分。输出候选、淘汰原因、指标贡献和 policy digest。平局依次使用覆盖率、验证样本数和 model id，保证可复现。
+Routing 先按元素、任务、场景、限制和关键指标完整性过滤，再按项目策略中的指标方向/权重评分。输出候选、淘汰原因、指标贡献和 policy 参数。平局依次使用覆盖率、验证样本数和 model id，保证可复现。
 
 论文示例中 DeepMD 可因离子输运 benchmark 排名胜出、CHGNet 可因电压相关静态任务胜出，但这些结论只能来自示例 registry/benchmark artifact，核心代码不硬编码。
 
@@ -182,11 +182,11 @@ Skills 只指导观察、判断、调用、风险确认和解释结果，不实�
 
 - 状态转换、retry 新 attempt、事务和崩溃恢复；
 - 所有只读命令零副作用、无 daemon/自动推进；
-- dry-run 零写、计划摘要失配拒绝；
+- dry-run 零写、显式布尔批准；
 - schema、配置优先级和重复插件检测；
 - 外部 argv 注入防护和结构化错误；
 - fake local/SLURM/SSH；
-- replay 不执行、不复制、不默认全量哈希大文件；
+- replay 不执行、不复制大文件；
 - manifest、原子写、凭据脱敏和 provenance；
 - routing 的指标方向、缺失值、场景、稳定 tie-break；
 - 小型科学公式和单位 smoke tests。
@@ -197,5 +197,5 @@ Skills 只指导观察、判断、调用、风险确认和解释结果，不实�
 
 - 状态库首版使用 SQLite；如果以后需要共享多用户数据库，另做迁移层，不在 v1 过早引入服务。
 - YAML 解析优先 PyYAML；JSON 是 YAML 子集，核心 fixtures 保持可由 stdlib JSON 读取，以便最小环境诊断。
-- 全文件哈希设大小阈值；超大产物默认记录 size/mtime/URI 和可选抽样指纹，完整哈希需显式请求。
+- 普通计算记录路径、参数、软件版本、seed 和输出；不建立项目自定义内容身份体系。
 - 远端科学脚本只能作为来源引用，不作为运行时依赖；用户可在本地配置 adapter command/profile。

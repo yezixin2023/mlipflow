@@ -8,7 +8,6 @@ supplied manuscript document.
 from __future__ import annotations
 
 import csv
-import hashlib
 import importlib.util
 import json
 import math
@@ -26,10 +25,6 @@ EXAMPLE = ROOT / "examples" / "high_entropy_sulfide_reproduction"
 REPRODUCE_PATH = EXAMPLE / "reproduce.py"
 BENCHMARK_WRAPPER = ROOT / "plugins" / "mlip-benchmark" / "benchmark_wrapper.py"
 SCHEMAS = ROOT / "schemas"
-MAIN_SHA256 = "22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b"
-SI_SHA256 = "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732"
-
-
 def _load_reproduce():
     spec = importlib.util.spec_from_file_location(
         "test_high_entropy_sulfide_reproduce", REPRODUCE_PATH
@@ -46,10 +41,6 @@ def _csv(path: Path):
         return list(csv.DictReader(stream))
 
 
-def _sha256(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 class ManuscriptReproductionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -60,13 +51,13 @@ class ManuscriptReproductionTests(unittest.TestCase):
             write=False,
         )
 
-    def test_pinned_real_evidence_and_schema_valid_registry(self) -> None:
+    def test_recorded_real_evidence_and_schema_valid_registry(self) -> None:
         provenance = json.loads(
             (EXAMPLE / "evidence" / "transcription_provenance.json").read_text(encoding="utf-8")
         )
         sources = {item["id"]: item for item in provenance["source_documents"]}
-        self.assertEqual(MAIN_SHA256, sources["manuscript-main"]["sha256"])
-        self.assertEqual(SI_SHA256, sources["supporting-information"]["sha256"])
+        self.assertEqual("Manuscirpt_0510zdl.docx", sources["manuscript-main"]["basename"])
+        self.assertEqual("SI_0510zdl.docx", sources["supporting-information"]["basename"])
         self.assertTrue(all(item["read_only"] for item in sources.values()))
         self.assertTrue(all(not item["included_in_example"] for item in sources.values()))
 
@@ -76,8 +67,8 @@ class ManuscriptReproductionTests(unittest.TestCase):
         self.assertEqual(6, len(registry["models"]))
         self.assertTrue(all(not model["recommended_tasks"] for model in registry["models"]))
         self.assertEqual(
-            {"sha256-verified"},
-            {item["status"] for item in registry["_evidence_verification"]},
+            {"available"},
+            {item["status"] for item in registry["_evidence_files"]},
         )
 
         try:
@@ -123,11 +114,7 @@ class ManuscriptReproductionTests(unittest.TestCase):
             {item["locator"] for item in implementation_files},
         )
         for item in implementation_files:
-            self.assertEqual(_sha256(ROOT / item["locator"]), item["sha256"])
-        self.assertEqual(
-            normalization["implementation_sha256"],
-            _sha256(ROOT / normalization["implementation"]),
-        )
+            self.assertTrue((ROOT / item["locator"]).is_file())
         self.assertEqual(
             {
                 "benchmark/metrics.json",
@@ -148,15 +135,14 @@ class ManuscriptReproductionTests(unittest.TestCase):
         )
 
         for route in routes.values():
-            self.assertEqual("sha256-verified", route["ranking"][0]["evidence_status"])
             self.assertTrue(route["decision_provenance"]["source_chain"])
             for source in route["decision_provenance"]["source_chain"]:
-                self.assertEqual(71, len(source["source_document_sha256"]))
-                self.assertEqual(71, len(source["evidence_file_sha256"]))
+                self.assertTrue(source["evidence_file"].startswith("evidence/"))
+                self.assertTrue(source["source_document"].endswith(".docx"))
         transport_source = routes["ionic-transport"]["decision_provenance"]["source_chain"][0]
         self.assertEqual(
-            "sha256:" + MAIN_SHA256,
-            transport_source["unit_source_document_sha256"],
+            "Manuscirpt_0510zdl.docx",
+            transport_source["unit_source_document"],
         )
 
         ranking = json.loads(
@@ -255,7 +241,7 @@ class ManuscriptReproductionTests(unittest.TestCase):
     def test_large_supercell_screening_replay_is_complete_and_portable(self) -> None:
         screening = self.summary["large_supercell_screening"]
         self.assertEqual("REPLAY_VERIFIED", screening["status"])
-        self.assertEqual("PINNED_LOCAL_RESULT_ARTIFACT", screening["evidence_level"])
+        self.assertEqual("RECORDED_LOCAL_RESULT_ARTIFACT", screening["evidence_level"])
         inputs = screening["input_set"]
         self.assertEqual(247, inputs["candidate_count"])
         self.assertEqual(247, inputs["source_structure_count"])
@@ -273,16 +259,16 @@ class ManuscriptReproductionTests(unittest.TestCase):
 
         artifacts = screening["source_artifacts"]
         self.assertEqual(
-            "sha256:30ada4653684618ab1594b4b428502ba324908b208028910d68b8e4785f5793a",
-            artifacts["ranking"]["sha256"],
+            "external-screening-artifact/ranking.json",
+            artifacts["ranking"]["locator"],
         )
         self.assertEqual(
-            "sha256:d030d2fdbd9c042b13a1a15c6a124ef2b953d62ca1170e963c272a57b43aa90d",
-            artifacts["candidate_manifest"]["sha256"],
+            "external-screening-artifact/candidates.json",
+            artifacts["candidate_manifest"]["locator"],
         )
         self.assertEqual(
-            "sha256:e3c4f4466b872b575345e4a10560b311fff19a8ed049383a82c18132534cd1c0",
-            artifacts["transport_results_manifest"]["sha256"],
+            "external-screening-artifact/transport.json",
+            artifacts["transport_results_manifest"]["locator"],
         )
 
         top = screening["top_candidates"]
@@ -302,14 +288,11 @@ class ManuscriptReproductionTests(unittest.TestCase):
         self.assertEqual(11, sources["metric_source_file_count"])
         for item in sources["candidate_sources"] + sources["metric_sources"]:
             self.assertEqual(item["basename"], Path(item["basename"]).name)
-            self.assertEqual(71, len(item["sha256"]))
         for item in screening["implementation"]["files"]:
             self.assertFalse(Path(item["locator"]).is_absolute())
-            self.assertEqual(71, len(item["sha256"]))
-        legacy_implementation = {
-            item["locator"]: item["sha256"]
-            for item in screening["implementation"]["files"]
-        }
+        legacy_implementation = tuple(
+            item["locator"] for item in screening["implementation"]["files"]
+        )
         self.assertEqual(self.reproduce.LEGACY_RANKING_IMPLEMENTATION, legacy_implementation)
         rendered = json.dumps(screening, sort_keys=True)
         for prefix in ("/Users/", "/public/", "/private/", "/tmp/"):
@@ -317,16 +300,16 @@ class ManuscriptReproductionTests(unittest.TestCase):
 
     def test_top_candidate_link_separates_postprocess_from_high_fidelity(self) -> None:
         validation = self.summary["top_candidate_validation"]
-        identity = validation["identity_link"]
-        self.assertEqual("EXACT_IDENTITY_MAPPING", identity["status"])
-        self.assertEqual("Mn6_Fe3_Ni8_Cu4_Zn7", identity["ranked_candidate_id"])
-        self.assertEqual("6_3_8_4_7", identity["historical_folder_id"])
+        mapping = validation["candidate_mapping"]
+        self.assertEqual("EXACT_COMPOSITION_MAPPING", mapping["status"])
+        self.assertEqual("Mn6_Fe3_Ni8_Cu4_Zn7", mapping["ranked_candidate_id"])
+        self.assertEqual("6_3_8_4_7", mapping["historical_folder_id"])
         self.assertEqual(
-            ["Mn", "Fe", "Ni", "Cu", "Zn"], identity["historical_token_order"]
+            ["Mn", "Fe", "Ni", "Cu", "Zn"], mapping["historical_token_order"]
         )
         self.assertEqual(
             {"Mn": 6, "Fe": 3, "Ni": 8, "Cu": 4, "Zn": 7},
-            identity["parsed_composition"],
+            mapping["parsed_composition"],
         )
 
         parity = validation["historical_transport_parity"]
@@ -350,10 +333,7 @@ class ManuscriptReproductionTests(unittest.TestCase):
         )
         implementation = parity["implementation_provenance"]
         self.assertEqual("1.0", implementation["wrapper_version"])
-        self.assertEqual(
-            _sha256(ROOT / implementation["wrapper_locator"]),
-            implementation["wrapper_sha256"],
-        )
+        self.assertTrue((ROOT / implementation["wrapper_locator"]).is_file())
         self.assertEqual(2, len(implementation["historical_scripts"]))
         for name in (
             "model_executed",
@@ -388,9 +368,7 @@ class ManuscriptReproductionTests(unittest.TestCase):
         unseen = self.summary["unseen_transfer_validation"]
         self.assertEqual("CLAIM_LEVEL_DOCUMENT_EVIDENCE", unseen["evidence_level"])
         self.assertEqual("EXTERNAL_VALIDATION_PENDING", unseen["status"])
-        self.assertEqual(
-            "sha256:" + MAIN_SHA256, unseen["source_document"]["sha256"]
-        )
+        self.assertEqual("Manuscirpt_0510zdl.docx", unseen["source_document"]["basename"])
         self.assertTrue(unseen["source_document"]["read_only"])
         system = unseen["document_claims"]["unseen_system"]
         self.assertEqual("Li24M12(PS4)16", system["reported_formula"])
@@ -446,7 +424,7 @@ class ManuscriptReproductionTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(
-                self.reproduce.ReproductionEvidenceError, "evidence (size|SHA-256) mismatch"
+                self.reproduce.ReproductionEvidenceError, "Table S11 long"
             ):
                 self.reproduce.reproduce(
                     relocated,
@@ -454,7 +432,7 @@ class ManuscriptReproductionTests(unittest.TestCase):
                     write=False,
                 )
 
-    def test_repository_locator_hash_tampering_is_rejected(self) -> None:
+    def test_repository_locator_contract_tampering_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             checkout = Path(temporary) / "mlipflow"
             relocated = checkout / "examples" / "high_entropy_sulfide_reproduction"
@@ -490,7 +468,7 @@ class ManuscriptReproductionTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(
                 self.reproduce.ReproductionEvidenceError,
-                "current candidate-ranking manifest identity drift",
+                "current candidate-ranking manifest contract drift",
             ):
                 self.reproduce.reproduce(
                     relocated,
@@ -503,13 +481,12 @@ class ManuscriptReproductionTests(unittest.TestCase):
         size = sum(path.stat().st_size for path in EXAMPLE.rglob("*") if path.is_file())
         self.assertLess(size, 500_000)
 
-    def test_top_level_acceptance_report_pins_the_canonical_report(self) -> None:
+    def test_top_level_acceptance_report_points_to_the_canonical_report(self) -> None:
         index = json.loads(
             (ROOT / "reports" / "manuscript_reproduction_summary.json").read_text(encoding="utf-8")
         )
         canonical = ROOT / index["canonical_report"]["path"]
-        digest = "sha256:" + hashlib.sha256(canonical.read_bytes()).hexdigest()
-        self.assertEqual(index["canonical_report"]["sha256"], digest)
+        self.assertTrue(canonical.is_file())
         self.assertEqual("REPLAY_VERIFIED", index["status"])
         self.assertEqual("deepmd-dpa2", index["selected_models"]["static-pes"])
         self.assertEqual("deepmd-se_atten_v2", index["selected_models"]["ionic-transport"])

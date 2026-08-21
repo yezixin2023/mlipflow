@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -17,10 +16,6 @@ def _load(name: str, path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def _sha(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _write_json(path: Path, value) -> None:
@@ -56,9 +51,7 @@ def _prepared(tmp_path: Path, framework: str, targets: list[str] | None = None) 
     structure.write_text("LAMMPS data file\n\n1 atoms\n1 atom types\n", encoding="utf-8")
     steps = 1000
     marker = f"MLIPFLOW_LAMMPS_COMPLETED step={steps}"
-    generated = [
-        {"name": "structure.data", "sha256": _sha(structure), "size_bytes": structure.stat().st_size}
-    ]
+    generated = [{"name": "structure.data"}]
     launchers = []
     for target in targets:
         deck = prepared / f"in.{target}.lammps"
@@ -77,7 +70,7 @@ def _prepared(tmp_path: Path, framework: str, targets: list[str] | None = None) 
             + f"run {steps}\nwrite_data final.data\nwrite_restart final.restart\nprint \"{marker}\"\n",
             encoding="utf-8",
         )
-        generated.append({"name": deck.name, "sha256": _sha(deck), "size_bytes": deck.stat().st_size})
+        generated.append({"name": deck.name})
         launchers.append(_launcher(framework, target))
     formats = {
         "deepmd": "deepmd-lammps-model",
@@ -97,7 +90,6 @@ def _prepared(tmp_path: Path, framework: str, targets: list[str] | None = None) 
             "framework": framework,
             "relative_path": f"{framework}/model.bin",
             "kind": "file",
-            "fingerprint": "sha256:" + "2" * 64,
             "artifact_format": formats[framework],
             "elements": ["Li"],
         },
@@ -122,14 +114,10 @@ def _prepared(tmp_path: Path, framework: str, targets: list[str] | None = None) 
 
 
 def _context(tmp_path: Path, framework: str, target: str, gpus: int | None = None) -> dict:
-    manifest = _prepared(tmp_path, framework)
+    _prepared(tmp_path, framework)
     if gpus is None:
         gpus = 0 if target == "cpu" else 1
-    parameters = {
-        "operation": "execute",
-        "target": target,
-        "input_manifest_fingerprint": _sha(manifest),
-    }
+    parameters = {"operation": "execute", "target": target}
     node = {
         "id": "lammps-run",
         "uses": "lammps-md@0",
@@ -174,10 +162,10 @@ def test_execute_plan_matrix(tmp_path: Path, framework: str, target: str) -> Non
     assert scheduled["execution_model"] == "mpi"
     assert scheduled["template_family"] == f"lammps-{framework}-{target}"
     assert plan["approval_summary"]["cpus_meaning"] == "mpi-task-count"
-    identity = plan["lammps_execution_identity"]
-    assert identity["framework"] == framework
-    assert identity["target"] == target
-    assert identity["steps"] == 1000
+    calculation = plan["lammps_calculation"]
+    assert calculation["framework"] == framework
+    assert calculation["target"] == target
+    assert calculation["steps"] == 1000
     staged = {item["remote_name"] for item in scheduled["staged_files"]}
     assert {
         "project.yaml",
@@ -212,7 +200,7 @@ def test_changed_prepared_deck_blocks_execution(tmp_path: Path) -> None:
     (tmp_path / "prepared" / "in.gpu.lammps").write_text("tampered\n", encoding="utf-8")
     plan = module.Adapter().plan(context)
     assert plan["status"] == "BLOCKED"
-    assert any(item["code"].startswith("lammps.prepared_") for item in plan["diagnostics"])
+    assert any(item["code"] == "lammps.deck_portability" for item in plan["diagnostics"])
 
 
 def test_gnnp_execute_plan_binds_directory_interface_and_family(tmp_path: Path) -> None:
@@ -237,9 +225,6 @@ def test_gnnp_execute_plan_binds_directory_interface_and_family(tmp_path: Path) 
         ),
         encoding="utf-8",
     )
-    for record in manifest["generated_files"]:
-        if record["name"] == "in.cpu.lammps":
-            record.update({"sha256": _sha(deck), "size_bytes": deck.stat().st_size})
     cpu_launcher = next(item for item in manifest["launchers"] if item["target"] == "cpu")
     cpu_launcher["argv_after_executable"].extend(
         ["-var", "INTERFACE_PATH", "<site-resolved-interface-path>"]
@@ -252,22 +237,16 @@ def test_gnnp_execute_plan_binds_directory_interface_and_family(tmp_path: Path) 
     )
     manifest["launchers"] = [cpu_launcher]
     _write_json(manifest_path, manifest)
-    fingerprint = _sha(manifest_path)
-    context["parameters"]["input_manifest_fingerprint"] = fingerprint
-    project_path = tmp_path / "project.yaml"
-    project = json.loads(project_path.read_text(encoding="utf-8"))
-    project["workflow"]["nodes"][0]["parameters"]["input_manifest_fingerprint"] = fingerprint
-    _write_json(project_path, project)
 
     plan = module.Adapter().plan(context)
 
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["scheduled_execution"]["template_family"] == "lammps-m3gnet-gnnp-cpu"
-    assert plan["lammps_execution_identity"]["model_kind"] == "directory"
-    assert plan["lammps_execution_identity"]["lammps_interface"] == "gnnp"
+    assert plan["lammps_calculation"]["model_kind"] == "directory"
+    assert plan["lammps_calculation"]["lammps_interface"] == "gnnp"
 
 
-def test_cluster_directory_model_fingerprint_and_interface_replacement(tmp_path: Path) -> None:
+def test_cluster_directory_model_resolution_and_interface_replacement(tmp_path: Path) -> None:
     cluster = _load("lammps_cluster_gnnp", PLUGIN / "lammps_cluster.py")
     root = tmp_path / "models"
     model = root / "m3gnet" / "finetuned_model"
@@ -275,11 +254,9 @@ def test_cluster_directory_model_fingerprint_and_interface_replacement(tmp_path:
     (model / "model.json").write_text("{}\n", encoding="utf-8")
     (model / "model.pt").write_bytes(b"model")
     (model / "state.pt").write_bytes(b"weights")
-    fingerprint = cluster.fingerprint(model)
     reference = {
         "relative_path": "m3gnet/finetuned_model",
         "kind": "directory",
-        "fingerprint": fingerprint,
     }
     assert cluster._resolve_model(str(root), reference) == model.resolve()
     interface = tmp_path / "ML-GNNP"
@@ -301,8 +278,7 @@ def test_cluster_directory_model_fingerprint_and_interface_replacement(tmp_path:
     assert str(model) in argv
     assert str(interface) in argv
     (model / "state.pt").write_bytes(b"tampered")
-    with pytest.raises(ValueError, match="fingerprint differs"):
-        cluster._resolve_model(str(root), reference)
+    assert cluster._resolve_model(str(root), reference) == model.resolve()
 
 
 def test_prepare_plan_uses_execution_ready_wrapper(tmp_path: Path) -> None:
@@ -321,7 +297,6 @@ def test_prepare_plan_uses_execution_ready_wrapper(tmp_path: Path) -> None:
             "framework": "deepmd",
             "relative_path": "deepmd/model.pb",
             "kind": "file",
-            "fingerprint": "sha256:" + "2" * 64,
             "artifact_format": "deepmd-lammps-model",
             "elements": ["Li"],
         },
@@ -363,12 +338,12 @@ def test_execution_checker_rebinds_outputs(tmp_path: Path) -> None:
     attempt = tmp_path / "attempt"
     attempt.mkdir()
     marker = "MLIPFLOW_LAMMPS_COMPLETED step=1000"
-    identity = {
+    calculation = {
         "framework": "mace",
         "target": "gpu",
-        "input_manifest_fingerprint": "sha256:" + "1" * 64,
+        "input_manifest_path": "prepared/lammps-input-manifest.json",
         "model_id": "mace-lmp-v1",
-        "model_fingerprint": "sha256:" + "2" * 64,
+        "model_path": "mace/model.bin",
         "model_kind": "file",
         "artifact_format": "mace-lammps-torchscript",
         "lammps_interface": None,
@@ -394,7 +369,7 @@ def test_execution_checker_rebinds_outputs(tmp_path: Path) -> None:
     for name, payload in files.items():
         path = attempt / name
         path.write_bytes(payload)
-        artifacts.append({"name": name, "path": name, "sha256": _sha(path), "size_bytes": path.stat().st_size})
+        artifacts.append({"name": name, "path": name})
     result = {
         "schema_version": 1,
         "plugin_id": "lammps-md",
@@ -403,19 +378,19 @@ def test_execution_checker_rebinds_outputs(tmp_path: Path) -> None:
         "framework": "mace",
         "target": "gpu",
         "lammps_version": "4 Jul 2026",
-        "input_manifest_fingerprint": identity["input_manifest_fingerprint"],
+        "input_manifest_path": calculation["input_manifest_path"],
         "model": {
-            "id": identity["model_id"],
-            "fingerprint": identity["model_fingerprint"],
-            "kind": identity["model_kind"],
-            "artifact_format": identity["artifact_format"],
-            "lammps_interface": identity["lammps_interface"],
+            "id": calculation["model_id"],
+            "path": calculation["model_path"],
+            "kind": calculation["model_kind"],
+            "artifact_format": calculation["artifact_format"],
+            "lammps_interface": calculation["lammps_interface"],
         },
         "ensemble": "nvt",
         "steps_requested": 1000,
         "steps_completed": 1000,
         "completion_marker": marker,
-        "launcher": {"site_launcher_used": True, "prepared_argv_after_executable": identity["prepared_launcher"]["argv_after_executable"], "required_packages": ["mace"]},
+        "launcher": {"site_launcher_used": True, "prepared_argv_after_executable": calculation["prepared_launcher"]["argv_after_executable"], "required_packages": ["mace"]},
         "artifacts": artifacts,
     }
     _write_json(attempt / "lammps-execution-result.json", result)
@@ -426,20 +401,19 @@ def test_execution_checker_rebinds_outputs(tmp_path: Path) -> None:
             "status": "OK",
             "framework": "mace",
             "target": "gpu",
-            "model_id": identity["model_id"],
-            "model_fingerprint": identity["model_fingerprint"],
-            "model_kind": identity["model_kind"],
-            "lammps_interface": identity["lammps_interface"],
-            "input_manifest_fingerprint": identity["input_manifest_fingerprint"],
+            "model_id": calculation["model_id"],
+            "model_path": calculation["model_path"],
+            "model_kind": calculation["model_kind"],
+            "lammps_interface": calculation["lammps_interface"],
+            "input_manifest_path": calculation["input_manifest_path"],
             "steps_completed": 1000,
             "lammps_version": "4 Jul 2026",
-            "result_sha256": _sha(attempt / "lammps-execution-result.json"),
         },
     )
     context = {
         "attempt_dir": str(attempt),
         "parameters": {"operation": "execute"},
-        "execution": {"plan": {"lammps_execution_identity": identity}},
+        "execution": {"plan": {"lammps_calculation": calculation}},
     }
     checked = module.Adapter().check(context)
     assert checked["status"] == "OK", checked.get("diagnostics")

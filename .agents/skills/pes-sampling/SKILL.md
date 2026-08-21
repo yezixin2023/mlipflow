@@ -13,7 +13,7 @@ SSW, or infer undocumented LASP inputs in this Skill.
 
 - Use `direct-select` for local MAML/DIRECT representative-structure selection.
 - Use `lasp-input-prepare` locally to convert one explicit ASE-readable periodic frame
-  into a fingerprinted single-frame LASP `input.arc`.
+  into a single-frame LASP `input.arc` with recorded source/frame metadata.
 - Use `merge-structures` locally to normalize and deduplicate verified DIRECT and
   scheduled-LASP selected outputs into one DFT-ready `structures.json`.
 - Use `lasp-ssw-execute` to run a user- or site-supplied LASP executable, locally or
@@ -75,16 +75,16 @@ but always select exactly one frame with `input_index`; use `-1` for the final M
 For sampling-cell handoff, set the reviewed strict
 `minimum_cell_length_angstrom` bound rather than assuming that an MD input remained the
 right size. The converter requires a full-rank 3D periodic cell and writes a fresh
-`input.arc` plus `lasp-input-manifest.json` with source/frame, geometry, and SHA-256
-identity. Pass that verified ARC artifact directly to `lasp-ssw-execute`; do not ask the
+`input.arc` plus `lasp-input-manifest.json` with source/frame and geometry records.
+Pass that verified ARC artifact directly to `lasp-ssw-execute`; do not ask the
 user to copy, rename, or hand-write an ARC. This operation does not run LASP, MD, or DFT.
 
 For a reviewed `potential vasp` run, also bind the same portable licensed
 `pseudopotential_reference` contract used by `$dft-labeling`: explicit
-`PMG_VASP_PSP_DIR`, functional, element-to-symbol map, component hashes, combined hash,
+`PMG_VASP_PSP_DIR`, functional, element-to-symbol map,
 and license acknowledgement. The converter may materialize `POTCAR` only inside its
 fresh attempt and records `collectable: false`. Its checker verifies the approved
-component and combined hashes. Collection returns the manifest and `input.arc` but
+functional and symbols. Collection returns the manifest and `input.arc` but
 never `POTCAR`.
 
 ## `merge-structures`
@@ -95,7 +95,7 @@ portable source-group IDs, `matcher_ltol`, `matcher_stol`,
 `matcher_angle_tol_deg`, `minimum_distance_angstrom`, and `max_structures`, plus an
 explicit Python executable with pymatgen and ASE. Do not guess scientific tolerances.
 
-The operation verifies archive membership and hashes, parses LASP ARC frames, rejects
+The operation verifies archive membership, parses LASP ARC frames, rejects
 non-finite/non-positive-volume/too-close structures, preserves source lineage, writes
 normalized POSCARs, removes exact duplicates, then applies the explicitly reviewed
 pymatgen `StructureMatcher` tolerances with cell scaling disabled. It neither evaluates
@@ -140,7 +140,7 @@ potential; this Skill is not LASP-NN-specific.
   from declared inputs. Obtain the separate DFT authorization required by repository
   policy before submission. Do not infer a call count from undocumented behavior. In
   scheduled mode, bind the verified upstream `lasp-input-manifest`; the adapter derives
-  its sibling runtime-only POTCAR, rechecks the exact hash, and stages it as sensitive.
+  its sibling runtime-only POTCAR and stages it as sensitive.
   Do not put POTCAR in `lasp_auxiliary_files` or ask the user for its attempt path.
 - Never read, display, package, or commit POTCAR content. Keep licensed material outside
   the repository and pass it only through the core input/staging contract.
@@ -195,14 +195,14 @@ is absent, first inventory the canonical root and compare every target, then add
 the missing `lasp-ssw/` family below it. Never create sibling `templates-*` or work
 roots, and never silently overwrite an existing template.
 
-Follow the complete lifecycle: review the dry-run's scientific identity, important
+Follow the complete lifecycle: review the dry-run's scientific parameters, important
 inputs, resources, fresh attempt workspace, and expected outputs. Let MLIPFlow core stage, submit, and persist
-scheduler identity; never call `sbatch` directly. Poll through MLIPFlow read-only
+scheduler job IDs; never call `sbatch` directly. Poll through MLIPFlow read-only
 status/log interfaces. After scheduler `COMPLETED`, ordinary `advance` bounded-fetches
-the run's declared outputs and runs pinned checker/collect.
+the run's declared outputs and runs scientific checker/collect.
 
 Slurm `COMPLETED` alone is never scientific success. Report `OK` only after bounded
-fetch and pinned checker/collect both succeed.
+fetch and scientific checker/collect both succeed.
 
 ## ARC compatibility and completion
 
@@ -225,11 +225,11 @@ canonical `allstr.arc`, not `all.arc` or `allstr.native.arc`. Treat the native r
 preserved provenance, not as the selected scientific trajectory or an independently
 fetched archive.
 
-Do not trust a self-reported `OK` JSON. The pinned checker must reparse fetched canonical
+Do not trust a self-reported `OK` JSON. The scientific checker must reparse fetched canonical
 `allstr.arc`, enforce frame/byte bounds and finite Energy records, recompute deterministic
 structure IDs, historical order, energy acceptance, accepted-order stride, selected
-counts, and selected-manifest identity. Scheduled checking must also verify every safe
-member of `selected-structures.tar.gz` against its source frame. Reparse declared
+counts, and selected-manifest records. Scheduled checking must also verify every safe
+member of `selected-structures.tar.gz` against its declared source frame. Reparse declared
 `best.arc`/`md.arc` when included. Fail on changed inputs/outputs,
 unsafe archive members, missing/oversized files, non-finite data, or lineage mismatch.
 

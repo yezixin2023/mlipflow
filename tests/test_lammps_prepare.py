@@ -38,7 +38,6 @@ def _model(framework: str) -> dict:
         "framework": framework,
         "relative_path": f"{framework}/model-v1.pt",
         "kind": "file",
-        "fingerprint": "sha256:" + "2" * 64,
         "artifact_format": formats[framework],
         "elements": ["Li", "P", "S"],
     }

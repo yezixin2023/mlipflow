@@ -9,7 +9,6 @@ contracts without installing a scientific framework.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.util
 import json
 import math
@@ -20,19 +19,15 @@ from typing import Any, Protocol, Sequence
 
 try:
     from mlipflow.science import model_runtime
-    from mlipflow.science.artifact_identity import fingerprint_path
-    from mlipflow.science.artifact_identity import sha256_bytes as _sha_bytes
 except ModuleNotFoundError:
     source_root = Path(__file__).resolve().parents[2] / "src"
     if source_root.is_dir() and str(source_root) not in sys.path:
         sys.path.insert(0, str(source_root))
     from mlipflow.science import model_runtime
-    from mlipflow.science.artifact_identity import fingerprint_path
-    from mlipflow.science.artifact_identity import sha256_bytes as _sha_bytes
 
 
 PLUGIN_ID = "mlip-benchmark"
-RUNNER_VERSION = "1.0.1"
+RUNNER_VERSION = "1.1.0"
 PREDICTION_CONTRACT = "mlip-benchmark/prediction-evidence"
 PREDICTION_SCHEMA_VERSION = 1
 MODEL_FRAMEWORKS = model_runtime.MODEL_FAMILY_FRAMEWORKS
@@ -51,7 +46,7 @@ class FreshBenchmarkError(RuntimeError):
 
 
 class Predictor(Protocol):
-    runtime_identity: dict[str, Any]
+    runtime_details: dict[str, Any]
     prediction_units: dict[str, str]
 
     def predict(self, sample: dict[str, Any]) -> dict[str, Any]: ...
@@ -232,8 +227,6 @@ def evaluate_fresh(
     dataset: Path,
     output_dir: Path,
     model_family: str,
-    model_fingerprint: str,
-    dataset_fingerprint: str,
     task: str,
     scenario: str,
     split: str,
@@ -260,12 +253,6 @@ def evaluate_fresh(
         raise FreshBenchmarkError("stress target requires an explicit stress_convention")
     for target in selected_targets:
         _unit_token(units.get(target), target)
-    observed_model = fingerprint_path(model)
-    observed_dataset = fingerprint_path(dataset)
-    if observed_model != model_fingerprint:
-        raise FreshBenchmarkError("model fingerprint differs from the approved identity")
-    if observed_dataset != dataset_fingerprint:
-        raise FreshBenchmarkError("dataset fingerprint differs from the approved identity")
     if output_dir.exists() and (not output_dir.is_dir() or any(output_dir.iterdir())):
         raise FreshBenchmarkError("fresh output directory must not already contain artifacts")
 
@@ -276,19 +263,19 @@ def evaluate_fresh(
     if "stress" in selected_targets and metadata["stress_convention"] != stress_convention:
         raise FreshBenchmarkError("dataset stress convention differs from the approved convention")
     runtime = predictor if predictor is not None else load_predictor(model, model_family, device)
-    identity = getattr(runtime, "runtime_identity", None)
+    runtime_info = getattr(runtime, "runtime_details", None)
     prediction_units = getattr(runtime, "prediction_units", None)
-    if not isinstance(identity, dict) or identity.get("framework") != MODEL_FRAMEWORKS[model_family]:
+    if not isinstance(runtime_info, dict) or runtime_info.get("framework") != MODEL_FRAMEWORKS[model_family]:
         raise FreshBenchmarkError("predictor runtime framework does not match the exact model family")
-    if identity.get("exact_model_family") not in {None, model_family}:
-        raise FreshBenchmarkError("predictor exact model family identity mismatch")
+    if runtime_info.get("exact_model_family") not in {None, model_family}:
+        raise FreshBenchmarkError("predictor exact model family differs")
     if not isinstance(prediction_units, dict):
         raise FreshBenchmarkError("predictor must declare prediction_units")
     for target in selected_targets:
         _unit_token(prediction_units.get(target), target)
-    if "energy" in selected_targets and identity.get("energy_convention") != "total":
+    if "energy" in selected_targets and runtime_info.get("energy_convention") != "total":
         raise FreshBenchmarkError("predictor must declare total-energy model output")
-    if "stress" in selected_targets and identity.get("stress_convention") != stress_convention:
+    if "stress" in selected_targets and runtime_info.get("stress_convention") != stress_convention:
         raise FreshBenchmarkError("predictor stress convention differs from the approved convention")
 
     evidence_records = []
@@ -343,16 +330,14 @@ def evaluate_fresh(
         "plugin_id": PLUGIN_ID,
         "mode": "fresh",
         "model_execution": True,
-        "model": {"family": model_family, "framework": MODEL_FRAMEWORKS[model_family], "fingerprint": observed_model},
-        "dataset": {"fingerprint": observed_dataset, "structure_count": len(samples)},
-        "source_fingerprints": {
-            "fresh_runner": fingerprint_path(Path(__file__)),
-            "metric_normalization": fingerprint_path(
-                Path(__file__).with_name("benchmark_normalization.py")
-            ),
-            "shared_model_runtime": fingerprint_path(_shared_runtime_path()),
+        "model": {"family": model_family, "framework": MODEL_FRAMEWORKS[model_family], "path": str(model)},
+        "dataset": {"path": str(dataset), "structure_count": len(samples)},
+        "source_paths": {
+            "fresh_runner": str(Path(__file__).resolve()),
+            "metric_normalization": str(Path(__file__).with_name("benchmark_normalization.py").resolve()),
+            "shared_model_runtime": str(_shared_runtime_path()),
         },
-        "runtime": dict(identity),
+        "runtime": dict(runtime_info),
         "task": task, "scenario": scenario, "split": split,
         "targets": list(selected_targets),
         "units": {target: units[target] for target in selected_targets},
@@ -368,8 +353,6 @@ def evaluate_fresh(
         "records": evidence_records,
     }
     evidence_payload = _json_bytes(evidence)
-    evidence_sha = _sha_bytes(evidence_payload)
-
     normalizer = _normalizer_module()
     output_parent = output_dir.parent
     output_parent.mkdir(parents=True, exist_ok=True)
@@ -400,30 +383,18 @@ def evaluate_fresh(
         "benchmark_summary.csv": normalizer._summary_bytes(metric_records),
         "model_ranking.json": normalizer._json_bytes(ranking),
     }
-    normalized_hashes = {
-        name: _sha_bytes(payload) for name, payload in payloads.items() if name != "prediction_evidence.json"
-    }
-    suite_digest = hashlib.sha256()
-    for name, digest in sorted(normalized_hashes.items()):
-        suite_digest.update(name.encode())
-        suite_digest.update(digest.encode())
     provenance = {
         "schema_version": 1, "plugin_id": PLUGIN_ID, "runner_version": RUNNER_VERSION,
         "mode": "fresh", "model_execution": True, "network_access": False,
-        "exact_model_family": model_family, "model_fingerprint": observed_model,
-        "dataset_fingerprint": observed_dataset, "runtime": dict(identity),
-        "source_fingerprints": evidence["source_fingerprints"],
+        "exact_model_family": model_family, "model_path": str(model),
+        "dataset_path": str(dataset), "runtime": dict(runtime_info),
+        "source_paths": evidence["source_paths"],
         "task": task, "scenario": scenario, "split": split,
         "units": {target: units[target] for target in selected_targets},
         "conventions": evidence["conventions"], "structure_count": len(samples),
-        "scalar_sample_counts": scalar_counts, "prediction_evidence_sha256": evidence_sha,
+        "scalar_sample_counts": scalar_counts,
         "unavailable_metrics": unavailable_metrics,
-        "normalized_artifact_sha256": normalized_hashes,
-        "normalized_suite_sha256": "sha256:" + suite_digest.hexdigest(),
-        "output_artifacts": [
-            {"path": name, "sha256": _sha_bytes(payload), "size_bytes": len(payload)}
-            for name, payload in sorted(payloads.items())
-        ],
+        "output_artifacts": [{"path": name} for name in sorted(payloads)],
     }
     payloads["provenance.json"] = _json_bytes(provenance)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -446,8 +417,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-family", choices=tuple(MODEL_FRAMEWORKS), required=True)
-    parser.add_argument("--model-fingerprint", required=True)
-    parser.add_argument("--dataset-fingerprint", required=True)
     parser.add_argument("--task", required=True)
     parser.add_argument("--scenario", required=True)
     parser.add_argument("--split", required=True)
@@ -468,8 +437,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         outputs = evaluate_fresh(
             model=Path(arguments.model), dataset=Path(arguments.dataset),
             output_dir=Path(arguments.output_dir), model_family=arguments.model_family,
-            model_fingerprint=arguments.model_fingerprint,
-            dataset_fingerprint=arguments.dataset_fingerprint, task=arguments.task,
+            task=arguments.task,
             scenario=arguments.scenario, split=arguments.split, targets=arguments.target,
             units=units, energy_normalization=arguments.energy_normalization,
             stress_convention=arguments.stress_convention, device=arguments.device,

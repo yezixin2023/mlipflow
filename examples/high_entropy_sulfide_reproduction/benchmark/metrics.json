@@ -14,7 +14,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-24",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "voltage_mae",
       "mode": "replay",
       "model": "chgnet",
@@ -38,7 +37,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-18",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "conductivity_mae",
       "mode": "replay",
       "model": "chgnet",
@@ -55,13 +53,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-6",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "energy_rmse",
       "mode": "replay",
       "model": "chgnet",
@@ -78,13 +74,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-12",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "force_rmse",
       "mode": "replay",
       "model": "chgnet",
@@ -108,7 +102,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-22",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "voltage_mae",
       "mode": "replay",
       "model": "deepmd-dpa2",
@@ -132,7 +125,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-16",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "conductivity_mae",
       "mode": "replay",
       "model": "deepmd-dpa2",
@@ -149,13 +141,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-4",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "energy_rmse",
       "mode": "replay",
       "model": "deepmd-dpa2",
@@ -172,13 +162,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-10",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "force_rmse",
       "mode": "replay",
       "model": "deepmd-dpa2",
@@ -202,7 +190,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-19",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "voltage_mae",
       "mode": "replay",
       "model": "deepmd-se_atten_v2",
@@ -226,7 +213,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-13",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "conductivity_mae",
       "mode": "replay",
       "model": "deepmd-se_atten_v2",
@@ -249,7 +235,6 @@
       },
       "direction": "maximize",
       "evidence_locator": "json!row-25",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "acceleration_ratio",
       "mode": "replay",
       "model": "deepmd-se_atten_v2",
@@ -272,7 +257,6 @@
       },
       "direction": "maximize",
       "evidence_locator": "json!row-26",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "acceleration_ratio",
       "mode": "replay",
       "model": "deepmd-se_atten_v2",
@@ -295,7 +279,6 @@
       },
       "direction": "maximize",
       "evidence_locator": "json!row-27",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "acceleration_ratio",
       "mode": "replay",
       "model": "deepmd-se_atten_v2",
@@ -312,13 +295,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-1",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "energy_rmse",
       "mode": "replay",
       "model": "deepmd-se_atten_v2",
@@ -335,13 +316,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-7",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "force_rmse",
       "mode": "replay",
       "model": "deepmd-se_atten_v2",
@@ -365,7 +344,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-20",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "voltage_mae",
       "mode": "replay",
       "model": "deepmd-se_e2_a",
@@ -389,7 +367,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-14",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "conductivity_mae",
       "mode": "replay",
       "model": "deepmd-se_e2_a",
@@ -406,13 +383,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-2",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "energy_rmse",
       "mode": "replay",
       "model": "deepmd-se_e2_a",
@@ -429,13 +404,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-8",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "force_rmse",
       "mode": "replay",
       "model": "deepmd-se_e2_a",
@@ -459,7 +432,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-21",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "voltage_mae",
       "mode": "replay",
       "model": "deepmd-se_e2_r",
@@ -483,7 +455,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-15",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "conductivity_mae",
       "mode": "replay",
       "model": "deepmd-se_e2_r",
@@ -500,13 +471,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-3",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "energy_rmse",
       "mode": "replay",
       "model": "deepmd-se_e2_r",
@@ -523,13 +492,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-9",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "force_rmse",
       "mode": "replay",
       "model": "deepmd-se_e2_r",
@@ -553,7 +520,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-23",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "voltage_mae",
       "mode": "replay",
       "model": "m3gnet",
@@ -577,7 +543,6 @@
       },
       "direction": "minimize",
       "evidence_locator": "json!row-17",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "conductivity_mae",
       "mode": "replay",
       "model": "m3gnet",
@@ -594,13 +559,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-5",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "energy_rmse",
       "mode": "replay",
       "model": "m3gnet",
@@ -617,13 +580,11 @@
     {
       "dimensions": {
         "derivation": "direct transcription of the reported test aggregate; underlying test sample count not stated",
-        "source_document_sha256": "0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "source_file": "table_3_pes_rmse.csv",
         "source_table": "Table 3"
       },
       "direction": "minimize",
       "evidence_locator": "json!row-11",
-      "evidence_sha256": "sha256:e9bbb3ca3f67f0880c412cb462d7282c27a279a930a0367a086a0e7cb807e698",
       "metric": "force_rmse",
       "mode": "replay",
       "model": "m3gnet",

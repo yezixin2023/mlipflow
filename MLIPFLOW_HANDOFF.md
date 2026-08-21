@@ -1,14 +1,14 @@
 # MLIPFlow Development Handoff
 
 This file records portable development constraints only. Site profiles, scheduler job
-IDs, absolute paths, model/data identities, credentials, and unpublished run results
+IDs, absolute model/data paths, credentials, and unpublished run results
 must stay outside the repository.
 
 ## Architecture
 
 - The control chain is `Agent -> Skill -> MLIPFlow Core -> Plugin -> scientific software`.
 - MLIPFlow is the deterministic execution layer; an Agent supervises scientific intent.
-- Scheduler `COMPLETED` is not scientific `OK`. A pinned plugin must still validate
+- Scheduler `COMPLETED` is not scientific `OK`. The selected plugin must still validate
   completion semantics and collect only approved artifacts.
 - Scheduled work uses a fresh attempt workspace, bounded staging/fetch allowlists, and
   preserved retry history. Never overwrite or delete an earlier attempt to simulate a
@@ -31,11 +31,10 @@ must stay outside the repository.
 ## Artifact and scientific contracts
 
 - Producer artifacts may be handed directly to declared downstream dependencies through
-  explicit role bindings; the final `OK` producer identity remains authoritative.
+  explicit role bindings; the final `OK` producer attempt remains authoritative.
 - Canonical DFT labels preserve units, energy convention, force/stress convention,
   structure lineage, and one shared train/validation/test split across framework views.
-- Published model references bind framework, kind, safe site-root-relative path, and
-  file or deterministic directory fingerprint.
+- Published model references record framework, kind, and a safe site-root-relative path.
 - Benchmark selection is task-specific. Undefined Pearson values are recorded as
   unavailable; only metrics shared by the full compared model set may decide a winner.
 - ASE/LAMMPS trajectory handoff to ionic transport uses recorded timestep, frame spacing,

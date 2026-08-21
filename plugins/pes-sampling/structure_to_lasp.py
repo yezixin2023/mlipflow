@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import os
@@ -13,7 +12,6 @@ from typing import Any, Iterable, Mapping, NamedTuple
 
 
 SAFE_POTCAR_SYMBOL = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
-FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 class ConversionError(RuntimeError):
@@ -27,18 +25,6 @@ from lasp_input_arc import canonical_from_atoms  # noqa: E402
 class PymatgenApi(NamedTuple):
     Potcar: Any
     configured_psp_root: str | None
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
-def _sha256_bytes(payload: bytes) -> str:
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
 def _fresh_directory(path: Path) -> Path:
@@ -78,8 +64,6 @@ def _pseudopotential_reference(path: Path) -> dict[str, Any]:
         "license_acknowledged",
         "functional",
         "symbols",
-        "expected_component_sha256",
-        "expected_combined_sha256",
     }
     if set(value) - allowed:
         raise ConversionError("pseudopotential reference contains unsupported fields")
@@ -113,30 +97,10 @@ def _pseudopotential_reference(path: Path) -> dict[str, Any]:
         ):
             raise ConversionError("pseudopotential symbols mapping is invalid")
         symbols[element] = symbol
-    expected = value.get("expected_component_sha256")
-    if not isinstance(expected, Mapping) or set(expected) != set(symbols.values()):
-        raise ConversionError(
-            "expected_component_sha256 must cover every selected POTCAR symbol exactly"
-        )
-    components: dict[str, str] = {}
-    for symbol, digest in expected.items():
-        if (
-            not isinstance(symbol, str)
-            or SAFE_POTCAR_SYMBOL.fullmatch(symbol) is None
-            or not isinstance(digest, str)
-            or FINGERPRINT.fullmatch(digest) is None
-        ):
-            raise ConversionError("expected POTCAR component fingerprints are invalid")
-        components[symbol] = digest
-    combined = value.get("expected_combined_sha256")
-    if not isinstance(combined, str) or FINGERPRINT.fullmatch(combined) is None:
-        raise ConversionError("expected_combined_sha256 must be a complete fingerprint")
     return {
         "reference_id": reference_id,
         "functional": functional,
         "symbols": symbols,
-        "expected_component_sha256": components,
-        "expected_combined_sha256": combined,
     }
 
 
@@ -167,13 +131,9 @@ def _component_records(
     potcar: Iterable[Any], symbols: list[str]
 ) -> list[dict[str, str]]:
     singles = list(potcar)
-    records = [
-        {"symbol": symbol, "sha256": _sha256_bytes(str(single).encode("utf-8"))}
-        for symbol, single in zip(symbols, singles)
-    ]
     if len(singles) != len(symbols):
         raise ConversionError("POTCAR component count differs from the element order")
-    return records
+    return [{"symbol": symbol} for symbol in symbols]
 
 
 def _prepare_potcar(
@@ -202,17 +162,6 @@ def _prepare_potcar(
             "pymatgen could not assemble the approved POTCAR"
         ) from exc
     components = _component_records(potcar, potcar_symbols)
-    for component in components:
-        if (
-            reference["expected_component_sha256"][component["symbol"]]
-            != component["sha256"]
-        ):
-            raise ConversionError(
-                f"POTCAR component hash mismatch for {component['symbol']}"
-            )
-    combined = _sha256(path)
-    if combined != reference["expected_combined_sha256"]:
-        raise ConversionError("combined POTCAR hash differs from the approved reference")
     return {
         "reference_id": reference["reference_id"],
         "source_env": "PMG_VASP_PSP_DIR",
@@ -221,12 +170,9 @@ def _prepare_potcar(
         "elements": element_order,
         "symbols": potcar_symbols,
         "components": components,
-        "combined_sha256": combined,
         "portable_artifact": False,
         "output": {
             "path": "POTCAR",
-            "sha256": combined,
-            "size_bytes": path.stat().st_size,
             "collectable": False,
         },
     }
@@ -282,7 +228,7 @@ def run(args: argparse.Namespace, api: PymatgenApi | None = None) -> dict[str, A
         "operation": "lasp-input-prepare",
         "source": {
             "basename": source.name,
-            "sha256": _sha256(source),
+            "path": str(source),
             "input_format": args.input_format,
             "input_index": str(args.input_index),
         },
@@ -295,8 +241,6 @@ def run(args: argparse.Namespace, api: PymatgenApi | None = None) -> dict[str, A
         },
         "output": {
             "path": output.name,
-            "sha256": _sha256(output),
-            "size_bytes": output.stat().st_size,
         },
         "arc_contract": {
             "format": "biosym-archive-2",
@@ -306,7 +250,7 @@ def run(args: argparse.Namespace, api: PymatgenApi | None = None) -> dict[str, A
         },
     }
     if potcar is not None:
-        manifest["pseudopotential_reference_sha256"] = _sha256(reference_path)
+        manifest["pseudopotential_reference_path"] = str(reference_path)
         manifest["potcar"] = potcar
     manifest_path = output_dir / "lasp-input-manifest.json"
     manifest_path.write_text(

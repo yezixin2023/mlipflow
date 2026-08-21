@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import builtins
-import hashlib
 import importlib.util
 import json
 import sys
@@ -33,13 +32,19 @@ def _contract():
     return _load("dft_dataset_contract_test", DFT_PLUGIN / "dataset_contract.py")
 
 
-def _canonical(count: int = 10, *, groups: bool = False, sampling: bool = False) -> dict:
+def _canonical(
+    count: int = 10,
+    *,
+    groups: bool = False,
+    sampling: bool = False,
+    project_id: str = "dataset",
+    start: int = 0,
+) -> dict:
     contract = _contract()
-    digest = "sha256:" + "1" * 64
     labels, structures = [], []
-    for index in range(count):
+    for index in range(start, start + count):
         structure_id = f"structure-{index:03d}"
-        item = {"id": structure_id, "path": f"structures/{structure_id}.vasp", "fingerprint": digest}
+        item = {"id": structure_id, "path": f"structures/{structure_id}.vasp"}
         if groups:
             item["source_group_id"] = f"trajectory-{index // 3:03d}"
         if sampling:
@@ -54,7 +59,6 @@ def _canonical(count: int = 10, *, groups: bool = False, sampling: bool = False)
                             "source_id": f"direct-{index:06d}",
                             "source_order": index + 1,
                             "source_path": f"selected/{structure_id}.vasp",
-                            "source_sha256": digest,
                         }
                     ],
                 }
@@ -73,7 +77,7 @@ def _canonical(count: int = 10, *, groups: bool = False, sampling: bool = False)
         label_records=labels,
         units={"energy": "eV", "length": "angstrom", "force": "eV/angstrom", "stress": "kbar-vasp-3x3"},
         calculation_type="static",
-        source_attempt_identity={"project_id": "dataset", "node_id": "label", "attempt": 1},
+        source_attempt_identity={"project_id": project_id, "node_id": "label", "attempt": 1},
         structures_manifest={"schema_version": 1, "structures": structures},
         raw_outputs={},
     )
@@ -125,6 +129,27 @@ def test_deterministic_split_is_minimal_stable_and_complete() -> None:
     ids = first["train_record_ids"] + first["validation_record_ids"] + first["test_record_ids"]
     assert len(ids) == len(set(ids)) == canonical["record_count"]
     assert not contract.validate_split_manifest(canonical, first)
+
+
+def test_canonical_merge_preserves_source_order_and_per_record_dft_lineage() -> None:
+    contract = _contract()
+    old = _canonical(3, project_id="old-labels")
+    query = _canonical(2, project_id="round-001", start=10)
+    merged = contract.merge_canonical_datasets([old, query])
+
+    assert merged["source_dataset_ids"] == [old["dataset_id"], query["dataset_id"]]
+    assert merged["record_count"] == 5
+    assert [record["record_id"] for record in merged["records"]] == [
+        *(record["record_id"] for record in old["records"]),
+        *(record["record_id"] for record in query["records"]),
+    ]
+    assert [record["source_dft_attempt"]["project_id"] for record in merged["records"]] == [
+        "old-labels", "old-labels", "old-labels", "round-001", "round-001"
+    ]
+    assert not contract.validate_canonical_dataset(merged)
+
+    with pytest.raises(contract.DatasetContractError, match="duplicate record_id"):
+        contract.merge_canonical_datasets([old, old])
 
 
 def test_group_aware_split_keeps_trajectory_frames_together() -> None:
@@ -189,7 +214,6 @@ def test_four_views_share_exact_record_ids_and_scientific_conventions(tmp_path: 
         assert reference["kind"] == "directory"
         assert reference["split_id"] == split["split_id"]
         assert reference["relative_path"] == f"{root.name}/{framework}"
-        assert reference["fingerprint"].startswith("sha256:")
     benchmark_path = output / "benchmark-test.json"
     benchmark = json.loads(benchmark_path.read_text())
     assert [sample["id"] for sample in benchmark["samples"]] == split["test_record_ids"]
@@ -202,9 +226,7 @@ def test_four_views_share_exact_record_ids_and_scientific_conventions(tmp_path: 
         (output / "benchmark-dataset-reference.json").read_text()
     )
     assert benchmark_reference["split_id"] == split["split_id"]
-    assert benchmark_reference["fingerprint"] == "sha256:" + hashlib.sha256(
-        benchmark_path.read_bytes()
-    ).hexdigest()
+    assert benchmark_reference["relative_path"] == f"{root.name}/benchmark/test.json"
     fresh = _load(
         "dft_benchmark_dataset_reader",
         ROOT / "plugins" / "mlip-benchmark" / "fresh_benchmark.py",
@@ -214,9 +236,9 @@ def test_four_views_share_exact_record_ids_and_scientific_conventions(tmp_path: 
     assert not list(tmp_path.rglob("*.tar"))
 
 
-def test_converter_refuses_existing_dataset_without_forensic_reverification(tmp_path: Path) -> None:
+def test_converter_refuses_existing_dataset_when_canonical_records_differ(tmp_path: Path) -> None:
     converter, args, _, root, first_output = _convert(tmp_path, _canonical(6), "m3gnet,chgnet,mace")
-    (root / "m3gnet" / "train.json").write_text("tampered")
+    (root / "canonical.json").write_text("{}")
     second_output = tmp_path / "second-output"
     args.output_dir = str(second_output)
     with pytest.raises(converter.ConversionError, match="already exists"):
@@ -224,7 +246,7 @@ def test_converter_refuses_existing_dataset_without_forensic_reverification(tmp_
     assert not second_output.exists()
     args.reuse_existing = True
     args.reuse_reference_dir = str(first_output)
-    with pytest.raises(converter.ConversionError, match="fingerprint differs"):
+    with pytest.raises(converter.ConversionError, match="canonical records differ"):
         converter.run(args)
 
 
@@ -273,6 +295,64 @@ def test_adapter_plan_passes_explicit_split_parameters_and_fetches_no_bundle(tmp
     variables = plan["scheduled_execution"]["template_variables"]
     assert variables["PLUGIN_SPLIT_SEED"] == "11"
     assert variables["PLUGIN_FRAMEWORKS"] == "deepmd,m3gnet,chgnet,mace"
+
+
+def test_dataset_adapter_stages_and_converter_resolves_canonical_merge_manifest(
+    tmp_path: Path,
+) -> None:
+    old = _canonical(3, project_id="old-labels")
+    query = _canonical(3, project_id="round-001", start=10)
+    source_dir = tmp_path / "canonical-sources"
+    write_json(source_dir / "old.json", old)
+    write_json(source_dir / "query.json", query)
+    merge_manifest = {
+        "schema_version": 1,
+        "contract": "mlipflow/canonical-dataset-merge",
+        "sources": [
+            {"path": "canonical-sources/old.json"},
+            {"path": "canonical-sources/query.json"},
+        ],
+    }
+    merge_path = tmp_path / "merge.json"
+    write_json(merge_path, merge_manifest)
+    merged = _contract().merge_canonical_datasets([old, query])
+
+    sys.path.insert(0, str(DFT_PLUGIN))
+    try:
+        converter = _load("dft_dataset_converter_merge", DFT_PLUGIN / "dataset_convert.py")
+    finally:
+        sys.path.pop(0)
+    assert converter._canonical_input(merge_path) == merged
+
+    attempt = tmp_path / "attempt"
+    attempt.mkdir()
+    context = {
+        "project_root": str(tmp_path),
+        "attempt_dir": str(attempt),
+        "backend": "ssh-slurm",
+        "inputs": {"canonical_dataset": "merge.json"},
+        "parameters": {
+            "operation": "dataset-assemble",
+            "frameworks": ["chgnet"],
+            "split_strategy": "deterministic",
+            "split_seed": 23,
+            "split_fractions": {"train": 2 / 3, "validation": 1 / 6, "test": 1 / 6},
+        },
+        "resources": {"cpus": 2, "gpus": 0, "memory": "4G", "walltime": "00:10:00"},
+    }
+    adapter = _load("dft_dataset_adapter_merge", DFT_PLUGIN / "adapter.py").Adapter()
+    assert adapter.validate(context) == []
+    plan = adapter.plan(context)
+    assert plan["status"] == "READY", plan.get("diagnostics")
+    assert plan["approval_summary"]["dataset_id"] == merged["dataset_id"]
+    assert plan["approval_summary"]["canonical_source_count"] == 2
+    assert {item["remote_name"] for item in plan["scheduled_execution"]["staged_files"]} == {
+        "canonical.json",
+        "canonical-sources/old.json",
+        "canonical-sources/query.json",
+        "dataset_convert.py",
+        "dataset_contract.py",
+    }
 
 
 def test_dataset_adapter_accepts_absolute_project_scoped_canonical_path(tmp_path: Path) -> None:
@@ -338,8 +418,7 @@ bash {{RUN_DIR}}/run.sh
     class Library:
         def read_template(self, _root, relative):
             content = run_template if relative == "dft-dataset/run.sh" else submit
-            payload = content.encode()
-            return {"content": content, "size_bytes": len(payload), "sha256": "sha256:" + hashlib.sha256(payload).hexdigest()}
+            return {"content": content}
     variables = {
         "PLUGIN_FRAMEWORKS": "deepmd,m3gnet,chgnet,mace", "PLUGIN_DATASET_ID": "dft-abc",
         "PLUGIN_SPLIT_STRATEGY": "deterministic", "PLUGIN_SPLIT_SEED": "4",

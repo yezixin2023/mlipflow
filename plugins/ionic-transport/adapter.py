@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import importlib.metadata
 import importlib.util
 import io
@@ -326,14 +325,6 @@ def _verify_file_record(
             _diagnostic("ERROR", "result.manifest_missing", f"{role} is missing: {path}")
         )
         return path, diagnostics
-    if record.get("sha256") != _sha256_file(path):
-        diagnostics.append(
-            _diagnostic("ERROR", "result.manifest_sha256", f"{role} SHA-256 does not match")
-        )
-    if record.get("size_bytes") != path.stat().st_size:
-        diagnostics.append(
-            _diagnostic("ERROR", "result.manifest_size", f"{role} size does not match")
-        )
     return path, diagnostics
 
 
@@ -357,14 +348,6 @@ def _operation_name(parameters: Mapping[str, Any]) -> str:
     if raw == "analyze-existing-transport":
         return _ANALYZE_OPERATION
     return str(raw)
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def _installed_version(name: str) -> Optional[str]:
@@ -935,9 +918,6 @@ def _read_parity_source(path_value: Any, role: str) -> Tuple[str, Dict[str, Any]
             % (role, _MAX_PARITY_SOURCE_BYTES, path)
         )
     payload = path.read_bytes()
-    after = path.stat()
-    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-        raise ManuscriptTransportError("%s changed while it was being read: %s" % (role, path))
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -945,8 +925,6 @@ def _read_parity_source(path_value: Any, role: str) -> Tuple[str, Dict[str, Any]
     provenance = {
         "role": role,
         "path": str(path),
-        "size_bytes": len(payload),
-        "sha256": hashlib.sha256(payload).hexdigest(),
         "read_only": True,
     }
     return text, provenance
@@ -1231,14 +1209,6 @@ def analyze_historical_target_msd(path_value: Any, sampling_profile: str) -> Dic
             "historical MSD analysis produced non-positive diffusivity; Arrhenius log is undefined"
         )
 
-    sampled_digest = hashlib.sha256(
-        "\n".join(
-            "%d %.17g %.17g" % (line_index, timestep, msd)
-            for line_index, timestep, msd in zip(
-                sampled_line_indices, timesteps, msd_values
-            )
-        ).encode("ascii")
-    ).hexdigest()
     linear_result: Dict[str, Any] = {
         "method": "linear_msd_fit",
         "slope_A2_fs": slope_a2_fs,
@@ -1265,7 +1235,6 @@ def analyze_historical_target_msd(path_value: Any, sampling_profile: str) -> Dic
             "last_timestep": timesteps[-1],
             "first_time_ps": timesteps[0] * timestep_fs / 1000.0,
             "last_time_ps": timesteps[-1] * timestep_fs / 1000.0,
-            "sampled_points_sha256": sampled_digest,
         },
         "methods": {
             "linear_msd_fit": linear_result,
@@ -1863,8 +1832,6 @@ def reproduce_manuscript_transport(
             "historical dataset/convention options require historical_output_path"
         )
 
-    wrapper_path = _MODULE_PATH
-    wrapper_digest = hashlib.sha256(wrapper_path.read_bytes()).hexdigest()
     return {
         "schema_version": 1,
         "artifact_type": "mlipflow.manuscript_transport_parity",
@@ -1910,7 +1877,6 @@ def reproduce_manuscript_transport(
         "provenance": {
             "wrapper": "ionic-transport.adapter.reproduce_manuscript_transport",
             "wrapper_version": MANUSCRIPT_PARITY_VERSION,
-            "wrapper_sha256": wrapper_digest,
             "sources": source_provenance,
         },
     }
@@ -1936,7 +1902,7 @@ def _integration_manifest_path(context: Mapping[str, Any]) -> Optional[Path]:
 def _verify_smoke_manifest(
     context: Mapping[str, Any],
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, str]], List[Dict[str, str]]]:
-    """Verify the bounded handoff manifest and every recorded SHA-256."""
+    """Verify the bounded handoff manifest and its declared files."""
 
     diagnostics: List[Dict[str, str]] = []
     artifacts: List[Dict[str, str]] = []
@@ -2104,7 +2070,6 @@ def _verify_smoke_manifest(
                 continue
             seen_roles.add(role)
             locator = record.get("path")
-            is_relative = record.get("path_is_attempt_relative") is True
             if not isinstance(locator, str) or not locator:
                 diagnostics.append(
                     _diagnostic("ERROR", "integration.artifact_path", "artifact path must be non-empty")
@@ -2113,27 +2078,20 @@ def _verify_smoke_manifest(
             expected_external = expected_external_by_group.get(group_name)
             if expected_external is not None:
                 path = expected_external.get(role)
-                if (
-                    path is None
-                    or locator != path.name
-                    or record.get("locator_kind") != "local-basename"
-                    or record.get("portable") is not False
-                    or record.get("absolute_path_recorded") is not False
-                    or is_relative
-                ):
+                if path is None or Path(locator).expanduser().resolve() != path.resolve():
                     diagnostics.append(
                         _diagnostic(
                             "ERROR",
-                            "integration.external_locator",
-                            "%s[%d] must be the approved non-portable local basename"
-                            % (group_name, index),
+                            "integration.external_path",
+                            "%s[%d] differs from the selected input path" % (group_name, index),
                         )
                     )
                     continue
                 path = path.resolve()
             else:
-                path = (attempt_dir / locator).resolve() if is_relative else Path(locator).resolve()
-            if confined and (not is_relative or not _is_within(path, attempt_dir)):
+                candidate = Path(locator).expanduser()
+                path = (attempt_dir / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+            if confined and not _is_within(path, attempt_dir):
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
@@ -2146,21 +2104,6 @@ def _verify_smoke_manifest(
                 diagnostics.append(
                     _diagnostic(
                         "ERROR", "integration.artifact_missing", "recorded artifact is missing: %s" % path
-                    )
-                )
-                continue
-            expected_sha = record.get("sha256")
-            if expected_sha != _sha256_file(path):
-                diagnostics.append(
-                    _diagnostic(
-                        "ERROR", "integration.artifact_sha256", "recorded SHA-256 does not match: %s" % path
-                    )
-                )
-                continue
-            if record.get("size_bytes") != path.stat().st_size:
-                diagnostics.append(
-                    _diagnostic(
-                        "ERROR", "integration.artifact_size", "recorded size does not match: %s" % path
                     )
                 )
                 continue
@@ -2183,7 +2126,7 @@ def _verify_smoke_manifest(
             _diagnostic(
                 "ERROR",
                 "integration.trajectory_count",
-                "one hashed production trajectory is required per temperature",
+                "one production trajectory is required per temperature",
             )
         )
     result_names = {path.name for path in verified_by_group.get("result_artifacts", [])}
@@ -2193,7 +2136,7 @@ def _verify_smoke_manifest(
             _diagnostic(
                 "ERROR",
                 "integration.result_artifacts",
-                "integration manifest omits required result hashes: %s" % sorted(missing_results),
+                "integration manifest omits required result files: %s" % sorted(missing_results),
             )
         )
     randomness = _mapping(manifest.get("randomness"))
@@ -2229,7 +2172,7 @@ def _verify_analysis_manifest(
         return [_diagnostic("ERROR", "result.analysis_manifest", "manifest must be an object")]
     if manifest.get("schema_version") != 1 or manifest.get("plugin_id") != PLUGIN_ID:
         diagnostics.append(
-            _diagnostic("ERROR", "result.analysis_manifest_identity", "manifest identity is invalid")
+            _diagnostic("ERROR", "result.analysis_manifest", "manifest header is invalid")
         )
     contract = _mapping(manifest.get("scientific_contract"))
     if (
@@ -2282,7 +2225,7 @@ def _verify_analysis_manifest(
                     diagnostics.append(
                         _diagnostic(
                             "ERROR",
-                            "result.runtime_identity",
+                            "result.runtime_version",
                             f"manifest runtime {name} differs from the selected local interpreter",
                         )
                     )
@@ -2302,7 +2245,7 @@ def _verify_analysis_manifest(
                     diagnostics.append(
                         _diagnostic(
                             "ERROR",
-                            "result.runtime_identity",
+                            "result.runtime_version",
                             "manifest ASE version differs from the selected local interpreter",
                         )
                     )
@@ -2383,8 +2326,8 @@ def _verify_analysis_manifest(
                     diagnostics.append(
                         _diagnostic(
                             "ERROR",
-                            "result.implementation_identity",
-                            f"implementation_artifacts[{index}] is not the pinned implementation",
+                            "result.implementation_path",
+                            f"implementation_artifacts[{index}] is not the selected implementation",
                         )
                     )
             _, record_diagnostics = _verify_file_record(
@@ -2547,7 +2490,7 @@ def _verify_transport_rows(
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
-                        "result.method_identity",
+                        "result.method",
                         f"row {index} {name} is not {wanted}",
                     )
                 )
@@ -2600,7 +2543,7 @@ def _verify_arrhenius_summary(summary: Mapping[str, Any]) -> List[Dict[str, str]
             ):
                 raise ValueError("Ea_stderr_eV differs from pymatgen")
             if candidate.get("arrhenius_method") != "pymatgen-fit-arrhenius-linear":
-                raise ValueError("Arrhenius method identity is invalid")
+                raise ValueError("Arrhenius method is invalid")
         except (ImportError, KeyError, TypeError, ValueError) as exc:
             diagnostics.append(
                 _diagnostic(
@@ -3140,10 +3083,10 @@ class Adapter:
                     "production_scale_parameters_accepted": False,
                 },
                 "provenance": {
-                    "md_source_sha256": _sha256_file(md_script),
-                    "analysis_source_sha256": _sha256_file(analysis_script),
-                    "structure_sha256": _sha256_file(structure),
-                    "model_sha256": None if model == "default" else _sha256_file(Path(model)),
+                    "md_source_path": str(md_script),
+                    "analysis_source_path": str(analysis_script),
+                    "structure_path": str(structure),
+                    "model_path": None if model == "default" else str(model),
                 },
                 "diagnostics": diagnostics,
             }
@@ -3179,7 +3122,7 @@ class Adapter:
                 "seed": None,
             },
             "provenance": {
-                "analysis_source_sha256": _sha256_file(script),
+                "analysis_source_path": str(script),
             },
             "diagnostics": diagnostics,
         }

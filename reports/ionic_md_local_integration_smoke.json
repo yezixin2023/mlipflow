@@ -16,20 +16,16 @@
   },
   "implementation": {
     "adapter": {
-      "locator": "plugins/ionic-transport/adapter.py",
-      "sha256": "cfea1fd974ef1e568ae9e3aac414ad999588edfa00035d91f8a1c6bd561bf36b"
+      "locator": "plugins/ionic-transport/adapter.py"
     },
     "handoff": {
-      "locator": "plugins/ionic-transport/md_smoke_handoff.py",
-      "sha256": "c8936041b1ee78af4bdafbc4a107f9ed59cd155fbcc3e718fdb7f391e11a4470"
+      "locator": "plugins/ionic-transport/md_smoke_handoff.py"
     },
     "historical_md_source": {
-      "locator": "externally-supplied/ase_md_only_multi_calc.py",
-      "sha256": "fa15784e72becb10f91b1abfb1c5f6f9920705ab15cffc866acb60541fa2271a"
+      "locator": "externally-supplied/ase_md_only_multi_calc.py"
     },
     "historical_analysis_source": {
-      "locator": "externally-supplied/ionic_conductivity.py",
-      "sha256": "28321912e79a43eefcd3314774427c5e9bf5c14d4326b562a7d4309daf519df7"
+      "locator": "externally-supplied/ionic_conductivity.py"
     }
   },
   "runtime": {
@@ -50,17 +46,13 @@
       "locator": "externally-supplied/Li3YCl6.cif",
       "expected_type": "ASE-readable CIF structure",
       "purpose": "Tiny local model-loading and trajectory smoke fixture",
-      "configuration_key": "inputs.structure",
-      "size_bytes": 1269,
-      "sha256": "b283f4c4ddbc161214847fcd7d69948b7a453ea5f74d0d32bb6d37ec817916d5"
+      "configuration_key": "inputs.structure"
     },
     "model": {
       "locator": "externally-supplied/mace-mpa-0-medium.model",
       "expected_type": "Local MACE model artifact",
       "purpose": "Verify an actual MLIP model load and force/energy evaluation during tiny MD",
       "configuration_key": "inputs.model",
-      "size_bytes": 79462305,
-      "sha256": "75428afe3a1d7d8062e19bcaabd5c433623cabf308242ec9fb493e38604fb638",
       "included_in_repository": false
     }
   },
@@ -94,19 +86,18 @@
     "trajectory_count": 3,
     "arrhenius_fit_completed": true,
     "integration_manifest": {
-      "size_bytes": 18925,
-      "sha256": "c2f536e8af90deec0b20e9aeda8ffa4c12007e5f15c342d1954f3fbc77e197f5"
+      "path": "md-integration-manifest.json"
     },
     "required_analysis_artifacts": {
-      "diffusion_results_by_temperature.csv": "14f5540928ac855e93baffb5cfb23b906086b566df8f95082af3cea5dfa16fd8",
-      "arrhenius_summary.json": "2b58434450fb729cdbc27db100c689d321994d1525d3bef6bf4418c4796c6ee4",
-      "postprocess_failures.json": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      "diffusion_results_by_temperature.csv": "diffusion_results_by_temperature.csv",
+      "arrhenius_summary.json": "arrhenius_summary.json",
+      "postprocess_failures.json": "postprocess_failures.json"
     }
   },
   "limitations": [
     "Ten MD steps per temperature are sufficient only to exercise the software handoff; the resulting diffusivity, conductivity, and activation energy are scientifically meaningless.",
     "The historical MD source exposes no seed argument. The wrapper seeds its NumPy velocity RNG, but framework and GPU bitwise determinism are not claimed.",
     "This smoke does not compare against an independent original result and therefore is not scientific numerical parity.",
-    "The external structure and model are fingerprinted but are not copied into the public repository."
+    "The external structure and model are referenced by path but are not copied into the public repository."
   ]
 }

@@ -1,6 +1,5 @@
 """Shared validation and provenance helpers for bundled MLIP runners."""
 
-import hashlib
 import importlib.metadata
 import json
 import math
@@ -55,7 +54,6 @@ def version(*names):
 
 
 def seed_all(seed):
-    os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
 
 
@@ -98,7 +96,7 @@ def predefined_split_files(path, suffix):
     return files
 
 
-def predefined_split_identity(files):
+def predefined_split_record(files):
     split_ids, record_ids = set(), {}
     for name, path in files.items():
         try:
@@ -111,7 +109,7 @@ def predefined_split_identity(files):
         if not isinstance(split_id, str) or not split_id or not isinstance(ids, list) or any(
             not isinstance(item, str) or not item for item in ids
         ):
-            raise TrainingError(f"predefined {name} split lacks split_id/record_id identity")
+            raise TrainingError(f"predefined {name} split lacks split_id or record IDs")
         split_ids.add(split_id)
         record_ids[name] = ids
     if len(split_ids) != 1:
@@ -122,22 +120,10 @@ def predefined_split_identity(files):
     return {
         "source": "predefined",
         "split_id": split_ids.pop(),
-        "train_record_ids_sha256": _ids_sha(record_ids["train"]),
-        "validation_record_ids_sha256": _ids_sha(record_ids["validation"]),
-        "test_record_ids_sha256": _ids_sha(record_ids["test"]),
+        "train_record_ids": record_ids["train"],
+        "validation_record_ids": record_ids["validation"],
+        "test_record_ids": record_ids["test"],
     }
-
-
-def _ids_sha(values):
-    return "sha256:" + hashlib.sha256(json.dumps(values, separators=(",", ":")).encode()).hexdigest()
-
-
-def _sha(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1048576), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def write_result(args, status, framework_version, metrics, media_type, provenance, error=None):
@@ -167,19 +153,17 @@ def write_result(args, status, framework_version, metrics, media_type, provenanc
         "seed": args.seed,
         "device": args.device,
         "precision": args.precision,
-        "dataset_fingerprint": args.dataset_fingerprint,
-        "config_fingerprint": args.config_fingerprint,
+        "dataset_path": args.data,
+        "config_path": args.config,
         "metrics": clean,
         "provenance": dict(provenance),
     }
     if args.operation == "finetune":
-        payload["foundation_model_fingerprint"] = args.foundation_model_fingerprint
+        payload["foundation_model_path"] = args.foundation_model
     if status == "OK":
         payload["model_artifact"] = {
             "path": rel.as_posix(),
             "media_type": media_type,
-            "sha256": _sha(output),
-            "size_bytes": output.stat().st_size,
         }
     if error:
         payload["error"] = error

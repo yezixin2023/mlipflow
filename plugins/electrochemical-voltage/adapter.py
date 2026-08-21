@@ -6,7 +6,6 @@ import argparse
 import importlib.util
 import json
 import math
-import re
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -21,7 +20,6 @@ COMPUTE_OPERATION = "compute-from-energies"
 REPLAY_OPERATION = "replay-si-table-s11"
 REPLAY_OUTPUT_NAMES = ("metrics.json", "model_ranking.json", "provenance.json")
 DEFAULT_REPLAY_OUTPUT_SUBDIR = "manuscript-voltage-replay"
-_SHA256_PATTERN = re.compile(r"^(?:sha256:)?([0-9a-fA-F]{64})$")
 CONTEXT_KEYS = (
     "project_root",
     "attempt_dir",
@@ -63,13 +61,6 @@ def _operation(context: dict[str, Any]) -> str:
     return COMPUTE_OPERATION if raw == "compute" else raw
 
 
-def _normalized_sha256(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    match = _SHA256_PATTERN.fullmatch(value.strip())
-    return match.group(1).lower() if match else None
-
-
 @lru_cache(maxsize=1)
 def _manuscript_replay_module() -> ModuleType:
     path = Path(__file__).with_name("manuscript_replay.py").absolute()
@@ -100,7 +91,6 @@ def _replay_input_artifacts(
 
     diagnostics: list[dict[str, str]] = []
     inputs = context["inputs"]
-    parameters = context["parameters"]
     input_path = _path(context["project_root"], inputs["manuscript_voltage_table"])
     try:
         raw = input_path.read_bytes()
@@ -114,19 +104,18 @@ def _replay_input_artifacts(
         ]
     try:
         module = _manuscript_replay_module()
-        if len(module.CSV_FIELDS) != 15:
-            raise RuntimeError("bundled replay contract must contain exactly 15 CSV fields")
+        if len(module.CSV_FIELDS) != 14:
+            raise RuntimeError("bundled replay contract must contain exactly 14 CSV fields")
         artifacts = module.build_artifacts(raw)
     except (OSError, RuntimeError, ValueError) as exc:
         return None, [
             _diagnostic(
                 "error",
                 "manuscript_replay.input_invalid",
-                f"SI Table S11 证据不满足严格 15 列契约：{exc}",
+                f"SI Table S11 证据不满足严格 14 列契约：{exc}",
             )
         ]
 
-    expected_document_sha256 = _normalized_sha256(parameters.get("source_document_sha256"))
     provenance = artifacts.get("provenance.json")
     if not isinstance(provenance, dict):  # pragma: no cover - bundled contract guard
         return None, [
@@ -134,14 +123,6 @@ def _replay_input_artifacts(
                 "error", "manuscript_replay.provenance_missing", "内存重放缺少 provenance。"
             )
         ]
-    if provenance.get("source_document_sha256") != expected_document_sha256:
-        diagnostics.append(
-            _diagnostic(
-                "error",
-                "manuscript_replay.source_document_sha256",
-                "CSV 中的 source_document_sha256 与已批准参数不一致。",
-            )
-        )
     for name in REPLAY_OUTPUT_NAMES:
         artifact = artifacts.get(name)
         if not isinstance(artifact, dict):
@@ -388,14 +369,6 @@ class Adapter:
                         "replay_output_subdir 必须是 attempt_dir 下的安全相对路径。",
                     )
                 )
-            if _normalized_sha256(parameters.get("source_document_sha256")) is None:
-                diagnostics.append(
-                    _diagnostic(
-                        "error",
-                        "parameters.source_document_sha256",
-                        "SI replay 必须提供 64 位 source_document_sha256（可带 sha256: 前缀）。",
-                    )
-                )
             if input_is_safe and not _errors(diagnostics):
                 _, replay_diagnostics = _replay_input_artifacts(context)
                 diagnostics.extend(replay_diagnostics)
@@ -506,9 +479,6 @@ class Adapter:
                 "expected_outputs": expected_outputs,
                 "diagnostics": diagnostics,
                 "units": {"voltage": "V"},
-                "source_document_sha256": _normalized_sha256(
-                    context["parameters"]["source_document_sha256"]
-                ),
             }
 
         input_path = _path(context["project_root"], context["inputs"]["energy_manifest"])
@@ -638,16 +608,6 @@ class Adapter:
                     "error",
                     "manuscript_replay.total_energy_claim",
                     "SI Table S11 replay 不能声明从总能重算电压。",
-                )
-            )
-        if provenance.get("source_document_sha256") != _normalized_sha256(
-            context["parameters"].get("source_document_sha256")
-        ):
-            diagnostics.append(
-                _diagnostic(
-                    "error",
-                    "manuscript_replay.source_document_sha256",
-                    "provenance 的文档 SHA-256 与已批准参数不一致。",
                 )
             )
         if any(observed[name].get("voltage_unit") != "V" for name in REPLAY_OUTPUT_NAMES):

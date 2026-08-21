@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import builtins
-import hashlib
 import importlib.util
 import io
 import json
@@ -35,14 +34,6 @@ def load_module(name: str, path: Path) -> ModuleType:
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def fingerprint_bytes(payload: bytes) -> str:
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
-
-
-def fingerprint(path: Path) -> str:
-    return fingerprint_bytes(path.read_bytes())
 
 
 class FakeStructure:
@@ -153,9 +144,7 @@ class VaspPrepareTests(unittest.TestCase):
             structures,
             {
                 "schema_version": 1,
-                "structures": [
-                    {"id": "s1", "path": "s1.cif", "fingerprint": fingerprint(structure)}
-                ],
+                "structures": [{"id": "s1", "path": "s1.cif"}],
             },
         )
         if calculation_type == "static":
@@ -184,7 +173,6 @@ class VaspPrepareTests(unittest.TestCase):
             }
         config = source_dir / "labeling.json"
         write_json(config, config_value)
-        combined = b"FAKE-Li_sv\nFAKE-P\nFAKE-S\n"
         reference = source_dir / "pseudopotentials.json"
         write_json(
             reference,
@@ -195,11 +183,6 @@ class VaspPrepareTests(unittest.TestCase):
                 "license_acknowledged": True,
                 "functional": "PBE_54",
                 "symbols": {"Li": "Li_sv", "P": "P", "S": "S"},
-                "expected_component_sha256": {
-                    symbol: fingerprint_bytes(f"FAKE-{symbol}\n".encode())
-                    for symbol in ("Li_sv", "P", "S")
-                },
-                "expected_combined_sha256": fingerprint_bytes(combined),
             },
         )
         psp_dir = project / "licensed-psp"
@@ -268,7 +251,10 @@ class VaspPrepareTests(unittest.TestCase):
             self.assertEqual("READY", plan["status"])
             self.assertFalse(plan["approval_summary"]["runs_vasp"])
             self.assertFalse(plan["approval_summary"]["submits_jobs"])
-            self.assertIn("prepare_wrapper", plan["input_fingerprints"])
+            self.assertEqual(
+                str((PLUGIN_ROOT / "vasp_prepare.py").resolve()),
+                plan["input_paths"]["prepare_wrapper"],
+            )
             self.assertEqual(450, plan["approval_summary"]["effective_incar"]["ENCUT"])
             self.assertEqual([1, 1, 1], plan["approval_summary"]["kpoints"]["grid"])
             self.assertEqual(
@@ -283,7 +269,6 @@ class VaspPrepareTests(unittest.TestCase):
             self.assertEqual(5e-6, manifest["incar"]["effective"]["EDIFF"])
             self.assertEqual(38, manifest["incar"]["effective"]["IALGO"])
             self.assertEqual([1, 1, 1], manifest["kpoints"]["grid"])
-            self.assertRegex(manifest["runtime"]["prepare_wrapper_sha256"], r"^sha256:[0-9a-f]{64}$")
             self.assertEqual(PYTHON_EXECUTABLE, manifest["runtime"]["python_executable"])
             self.assertEqual(
                 manifest["generator"]["version"], manifest["runtime"]["pymatgen_version"]
@@ -301,7 +286,7 @@ class VaspPrepareTests(unittest.TestCase):
             write_json(result_path, changed)
             self.assertEqual("FAIL", adapter.check(context)["status"])
 
-    def test_incar_and_potcar_tampering_fail_even_when_manifest_hashes_are_rewritten(self) -> None:
+    def test_incar_tampering_fails_from_parameter_recheck(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             context, fixture = self.fixture(Path(directory))
             adapter = self.adapter_module.Adapter()
@@ -311,25 +296,7 @@ class VaspPrepareTests(unittest.TestCase):
             result = json.loads(result_path.read_text(encoding="utf-8"))
             incar = Path(context["attempt_dir"]) / result["calculations"][0]["files"]["INCAR"]["path"]
             incar.write_text("ENCUT = 100\nNSW = 0\nIBRION = -1\n", encoding="utf-8")
-            result["calculations"][0]["files"]["INCAR"]["sha256"] = fingerprint(incar)
-            result["calculations"][0]["files"]["INCAR"]["size_bytes"] = incar.stat().st_size
-            write_json(result_path, result)
             self.assertEqual("FAIL", adapter.check(context)["status"])
-
-            with tempfile.TemporaryDirectory() as second_directory:
-                second_context, second_fixture = self.fixture(Path(second_directory))
-                with patch.dict(os.environ, {"PMG_VASP_PSP_DIR": str(second_fixture.psp_dir)}):
-                    self.wrapper.prepare_inputs(second_fixture.args, self.fake_api())
-                second_result_path = Path(second_context["attempt_dir"]) / "dft-input-manifest.json"
-                second_result = json.loads(second_result_path.read_text(encoding="utf-8"))
-                potcar = Path(second_context["attempt_dir"]) / second_result["calculations"][0]["files"]["POTCAR"]["path"]
-                potcar.write_text("forged\n", encoding="utf-8")
-                new_digest = fingerprint(potcar)
-                second_result["calculations"][0]["files"]["POTCAR"]["sha256"] = new_digest
-                second_result["calculations"][0]["files"]["POTCAR"]["size_bytes"] = potcar.stat().st_size
-                second_result["calculations"][0]["potcar"]["combined_sha256"] = new_digest
-                write_json(second_result_path, second_result)
-                self.assertEqual("FAIL", self.adapter_module.Adapter().check(second_context)["status"])
 
     def test_static_relax_and_aimd_contracts_are_distinct(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -358,24 +325,12 @@ class VaspPrepareTests(unittest.TestCase):
                 changed["parameters"]["interpreter_argv"] = [executable]
                 self.assertEqual("BLOCKED", adapter.plan(changed)["status"])
 
-    def test_wrapper_requires_approved_pseudopotential_environment_and_fingerprints(self) -> None:
+    def test_wrapper_requires_configured_pseudopotential_environment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             context, fixture = self.fixture(Path(directory))
             with patch.dict(os.environ, {}, clear=True):
                 with self.assertRaisesRegex(self.wrapper.ContractError, "PMG_VASP_PSP_DIR"):
                     self.wrapper.prepare_inputs(fixture.args, self.fake_api())
-            reference = Path(context["project_root"]) / "input/pseudopotentials.json"
-            value = json.loads(reference.read_text(encoding="utf-8"))
-            value["expected_combined_sha256"] = "sha256:" + "0" * 64
-            write_json(reference, value)
-            # A failed runtime leaves explicit INCOMPLETE evidence in its fresh attempt.
-            retry_attempt = Path(context["project_root"]) / "retry-attempt"
-            retry_attempt.mkdir()
-            retry_args = argparse.Namespace(**{**vars(fixture.args), "attempt_dir": str(retry_attempt), "result_manifest": str(retry_attempt / "dft-input-manifest.json")})
-            with patch.dict(os.environ, {"PMG_VASP_PSP_DIR": str(fixture.psp_dir)}):
-                with self.assertRaisesRegex(self.wrapper.ContractError, "combined POTCAR hash"):
-                    self.wrapper.prepare_inputs(retry_args, self.fake_api())
-            self.assertTrue((retry_attempt / "vasp-inputs/INCOMPLETE.json").is_file())
 
     def test_missing_pymatgen_is_an_explicit_prepare_failure(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -465,9 +420,7 @@ class VaspPrepareTests(unittest.TestCase):
                 structures,
                 {
                     "schema_version": 1,
-                    "structures": [
-                        {"id": "s1", "path": "source.vasp", "fingerprint": fingerprint(source)}
-                    ],
+                    "structures": [{"id": "s1", "path": "source.vasp"}],
                 },
             )
             api = self.wrapper.PymatgenApi(

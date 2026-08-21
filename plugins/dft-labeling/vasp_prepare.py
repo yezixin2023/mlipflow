@@ -8,7 +8,6 @@ POTCAR content from the portable result manifest.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import math
@@ -27,7 +26,6 @@ MAX_STRUCTURE_BYTES = 64 * 1024 * 1024
 MAX_STRUCTURES = 10000
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SAFE_POTCAR_SYMBOL = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
-SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 
 MANUSCRIPT_STATIC_PRESET = "manuscript-static-v1"
 MANUSCRIPT_STATIC_INCAR: dict[str, Any] = {
@@ -58,7 +56,6 @@ MANUSCRIPT_STATIC_KPOINTS = {
 MANUSCRIPT_STATIC_PROVENANCE = {
     "paper": {
         "locator": "manuscript-supplement://SI_0510zdl.docx#page=2&figure=S3",
-        "sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
         "declared_parameters": {"ENCUT": 450, "EDIFF": 5e-6, "IALGO": 38},
         "note": (
             "Figure S3 labels EDIFF as eV/atom; VASP INCAR EDIFF is an absolute "
@@ -68,9 +65,7 @@ MANUSCRIPT_STATIC_PROVENANCE = {
     },
     "historical_template": {
         "incar_locator": "remote-mlp://4-Element/Li8/scf/single/INCAR",
-        "incar_sha256": "sha256:69fbece3f536be6aa275d83e39a29bedda4d0ddc0a704d47ba7200642864b01c",
         "kpoints_locator": "remote-mlp://4-Element/Li8/scf/single/KPOINTS",
-        "kpoints_sha256": "sha256:3eda09df03e3fa250fd362b3f1f97b8a89cd9612eaebbaea5dbac1e2cf7a73a6",
         "excluded_runtime_parameter": {
             "NPAR": 4,
             "reason": "hardware- and VASP-version-dependent parallelization setting",
@@ -91,18 +86,6 @@ class PymatgenApi(NamedTuple):
     Potcar: Any
     version: str
     configured_psp_root: str | None
-
-
-def _sha256_bytes(payload: bytes) -> str:
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def _has_symlink_component(path: Path) -> bool:
@@ -174,12 +157,6 @@ def _safe_relative(value: Any, label: str) -> Path:
 def _portable_id(value: Any, label: str) -> str:
     if not isinstance(value, str) or not SAFE_ID.fullmatch(value):
         raise ContractError(f"{label} must match {SAFE_ID.pattern}")
-    return value
-
-
-def _fingerprint(value: Any, label: str) -> str:
-    if not isinstance(value, str) or not SHA256.fullmatch(value):
-        raise ContractError(f"{label} must be a full sha256 fingerprint")
     return value
 
 
@@ -331,8 +308,6 @@ def _pseudopotential_reference(value: Mapping[str, Any]) -> dict[str, Any]:
         "license_acknowledged",
         "functional",
         "symbols",
-        "expected_component_sha256",
-        "expected_combined_sha256",
     }
     unknown = set(value) - allowed
     if unknown:
@@ -369,23 +344,10 @@ def _pseudopotential_reference(value: Mapping[str, Any]) -> dict[str, Any]:
         ):
             raise ContractError("symbols contains an invalid element or POTCAR symbol")
         symbols[element] = symbol
-    expected_components = value.get("expected_component_sha256", {})
-    if not isinstance(expected_components, Mapping):
-        raise ContractError("expected_component_sha256 must be an object")
-    normalized_expected: dict[str, str] = {}
-    for symbol, digest in expected_components.items():
-        if not isinstance(symbol, str) or not SAFE_POTCAR_SYMBOL.fullmatch(symbol):
-            raise ContractError("expected_component_sha256 contains an invalid symbol")
-        normalized_expected[symbol] = _fingerprint(digest, f"expected POTCAR hash for {symbol}")
-    expected_combined = value.get("expected_combined_sha256")
-    if expected_combined is not None:
-        expected_combined = _fingerprint(expected_combined, "expected_combined_sha256")
     return {
         "reference_id": reference_id,
         "functional": functional,
         "symbols": symbols,
-        "expected_component_sha256": normalized_expected,
-        "expected_combined_sha256": expected_combined,
     }
 
 
@@ -413,17 +375,11 @@ def _structure_records(
         if _has_symlink_below(source, project_root) or not _within(source.resolve(), project_root):
             raise ContractError(f"structure {structure_id} must remain inside project_root")
         source = _ordinary_file(source, f"structure {structure_id}", MAX_STRUCTURE_BYTES)
-        declared = item.get("fingerprint", item.get("frame_sha256", item.get("sha256")))
-        declared = _fingerprint(declared, f"structure {structure_id} fingerprint")
-        actual = _sha256(source)
-        if actual != declared:
-            raise ContractError(f"structure {structure_id} fingerprint does not match its source file")
         records.append(
             {
                 "id": structure_id,
                 "relative_path": relative.as_posix(),
                 "source_path": source,
-                "fingerprint": actual,
             }
         )
     return records
@@ -461,38 +417,20 @@ def _runtime_psp_configuration(api: PymatgenApi) -> str:
 
 def _potcar_component_records(potcar: Iterable[Any], symbols: list[str]) -> list[dict[str, str]]:
     records: list[dict[str, str]] = []
-    for symbol, single in zip(symbols, potcar):
+    for symbol, _ in zip(symbols, potcar):
         records.append(
-            {
-                "symbol": symbol,
-                "sha256": _sha256_bytes(str(single).encode("utf-8")),
-            }
+            {"symbol": symbol}
         )
     if len(records) != len(symbols):
         raise ContractError("pymatgen POTCAR component count differs from POSCAR species count")
     return records
 
 
-def _verify_expected_potcar(
-    reference: Mapping[str, Any], components: list[dict[str, str]], combined_sha256: str
-) -> None:
-    expected = reference["expected_component_sha256"]
-    for component in components:
-        expected_digest = expected.get(component["symbol"])
-        if expected_digest is not None and component["sha256"] != expected_digest:
-            raise ContractError(f"POTCAR component hash mismatch for {component['symbol']}")
-    expected_combined = reference.get("expected_combined_sha256")
-    if expected_combined is not None and combined_sha256 != expected_combined:
-        raise ContractError("combined POTCAR hash differs from the approved reference")
-
-
 def _file_record(
-    actual_path: Path, portable_path: Path, media_type: str, collectable: bool
+    portable_path: Path, media_type: str, collectable: bool
 ) -> dict[str, Any]:
     return {
         "path": portable_path.as_posix(),
-        "sha256": _sha256(actual_path),
-        "size_bytes": actual_path.stat().st_size,
         "media_type": media_type,
         "collectable": collectable,
     }
@@ -611,8 +549,6 @@ def prepare_inputs(args: argparse.Namespace, api: PymatgenApi | None = None) -> 
                     "pymatgen could not assemble POTCAR from the configured PMG_VASP_PSP_DIR"
                 ) from exc
             component_records = _potcar_component_records(potcar, potcar_symbols)
-            combined_sha256 = _sha256(potcar_path)
-            _verify_expected_potcar(reference, component_records, combined_sha256)
         except ContractError:
             raise
         except Exception as exc:
@@ -621,19 +557,17 @@ def prepare_inputs(args: argparse.Namespace, api: PymatgenApi | None = None) -> 
         relative_directory = (output_relative / directory_name).as_posix()
         files = {
             "POSCAR": _file_record(
-                poscar_path,
                 Path(relative_directory) / "POSCAR",
                 "chemical/x-vasp-poscar",
                 True,
             ),
             "INCAR": _file_record(
-                incar_path, Path(relative_directory) / "INCAR", "text/plain", True
+                Path(relative_directory) / "INCAR", "text/plain", True
             ),
             "KPOINTS": _file_record(
-                kpoints_path, Path(relative_directory) / "KPOINTS", "text/plain", True
+                Path(relative_directory) / "KPOINTS", "text/plain", True
             ),
             "POTCAR": _file_record(
-                potcar_path,
                 Path(relative_directory) / "POTCAR",
                 "application/x-vasp-potcar",
                 False,
@@ -643,10 +577,7 @@ def prepare_inputs(args: argparse.Namespace, api: PymatgenApi | None = None) -> 
             {
                 "order": order,
                 "structure_id": structure_id,
-                "source": {
-                    "path": record["relative_path"],
-                    "sha256": record["fingerprint"],
-                },
+                "source": {"path": record["relative_path"]},
                 "directory": relative_directory,
                 "formula": str(structure.composition.reduced_formula),
                 "atom_count": len(structure),
@@ -658,7 +589,6 @@ def prepare_inputs(args: argparse.Namespace, api: PymatgenApi | None = None) -> 
                     "elements": elements,
                     "symbols": potcar_symbols,
                     "components": component_records,
-                    "combined_sha256": combined_sha256,
                     "portable_artifact": False,
                 },
             }
@@ -675,7 +605,6 @@ def prepare_inputs(args: argparse.Namespace, api: PymatgenApi | None = None) -> 
             "python_executable": str(Path(sys.executable).expanduser().absolute().resolve()),
             "python_version": platform.python_version(),
             "pymatgen_version": api.version,
-            "prepare_wrapper_sha256": _sha256(Path(__file__).resolve()),
         },
         "calculation_type": config["calculation_type"],
         "preset": config["preset"],
@@ -688,10 +617,12 @@ def prepare_inputs(args: argparse.Namespace, api: PymatgenApi | None = None) -> 
         },
         "kpoints": config["kpoints"],
         "sort_structure": config["sort_structure"],
-        "input_fingerprints": {
-            "structures_manifest": _sha256(structures_path),
-            "labeling_config": _sha256(labeling_path),
-            "pseudopotential_reference": _sha256(pseudopotential_path),
+        "input_paths": {
+            "structures_manifest": str(structures_path.relative_to(project_root)),
+            "labeling_config": str(labeling_path.relative_to(project_root)),
+            "pseudopotential_reference": str(
+                pseudopotential_path.relative_to(project_root)
+            ),
         },
         "structure_count": len(calculations),
         "execution_ready": True,

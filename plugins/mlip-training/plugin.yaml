@@ -6,7 +6,7 @@
   "display_name": "MLIP training and fine-tuning",
   "version": "0.7.4",
   "api_version": 1,
-  "description": "Unified local and ssh-slurm workflow adapter for training or fine-tuning DeepMD, M3GNet/MatGL, CHGNet, and MACE with bundled Python runners, logical cluster data/foundation/model references, optional no-overwrite model publication, bounded artifact fetch, and pinned scientific identity.",
+  "description": "Unified local and ssh-slurm workflow adapter for training or fine-tuning DeepMD, M3GNet/MatGL, CHGNet, and MACE with bundled Python runners, logical cluster data/foundation/model paths, optional no-overwrite model publication, and bounded artifact fetch.",
   "category": "training",
   "contract": {
     "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
@@ -23,13 +23,13 @@
     ],
     "limitations": [
       "MLIPFlow orchestrates framework APIs but does not bundle framework packages, cluster modules, datasets, or foundation models; those remain site-owned resources.",
-      "The generic scheduler contract verifies approved content fingerprints and model artifacts but does not claim numerical parity across framework versions or hardware.",
+      "The generic scheduler contract records explicit config, dataset, foundation-model, and output paths but does not claim numerical parity across framework versions or hardware.",
       "The original strict DeepMD fresh-training scheduler contract remains as backward compatibility for legacy dataset-reference manifests without relative_path/kind; new DeepMD plans may use the bundled generic contract.",
       "DeepMD fine-tuning is limited by the bundled runner to framework backends whose DeePMD entry points expose the verified --finetune path; M3GNet foundation models are directories while CHGNet, MACE, and normal DeepMD foundation artifacts are files.",
       "Optional publication is part of the approved training job, refuses an existing canonical destination, and emits a small model-reference.json for downstream benchmark and MD nodes."
-      ,"For an upstream artifact binding, the immutable dataset reference supplies the approved dataset fingerprint directly; an optional redundant dataset-fingerprint parameter is still checked when explicitly supplied."
+      ,"For an upstream artifact binding, the dataset reference supplies the site-root-relative dataset path directly."
       ,"A training node that requests canonical model publication selects the corresponding mlip-<framework>-publish site template so the site can keep the read-only foundation root separate from the canonical publication root without changing the scientific node."
-      ,"Scheduled training stages the small shared model_runtime.py used for framework-version identity, so the reviewed framework environment does not need a separate MLIPFlow package installation."
+      ,"Scheduled training stages the small shared model_runtime.py used to record framework versions, so the reviewed framework environment does not need a separate MLIPFlow package installation."
       ,"A site template may resolve an approved read-only foundation below a separate MLIPFLOW_FOUNDATION_MODEL_ROOT while publishing the trained artifact below the canonical MLIPFLOW_MODEL_ROOT. Omitting the separate foundation root preserves the single-root contract."
     ]
   },
@@ -58,8 +58,8 @@
     {"name": "result-manifest", "kind": "manifest", "required": false, "description": "Local compatibility path: wrapper result manifest."},
     {"name": "foundation-model", "kind": "artifact-reference", "required": false, "description": "Local fine-tuning path: explicit foundation model artifact."},
     {"name": "training-config", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled path: project-scoped JSON config staged to the compute node."},
-    {"name": "dataset-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled path: logical dataset_id, safe relative_path below the site data root, file/directory kind, and approved fingerprint."},
-    {"name": "foundation-model-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled fine-tuning path: logical model_id, safe relative_path below the site-owned foundation model root (or model root fallback), kind, and approved fingerprint."}
+    {"name": "dataset-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled path: dataset name, safe relative_path below the site data root, and file/directory kind."},
+    {"name": "foundation-model-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled fine-tuning path: model name, safe relative_path below the site-owned foundation model root (or model root fallback), and kind."}
   ],
   "parameters": [
     {"name": "framework", "type": "string", "required": true, "description": "deepmd, m3gnet, chgnet, or mace."},
@@ -67,17 +67,14 @@
     {"name": "seed", "type": "integer", "required": true, "description": "Explicit deterministic seed recorded in the approved plan and result."},
     {"name": "device", "type": "string", "required": true, "description": "Framework device request such as cpu, gpu, or cuda."},
     {"name": "precision", "type": "string", "required": true, "description": "float32 or float64; CHGNet requires float32."},
-    {"name": "dataset-fingerprint", "type": "string", "required": false, "description": "Optional redundant SHA-256 assertion for the cluster-resolved dataset artifact; the bound dataset reference is authoritative and is identity-pinned in the approved plan."},
-    {"name": "config-fingerprint", "type": "string", "required": true, "description": "SHA-256 identity of the staged training configuration."},
-    {"name": "foundation-model-fingerprint", "type": "string", "required": false, "description": "Required for finetune and verified against the cluster-resolved foundation model."},
     {"name": "result-manifest", "type": "string", "required": false, "description": "Scheduled local result filename after bounded fetch; defaults to mlip-training-result.json."},
     {"name": "publish-model-id", "type": "string", "required": false, "description": "Optional safe logical ID for publishing the successful trained model below the selected site's canonical model root."},
     {"name": "publish-model-relative-path", "type": "string", "required": false, "description": "Required with publish-model-id; fresh no-overwrite destination below the canonical model root."}
   ],
   "outputs": [
-    {"name": "model-artifact", "kind": "artifact-reference", "required": true, "description": "Framework-produced trained or fine-tuned model artifact with SHA-256 and media type."},
-    {"name": "training-manifest", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Versioned framework/operation/seed/fingerprint/metric result emitted by the bundled wrapper."},
-    {"name": "cluster-run-report", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled execution evidence including cluster-resolved data/model fingerprints and framework identity."}
+    {"name": "model-artifact", "kind": "artifact-reference", "required": true, "description": "Framework-produced trained or fine-tuned model artifact path and media type."},
+    {"name": "training-manifest", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Versioned framework/operation/seed/path/metric result emitted by the bundled wrapper."},
+    {"name": "cluster-run-report", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled execution report including cluster-resolved data/model paths and framework version."}
     ,{"name": "model-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Optional downstream logical model reference emitted only after successful no-overwrite canonical publication."}
   ],
   "dependencies": {
@@ -98,21 +95,21 @@
     "network_access": false,
     "requires_approval_before_execution": true,
     "notes": [
-      "ssh-slurm approves stage/submit once; scheduler observation, bounded transport verification, and scientific checks continue that approved run without another digest.",
+      "ssh-slurm approves stage/submit once; scheduler observation, bounded fetch, and scientific checks continue that approved run.",
       "Project files never contain SSH targets, partitions, module commands, absolute cluster data paths, or credentials; those remain in the selected site profile and remote template library.",
-      "Scheduled datasets and foundation models are not copied through MLIPFlow. The remote runner resolves safe relative references below site-owned data/foundation roots and recomputes file SHA-256 or deterministic tree-sha256-v1 before training; publication uses the separate canonical model root.",
+      "Scheduled datasets and foundation models are not copied through MLIPFlow. The remote runner resolves safe relative references below site-owned data/foundation roots; publication uses the separate canonical model root.",
       "The remote runner invokes training_wrapper.main() in-process without a shell.",
-      "Requested model publication is identity-bound in the approval summary, refuses overwrite, and never silently replaces an existing canonical model."
+      "Requested model publication records its destination in the approval summary, refuses overwrite, and never silently replaces an existing canonical model."
     ]
   },
   "completion": {
     "status": "implemented",
     "checks": [
-      {"id": "scheduled-identity", "implemented": true, "description": "Require framework, operation, seed, device, precision, config, dataset, and foundation-model identities to match the approved plan."},
-      {"id": "cluster-artifact-identity", "implemented": true, "description": "Require the cluster runner to recompute the dataset/foundation fingerprints and report successful completion."},
-      {"id": "model-artifact-hash", "implemented": true, "description": "Require the fetched model file size and SHA-256 to exactly match training-result.json."},
+      {"id": "scheduled-settings", "implemented": true, "description": "Require framework, operation, seed, device, precision, config, dataset, and foundation-model paths to match the requested calculation."},
+      {"id": "cluster-path-report", "implemented": true, "description": "Require the cluster runner to report resolved dataset/foundation paths and successful completion."},
+      {"id": "model-artifact", "implemented": true, "description": "Require the fetched model artifact at the declared output path."},
       {"id": "finite-training-metrics", "implemented": true, "description": "Reject non-finite numeric metrics in the framework result manifest."},
-      {"id": "canonical-model-publication", "implemented": true, "description": "When requested, publish the verified model to one fresh canonical destination and require the fetched model-reference fingerprint to match that content."},
+      {"id": "canonical-model-publication", "implemented": true, "description": "When requested, publish the model to one fresh canonical destination and require the fetched model-reference path to match that destination."},
       {"id": "legacy-deepmd-completion", "implemented": true, "description": "Preserve the earlier learning-curve/checkpoint completion checks for legacy DeepMD fresh-training references."}
     ],
     "success_state": "OK",

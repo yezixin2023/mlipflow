@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import io
 import json
 import math
@@ -21,7 +20,6 @@ MAX_STRUCTURE_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_STRUCTURES = 10000
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
-SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 class MergeError(ValueError):
@@ -35,20 +33,7 @@ class Candidate:
     source_id: str
     source_order: int
     source_path: str
-    source_sha256: str
     structure: Any
-
-
-def _sha256_bytes(payload: bytes) -> str:
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def _ordinary_file(path: Path, label: str, maximum: int) -> Path:
@@ -171,7 +156,6 @@ def _direct_candidates(
                 source_id=f"direct-{order:06d}",
                 source_order=order,
                 source_path=relative.as_posix(),
-                source_sha256=_sha256(path),
                 structure=structure,
             )
         )
@@ -225,12 +209,6 @@ def _lasp_candidates(
         payload = members.get(relative.as_posix())
         if payload is None:
             raise MergeError(f"LASP selected archive lacks {relative.as_posix()}")
-        declared = record.get("frame_sha256")
-        if not isinstance(declared, str) or not SHA256.fullmatch(declared):
-            raise MergeError(f"LASP selected record {index} lacks a full frame_sha256")
-        actual = _sha256_bytes(payload)
-        if actual != declared:
-            raise MergeError(f"LASP selected record {index} differs from its archive member")
         candidates.append(
             Candidate(
                 method="LASP_SSW",
@@ -238,7 +216,6 @@ def _lasp_candidates(
                 source_id=source_id,
                 source_order=order,
                 source_path=relative.as_posix(),
-                source_sha256=actual,
                 structure=_read_arc(payload, adaptor),
             )
         )
@@ -254,7 +231,6 @@ def _source_record(candidate: Candidate) -> dict[str, Any]:
         "source_id": candidate.source_id,
         "source_order": candidate.source_order,
         "source_path": candidate.source_path,
-        "source_sha256": candidate.source_sha256,
     }
 
 
@@ -370,18 +346,16 @@ def merge(args: argparse.Namespace) -> dict[str, Any]:
             )
             continue
         payload = _structure_payload(candidate.structure)
-        fingerprint = _sha256_bytes(payload)
-        structure_id = "structure-" + fingerprint.removeprefix("sha256:")[:24]
+        structure_id = f"structure-{len(kept) + 1:06d}"
         path = structures_dir / f"{structure_id}.vasp"
         if path.exists():
-            raise MergeError("normalized structure identity collision")
+            raise MergeError("normalized structure output path already exists")
         path.write_bytes(payload)
         source = _source_record(candidate)
         kept.append(
             {
                 "id": structure_id,
                 "path": path.relative_to(output_dir).as_posix(),
-                "fingerprint": fingerprint,
                 "source_group_id": candidate.source_group_id,
                 "source_sampling_method": candidate.method,
                 "source_sampling_methods": [candidate.method],
@@ -407,20 +381,6 @@ def merge(args: argparse.Namespace) -> dict[str, Any]:
         },
         "minimum_distance_angstrom": args.minimum_distance_angstrom,
     }
-    identity = {
-        "input_sha256": {
-            "direct_manifest": _sha256(direct_manifest),
-            "lasp_selected_manifest": _sha256(lasp_manifest),
-            "lasp_selected_archive": _sha256(lasp_archive),
-        },
-        "matching": matching,
-        "structure_ids": [record["id"] for record in public_records],
-        "duplicates": duplicates,
-        "rejected": rejected,
-    }
-    structure_set_id = "structure-set-" + hashlib.sha256(
-        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()[:32]
     per_source: dict[str, dict[str, int]] = {}
     for method in ("DIRECT", "LASP_SSW"):
         inputs = sum(candidate.method == method for candidate in candidates)
@@ -432,8 +392,11 @@ def merge(args: argparse.Namespace) -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION,
         "operation": "merge-structures",
         "status": "OK",
-        "structure_set_id": structure_set_id,
-        "input_artifacts": identity["input_sha256"],
+        "input_artifacts": {
+            "direct_manifest": str(direct_manifest),
+            "lasp_selected_manifest": str(lasp_manifest),
+            "lasp_selected_archive": str(lasp_archive),
+        },
         "matching": matching,
         "counts": {
             "input": len(candidates),

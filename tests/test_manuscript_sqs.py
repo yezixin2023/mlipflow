@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import hashlib
 import json
 import tempfile
 import unittest
@@ -28,10 +27,9 @@ class ManuscriptSQSTests(unittest.TestCase):
         report_path = ROOT / "reports" / "sqs_local_integration_smoke.json"
         report = json.loads(report_path.read_text(encoding="utf-8"))
         entrypoint = ROOT / report["implementation"]["entrypoint_locator"]
-        digest = hashlib.sha256(entrypoint.read_bytes()).hexdigest()
 
         self.assertEqual("LOCAL_INTEGRATION_SMOKE_PASS", report["status"])
-        self.assertEqual(digest, report["implementation"]["entrypoint_sha256"])
+        self.assertTrue(entrypoint.is_file())
         self.assertEqual(2, report["result"]["run_count"])
         self.assertTrue(report["result"]["byte_identical_between_runs"])
         self.assertEqual(57, sum(report["result"]["output_species_counts"].values()))
@@ -74,7 +72,7 @@ class ManuscriptSQSTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "require 28"):
             sqs.validate_manifest(manifest, prototype_symbols=symbols)
 
-    def test_adapter_defaults_to_fingerprinted_bundled_generator(self) -> None:
+    def test_adapter_defaults_to_bundled_generator_path(self) -> None:
         adapter = _module("adapter.py").Adapter()
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
@@ -94,7 +92,7 @@ class ManuscriptSQSTests(unittest.TestCase):
             plan = adapter.plan(context)
             self.assertEqual("READY", plan["status"])
             self.assertFalse(plan["provenance"]["generator_is_user_supplied"])
-            self.assertTrue(plan["provenance"]["generator_fingerprint"].startswith("sha256:"))
+            self.assertEqual(str(PLUGIN / "sqs.py"), plan["provenance"]["generator_path"])
             self.assertIn(str(PLUGIN / "sqs.py"), plan["argv"])
 
 

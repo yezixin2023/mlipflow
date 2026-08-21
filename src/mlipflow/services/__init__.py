@@ -10,7 +10,7 @@ Layout::
 
     paths            project-scoped paths
     queries          read-only: list/status/json/inspect/logs/route/doctor
-    contracts        pure validation, fingerprinting, context assembly
+    contracts        pure validation and context assembly
     backend_factory  the one place scheduler backends are constructed
     execution        replay / local / scheduled-submit attempt lifecycles
     scheduled        stage, submit, observe, fetch, finalize for schedulers
@@ -58,7 +58,6 @@ from .commands import (  # noqa: F401
     _require_approval,
 )
 from .contracts import (  # noqa: F401
-    _adapter_command_identities,
     _adapter_context,
     _cluster_profile,
     _is_within,
@@ -68,7 +67,6 @@ from .contracts import (  # noqa: F401
     _planned_attempt,
     _project_scoped_result_path,
     _scheduled_contract,
-    _sha256_file,
 )
 from .execution import _execute_ready, _replay  # noqa: F401
 from .paths import (  # noqa: F401
@@ -91,7 +89,6 @@ from .scheduled import (  # noqa: F401
     _materialize_hpc_scripts,
     _observe_scheduled_step,
     _remote_output_inventory,
-    _scheduler_expected_identity,
     _stage_and_submit_scheduled_adapter,
     _validate_hpc_completion,
     _HPC_RUN_SCRIPT,

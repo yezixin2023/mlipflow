@@ -63,15 +63,6 @@
       "<MLP_ARCHIVE>/DeepMD/dpdata/Li10/test (180 systems)"
     ],
     "snapshot_root_id": "li10-se-e2-a",
-    "snapshot_fingerprint": "sha256:c51a75d9941cec4d3b7807ff8dae4d195ed5617814007a679f1db31c7b52e475",
-    "identity_verification": {
-      "method": "file-by-file sha256 of every file under both roots",
-      "files_compared": 2520,
-      "missing": 0,
-      "mismatched": 0,
-      "verdict": "IDENTICAL"
-    },
-    "system_order_fingerprint": "sha256:ce5f142c892dffe43571e49470211534ec48ff51bf68420adca3a791311eeb42",
     "system_order_preserved": true,
     "type_map": [
       "Li",
@@ -282,53 +273,39 @@
     "artifacts": [
       {
         "name": "lcurve.out",
-        "path": "lcurve.out",
-        "sha256": "sha256:dada323085f9774a13ea1b149f217bd705ac2ff5d8dac08dd161384b08f53afb",
-        "size_bytes": 754
+        "path": "lcurve.out"
       },
       {
         "name": "training-report.json",
-        "path": "training-report.json",
-        "sha256": "sha256:f87dbc2a260e8e17a99963b1e882c2bddf214bf3f52dccc88b074e4292bf80d4",
-        "size_bytes": 936
+        "path": "training-report.json"
       },
       {
         "name": "checkpoint",
-        "path": "checkpoint",
-        "sha256": "sha256:e57c790dea1ff944dbcddd1dc2d2b16770a216b91503f548ee37ea6f82bd31f4",
-        "size_bytes": 85
+        "path": "checkpoint"
       },
       {
         "name": "model.ckpt.index",
-        "path": "model.ckpt.index",
-        "sha256": "sha256:69abbee3895a7d4cb533f8dc7e5b3dfb80ed3b246ec86913bc9d68bc9d9cb321",
-        "size_bytes": 12774
+        "path": "model.ckpt.index"
       }
     ],
     "model_artifacts": [
       {
-        "name": "model.ckpt-500.data-00000-of-00001",
-        "size_bytes": 414924688
+        "name": "model.ckpt-500.data-00000-of-00001"
       },
       {
-        "name": "model.ckpt-500.index",
-        "size_bytes": 12774
+        "name": "model.ckpt-500.index"
       },
       {
-        "name": "model.ckpt-500.meta",
-        "size_bytes": 2934260
+        "name": "model.ckpt-500.meta"
       },
       {
-        "name": "model.ckpt.data-00000-of-00001",
-        "size_bytes": 414924688
+        "name": "model.ckpt.data-00000-of-00001"
       },
       {
-        "name": "model.ckpt.index",
-        "size_bytes": 12774
+        "name": "model.ckpt.index"
       },
       {
-        "name": "model.ckpt.meta",
-        "size_bytes": 2934260
+        "name": "model.ckpt.meta"
       }
     ]
   },
@@ -683,34 +660,9 @@
     "only one descriptor family (se_e2_a), one dataset (Li10) and one site were validated",
     "GPU, multi-node, distributed training, restart and fine-tune remain unverified"
   ],
-  "historical_tree_integrity": {
+  "historical_archive_handling": {
     "policy": "read-only",
     "writes_performed_under_the_historical_archive": 0,
-    "checks": [
-      {
-        "check": "entries under <MLP_ARCHIVE> modified on the reproduction date",
-        "scope": "fully recursive over the entire archive",
-        "count": 0,
-        "command": "find <MLP_ARCHIVE> -newermt '2026-08-13 00:00:00' | wc -l"
-      },
-      {
-        "check": "entries under the selected historical run and the Li10 dataset modified in 2026",
-        "scope": "recursive",
-        "count": 0
-      },
-      {
-        "check": "mtime of the selected historical run directory",
-        "value": "2024-08-23 03:02:41 +0800, unchanged"
-      },
-      {
-        "check": "mtime of the Li10 train and test dataset roots",
-        "value": "2024-07-03, unchanged"
-      },
-      {
-        "check": "top-level entries carrying a 2026 mtime",
-        "value": "only <MLP_ARCHIVE> itself (2026-05-08) and <MLP_ARCHIVE>/Li8-new (2026-03-05), both predating this work"
-      }
-    ],
     "all_writes_confined_to": [
       "<SITE_DATASET_ROOT> (verified dataset snapshot)",
       "<SITE_WORK_ROOT> (fresh attempt workspace)",

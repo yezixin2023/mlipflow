@@ -1,175 +1,89 @@
 from __future__ import annotations
 
-import copy
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from mlipflow.backends import ExecutionResult
 from mlipflow.config import load_project
 from mlipflow.errors import ApprovalError
-from mlipflow.planning import execution_identity, with_digest
 from mlipflow.services import initialize, make_run_plan, retry, run_node, state_path
 from mlipflow.state import RunState, StateStore
 
 from .helpers import plugin_manifest, project_config, write_json
 
 
-def _semantic_plan() -> dict:
-    return {
-        "schema_version": 3,
-        "action": "run",
-        "project_id": "display-project",
-        "node_id": "display-node",
-        "attempt": 1,
-        "plugin": {
-            "id": "demo",
-            "version": "1.0.0",
-            "implementation_identity": {"content": "sha256:" + "1" * 64},
-        },
-        "mode": "execute",
-        "backend": "local",
-        "backend_profile": None,
-        "inputs": {"data": "data.json"},
-        "input_identities": {"data": {"content": "sha256:" + "2" * 64}},
-        "parameters": {"model_fingerprint": "sha256:" + "3" * 64},
-        "resources": {"cpus": 2},
-        "cost_class": "expensive",
-        "approval_required": True,
-        "warnings": ["human warning"],
-        "adapter_diagnostics": [{"message": "human diagnostic"}],
-        "adapter_command_identities": {"0": {"content": "sha256:" + "4" * 64}},
-        "adapter_plan": {
-            "status": "READY",
-            "executable": True,
-            "argv": ["python", "worker.py", "--steps", "10"],
-            "cwd": "{ATTEMPT_DIR}",
-            "diagnostics": [],
-            "approval_summary": {"description": "display only"},
-            "input_fingerprints": {"data": "sha256:" + "2" * 64},
-        },
+def _approved_project(root: Path) -> tuple[Path, object]:
+    plugins = root / "plugins"
+    manifest = plugin_manifest()
+    manifest["implementation"].update(
+        {"kind": "external-command", "status": "adapter-ready"}
+    )
+    manifest["safety"] = {
+        "expensive": True,
+        "requires_approval_before_execution": True,
     }
+    write_json(plugins / "demo" / "plugin.yaml", manifest)
+    (plugins / "demo" / "adapter.py").write_text(
+        "class Adapter:\n"
+        "    def validate(self, context): return []\n"
+        "    def plan(self, context):\n"
+        "        return {'status': 'READY', 'executable': True, "
+        "'argv': ['true'], 'cwd': context['attempt_dir']}\n"
+        "    def check(self, context):\n"
+        "        return {'status': 'OK', 'diagnostics': []}\n"
+        "    def collect(self, context):\n"
+        "        return {'status': 'OK', 'artifacts': [], 'metrics': {}, "
+        "'diagnostics': []}\n",
+        encoding="utf-8",
+    )
+    write_json(
+        root / "project.yaml",
+        project_config(
+            [
+                {"id": "x", "uses": "demo@1"},
+                {"id": "y", "uses": "demo@1"},
+            ]
+        ),
+    )
+    initialize(root)
+    return plugins, load_project(root)
 
 
-class ApprovalIdentityTests(unittest.TestCase):
-    def test_cosmetic_and_duplicate_fields_do_not_change_digest(self) -> None:
-        first = with_digest(_semantic_plan())
-        changed = _semantic_plan()
-        changed["plugin"]["version"] = "9.9.9"
-        changed["warnings"] = ["different warning"]
-        changed["adapter_diagnostics"] = [{"message": "different diagnostic"}]
-        changed["adapter_plan"]["diagnostics"] = ["different"]
-        changed["adapter_plan"]["approval_summary"] = {"different": True}
-        changed["adapter_plan"]["input_fingerprints"] = {"duplicate": "changed"}
-        changed["parameters"]["model_fingerprint"] = "sha256:" + "f" * 64
-        changed["cost_class"] = "standard"
-        changed["approval_required"] = False
-        second = with_digest(changed)
-        self.assertEqual(first["plan_digest"], second["plan_digest"])
-        identity_text = repr(execution_identity(second))
-        for excluded in (
-            "warning",
-            "diagnostic",
-            "approval_summary",
-            "model_fingerprint",
-            "declared",
-        ):
-            self.assertNotIn(excluded, identity_text)
-
-    def test_execution_semantics_change_digest(self) -> None:
-        original = with_digest(_semantic_plan())["plan_digest"]
-        changes = []
-        for path, value in (
-            (("project_id",), "another-project"),
-            (("node_id",), "another-node"),
-            (("attempt",), 2),
-            (("backend",), "ssh-slurm"),
-            (("resources", "cpus"), 8),
-            (("adapter_plan", "argv"), ["python", "worker.py", "--steps", "20"]),
-            (("input_identities", "data", "content"), "sha256:" + "a" * 64),
-            (("adapter_command_identities", "0", "content"), "sha256:" + "b" * 64),
-        ):
-            changed = copy.deepcopy(_semantic_plan())
-            target = changed
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = value
-            changes.append(with_digest(changed)["plan_digest"])
-        self.assertTrue(all(item != original for item in changes))
-
-    def test_actual_node_and_retry_attempts_have_distinct_approval_tokens(self) -> None:
+class ApprovalTests(unittest.TestCase):
+    def test_expensive_run_requires_explicit_boolean_approval(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            plugins = root / "plugins"
-            manifest = plugin_manifest()
-            manifest["safety"] = {"requires_approval_before_execution": True}
-            write_json(plugins / "demo" / "plugin.yaml", manifest)
-            write_json(
-                root / "project.yaml",
-                project_config(
-                    [
-                        {"id": "x", "uses": "demo@1"},
-                        {"id": "y", "uses": "demo@1"},
-                    ]
-                ),
-            )
-            initialize(root)
-            project = load_project(root)
+            plugins, project = _approved_project(root)
+            plan = make_run_plan(project, "x", plugins)
+            self.assertTrue(plan["approval_required"])
+            with self.assertRaises(ApprovalError):
+                run_node(project, "x", plugins)
+            self.assertFalse((root / ".mlipflow/runs/x/attempt-1").exists())
 
+            with patch(
+                "mlipflow.services.LocalBackend.run",
+                return_value=ExecutionResult(0, "", ""),
+            ):
+                result = run_node(project, "x", plugins, approval=True)
+            self.assertEqual("OK", result["step"]["state"])
+
+    def test_attempt_and_node_are_plain_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plugins, project = _approved_project(root)
             first = make_run_plan(project, "x", plugins)
-            other_node = make_run_plan(project, "y", plugins)
+            other = make_run_plan(project, "y", plugins)
             with StateStore(state_path(project), readonly=False) as store:
                 step = store.latest_step(project.project_id, "x")
                 store.transition(step.run_id, RunState.RUNNING)
                 store.transition(step.run_id, RunState.FAIL)
             retry(project, "x")
             second = make_run_plan(project, "x", plugins)
-
-            self.assertEqual(1, first["attempt"])
-            self.assertEqual(1, other_node["attempt"])
-            self.assertEqual(2, second["attempt"])
-            self.assertEqual(
-                3,
-                len(
-                    {
-                        first["plan_digest"],
-                        other_node["plan_digest"],
-                        second["plan_digest"],
-                    }
-                ),
-            )
-
-    def test_approval_required_run_rejects_missing_digest(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            plugins = root / "plugins"
-            manifest = plugin_manifest()
-            manifest["implementation"].update(
-                {"kind": "external-command", "status": "adapter-ready"}
-            )
-            manifest["safety"] = {
-                "expensive": True,
-                "requires_approval_before_execution": True,
-            }
-            write_json(plugins / "demo" / "plugin.yaml", manifest)
-            (plugins / "demo" / "adapter.py").write_text(
-                "class Adapter:\n"
-                "    def validate(self, context): return []\n"
-                "    def plan(self, context):\n"
-                "        return {'status': 'READY', 'executable': True, "
-                "'argv': ['true'], 'cwd': context['attempt_dir']}\n",
-                encoding="utf-8",
-            )
-            write_json(
-                root / "project.yaml",
-                project_config([{"id": "expensive", "uses": "demo@1"}]),
-            )
-            initialize(root)
-            project = load_project(root)
-            plan = make_run_plan(project, "expensive", plugins)
-            self.assertTrue(plan["approval_required"])
-            with self.assertRaises(ApprovalError):
-                run_node(project, "expensive", plugins)
-            self.assertFalse((root / ".mlipflow/runs/expensive/attempt-1").exists())
+            self.assertEqual(("x", 1), (first["node_id"], first["attempt"]))
+            self.assertEqual(("y", 1), (other["node_id"], other["attempt"]))
+            self.assertEqual(("x", 2), (second["node_id"], second["attempt"]))
 
 
 if __name__ == "__main__":

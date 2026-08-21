@@ -13,7 +13,6 @@ infer missing candidates or units.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import os
@@ -92,24 +91,8 @@ def parse_metric_line(
     return canonical_id(composition, canonical_order), composition, value
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return f"sha256:{digest.hexdigest()}"
-
-
 def _source(path: Path) -> dict[str, Any]:
-    return {
-        # The resolved path is an execution detail and may expose a private
-        # workstation or cluster layout.  A basename plus the content digest
-        # is sufficient to identify these immutable legacy text inputs in a
-        # portable result manifest.
-        "locator": path.name,
-        "size_bytes": path.stat().st_size,
-        "sha256": _sha256(path),
-    }
+    return {"locator": path.name}
 
 
 def _nonempty_lines(path: Path) -> list[tuple[int, str]]:
@@ -185,7 +168,7 @@ def normalize(
                     "sources": [],
                 }
             metrics[candidate_id]["sources"].append(
-                {"locator": path.name, "line": line_number, "sha256": _sha256(path)}
+                {"locator": path.name, "line": line_number}
             )
 
     common_provenance = {

@@ -1,28 +1,17 @@
-"""Portable rewriting of machine-specific paths in adapter-authored plan fields.
+"""Portable rewriting of machine-specific paths in adapter-authored plans.
 
-An adapter necessarily thinks in absolute paths: it emits the argv it wants run,
-the working directory to run it in, and diagnostics naming the files it looked
-at.  Those values are correct for the machine that produced them and meaningless
-on any other, so placing them verbatim into ``plan_digest`` makes an approval
-non-reproducible across a clone, a relocation or a second machine — the same
-defect ``mtime_ns`` caused, arriving by a different route.
-
-The core therefore rewrites adapter output against the roots it already knows
-before the plan is signed::
+Adapters emit absolute paths for commands, working directories, and inputs.
+MLIPFlow stores those paths relative to the known project locations::
 
     /home/u/proj/.mlipflow/runs/label/attempt-1/out   ->  {ATTEMPT_DIR}/out
     /home/u/proj/prepared/POSCAR                      ->  {PROJECT_ROOT}/prepared/POSCAR
     /opt/venv/share/mlipflow/plugins/dft/helper.py    ->  {PLUGIN_DIR}/helper.py
 
-and resolves them back immediately before anything runs, so adapters keep
-receiving the absolute paths they expect.  Approval sees a portable description
-of what will happen; execution sees this machine's realisation of it.  Scientific
-behaviour is untouched — the same argv runs in the same directory.
+and resolves them immediately before execution.
 
 Paths outside every known root are left alone.  A declared interpreter such as
-``resources.python_executable`` is site configuration that the project states
-explicitly, so it is identical wherever that project file is used; discovering it
-and rewriting it would hide a real part of the approval.
+``resources.python_executable`` is explicit site configuration and is left as
+written.
 """
 
 from __future__ import annotations
@@ -55,7 +44,7 @@ class PortableRoots:
         Several spellings of one root are emitted because adapters variously call
         ``absolute()`` and ``resolve()``; on macOS those differ (``/var`` versus
         ``/private/var``), and a root that only matched one spelling would leave
-        machine-specific text in the digest.
+        machine-specific text in stored plans.
 
         Longest-first ordering matters: ``attempt_dir`` lives inside
         ``project_root``, and rewriting the parent first would strand the

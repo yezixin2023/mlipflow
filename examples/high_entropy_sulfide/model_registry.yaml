@@ -8,17 +8,13 @@
       "family": "DeepMD",
       "version": "fixture-only-1",
       "artifact": {
-        "uri": "replay/training_models.json#deepmd-demo",
-        "fingerprint": "sha256:9414bccacda3ad4ca1b3dabd22820740ae149b739c0e6ac8aceaebb6314f8ff5",
-        "size_bytes": 580
+        "uri": "replay/training_models.json#deepmd-demo"
       },
       "elements": ["Li", "Mn", "Fe", "Ni", "Cu", "Zn", "P", "S"],
       "tasks": ["ionic-transport", "electrochemical-voltage"],
       "recommended_tasks": ["ionic-transport"],
       "training_data": {
-        "uri": "replay/dft_labels.csv",
-        "fingerprint": "sha256:6888c753a1c24b679c5b72a23a3b023cc473565b1a6958900d32004a063ead6b",
-        "size_bytes": 245
+        "uri": "replay/dft_labels.csv"
       },
       "benchmarks": [
         {
@@ -26,9 +22,7 @@
           "task": "ionic-transport",
           "scenario": "synthetic-high-entropy-sulfide-v1",
           "artifact": {
-            "uri": "replay/model_benchmark.csv",
-            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
-            "size_bytes": 1590
+            "uri": "replay/model_benchmark.csv"
           },
           "validation_samples": 24,
           "metrics": {"force_rmse_ev_a": 0.052, "diffusion_log10_mae": 0.07},
@@ -39,9 +33,7 @@
           "task": "electrochemical-voltage",
           "scenario": "synthetic-high-entropy-sulfide-v1",
           "artifact": {
-            "uri": "replay/model_benchmark.csv",
-            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
-            "size_bytes": 1590
+            "uri": "replay/model_benchmark.csv"
           },
           "validation_samples": 24,
           "metrics": {"energy_rmse_ev_atom": 0.031, "voltage_mae_v": 0.12},
@@ -59,17 +51,13 @@
       "family": "MACE",
       "version": "fixture-only-1",
       "artifact": {
-        "uri": "replay/training_models.json#mace-demo",
-        "fingerprint": "sha256:9414bccacda3ad4ca1b3dabd22820740ae149b739c0e6ac8aceaebb6314f8ff5",
-        "size_bytes": 580
+        "uri": "replay/training_models.json#mace-demo"
       },
       "elements": ["Li", "Mn", "Fe", "Ni", "Cu", "Zn", "P", "S"],
       "tasks": ["ionic-transport", "electrochemical-voltage"],
       "recommended_tasks": [],
       "training_data": {
-        "uri": "replay/dft_labels.csv",
-        "fingerprint": "sha256:6888c753a1c24b679c5b72a23a3b023cc473565b1a6958900d32004a063ead6b",
-        "size_bytes": 245
+        "uri": "replay/dft_labels.csv"
       },
       "benchmarks": [
         {
@@ -77,9 +65,7 @@
           "task": "ionic-transport",
           "scenario": "synthetic-high-entropy-sulfide-v1",
           "artifact": {
-            "uri": "replay/model_benchmark.csv",
-            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
-            "size_bytes": 1590
+            "uri": "replay/model_benchmark.csv"
           },
           "validation_samples": 24,
           "metrics": {"force_rmse_ev_a": 0.063, "diffusion_log10_mae": 0.105},
@@ -90,9 +76,7 @@
           "task": "electrochemical-voltage",
           "scenario": "synthetic-high-entropy-sulfide-v1",
           "artifact": {
-            "uri": "replay/model_benchmark.csv",
-            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
-            "size_bytes": 1590
+            "uri": "replay/model_benchmark.csv"
           },
           "validation_samples": 24,
           "metrics": {"energy_rmse_ev_atom": 0.024, "voltage_mae_v": 0.078},
@@ -110,17 +94,13 @@
       "family": "CHGNet",
       "version": "fixture-only-1",
       "artifact": {
-        "uri": "replay/training_models.json#chgnet-demo",
-        "fingerprint": "sha256:9414bccacda3ad4ca1b3dabd22820740ae149b739c0e6ac8aceaebb6314f8ff5",
-        "size_bytes": 580
+        "uri": "replay/training_models.json#chgnet-demo"
       },
       "elements": ["Li", "Mn", "Fe", "Ni", "Cu", "Zn", "P", "S"],
       "tasks": ["ionic-transport", "electrochemical-voltage"],
       "recommended_tasks": ["electrochemical-voltage"],
       "training_data": {
-        "uri": "replay/dft_labels.csv",
-        "fingerprint": "sha256:6888c753a1c24b679c5b72a23a3b023cc473565b1a6958900d32004a063ead6b",
-        "size_bytes": 245
+        "uri": "replay/dft_labels.csv"
       },
       "benchmarks": [
         {
@@ -128,9 +108,7 @@
           "task": "ionic-transport",
           "scenario": "synthetic-high-entropy-sulfide-v1",
           "artifact": {
-            "uri": "replay/model_benchmark.csv",
-            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
-            "size_bytes": 1590
+            "uri": "replay/model_benchmark.csv"
           },
           "validation_samples": 24,
           "metrics": {"force_rmse_ev_a": 0.081, "diffusion_log10_mae": 0.16},
@@ -141,9 +119,7 @@
           "task": "electrochemical-voltage",
           "scenario": "synthetic-high-entropy-sulfide-v1",
           "artifact": {
-            "uri": "replay/model_benchmark.csv",
-            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
-            "size_bytes": 1590
+            "uri": "replay/model_benchmark.csv"
           },
           "validation_samples": 24,
           "metrics": {"energy_rmse_ev_atom": 0.017, "voltage_mae_v": 0.045},
@@ -161,17 +137,13 @@
       "family": "M3GNet",
       "version": "fixture-only-1",
       "artifact": {
-        "uri": "replay/training_models.json#m3gnet-unseen-demo",
-        "fingerprint": "sha256:9414bccacda3ad4ca1b3dabd22820740ae149b739c0e6ac8aceaebb6314f8ff5",
-        "size_bytes": 580
+        "uri": "replay/training_models.json#m3gnet-unseen-demo"
       },
       "elements": ["Li", "Mn", "Fe", "Ni", "Cu", "Zn", "P", "S"],
       "tasks": ["ionic-transport"],
       "recommended_tasks": [],
       "training_data": {
-        "uri": "replay/dft_labels.csv",
-        "fingerprint": "sha256:6888c753a1c24b679c5b72a23a3b023cc473565b1a6958900d32004a063ead6b",
-        "size_bytes": 245
+        "uri": "replay/dft_labels.csv"
       },
       "benchmarks": [
         {
@@ -179,9 +151,7 @@
           "task": "ionic-transport",
           "scenario": "unseen-transfer-probe-v1",
           "artifact": {
-            "uri": "replay/model_benchmark.csv",
-            "fingerprint": "sha256:061413b8d940ff6a66603043cfa70e2396f6efd235359f1b70931da97df47d61",
-            "size_bytes": 1590
+            "uri": "replay/model_benchmark.csv"
           },
           "validation_samples": 8,
           "metrics": {"force_rmse_ev_a": 0.091, "diffusion_log10_mae": 0.21},

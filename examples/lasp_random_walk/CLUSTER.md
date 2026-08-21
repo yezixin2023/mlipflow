@@ -58,11 +58,11 @@ A scheduled LASP node has no `lasp_executable` input.  The licensed binary is re
 
 ## 3. What MLIPFlow stages
 
-The approved scheduled plan stages only pinned project/plugin files: the project configuration, `input.arc`, `lasp.in`, declared auxiliary files, `lasp_ssw.py`, and `lasp_cluster.py`.  The cluster run template invokes the staged helper inside the Slurm allocation.
+The approved scheduled plan stages only the declared project/plugin files: the project configuration, `input.arc`, `lasp.in`, declared auxiliary files, `lasp_ssw.py`, and `lasp_cluster.py`. The cluster run template invokes the staged helper inside the Slurm allocation.
 
 ## 4. Bounded outputs and verified continuation
 
-The approved run binds a fixed output allowlist. After scheduler completion, ordinary `advance` inventories that allowlist and rechecks sizes/hashes during transport without requiring a second approval. Required LASP outputs include:
+The approved run records a fixed output allowlist. After scheduler completion, ordinary `advance` inventories that allowlist and applies the declared size bounds during transport without requiring a second approval. Required LASP outputs include:
 
 - `cluster-run-report.json`
 - `sampling-result.json`
@@ -75,6 +75,6 @@ The approved run binds a fixed output allowlist. After scheduler completion, ord
 
 `best.arc`, `md.arc`, their manifests, and LASP logs are fetched only when declared/available.  Dynamic selected ARC files are packed remotely into `selected-structures.tar.gz`, which keeps the pre-fetch allowlist finite.
 
-During finalization, the pinned adapter reparses fetched `allstr.arc`, recomputes the energy filter and accepted-order stride, recomputes deterministic structure IDs, verifies the selected manifest, and verifies every member of `selected-structures.tar.gz` against the corresponding source-frame SHA-256 before returning scientific `OK`.
+During finalization, the adapter reparses fetched `allstr.arc`, recomputes the energy filter and accepted-order stride, recomputes deterministic structure IDs, verifies the selected manifest, and compares every member of `selected-structures.tar.gz` with its declared source frame before returning scientific `OK`.
 
 This integration validates scheduling, lineage, and bounded transfer.  It does not claim that a fake/local test establishes LASP numerical correctness; production validation still requires a real LASP run on the target cluster.

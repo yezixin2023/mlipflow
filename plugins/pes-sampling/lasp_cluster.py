@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import hashlib
 import importlib.util
 import json
 import re
@@ -20,7 +19,6 @@ from typing import Any
 
 UNKNOWN = "HISTORICAL_PARAMETER_UNKNOWN"
 MAX_POTCAR_BYTES = 64 * 1024 * 1024
-FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -39,14 +37,6 @@ def _load_mapping(path: Path) -> dict[str, Any]:
     return value
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
 def _lasp_potential(path: Path) -> str:
     values: list[str] = []
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -60,7 +50,7 @@ def _lasp_potential(path: Path) -> str:
     return values[0]
 
 
-def _pseudopotential_identity(input_dir: Path) -> dict[str, Any]:
+def _pseudopotential_record(input_dir: Path) -> dict[str, Any]:
     manifest_path = input_dir / "lasp-input-manifest.json"
     potcar_path = input_dir / "POTCAR"
     if manifest_path.is_symlink() or not manifest_path.is_file():
@@ -72,23 +62,22 @@ def _pseudopotential_identity(input_dir: Path) -> dict[str, Any]:
         or manifest.get("plugin_id") != "pes-sampling"
         or manifest.get("operation") != "lasp-input-prepare"
     ):
-        raise ValueError("staged LASP input manifest identity is invalid")
+        raise ValueError("staged LASP input manifest schema is invalid")
     structure = manifest.get("output")
     if (
         not isinstance(structure, dict)
         or structure.get("path") != "input.arc"
-        or structure.get("sha256") != _sha256(input_dir / "input.arc")
-        or structure.get("size_bytes") != (input_dir / "input.arc").stat().st_size
+        or not (input_dir / "input.arc").is_file()
     ):
         raise ValueError("staged LASP input manifest does not bind input.arc")
-    reference_sha256 = manifest.get("pseudopotential_reference_sha256")
+    reference_path = manifest.get("pseudopotential_reference_path")
     potcar = manifest.get("potcar")
     if (
-        not isinstance(reference_sha256, str)
-        or FINGERPRINT.fullmatch(reference_sha256) is None
+        not isinstance(reference_path, str)
+        or not reference_path
         or not isinstance(potcar, dict)
     ):
-        raise ValueError("staged LASP input manifest lacks pseudopotential identity")
+        raise ValueError("staged LASP input manifest lacks the pseudopotential record")
     elements = potcar.get("elements")
     symbols = potcar.get("symbols")
     components = potcar.get("components")
@@ -112,36 +101,27 @@ def _pseudopotential_identity(input_dir: Path) -> dict[str, Any]:
         or any(
             not isinstance(component, dict)
             or component.get("symbol") != symbol
-            or not isinstance(component.get("sha256"), str)
-            or FINGERPRINT.fullmatch(component["sha256"]) is None
             for component, symbol in zip(components, symbols)
         )
         or not isinstance(output, dict)
         or output.get("path") != "POTCAR"
         or output.get("collectable") is not False
-        or output.get("sha256") != potcar.get("combined_sha256")
-        or not isinstance(output.get("sha256"), str)
-        or FINGERPRINT.fullmatch(output["sha256"]) is None
-        or isinstance(output.get("size_bytes"), bool)
-        or not isinstance(output.get("size_bytes"), int)
-        or output.get("size_bytes") < 1
         or potcar_path.is_symlink()
         or not potcar_path.is_file()
+        or potcar_path.stat().st_size < 1
         or potcar_path.stat().st_size > MAX_POTCAR_BYTES
-        or potcar_path.stat().st_size != output.get("size_bytes")
-        or _sha256(potcar_path) != output.get("sha256")
     ):
-        raise ValueError("staged runtime-only POTCAR identity is invalid")
+        raise ValueError("staged runtime-only POTCAR record is invalid")
     return {
         "reference_id": potcar.get("reference_id"),
-        "reference_sha256": reference_sha256,
+        "reference_path": reference_path,
         "functional": potcar.get("functional"),
         "elements": elements,
         "symbols": symbols,
         "components": components,
-        "combined_sha256": output.get("sha256"),
         "configuration_source": potcar.get("configuration_source"),
-        "manifest_sha256": _sha256(manifest_path),
+        "manifest_path": str(manifest_path),
+        "potcar_path": str(potcar_path),
         "portable_or_collectable": False,
     }
 
@@ -210,7 +190,7 @@ def run(args: argparse.Namespace) -> int:
     if potential == "vasp":
         if "lasp_input_manifest" not in inputs:
             raise ValueError("potential vasp requires lasp_input_manifest")
-        pseudopotential = _pseudopotential_identity(input_dir)
+        pseudopotential = _pseudopotential_record(input_dir)
     elif "lasp_input_manifest" in inputs:
         raise ValueError("lasp_input_manifest is accepted only for potential vasp")
 
@@ -272,8 +252,8 @@ def run(args: argparse.Namespace) -> int:
         "potential": potential,
         "pseudopotential": pseudopotential,
         "input_structure": {
-            "source_sha256": _sha256(source_input),
-            "canonical_sha256": _sha256(canonical_input),
+            "source_path": str(source_input),
+            "canonical_path": str(canonical_input),
             "conversion": arc_conversion,
             "canonical_collected": False,
         },
@@ -286,11 +266,9 @@ def run(args: argparse.Namespace) -> int:
         "counts": result.get("counts", {}),
         "selected_archive": {
             "path": "selected-structures.tar.gz",
-            "sha256": _sha256(archive),
-            "size_bytes": archive.stat().st_size,
         },
         "source_outputs": {
-            "allstr_arc_sha256": _sha256(target / "raw-run" / "allstr.arc"),
+            "allstr_arc_path": str(target / "raw-run" / "allstr.arc"),
         },
     }
     (output_root / "cluster-run-report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")

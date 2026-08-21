@@ -29,7 +29,6 @@ from .helpers import project_config, write_json
 from .test_scheduled_dft import (
     PLUGINS,
     FakeTemplateLibrary,
-    sha256,
     write_calculation_outputs,
     write_completion,
     write_site,
@@ -91,7 +90,7 @@ def build_project(
         {
             "schema_version": 1,
             "structures": [
-                {"id": sid, "path": src.name, "fingerprint": sha256(src)}
+                {"id": sid, "path": src.name}
                 for sid, src in zip(structure_ids, sources)
             ],
         },
@@ -123,8 +122,6 @@ def build_project(
             path.write_text(text, encoding="utf-8")
             files[name] = {
                 "path": f"{directory.name}/{name}",
-                "sha256": sha256(path),
-                "size_bytes": path.stat().st_size,
                 "collectable": name != "POTCAR",
             }
         calculations.append(
@@ -210,7 +207,7 @@ class ScheduledLifecycle:
         plan = self.plan()
 
         def stage(remote_dir, files):
-            for _, relative, _ in files:
+            for _, relative in files:
                 self.staged.add(relative)
             return remote_dir
 
@@ -225,7 +222,11 @@ class ScheduledLifecycle:
             side_effect=lambda *_args, **_kwargs: next(submitted),
         ):
             run_node(
-                self.project, "label-li", PLUGINS, plan["plan_digest"], self.site,
+                self.project,
+                "label-li",
+                PLUGINS,
+                True,
+                self.site,
                 FakeTemplateLibrary(),
             )
         return plan
@@ -291,7 +292,6 @@ class ScheduledLifecycle:
                 "path": remote_path,
                 "exists": True,
                 "size_bytes": path.stat().st_size,
-                "sha256": sha256(path),
             }
 
         def fetch(_self, _cwd, remote_path, destination):
@@ -316,7 +316,7 @@ class ScheduledLifecycle:
             "mlipflow.services.SshSlurmBackend.inspect_file", autospec=True,
             side_effect=inspect,
         ):
-            approved = make_advance_plan(self.project, PLUGINS)
+            make_advance_plan(self.project, PLUGINS)
         with patch(
             "mlipflow.services.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
@@ -327,7 +327,6 @@ class ScheduledLifecycle:
             "mlipflow.services.SshSlurmBackend.fetch_from", autospec=True,
             side_effect=fetch,
         ):
-            assert "plan_digest" not in approved
             return advance(self.project, PLUGINS)
 
     def run(self, **overrides: Any) -> dict[str, Any]:
@@ -467,7 +466,6 @@ class NestedPathTests(TemporaryProjectTest):
 
         source = self.root / "payload"
         source.write_text("x", encoding="utf-8")
-        digest = sha256(source)
         commands: list[list[str]] = []
 
         class Result:
@@ -483,11 +481,11 @@ class NestedPathTests(TemporaryProjectTest):
         with patch("mlipflow.backends.subprocess.run", side_effect=fake_run), patch.object(
             SshSlurmBackend,
             "inspect_file",
-            return_value={"exists": True, "sha256": digest, "size_bytes": 1},
+            return_value={"exists": True, "size_bytes": 1},
         ):
             backend.stage_workspace(
                 "/work/p/n/attempt-0001",
-                [(source, "input/calc-0002/POSCAR", digest)],
+                [(source, "input/calc-0002/POSCAR")],
             )
         mkdir = commands[0][-1]
         self.assertIn("input/calc-0002", mkdir)

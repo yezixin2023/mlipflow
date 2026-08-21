@@ -53,7 +53,7 @@ def test_natural_language_intents_preserve_execution_and_claim_boundaries() -> N
     assert "no brand preference" in reference
     assert "Use this old workbook for a fresh benchmark" in reference
     assert "Correct the mode to replay" in reference
-    assert "Fingerprint drift or existing output" in reference
+    assert "Changed input paths or existing output" in reference
     assert "do not bypass or overwrite" in reference
 
 

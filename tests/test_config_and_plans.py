@@ -139,6 +139,47 @@ class ConfigTests(unittest.TestCase):
                     with self.assertRaisesRegex(ConfigError, "site-owned"):
                         load_project(root)
 
+    def test_hpc_project_accepts_explicit_unlimited_walltime(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            node = {
+                "id": "hpc",
+                "uses": "demo@1",
+                "backend": "ssh-slurm",
+                "backend_profile": "cluster-a",
+                "resources": {
+                    "cpus": 128,
+                    "gpus": 0,
+                    "memory": "128G",
+                    "walltime": "UNLIMITED",
+                },
+            }
+            write_json(root / "project.yaml", project_config([node]))
+
+            project = load_project(root)
+
+            self.assertEqual("UNLIMITED", project.node("hpc")["resources"]["walltime"])
+
+    def test_hpc_project_allows_site_selected_cluster(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            node = {
+                "id": "hpc",
+                "uses": "demo@1",
+                "backend": "ssh-slurm",
+                "resources": {
+                    "cpus": 128,
+                    "gpus": 0,
+                    "memory": "128G",
+                    "walltime": "48:00:00",
+                },
+            }
+            write_json(root / "project.yaml", project_config([node]))
+
+            project = load_project(root)
+
+            self.assertNotIn("backend_profile", project.node("hpc"))
+
 
 class PlanTests(unittest.TestCase):
     def test_empty_workflow_can_bootstrap_nodes_on_later_initialize(self) -> None:
@@ -260,7 +301,7 @@ class PlanTests(unittest.TestCase):
             with StateStore(state_path(project), readonly=True) as store:
                 self.assertEqual(2, store.node_snapshot(step.run_id)["parameters"]["revision"])
 
-    def test_generic_file_and_directory_inputs_are_fingerprinted(self) -> None:
+    def test_generic_inputs_are_recorded_as_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             plugins = root / "plugins"
@@ -285,15 +326,15 @@ class PlanTests(unittest.TestCase):
             first = make_run_plan(project, "x", plugins)
             structures.write_text("two\n", encoding="utf-8")
             second = make_run_plan(project, "x", plugins)
-            self.assertNotEqual(first["plan_digest"], second["plan_digest"])
             (dataset / "part.dat").write_text("beta\n", encoding="utf-8")
             third = make_run_plan(project, "x", plugins)
-            self.assertNotEqual(second["plan_digest"], third["plan_digest"])
-            self.assertEqual(third["input_identities"]["data"]["content_mode"], "tree-full")
-            self.assertEqual(third["input_identities"]["data"]["locator"], "dataset")
-            self.assertEqual(third["input_identities"]["structures"]["locator"], "structures.xyz")
+            self.assertEqual(first, second)
+            self.assertEqual(second, third)
+            self.assertEqual(
+                {"data": "dataset", "structures": "structures.xyz"}, third["inputs"]
+            )
 
-    def test_input_change_invalidates_digest_but_manifest_text_does_not(self) -> None:
+    def test_replay_plan_records_the_result_path_not_file_content(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             plugins = root / "plugins"
@@ -314,12 +355,12 @@ class PlanTests(unittest.TestCase):
             first = make_run_plan(project, "x", plugins)
             write_json(result_path, {"schema_version": 1, "metrics": {"changed": 1}, "artifacts": []})
             second = make_run_plan(project, "x", plugins)
-            self.assertNotEqual(first["plan_digest"], second["plan_digest"])
-            manifest["description"] = "Changed without a version bump, still changes approval"
+            self.assertEqual(first, second)
+            manifest["description"] = "Changed without a version bump"
             write_json(manifest_path, manifest)
             third = make_run_plan(project, "x", plugins)
-            self.assertEqual(second["plan_digest"], third["plan_digest"])
-            self.assertNotIn("manifest_digest", third["plugin"])
+            self.assertEqual(second, third)
+            self.assertEqual("result.json", third["inputs"]["result_manifest"])
 
     def test_slurm_dry_plan_never_calls_scheduler(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

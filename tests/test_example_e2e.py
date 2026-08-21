@@ -69,12 +69,12 @@ class HighEntropySulfideExampleTests(unittest.TestCase):
                 for step in workflow["steps"]:
                     if step["state"] == "READY":
                         plan = make_run_plan(project, step["node_id"], PLUGINS)
-                        run_node(project, step["node_id"], PLUGINS, plan["plan_digest"])
+                        self.assertEqual(4, plan["schema_version"])
+                        run_node(project, step["node_id"], PLUGINS, True)
                 workflow = query_workflow(project)
                 if all(step["state"] == "OK" for step in workflow["steps"]):
                     break
-                plan = make_advance_plan(project)
-                self.assertNotIn("plan_digest", plan)
+                make_advance_plan(project)
                 advance(project)
             completed = query_workflow(project)
             self.assertEqual({"OK": 9}, completed["counts"])
@@ -111,14 +111,14 @@ class HighEntropySulfideExampleTests(unittest.TestCase):
         size = sum(path.stat().st_size for path in EXAMPLE.rglob("*") if path.is_file())
         self.assertLess(size, 100_000)
 
-    def test_tampered_benchmark_evidence_blocks_routing(self) -> None:
+    def test_missing_benchmark_evidence_blocks_routing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "example"
             shutil.copytree(EXAMPLE, root)
             evidence = root / "replay" / "model_benchmark.csv"
-            evidence.write_text(evidence.read_text(encoding="utf-8") + "tampered\n", encoding="utf-8")
+            evidence.unlink()
             project = load_project(root)
-            with self.assertRaisesRegex(ConfigError, "mismatch"):
+            with self.assertRaisesRegex(ConfigError, "does not exist"):
                 query_route(
                     project,
                     task="ionic-transport",

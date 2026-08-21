@@ -7,7 +7,6 @@ for scientific numerical parity.
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import subprocess
@@ -154,7 +153,6 @@ class IonicMDHandoffTests(unittest.TestCase):
         for name in ("adapter", "handoff"):
             record = report["implementation"][name]
             self.assertTrue((ROOT / record["locator"]).is_file())
-            self.assertRegex(record["sha256"], r"^[0-9a-f]{64}$")
 
         self.assertEqual("LOCAL_INTEGRATION_SMOKE_PASS", report["status"])
         self.assertTrue(report["scientific_claim"]["real_mlip_model_loaded"])
@@ -169,8 +167,14 @@ class IonicMDHandoffTests(unittest.TestCase):
         self.assertEqual("OK", report["result"]["adapter_collect_status"])
         self.assertLessEqual(report["bounded_parameters"]["production_steps_per_temperature"], 10)
         self.assertLessEqual(report["bounded_parameters"]["production_time_ps"], 0.01)
-        for digest in report["result"]["required_analysis_artifacts"].values():
-            self.assertRegex(digest, r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            {
+                "diffusion_results_by_temperature.csv",
+                "arrhenius_summary.json",
+                "postprocess_failures.json",
+            },
+            set(report["result"]["required_analysis_artifacts"]),
+        )
         serialized = json.dumps(report, sort_keys=True)
         self.assertNotIn("/Users/", serialized)
         self.assertNotIn("/public/home/", serialized)
@@ -178,7 +182,7 @@ class IonicMDHandoffTests(unittest.TestCase):
     def test_fake_historical_sources_complete_the_confined_handoff(self) -> None:
         context = self.smoke_context()
         immutable = [self.md_script, self.structure]
-        before = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in immutable}
+        before = {path: path.read_bytes() for path in immutable}
         plan = self.adapter.plan(context)
         self.assertEqual("READY", plan["status"], plan.get("diagnostics"))
         self.assertEqual("md-smoke-and-analyze", plan["operation"])
@@ -207,7 +211,12 @@ class IonicMDHandoffTests(unittest.TestCase):
         for group_name in ("trajectory_artifacts", "md_artifacts", "result_artifacts"):
             roles = [item["role"] for item in manifest[group_name]]
             self.assertEqual(len(roles), len(set(roles)), group_name)
-            self.assertTrue(all(item["path_is_attempt_relative"] for item in manifest[group_name]))
+            self.assertTrue(
+                all(
+                    (self.attempt / item["path"]).resolve().is_relative_to(self.attempt)
+                    for item in manifest[group_name]
+                )
+            )
         self.assertTrue(
             {
                 "diffusion_results_by_temperature.csv",
@@ -216,17 +225,16 @@ class IonicMDHandoffTests(unittest.TestCase):
                 "analysis_manifest.json",
             }.issubset({Path(item["path"]).name for item in manifest["result_artifacts"]})
         )
-        self.assertTrue(all(item["sha256"].startswith("sha256:") for item in manifest["source_artifacts"]))
-        self.assertTrue(all(item["sha256"].startswith("sha256:") for item in manifest["input_artifacts"]))
-        self.assertTrue(all(item["sha256"].startswith("sha256:") for item in manifest["result_artifacts"]))
-        self.assertTrue(all(item["absolute_path_recorded"] is False for item in manifest["source_artifacts"]))
-        self.assertTrue(all(item["portable"] is False for item in manifest["source_artifacts"]))
+        for group_name in ("source_artifacts", "input_artifacts", "result_artifacts"):
+            self.assertTrue(
+                all(set(item) == {"role", "path"} for item in manifest[group_name])
+            )
         self.assertFalse(manifest["execution"]["absolute_paths_recorded"])
         self.assertTrue(
             all(Path(path).resolve().is_relative_to(self.attempt) for path in plan["expected_outputs"])
         )
         self.assertEqual(
-            before, {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in immutable}
+            before, {path: path.read_bytes() for path in immutable}
         )
         self.assertFalse((self.project / "__pycache__").exists())
 
@@ -240,11 +248,11 @@ class IonicMDHandoffTests(unittest.TestCase):
         )
 
         first_trajectory = Path(plan["trajectory_paths"][0])
-        first_trajectory.write_bytes(b"tampered")
-        tampered = self.adapter.check(context)
-        self.assertEqual("FAIL", tampered["status"])
+        first_trajectory.unlink()
+        missing = self.adapter.check(context)
+        self.assertEqual("FAIL", missing["status"])
         self.assertIn(
-            "integration.artifact_sha256", {item["code"] for item in tampered["diagnostics"]}
+            "result.manifest_missing", {item["code"] for item in missing["diagnostics"]}
         )
 
     def test_smoke_caps_and_network_prone_default_are_blocked(self) -> None:

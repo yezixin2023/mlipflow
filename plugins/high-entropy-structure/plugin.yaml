@@ -48,7 +48,7 @@
     {"name": "composition-manifest", "kind": "manifest", "required": true, "media_type": "application/json"}
   ],
   "parameters": [
-    {"name": "sqs-script", "type": "string", "required": false, "description": "Optional project-relative override; omitted uses the fingerprinted bundled icet implementation."},
+    {"name": "sqs-script", "type": "string", "required": false, "description": "Optional project-relative override; omitted uses the bundled icet implementation."},
     {"name": "interpreter-argv", "type": "array", "required": false, "description": "Optional one-item interpreter argv passed without a shell; defaults to the current Python interpreter."},
     {"name": "seed", "type": "integer", "required": true, "description": "Explicit non-negative random seed recorded in provenance."},
     {"name": "max-candidates", "type": "integer", "required": true, "description": "Hard positive cap presented in the approval plan."},
@@ -79,9 +79,9 @@
     "status": "implemented",
     "checks": [
       {"id": "sqs-input-contract", "implemented": true, "description": "Require exact alloy species/counts, cluster cutoffs, repeat vector, Monte Carlo steps and a deterministic seed policy."},
-      {"id": "result-manifest-schema", "implemented": true, "description": "Require schema version, plugin identity, approved base seed, deterministic per-candidate seed policy, method identity, generator identity/fingerprint, candidate count, and status OK."},
+      {"id": "result-manifest-schema", "implemented": true, "description": "Require schema version, plugin name, approved base seed, deterministic per-candidate seed policy, method and generator names, candidate count, and status OK."},
       {"id": "candidate-coverage-and-composition", "implemented": true, "description": "Re-read the approved composition manifest and require exact ordered candidate coverage, unique IDs, exact alloy species/counts, and alloy site totals."},
-      {"id": "structure-count-and-fingerprints", "implemented": true, "description": "Parse each actual structure, compare its full composition with prototype plus approved alloy counts, and require non-empty files with matching sha256 fingerprints."},
+      {"id": "structure-count-and-composition", "implemented": true, "description": "Parse each actual structure, compare its full composition with prototype plus approved alloy counts, and require non-empty files."},
       {"id": "optional-cluster-vector", "implemented": true, "description": "If declared, require a non-empty finite numeric cluster_vector without claiming objective recomputation or global optimality."}
     ],
     "success_state": "OK",

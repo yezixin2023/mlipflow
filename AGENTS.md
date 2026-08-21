@@ -19,7 +19,7 @@
    ```
 
    它们不得提交、拉取、重试、取消、修改输入、写状态或触发自动推进。
-4. `init/run/advance/retry/stop` 会改变状态或外部系统。启动声明为需审批的昂贵或外部计算前，先用 `run --dry-run` 审查执行语义，再传回该计划给出的 approval token。scheduler observation、bounded fetch、check/collect 不需要第二次审批；`retry` 只创建 fresh attempt；显式 `stop NODE` 本身就是取消意图。
+4. `init/run/advance/retry/stop` 会改变状态或外部系统。启动声明为需审批的昂贵或外部计算前，先用 `run --dry-run` 审查执行语义，再用 `--approve` 表示明确批准。scheduler observation、bounded fetch、check/collect 不需要第二次审批；`retry` 只创建 fresh attempt；显式 `stop NODE` 本身就是取消意图。
 5. 以下行为总要单独获得明确意图：删除或清理数据、覆盖模型/数据集、破坏性重跑、远端 staging、DFT/AIMD、长时间 MD、训练/微调和大规模筛选。显式 `stop NODE` 可取消该节点的已知作业，但不得扩大到其他作业。
 6. 不要把密码、私钥路径、token、POTCAR、模型权重或私有大数据写入仓库。SSH 后端只引用用户 `~/.ssh/config` 中的 profile 名。
 7. `retry` 必须创建新 attempt 并保留旧结果。不要用 `rm` 模拟 retry。
@@ -34,13 +34,13 @@
 2. 用对应仓库 Skill 理解任务和科学注意事项。
 3. `mlipflow inspect NODE` 检查插件契约、输入和已知限制。
 4. 如涉及模型选择，运行 `mlipflow route --task ...`，读取候选、淘汰原因和 benchmark 指标贡献；不要凭图或模型品牌选择。
-5. 对需审批的 `run` 先运行 `--dry-run`，逐项说明执行语义、规模、后端、资源、实际输入与 staged scripts，再请求批准。普通 `advance`/`retry` 和显式 `stop NODE` 不需要复制 approval token。
+5. 对需审批的 `run` 先运行 `--dry-run`，逐项说明执行语义、规模、后端、资源、实际输入与 staged scripts，再请求布尔批准。普通 `advance`/`retry` 和显式 `stop NODE` 不需要额外批准字段。
 6. 执行后按退出码和结构化 JSON 判断，不把非零退出码描述为成功。
 7. 对 FAIL 先读 `logs` 和 manifest；诊断后提出 retry 或参数修正，不能自动重试。
 
 ## 回放模式
 
-回放只允许读取、验证、指纹化并引用现有小型 manifest/产物。不得启动数值程序、提交作业、复制大型数据或修改来源文件。回放结果必须明确标注为“既有结果的结构化采集”，不能称为重新计算或独立科学验证。
+回放只允许读取、验证并按路径引用现有小型 manifest/产物。不得启动数值程序、提交作业、复制大型数据或修改来源文件。回放结果必须明确标注为“既有结果的结构化采集”，不能称为重新计算或独立科学验证。
 
 ## Skills 与 plugins
 

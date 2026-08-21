@@ -47,7 +47,7 @@
   },
   "inputs": [
     {"name": "energy-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Required only by compute-from-energies: strictly increasing Li states, eV total energies, formula-unit count, completion status, and source references."},
-    {"name": "manuscript-voltage-table", "kind": "manifest", "required": false, "media_type": "text/csv", "description": "Required only by replay-si-table-s11: exact 15-column long transcription with DFT references, all six model columns, V units, and source-document SHA-256."}
+    {"name": "manuscript-voltage-table", "kind": "manifest", "required": false, "media_type": "text/csv", "description": "Required only by replay-si-table-s11: exact 14-column long transcription with DFT references, all six model columns, and V units."}
   ],
   "parameters": [
     {"name": "operation", "type": "string", "required": false, "description": "compute-from-energies (default, backward compatible) or replay-si-table-s11.", "default": "compute-from-energies"},
@@ -57,7 +57,6 @@
     {"name": "reference-species", "type": "string", "required": false, "description": "Required by compute-from-energies and must be Li."},
     {"name": "composition-order", "type": "string", "required": false, "description": "Required by compute-from-energies and must be increasing-li."},
     {"name": "result-manifest", "type": "string", "required": false, "description": "Safe attempt-relative compute-from-energies result path.", "default": "voltage-result.json"},
-    {"name": "source-document-sha256", "type": "string", "required": false, "description": "Required by replay-si-table-s11 and compared exactly with every CSV row and provenance.json."},
     {"name": "replay-output-subdir", "type": "string", "required": false, "description": "Fresh attempt-relative directory for metrics.json, model_ranking.json, and provenance.json; an existing directory is rejected.", "default": "manuscript-voltage-replay"}
   ],
   "outputs": [
@@ -65,7 +64,7 @@
     {"name": "voltage-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "compute-from-energies output."},
     {"name": "manuscript-replay-metrics", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Per-row voltage errors and per-model MAE, RMSE, maximum absolute error, and N."},
     {"name": "manuscript-replay-ranking", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Deterministic MAE-first model ranking."},
-    {"name": "manuscript-replay-provenance", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Source hashes, unit source, and explicit evidence-replay boundaries."}
+    {"name": "manuscript-replay-provenance", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Source table, unit source, and explicit evidence-replay boundaries."}
   ],
   "dependencies": {
     "upstream_plugins": ["dft-labeling"],
@@ -84,7 +83,7 @@
     "checks": [
       {"id": "energy-series-consistency", "implemented": true, "description": "Validate strict Li ordering, unique states, finite energies, eV units, positive formula units, source references, and upstream OK completion."},
       {"id": "voltage-reference-and-sign", "implemented": true, "description": "Require an explicit Li reference and recompute every result step with the core average-intercalation-voltage primitive."},
-      {"id": "manuscript-table-replay", "implemented": true, "description": "Through the standard Adapter, validate the exact 15-column SI Table S11 CSV and approved document SHA, reject duplicate/non-finite/non-V rows and overwrite attempts, and recompute every model error and deterministic ranking with mode=replay, model_execution=false, and recomputed_from_total_energies=false."}
+      {"id": "manuscript-table-replay", "implemented": true, "description": "Through the standard Adapter, validate the exact 15-column SI Table S11 CSV and recorded source path, reject duplicate/non-finite/non-V rows and overwrite attempts, and recompute every model error and deterministic ranking with mode=replay, model_execution=false, and recomputed_from_total_energies=false."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"

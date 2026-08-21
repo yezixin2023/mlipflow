@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -20,10 +19,6 @@ def _load(name: str, path: Path):
     return module
 
 
-def _sha(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _write_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
@@ -37,7 +32,6 @@ def _context(tmp_path: Path, calculator: str) -> dict:
         "Properties=species:S:1:pos:R:3 pbc=\"T T T\"\nLi 0 0 0\n",
         encoding="utf-8",
     )
-    model_fp = "sha256:" + "2" * 64
     model_ref = tmp_path / "inputs" / f"{calculator}-model.json"
     _write_json(
         model_ref,
@@ -47,7 +41,6 @@ def _context(tmp_path: Path, calculator: str) -> dict:
             "relative_path": f"{calculator}/model-v1"
             + ("" if calculator == "m3gnet" else ".model"),
             "kind": "directory" if calculator == "m3gnet" else "file",
-            "fingerprint": model_fp,
         },
     )
     parameters = {
@@ -65,8 +58,6 @@ def _context(tmp_path: Path, calculator: str) -> dict:
         "device": "cpu",
         "default_dtype": "float32" if calculator == "chgnet" else "float64",
         "fix_com": False,
-        "model_fingerprint": model_fp,
-        "structure_fingerprint": _sha(structure),
         "input_index": "-1",
     }
     project = {
@@ -114,15 +105,15 @@ def test_npt_scheduler_matrix_is_ready(tmp_path: Path, calculator: str) -> None:
     module = _load("ase_md_npt_adapter", PLUGIN / "adapter_npt.py")
     plan = module.Adapter().plan(_context(tmp_path, calculator))
     assert plan["status"] == "READY", plan.get("diagnostics")
-    identity = plan["md_identity"]
-    assert identity["calculator"] == calculator
-    assert identity["ensemble"] == "npt-isotropic-mtk"
-    assert identity["pressure_gpa"] == 0.0
-    assert identity["thermostat_damping_fs"] == 100.0
-    assert identity["barostat_damping_fs"] == 1000.0
-    assert identity["stress_required"] is True
-    assert "friction_per_fs" not in identity
-    assert identity["fix_com"] is False
+    settings = plan["md_parameters"]
+    assert settings["calculator"] == calculator
+    assert settings["ensemble"] == "npt-isotropic-mtk"
+    assert settings["pressure_gpa"] == 0.0
+    assert settings["thermostat_damping_fs"] == 100.0
+    assert settings["barostat_damping_fs"] == 1000.0
+    assert settings["stress_required"] is True
+    assert "friction_per_fs" not in settings
+    assert settings["fix_com"] is False
     assert plan["approval_summary"]["cell_mode"] == "isotropic-volume"
     staged = {
         item["remote_name"] for item in plan["scheduled_execution"]["staged_files"]
@@ -157,16 +148,16 @@ def test_npt_requires_explicit_damping_times(tmp_path: Path) -> None:
     assert any(item["code"] == "ase_md.barostat_damping_fs" for item in plan["diagnostics"])
 
 
-def test_npt_checker_verifies_pressure_cell_schedule_and_hashes(tmp_path: Path) -> None:
+def test_npt_checker_verifies_pressure_cell_schedule_and_outputs(tmp_path: Path) -> None:
     module = _load("ase_md_npt_checker", PLUGIN / "adapter_npt.py")
     attempt = tmp_path / "attempt"
     attempt.mkdir()
-    identity = {
+    settings = {
         "calculator": "mace",
         "ensemble": "npt-isotropic-mtk",
         "model_id": "mace-v1",
-        "model_fingerprint": "sha256:" + "2" * 64,
-        "structure_fingerprint": "sha256:" + "3" * 64,
+        "model_path": "mace/mace-v1.model",
+        "structure_path": "structure/start.extxyz",
         "temperature_k": 900.0,
         "pressure_gpa": 0.0,
         "timestep_fs": 1.0,
@@ -201,7 +192,7 @@ def test_npt_checker_verifies_pressure_cell_schedule_and_hashes(tmp_path: Path) 
         attempt / "trajectory-index.json",
         {
             "schema_version": 1,
-            "steps": identity["trajectory_steps"],
+            "steps": settings["trajectory_steps"],
             "time_fs": [0.0, 2.0, 4.0, 5.0],
         },
     )
@@ -222,7 +213,7 @@ def test_npt_checker_verifies_pressure_cell_schedule_and_hashes(tmp_path: Path) 
                 "cell_c_A",
             ]
         )
-        for step in identity["thermo_steps"]:
+        for step in settings["thermo_steps"]:
             writer.writerow(
                 [step, float(step), 900.0, -10.0, 1.0, -9.0, 1000.0, 0.1, 10, 10, 10]
             )
@@ -237,8 +228,6 @@ def test_npt_checker_verifies_pressure_cell_schedule_and_hashes(tmp_path: Path) 
             {
                 "name": role,
                 "path": path.name,
-                "sha256": _sha(path),
-                "size_bytes": path.stat().st_size,
             }
         )
     result = {
@@ -249,8 +238,8 @@ def test_npt_checker_verifies_pressure_cell_schedule_and_hashes(tmp_path: Path) 
         "calculator_version": "test",
         "ase_version": "test",
         "ensemble": "npt-isotropic-mtk",
-        "model": {"id": identity["model_id"], "fingerprint": identity["model_fingerprint"]},
-        "structure_fingerprint": identity["structure_fingerprint"],
+        "model": {"id": settings["model_id"], "path": settings["model_path"]},
+        "structure_path": settings["structure_path"],
         "temperature_K": 900.0,
         "pressure_GPa": 0.0,
         "initial_pressure_GPa": 0.2,
@@ -283,18 +272,20 @@ def test_npt_checker_verifies_pressure_cell_schedule_and_hashes(tmp_path: Path) 
             "calculator": "mace",
             "ensemble": "npt-isotropic-mtk",
             "model": {
-                "id": identity["model_id"],
-                "observed_fingerprint": identity["model_fingerprint"],
+                "id": settings["model_id"],
+                "path": settings["model_path"],
             },
-            "structure_fingerprint": identity["structure_fingerprint"],
+            "structure_path": settings["structure_path"],
             "steps_completed": 5,
             "pressure_GPa": 0.0,
             "thermostat_damping_fs": 100.0,
             "barostat_damping_fs": 1000.0,
-            "result_sha256": _sha(attempt / "md-result.json"),
         },
     )
-    context = {"attempt_dir": str(attempt), "execution": {"plan": {"md_identity": identity}}}
+    context = {
+        "attempt_dir": str(attempt),
+        "execution": {"plan": {"md_parameters": settings}},
+    }
     checked = module.Adapter().check(context)
     assert checked["status"] == "OK", checked.get("diagnostics")
     assert checked["metrics"]["final_pressure_GPa"] == 0.1

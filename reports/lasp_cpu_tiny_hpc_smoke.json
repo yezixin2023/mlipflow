@@ -9,7 +9,7 @@
     "real_lasp_executed": true,
     "real_scheduler_executed": true,
     "bounded_fetch_completed": true,
-    "pinned_checker_collect_ok": true,
+    "checker_collect_ok": true,
     "dft_or_vasp_executed": false,
     "lasp_ssw_numerical_parity_established": false,
     "production_sampling_executed": false,
@@ -47,28 +47,20 @@
     },
     "files": [
       {
-        "name": "input.arc",
-        "size_bytes": 1342,
-        "sha256": "2678b749d25cf4163dbb426f1d7312e7e75c594267972de49bd429cab618f888"
+        "name": "input.arc"
       },
       {
-        "name": "lasp.in",
-        "size_bytes": 409,
-        "sha256": "b32e4a7c87c4083f81d651bef1cd6276a7904ad190d0f444aa007fefc45de1f0"
+        "name": "lasp.in"
       },
       {
         "name": "CHON.pot",
-        "role": "user-supplied NN potential artifact; content is not stored in the repository",
-        "size_bytes": 7004118,
-        "sha256": "8c99bd37a3152bd5412197dd16bd337f65b0214445fa04c1a261e74b8a4732c3"
+        "role": "user-supplied NN potential artifact; content is not stored in the repository"
       }
     ]
   },
   "runtime": {
     "lasp_version": "3.6.0 (NN single-precision, Nov. 2023)",
-    "lasp_executable_sha256": "900d9b5f1ebe738f022a82548b73edc06f3b7d176653bd23e87bb1d6e11c6d51",
     "mpi_launcher_basename": "mpirun",
-    "mpi_launcher_sha256": "c1cfcb8347e8dd41a639518c6c781c49621867ad4d1f611c33ef4664479f496e",
     "mpi_processes": 12,
     "shell": false,
     "returncode": 0
@@ -85,8 +77,7 @@
       "job_id": "redacted",
       "scheduler_state": "COMPLETED",
       "mlipflow_state": "OK",
-      "plan_digest": "sha256:ad5ae0cec78958594e9cc2e7d2e06c9382323ffb1e70183245fd53ed5c16a0bd",
-      "state_reason": "scheduler completed; bounded fetch and pinned plugin checks succeeded"
+      "state_reason": "scheduler completed; bounded fetch and plugin checks succeeded"
     },
     "scientific_inputs_potential_parameters_and_resources_unchanged": true,
     "fresh_attempt_workspace_used": true,
@@ -96,24 +87,14 @@
     "compatible_source_name": "all.arc",
     "canonical_checker_input": {
       "name": "allstr.arc",
-      "frame_count": 14,
-      "size_bytes": 18491,
-      "sha256": "b5a9389af624bcbebc575f98e61279a00e5817b9ba0d7a423c6fd7ae15027fa6"
+      "frame_count": 14
     },
     "preexisting_native_archive": {
       "preserved_as": "allstr.native.arc",
-      "frame_count": 2249,
-      "size_bytes": 2977008,
-      "sha256": "b8d8708352f2c605fbc39e035a2e166a1afd0276a68430d9ca78adfa6dc4471a"
+      "frame_count": 2249
     },
-    "best_arc": {
-      "size_bytes": 10577,
-      "sha256": "539a345a14dd2f3ebd0b1ccb0f9604cf36166bcab21078b2937fd692b5aa3c27"
-    },
-    "md_arc": {
-      "size_bytes": 25,
-      "sha256": "ed551fac974c616b2084cd58364d1108983c022e6cdfbf02d2e3fb96081b554d"
-    }
+    "best_arc": "best.arc",
+    "md_arc": "md.arc"
   },
   "result": {
     "generated_structure_count": 14,
@@ -125,41 +106,29 @@
     "selection_stride_verified": true,
     "artifacts": [
       {
-        "name": "cluster-run-report.json",
-        "size_bytes": 841,
-        "sha256": "6c170803278d235c02735798a8e412fee2b684e08fd16dc02262e5f213f0af35"
+        "name": "cluster-run-report.json"
       },
       {
-        "name": "sampling-result.json",
-        "size_bytes": 9797,
-        "sha256": "cbe9724b6da10a8c4dff9c9b9e7a298255450ce44e39ae0a3d11dfbd21f5f0c9"
+        "name": "sampling-result.json"
       },
       {
-        "name": "ssw-structures.json",
-        "size_bytes": 7973,
-        "sha256": "63bbb1aac61b5162e53effd621423cf376c74dfdf07719699f196327e67557ce"
+        "name": "ssw-structures.json"
       },
       {
-        "name": "selected-structures.json",
-        "size_bytes": 8111,
-        "sha256": "e7610fcc13a6ac71e5c3ef5a004a353336bc38c46c4c3fd575353cbfb16dd097"
+        "name": "selected-structures.json"
       },
       {
-        "name": "lasp-run-metadata.json",
-        "size_bytes": 2953,
-        "sha256": "143ab0863d8b7bbc1be13d3e10e79f00ab2366fe8ce717ab31c4ea19ce215c86"
+        "name": "lasp-run-metadata.json"
       },
       {
-        "name": "selected-structures.tar.gz",
-        "size_bytes": 4905,
-        "sha256": "52b45e7046b6e379e40e53e3c67538f2e4828ec2545be0737b19b0809e933f70"
+        "name": "selected-structures.tar.gz"
       }
     ]
   },
   "completion": {
     "scheduler_terminal_state": "COMPLETED",
     "bounded_fetch_completed": true,
-    "pinned_checker_status": "OK",
+    "checker_status": "OK",
     "collect_status": "OK",
     "final_mlipflow_state": "OK"
   },

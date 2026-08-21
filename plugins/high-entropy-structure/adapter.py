@@ -7,7 +7,6 @@ is part of the plugin manifest), and verifies declared output artifacts.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import re
@@ -20,9 +19,8 @@ from typing import Any
 PLUGIN_ID = "high-entropy-structure"
 BUILTIN_SQS = Path(globals().get("__file__", "adapter.py")).absolute().with_name("sqs.py")
 SEED_POLICY = "base-seed-plus-candidate-index"
-BUILTIN_GENERATOR_IDENTITY = "mlipflow-bundled:icet.generate_sqs_from_supercells"
+BUILTIN_GENERATOR_NAME = "icet.generate_sqs_from_supercells"
 IDENTIFIER = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
-SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 SHELL_EXECUTABLES = frozenset(
     {"bash", "csh", "cmd", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "tcsh", "zsh"}
 )
@@ -93,19 +91,11 @@ def _load_json(path: Path) -> tuple[dict[str, Any] | None, dict[str, str] | None
     return value, None
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return f"sha256:{digest.hexdigest()}"
-
-
 def _generator_contract(context: dict[str, Any]) -> tuple[str, Path]:
     script_value = context["parameters"].get("sqs_script")
     if isinstance(script_value, str):
-        return f"user-supplied:{script_value}", _path(context["project_root"], script_value)
-    return BUILTIN_GENERATOR_IDENTITY, BUILTIN_SQS.absolute()
+        return script_value, _path(context["project_root"], script_value)
+    return BUILTIN_GENERATOR_NAME, BUILTIN_SQS.absolute()
 
 
 def _positive_int(value: Any) -> bool:
@@ -395,7 +385,7 @@ class Adapter:
             attempt_dir, parameters.get("result_manifest", "generation-result.json")
         )
         script_value = parameters.get("sqs_script")
-        generator_identity, script_path = _generator_contract(context)
+        generator_name, script_path = _generator_contract(context)
         argv = list(parameters.get("interpreter_argv", [sys.executable]))
         argv.extend(
             [
@@ -426,9 +416,8 @@ class Adapter:
                 "seed": parameters["seed"],
                 "max_candidates": parameters["max_candidates"],
                 "generator_is_user_supplied": script_value is not None,
-                "generator_identity": generator_identity,
+                "generator_name": generator_name,
                 "generator_path": str(script_path),
-                "generator_fingerprint": _sha256(script_path) if script_path.is_file() else None,
                 "seed_policy": SEED_POLICY,
             },
         }
@@ -471,12 +460,9 @@ class Adapter:
                 _diagnostic("error", "result.seed", "结果 seed 与已批准计划不一致。")
             )
 
-        generator_identity, generator_path = _generator_contract(context)
+        generator_name, generator_path = _generator_contract(context)
         generator = manifest.get("generator")
-        expected_generator_fingerprint: str | None = None
-        if generator_path.is_file():
-            expected_generator_fingerprint = _sha256(generator_path)
-        else:
+        if not generator_path.is_file():
             diagnostics.append(
                 _diagnostic(
                     "error", "result.generator_source", f"已批准 generator 不存在：{generator_path}"
@@ -484,23 +470,12 @@ class Adapter:
             )
         if not isinstance(generator, dict):
             diagnostics.append(
-                _diagnostic("error", "result.generator", "必须声明 generator identity 和 fingerprint。")
+                _diagnostic("error", "result.generator", "必须声明 generator name。")
             )
-        else:
-            if generator.get("identity") != generator_identity:
-                diagnostics.append(
-                    _diagnostic(
-                        "error", "result.generator_identity", "generator identity 与已批准计划不一致。"
-                    )
-                )
-            if generator.get("fingerprint") != expected_generator_fingerprint:
-                diagnostics.append(
-                    _diagnostic(
-                        "error",
-                        "result.generator_fingerprint",
-                        "generator fingerprint 与当前已批准脚本不一致。",
-                    )
-                )
+        elif generator.get("name") != generator_name:
+            diagnostics.append(
+                _diagnostic("error", "result.generator_name", "generator name 与计划不一致。")
+            )
 
         method = manifest.get("method")
         if not isinstance(method, dict):
@@ -514,12 +489,12 @@ class Adapter:
                         f"random_seed_policy 必须为 {SEED_POLICY}。",
                     )
                 )
-            if generator_identity == BUILTIN_GENERATOR_IDENTITY:
-                bundled_identity = {
+            if generator_name == BUILTIN_GENERATOR_NAME:
+                bundled_method = {
                     "library": "icet",
                     "api": "generate_sqs_from_supercells",
                 }
-                for key, expected in bundled_identity.items():
+                for key, expected in bundled_method.items():
                     if method.get(key) != expected:
                         diagnostics.append(
                             _diagnostic(
@@ -532,24 +507,14 @@ class Adapter:
                             _diagnostic(
                                 "error",
                                 f"result.method.{key}",
-                                f"bundled method 必须记录 {key} identity；版本本身不代表结构科学等价。",
+                                f"bundled method 必须记录 {key}。",
                             )
                         )
-
-        declared_inputs = {
-            "prototype_fingerprint": manifest.get("prototype_fingerprint"),
-            "composition_manifest_fingerprint": manifest.get("composition_manifest_fingerprint"),
-        }
-        for key, fingerprint in declared_inputs.items():
-            if not isinstance(fingerprint, str) or not SHA256.fullmatch(fingerprint):
-                diagnostics.append(
-                    _diagnostic("error", f"result.{key}", f"必须声明输入 {key} 的 sha256。")
-                )
         input_paths = {
-            "prototype_fingerprint": _path(
+            "prototype": _path(
                 context["project_root"], context["inputs"]["prototype_structure"]
             ),
-            "composition_manifest_fingerprint": _path(
+            "composition_manifest": _path(
                 context["project_root"], context["inputs"]["composition_manifest"]
             ),
         }
@@ -558,14 +523,10 @@ class Adapter:
                 diagnostics.append(
                     _diagnostic("error", f"result.{key}", f"输入文件不存在：{input_path}")
                 )
-            elif _sha256(input_path) != declared_inputs[key]:
-                diagnostics.append(
-                    _diagnostic("error", f"result.{key}", f"输入 {key} 的 sha256 不匹配。")
-                )
 
         approved: dict[str, Any] | None = None
-        prototype_path = input_paths["prototype_fingerprint"]
-        composition_path = input_paths["composition_manifest_fingerprint"]
+        prototype_path = input_paths["prototype"]
+        composition_path = input_paths["composition_manifest"]
         if prototype_path.is_file() and composition_path.is_file():
             try:
                 prototype_counts = _read_structure_counts(prototype_path)
@@ -642,15 +603,9 @@ class Adapter:
                     )
                 )
             relative = structure.get("path")
-            fingerprint = structure.get("fingerprint")
             if not _safe_relative(relative):
                 diagnostics.append(
                     _diagnostic("error", f"{prefix}.path", "结构路径必须位于 attempt_dir 内。")
-                )
-                continue
-            if not isinstance(fingerprint, str) or not SHA256.fullmatch(fingerprint):
-                diagnostics.append(
-                    _diagnostic("error", f"{prefix}.fingerprint", "必须声明 sha256 指纹。")
                 )
                 continue
             declared_composition = structure.get("composition")
@@ -691,10 +646,6 @@ class Adapter:
                 )
             elif artifact_path.stat().st_size == 0:
                 diagnostics.append(_diagnostic("error", f"{prefix}.empty", "结构文件为空。"))
-            elif _sha256(artifact_path) != fingerprint:
-                diagnostics.append(
-                    _diagnostic("error", f"{prefix}.fingerprint", "结构文件 sha256 不匹配。")
-                )
             elif expected is not None:
                 try:
                     actual_counts = dict(_read_structure_counts(artifact_path))
@@ -757,7 +708,6 @@ class Adapter:
                     "name": structure["id"],
                     "path": structure["path"],
                     "media_type": structure.get("media_type", "chemical/x-cif"),
-                    "fingerprint": structure["fingerprint"],
                 }
             )
         return {

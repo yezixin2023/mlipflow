@@ -214,8 +214,8 @@ def _write_native_lammps_attempt(
                 "dump_interval": 1,
                 "type_map": ["Li", "He"],
                 "ensemble": "nvt",
-                "model": {"id": "model-a", "fingerprint": "model-a-id"},
-                "structure_identity": "structure-a",
+                "model": {"id": "model-a", "path": "mace/model-a.pt"},
+                "structure_path": "prepared/structure.data",
             }
         ),
         encoding="utf-8",
@@ -234,14 +234,15 @@ def test_native_lammps_metadata_filename_and_restart_stitch(tmp_path: Path, runn
         json.dumps(
             {
                 "adapter_plan": {
-                    "lammps_execution_identity": {
+                    "lammps_calculation": {
                         "temperature_k": 600.0,
                         "timestep_fs": 1.0,
                         "dump_interval": 1,
                         "type_map": ["Li", "He"],
                         "ensemble": "nvt",
                         "model_id": "model-a",
-                        "model_fingerprint": "model-a-id",
+                        "model_path": "mace/model-a.pt",
+                        "structure_path": "prepared/structure.data",
                     }
                 }
             }
@@ -264,7 +265,7 @@ def test_native_lammps_metadata_filename_and_restart_stitch(tmp_path: Path, runn
     assert result.handoff["segments"] == 2
     assert result.handoff["type_map"] == ["Li", "He"]
     assert result.handoff["model"]["id"] == "model-a"
-    assert result.handoff["structure_identity"] == "structure-a"
+    assert result.handoff["structure_path"] == "prepared/structure.data"
     assert np.allclose(captured["continuous_frac"][:, 0, 0], [0.98, 1.02, 1.06, 1.10, 1.14])
 
 
@@ -309,8 +310,8 @@ def _write_native_ase_attempt(
                 "timestep_fs": 1.0,
                 "trajectory_interval": 1,
                 "ensemble": "nvt-langevin",
-                "model": {"id": "model-b", "fingerprint": "model-b-id"},
-                "structure_fingerprint": "structure-b",
+                "model": {"id": "model-b", "path": "mace/model-b.model"},
+                "structure_path": "structure/start.extxyz",
             }
         ),
         encoding="utf-8",
@@ -325,14 +326,14 @@ def test_native_ase_metadata_filename_and_restart_stitch(tmp_path: Path, runner)
         json.dumps(
             {
                 "adapter_plan": {
-                    "md_identity": {
+                    "md_parameters": {
                         "temperature_k": 500.0,
                         "timestep_fs": 1.0,
                         "trajectory_interval": 1,
                         "ensemble": "nvt-langevin",
                         "model_id": "model-b",
-                        "model_fingerprint": "model-b-id",
-                        "structure_fingerprint": "structure-b",
+                        "model_path": "mace/model-b.model",
+                        "structure_path": "structure/start.extxyz",
                     }
                 }
             }
@@ -351,7 +352,7 @@ def test_native_ase_metadata_filename_and_restart_stitch(tmp_path: Path, runner)
     assert result.handoff["physical_time_fs"] == [0.0, 1.0, 2.0, 3.0, 4.0]
     assert result.handoff["segments"] == 2
     assert result.handoff["model"]["id"] == "model-b"
-    assert result.handoff["structure_identity"] == "structure-b"
+    assert result.handoff["structure_path"] == "structure/start.extxyz"
     assert np.allclose(captured["continuous_frac"][:, 0, 0], [0.98, 1.02, 1.06, 1.10, 1.14])
 
 

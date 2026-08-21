@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
-import hashlib
 import json
+import math
 import subprocess
 import tempfile
 import unittest
@@ -26,13 +26,29 @@ def _load(path: Path, name: str):
     return module
 
 
+def test_metric_recomputation_accepts_only_floating_roundoff() -> None:
+    adapter = _load(ADAPTER_PATH, "test_benchmark_metric_tolerance")
+    stored = [{"metric": "force_mae", "sample_count": 3, "value": 0.3}]
+    recomputed = [
+        {
+            "metric": "force_mae",
+            "sample_count": 3,
+            "value": math.nextafter(0.3, math.inf),
+        }
+    ]
+    assert adapter._metric_records_match(stored, recomputed)
+
+    recomputed[0]["value"] += 1e-6
+    assert not adapter._metric_records_match(stored, recomputed)
+
+
 class FakePredictor:
     prediction_units = {
         "energy": "eV",
         "force": "eV/angstrom",
         "stress": "GPa",
     }
-    runtime_identity = {
+    runtime_details = {
         "framework": "deepmd",
         "framework_version": "fake-contract-1",
         "backend": "injected-test-predictor",
@@ -106,8 +122,6 @@ class FreshBenchmarkTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self.model_sha = self.fresh.fingerprint_path(self.model)
-        self.dataset_sha = self.fresh.fingerprint_path(self.dataset)
         self.output = self.root / "attempt" / "fresh"
 
     def tearDown(self):
@@ -119,8 +133,6 @@ class FreshBenchmarkTests(unittest.TestCase):
             dataset=self.dataset,
             output_dir=output or self.output,
             model_family="deepmd-dpa2",
-            model_fingerprint=self.model_sha,
-            dataset_fingerprint=self.dataset_sha,
             task="static-pes",
             scenario="fresh-contract-v1",
             split="test",
@@ -143,8 +155,6 @@ class FreshBenchmarkTests(unittest.TestCase):
             "parameters": {
                 "operation": "evaluate-fresh",
                 "model_family": "deepmd-dpa2",
-                "model_fingerprint": self.model_sha,
-                "dataset_fingerprint": self.dataset_sha,
                 "task": "static-pes",
                 "scenario": "fresh-contract-v1",
                 "split": "test",
@@ -177,22 +187,90 @@ class FreshBenchmarkTests(unittest.TestCase):
         self.assertEqual([2.0, 3.0], [row["reference"] for row in energy_rows])
         self.assertEqual([2.1, 2.8], [row["prediction"] for row in energy_rows])
         counts = {row["metric"]: row["sample_count"] for row in metrics["records"]}
+        values = {row["metric"]: row["value"] for row in metrics["records"]}
         self.assertEqual(2, counts["energy_mae"])
         self.assertEqual(9, counts["force_rmse"])
+        self.assertEqual(3, counts["maximum_atomic_force_error"])
+        self.assertAlmostEqual((3 * 0.2**2) ** 0.5, values["maximum_atomic_force_error"])
         self.assertEqual(12, counts["stress_pearson_r"])
-        self.assertEqual(self.model_sha, provenance["model_fingerprint"])
-        self.assertEqual(self.dataset_sha, provenance["dataset_fingerprint"])
-        self.assertTrue(provenance["prediction_evidence_sha256"].startswith("sha256:"))
-        self.assertEqual(3, len(provenance["normalized_artifact_sha256"]))
+        maximum_force = next(
+            row
+            for row in metrics["records"]
+            if row["metric"] == "maximum_atomic_force_error"
+        )
+        self.assertEqual(
+            {
+                "scope": "overall",
+                "target": "force",
+                "error_norm": "atomic-l2-vector",
+                "aggregation": "maximum-over-atoms",
+            },
+            maximum_force["dimensions"],
+        )
+        self.assertEqual(str(self.model.resolve()), provenance["model_path"])
+        self.assertEqual(str(self.dataset.resolve()), provenance["dataset_path"])
+        self.assertEqual(
+            {"prediction_evidence.json", "metrics.json", "benchmark_summary.csv", "model_ranking.json"},
+            {item["path"] for item in provenance["output_artifacts"]},
+        )
         checked = self.adapter.check(self.context())
         self.assertEqual("OK", checked["status"], checked["diagnostics"])
         self.assertEqual("fresh", checked["mode"])
+
+    def test_maximum_atomic_force_error_requires_explicit_n_by_three_vectors(self):
+        normalizer = self.fresh._normalizer_module()
+        defaults = {
+            "model": "chgnet",
+            "task": "static-pes",
+            "scenario": "force-vector-contract",
+            "split": "audit",
+            "units": {"force": "eV/angstrom"},
+        }
+        explicit = self.root / "explicit-force-vectors.json"
+        explicit.write_text(
+            json.dumps(
+                [
+                    {
+                        "target": "force",
+                        "reference": [[0, 0, 0], [1, 1, 1]],
+                        "prediction": [[0.1, 0.2, 0.2], [1.3, 1.4, 1.0]],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        records, _ = normalizer._execute_source({"path": explicit, **defaults})
+        maximum = next(
+            record
+            for record in records
+            if record["metric"] == "maximum_atomic_force_error"
+        )
+        self.assertEqual(2, maximum["sample_count"])
+        self.assertAlmostEqual(0.5, maximum["value"])
+
+        flattened = self.root / "flattened-force-components.json"
+        flattened.write_text(
+            json.dumps(
+                [
+                    {
+                        "target": "force",
+                        "reference": [0, 0, 0, 1, 1, 1],
+                        "prediction": [0.1, 0.2, 0.2, 1.3, 1.4, 1.0],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        flat_records, _ = normalizer._execute_source({"path": flattened, **defaults})
+        self.assertNotIn(
+            "maximum_atomic_force_error",
+            {record["metric"] for record in flat_records},
+        )
 
     def test_single_structure_keeps_errors_and_records_energy_pearson_unavailable(self):
         dataset = json.loads(self.dataset.read_text(encoding="utf-8"))
         dataset["samples"] = dataset["samples"][:1]
         self.dataset.write_text(json.dumps(dataset), encoding="utf-8")
-        self.dataset_sha = self.fresh.fingerprint_path(self.dataset)
 
         paths = self.evaluate()
         metrics = json.loads(paths["metrics.json"].read_text())
@@ -257,15 +335,8 @@ class FreshBenchmarkTests(unittest.TestCase):
                 self.assertIs(sentinel, runtime.load_inference_predictor(self.model, family, "cpu"))
         self.assertEqual(4, loader.call_count)
 
-    def test_model_dataset_and_prediction_evidence_drift_fail_collection(self):
+    def test_changed_prediction_evidence_fails_collection(self):
         self.evaluate()
-        self.model.write_bytes(b"changed-model")
-        self.assertEqual("FAIL", self.adapter.check(self.context())["status"])
-        self.model.write_bytes(b"test-only-model-artifact")
-        original_dataset = self.dataset.read_text()
-        self.dataset.write_text(original_dataset + "\n")
-        self.assertEqual("FAIL", self.adapter.check(self.context())["status"])
-        self.dataset.write_text(original_dataset)
         evidence_path = self.output / "prediction_evidence.json"
         evidence = json.loads(evidence_path.read_text())
         evidence["records"][0]["prediction"] += 1
@@ -288,8 +359,7 @@ class FreshBenchmarkTests(unittest.TestCase):
             with self.assertRaisesRegex(self.fresh.FreshBenchmarkError, "model-load failure"):
                 self.fresh.evaluate_fresh(
                     model=self.model, dataset=self.dataset, output_dir=failed_output,
-                    model_family="deepmd-dpa2", model_fingerprint=self.model_sha,
-                    dataset_fingerprint=self.dataset_sha, task="static-pes",
+                    model_family="deepmd-dpa2", task="static-pes",
                     scenario="fresh-contract-v1", split="test", targets=["energy"],
                     units={"energy": "eV/atom"}, energy_normalization="per-atom",
                     stress_convention=None,
@@ -373,7 +443,11 @@ class FreshBenchmarkTests(unittest.TestCase):
         ]
         self.assertTrue(fair_axes)
         self.assertTrue(
-            all(item["metric"].startswith(("energy_", "force_")) for item in fair_axes)
+            all(
+                item["metric"].startswith(("energy_", "force_"))
+                or item["metric"] == "maximum_atomic_force_error"
+                for item in fair_axes
+            )
         )
         self.assertTrue(diagnostic_only)
         self.assertTrue(
@@ -391,7 +465,6 @@ class FreshBenchmarkTests(unittest.TestCase):
                     "framework": "deepmd",
                     "relative_path": "deepmd/deepmd-test-model.pb",
                     "kind": "file",
-                    "fingerprint": self.model_sha,
                 }
             ),
             encoding="utf-8",
@@ -403,7 +476,6 @@ class FreshBenchmarkTests(unittest.TestCase):
                     "dataset_id": "test-dataset",
                     "relative_path": "test-dataset/benchmark/test.json",
                     "kind": "file",
-                    "fingerprint": self.dataset_sha,
                 }
             ),
             encoding="utf-8",
@@ -451,18 +523,14 @@ class FreshBenchmarkTests(unittest.TestCase):
             "framework": "deepmd",
             "model": {
                 "id": "deepmd-test-model",
-                "observed_fingerprint": self.model_sha,
+                "relative_path": "deepmd/deepmd-test-model.pb",
             },
             "dataset": {
                 "id": "test-dataset",
-                "observed_fingerprint": self.dataset_sha,
+                "relative_path": "test-dataset/benchmark/test.json",
             },
             "outputs": {
-                name: "sha256:"
-                + hashlib.sha256(path.read_bytes()).hexdigest()
-                for name, path in {
-                    item: self.output / item for item in self.fresh.OUTPUT_NAMES
-                }.items()
+                name: str(self.output / name) for name in self.fresh.OUTPUT_NAMES
             },
         }
         (self.root / "attempt" / "cluster-benchmark-report.json").write_text(

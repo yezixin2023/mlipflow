@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import shutil
 import tempfile
 import unittest
@@ -22,10 +21,6 @@ RUN_TEMPLATE = """#!/usr/bin/env bash
 # {{CPUS}} {{GPUS}} {{MEMORY}} {{WALLTIME}}
 exit 0
 """
-
-
-def _sha(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _library() -> FakeTemplateLibrary:
@@ -60,7 +55,6 @@ def _prepared(root: Path) -> Path:
             "framework": "mace",
             "relative_path": "mace/model-lammps.pt",
             "kind": "file",
-            "fingerprint": "sha256:" + "2" * 64,
             "artifact_format": "mace-lammps-torchscript",
             "elements": ["Li"],
         },
@@ -77,8 +71,8 @@ def _prepared(root: Path) -> Path:
             "thermostat_damping_fs": 100.0,
         },
         "generated_files": [
-            {"name": "structure.data", "sha256": _sha(structure), "size_bytes": structure.stat().st_size},
-            {"name": "in.gpu.lammps", "sha256": _sha(deck), "size_bytes": deck.stat().st_size},
+            {"name": "structure.data"},
+            {"name": "in.gpu.lammps"},
         ],
         "launchers": [
             {
@@ -99,7 +93,7 @@ def _prepared(root: Path) -> Path:
 
 
 def _build_project(root: Path) -> Path:
-    manifest = _prepared(root)
+    _prepared(root)
     node = {
         "id": "lammps-run",
         "uses": "lammps-md@0",
@@ -107,11 +101,7 @@ def _build_project(root: Path) -> Path:
         "backend": "ssh-slurm",
         "backend_profile": "cluster-a",
         "inputs": {"lammps_input_manifest": "prepared/lammps-input-manifest.json"},
-        "parameters": {
-            "operation": "execute",
-            "target": "gpu",
-            "input_manifest_fingerprint": _sha(manifest),
-        },
+        "parameters": {"operation": "execute", "target": "gpu"},
         "resources": {"cpus": 8, "gpus": 1, "memory": "32G", "walltime": "01:00:00"},
     }
     write_json(root / "project.yaml", project_config([node]))
@@ -138,7 +128,6 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
             "path": remote_path,
             "exists": True,
             "size_bytes": path.stat().st_size,
-            "sha256": _sha(path),
         }
 
     def _fetch(self, _self, _cwd, remote_path, destination):
@@ -146,53 +135,53 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
         shutil.copy2(self.remote / remote_path, destination)
         return destination
 
-    def _write_remote_success(self, identity: dict[str, Any]) -> None:
+    def _write_remote_success(self, calculation: dict[str, Any]) -> None:
         output = self.remote / "output"
         output.mkdir(parents=True)
         files = {
             "trajectory.lammpstrj": b"ITEM: TIMESTEP\n1000\n",
             "final.data": b"final data\n",
             "final.restart": b"binary restart",
-            "lammps.log": ("LAMMPS (4 Jul 2026)\n" + identity["completion_marker"] + "\n").encode(),
+            "lammps.log": ("LAMMPS (4 Jul 2026)\n" + calculation["completion_marker"] + "\n").encode(),
             "lammps.screen.log": b"LAMMPS (4 Jul 2026)\n",
         }
         artifacts = []
         for name, payload in files.items():
             path = output / name
             path.write_bytes(payload)
-            artifacts.append({"name": name, "path": name, "sha256": _sha(path), "size_bytes": path.stat().st_size})
+            artifacts.append({"name": name, "path": name})
         result = {
             "schema_version": 1,
             "plugin_id": "lammps-md",
             "status": "OK",
             "operation": "execute",
-            "framework": identity["framework"],
-            "target": identity["target"],
+            "framework": calculation["framework"],
+            "target": calculation["target"],
             "lammps_version": "4 Jul 2026",
-            "input_manifest_fingerprint": identity["input_manifest_fingerprint"],
+            "input_manifest_path": calculation["input_manifest_path"],
             "model": {
-                "id": identity["model_id"],
-                "fingerprint": identity["model_fingerprint"],
-                "kind": identity["model_kind"],
-                "artifact_format": identity["artifact_format"],
-                "lammps_interface": identity["lammps_interface"],
+                "id": calculation["model_id"],
+                "path": calculation["model_path"],
+                "kind": calculation["model_kind"],
+                "artifact_format": calculation["artifact_format"],
+                "lammps_interface": calculation["lammps_interface"],
             },
-            "ensemble": identity["ensemble"],
-            "steps_requested": identity["steps"],
-            "steps_completed": identity["steps"],
+            "ensemble": calculation["ensemble"],
+            "steps_requested": calculation["steps"],
+            "steps_completed": calculation["steps"],
             "segment_start_step": 0,
-            "completion_marker": identity["completion_marker"],
+            "completion_marker": calculation["completion_marker"],
             "launcher": {
                 "site_launcher_used": True,
-                "prepared_argv_after_executable": identity["prepared_launcher"]["argv_after_executable"],
-                "required_packages": identity["prepared_launcher"].get("required_packages", []),
+                "prepared_argv_after_executable": calculation["prepared_launcher"]["argv_after_executable"],
+                "required_packages": calculation["prepared_launcher"].get("required_packages", []),
             },
             "restart": {
                 "policy": "disabled",
                 "checkpoint_interval": None,
                 "resumed": False,
                 "from_attempt": None,
-                "selected_checkpoint_sha256": None,
+                "selected_checkpoint": None,
                 "runtime_compatibility_checked": False,
                 "bitwise_exact_guaranteed": False,
             },
@@ -204,19 +193,18 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
             {
                 "schema_version": 1,
                 "status": "OK",
-                "framework": identity["framework"],
-                "target": identity["target"],
-                "model_id": identity["model_id"],
-                "model_fingerprint": identity["model_fingerprint"],
-                "model_kind": identity["model_kind"],
-                "lammps_interface": identity["lammps_interface"],
-                "input_manifest_fingerprint": identity["input_manifest_fingerprint"],
-                "steps_completed": identity["steps"],
+                "framework": calculation["framework"],
+                "target": calculation["target"],
+                "model_id": calculation["model_id"],
+                "model_path": calculation["model_path"],
+                "model_kind": calculation["model_kind"],
+                "lammps_interface": calculation["lammps_interface"],
+                "input_manifest_path": calculation["input_manifest_path"],
+                "steps_completed": calculation["steps"],
                 "segment_start_step": 0,
                 "restart_from_attempt": None,
-                "selected_checkpoint_sha256": None,
+                "selected_checkpoint": None,
                 "lammps_version": "4 Jul 2026",
-                "result_sha256": _sha(output / "lammps-execution-result.json"),
             },
         )
         write_json(
@@ -234,7 +222,7 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
     def test_submit_completed_fetch_and_check(self) -> None:
         plan = make_run_plan(self.project, "lammps-run", PLUGINS, self.site, _library())
         self.assertEqual(plan["adapter_plan"]["status"], "READY")
-        identity = plan["adapter_plan"]["lammps_execution_identity"]
+        calculation = plan["adapter_plan"]["lammps_calculation"]
 
         def stage(remote_dir, files):
             return remote_dir
@@ -247,11 +235,11 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
                 self.project,
                 "lammps-run",
                 PLUGINS,
-                plan["plan_digest"],
+                True,
                 self.site,
                 _library(),
             )
-        self._write_remote_success(identity)
+        self._write_remote_success(calculation)
         attempt = self.root / ".mlipflow" / "runs" / "lammps-run" / "attempt-1"
         self.assertFalse((attempt / "lammps-execution-result.json").exists())
 
@@ -279,7 +267,6 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
             autospec=True,
             side_effect=self._fetch,
         ):
-            assert "plan_digest" not in approved
             outcome = advance(self.project, PLUGINS)
 
         self.assertEqual(outcome["changed"][0]["state"], "OK", outcome)

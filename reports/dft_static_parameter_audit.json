@@ -7,12 +7,10 @@
   "sources": {
     "manuscript": {
       "locator": "workspace-document://Manuscirpt_0510zdl.docx",
-      "sha256": "sha256:22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b",
       "finding": "The main text discusses DFT/AIMD but does not provide a more complete static INCAR set."
     },
     "supplement": {
       "locator": "workspace-document://SI_0510zdl.docx#page=2&figure=S3",
-      "sha256": "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732",
       "declared_static_parameters": {
         "ENCUT_eV": 450,
         "EDIFF_numeric": 0.000005,
@@ -23,9 +21,7 @@
     },
     "historical_template": {
       "incar_locator": "remote-mlp://4-Element/Li8/scf/single/INCAR",
-      "incar_sha256": "sha256:69fbece3f536be6aa275d83e39a29bedda4d0ddc0a704d47ba7200642864b01c",
       "kpoints_locator": "remote-mlp://4-Element/Li8/scf/single/KPOINTS",
-      "kpoints_sha256": "sha256:3eda09df03e3fa250fd362b3f1f97b8a89cd9612eaebbaea5dbac1e2cf7a73a6",
       "incar": {
         "ISTART": 0,
         "ICHARG": 2,

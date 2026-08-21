@@ -6,7 +6,7 @@
   "display_name": "ASE molecular dynamics with MLIP calculators",
   "version": "0.4.1",
   "api_version": 1,
-  "description": "Scheduled single-temperature ASE NVT Langevin or isotropic MTK NPT molecular dynamics with explicit supercell sizing, finite stability summaries, and exact checkpoint/restart across fresh ssh-slurm attempts using fingerprinted DeepMD, M3GNet/MatGL, CHGNet, or MACE models.",
+  "description": "Scheduled single-temperature ASE NVT Langevin or isotropic MTK NPT molecular dynamics with explicit supercell sizing, finite stability summaries, and exact checkpoint/restart across fresh ssh-slurm attempts using DeepMD, M3GNet/MatGL, CHGNet, or MACE models.",
   "category": "sampling",
   "contract": {
     "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
@@ -32,11 +32,10 @@
       "Each retry writes a new per-attempt trajectory.traj and thermo.csv segment using global MD step numbers. The producer keeps segments separate; ionic-transport consumes collected attempts as one logical trajectory and deduplicates restart boundaries.",
       "Isotropic MTK NPT requires a full-rank 3D periodic cell, no ASE constraints, and a concrete calculator/model that returns finite ASE stress. The compute-node runner probes stress before starting or resuming dynamics and fails closed when stress is unavailable.",
       "The NPT chain configuration is version-pinned to thermostat/barostat chain lengths 3/3 and integration substeps 1/1; pressure, thermostat damping, and barostat damping remain explicit workflow parameters.",
-      "Every MLIP model must be an explicit site-owned artifact with an approved content fingerprint. Implicit pretrained-model downloads, network lookup, package caches, and model names that trigger remote loading are not accepted.",
-      "For scheduled upstream bindings, the collected model-reference fingerprint is authoritative; a redundant parameters.model_fingerprint is optional and must match when supplied.",
+      "Every MLIP model must be an explicit site-owned path. Implicit pretrained-model downloads, network lookup, package caches, and model names that trigger remote loading are not accepted.",
       "Published CHGNet and M3GNet artifacts use ase-md-<calculator>-canonical site template families so MODEL_ROOT resolves below the canonical MLIPFlow model root rather than a historical research directory.",
       "M3GNet/MatGL models are directory artifacts; DeepMD, CHGNet, and MACE models are file artifacts. CHGNet is restricted to float32 in this adapter.",
-      "DeepMD's ASE DP calculator uses the precision encoded by the model; default_dtype is recorded for cross-framework workflow identity but does not recast a DeepMD model.",
+      "DeepMD's ASE DP calculator uses the precision encoded by the model; default_dtype is recorded but does not recast a DeepMD model.",
       "GPU and framework kernels are not claimed to be bitwise deterministic. No numerical parity claim is made across ASE, calculator-framework, hardware, or accelerator versions."
       ,"An optional explicit three-axis repeat is applied to the staged source structure before dynamics. A separately approved strict lower bound can require every initial periodic cell length to exceed a stated angstrom value; no scientific cutoff is guessed by the plugin."
       ,"The result reports finite temperature, energy-per-atom, volume, and stored-frame minimum pair-distance summaries as diagnostic evidence. It does not turn those observations into an unapproved model-ranking threshold."
@@ -56,11 +55,11 @@
     "supported": true,
     "behavior": "parse-existing-artifacts",
     "accepted_media_types": ["application/json", "text/csv", "application/octet-stream"],
-    "reason": "Replay re-runs only bounded result/thermo/fingerprint/checkpoint checks on already fetched artifacts and never starts ASE dynamics."
+    "reason": "Replay re-runs only bounded result, thermodynamics, path, and checkpoint checks on already fetched artifacts and never starts ASE dynamics."
   },
   "inputs": [
     {"name": "structure", "kind": "file", "required": true, "description": "Project-scoped structure readable by ASE; the original basename/extension is preserved when staged."},
-    {"name": "model-reference", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Logical model id, site-root-relative path, artifact kind, and approved SHA-256/tree fingerprint. The model itself is not uploaded by MLIPFlow."}
+    {"name": "model-reference", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Logical model id, site-root-relative path, and artifact kind. The model itself is not uploaded by MLIPFlow."}
   ],
   "parameters": [
     {"name": "calculator", "type": "string", "required": true, "description": "One explicit calculator family: deepmd, m3gnet, chgnet, or mace."},
@@ -80,8 +79,6 @@
     {"name": "thermostat-damping-fs", "type": "number", "required": false, "description": "NPT-only finite positive MTK thermostat damping time in fs."},
     {"name": "barostat-damping-fs", "type": "number", "required": false, "description": "NPT-only finite positive MTK barostat damping time in fs."},
     {"name": "fix-com", "type": "boolean", "required": true, "description": "NVT may append ASE FixCom. NPT requires false because IsotropicMTKNPT does not support constraints."},
-    {"name": "model-fingerprint", "type": "string", "required": false, "description": "Optional redundant assertion. The collected model-reference fingerprint is authoritative and cluster-resolved model content must match it."},
-    {"name": "structure-fingerprint", "type": "string", "required": true, "description": "Approved SHA-256 of the original staged input structure. Restart checkpoints are additionally bound by their own SHA-256."},
     {"name": "input-format", "type": "string", "required": false, "description": "Optional explicit ASE reader format; otherwise ASE infers from the staged structure basename."},
     {"name": "input-index", "type": "string", "required": false, "description": "ASE reader index string; defaults to -1 and must select exactly one Atoms object."}
     ,{"name": "supercell-repeat", "type": "array", "required": false, "description": "Optional explicit [a,b,c] positive-integer repeat applied before dynamics; defaults to [1,1,1]."}
@@ -92,7 +89,7 @@
     {"name": "thermodynamics", "kind": "file", "required": true, "media_type": "text/csv", "description": "Per-attempt finite thermodynamic segment using global MD step numbers. NPT additionally records pressure and cell lengths."},
     {"name": "checkpoint", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Atomic JSON checkpoint containing exact atom/integrator state. When enabled it is bounded-fetchable on success and separately salvageable after scheduler terminal failure."},
     {"name": "final-structure", "kind": "file", "required": true, "description": "Final ASE structure as extxyz for a scientifically completed total trajectory."},
-    {"name": "md-result", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Pinned model/source-structure/supercell/integrator/restart identity, initial cell and atom counts, finite stability observations, versions, completed steps, and output fingerprints."}
+    {"name": "md-result", "kind": "manifest", "required": true, "media_type": "application/json", "description": "Model and structure paths, supercell and integrator parameters, restart record, initial cell and atom counts, finite stability observations, versions, completed steps, and outputs."}
   ],
   "dependencies": {
     "upstream_plugins": [],
@@ -112,22 +109,22 @@
     "network_access": false,
     "requires_approval_before_execution": true,
     "notes": [
-      "The project carries only portable structure/model/restart identities and abstract resources; SSH host, partition, modules, Python environment, model root, template root, and work root remain site-owned configuration.",
-      "Scheduler COMPLETED is not scientific success. Finalization performs a bounded fetch followed by model/structure/restart identity, segment schedule, thermodynamic finiteness, completed-step, and SHA-256 checks.",
-      "For terminal scheduler failure or cancellation, checkpoint-enabled plans expose only the failure-salvage subset of outputs already allowlisted by the approved run; transport rechecks remote size/SHA and the attempt remains FAIL/STOPPED afterward.",
-      "A retry only creates a fresh attempt. A later run approval stages the locally salvaged prior checkpoint as a new fingerprinted scientific input; it never reuses the prior remote run directory."
+      "The project carries only portable structure/model paths, restart parameters, and abstract resources; SSH host, partition, modules, Python environment, model root, template root, and work root remain site-owned configuration.",
+      "Scheduler COMPLETED is not scientific success. Finalization performs a bounded fetch followed by model/structure path, restart parameters, segment schedule, thermodynamic finiteness, and completed-step checks.",
+      "For terminal scheduler failure or cancellation, checkpoint-enabled plans expose only the failure-salvage subset of outputs already allowlisted by the approved run and the attempt remains FAIL/STOPPED afterward.",
+      "A retry only creates a fresh attempt. A later run stages the locally salvaged prior checkpoint as an explicit scientific input; it never reuses the prior remote run directory."
     ]
   },
   "completion": {
     "status": "implemented",
     "checks": [
-      {"id": "md-identity", "implemented": true, "description": "Require calculator, ensemble, model fingerprint, source structure fingerprint, seed, integrator settings, device, dtype request, total requested/completed steps, and segment start to match the approved plan."},
-      {"id": "md-artifacts", "implemented": true, "description": "Require trajectory segment, trajectory index, thermodynamics, final structure, and cluster report with matching size and SHA-256 records on successful completion."},
+      {"id": "md-parameters", "implemented": true, "description": "Require calculator, ensemble, model and structure paths, seed, integrator settings, device, dtype request, total requested/completed steps, and segment start to match the plan."},
+      {"id": "md-artifacts", "implemented": true, "description": "Require trajectory segment, trajectory index, thermodynamics, final structure, and cluster report on successful completion."},
       {"id": "md-schedule", "implemented": true, "description": "Require trajectory and thermo global-step schedules to start at the approved restart step and then follow the deterministic intervals through the original total requested step."},
       {"id": "md-thermodynamics", "implemented": true, "description": "Reject non-finite temperature, energy, time, or volume records and inconsistent time-step conversion; NPT additionally requires finite pressure and positive cell lengths."},
       {"id": "npt-stress-capability", "implemented": true, "description": "Before fresh or restarted NPT integration, require the concrete loaded calculator/model to advertise stress and return a finite 3x3 ASE stress tensor."},
-      {"id": "md-checkpoint", "implemented": true, "description": "When checkpointing is enabled, bind the checkpoint SHA/size/completed step and exact model/structure/integrator identity; retries require an immediately previous approved salvaged checkpoint and an exact ASE-version match for NPT extended-state restoration."}
-      ,{"id": "md-supercell-and-stability", "implemented": true, "description": "Bind any explicit repeat and strict initial-cell lower bound into plan/result/checkpoint identity; verify expanded atom count and cell lengths, and require finite stored-frame pair-distance plus thermodynamic summaries."}
+      {"id": "md-checkpoint", "implemented": true, "description": "When checkpointing is enabled, check its completed step and model, structure, and integrator parameters; retries require an immediately previous salvaged checkpoint and an exact ASE-version match for NPT extended-state restoration."}
+      ,{"id": "md-supercell-and-stability", "implemented": true, "description": "Record any explicit repeat and strict initial-cell lower bound in plan, result, and checkpoint; verify expanded atom count and cell lengths, and require finite stored-frame pair-distance plus thermodynamic summaries."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"

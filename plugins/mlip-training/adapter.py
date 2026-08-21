@@ -15,7 +15,6 @@ site-specific absolute path into the approval plan.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 from pathlib import Path, PurePosixPath
@@ -160,13 +159,14 @@ def _load_result(path: Path, context: dict[str, Any]) -> tuple[dict[str, Any] | 
         diagnostics.append(
             _diagnostic("error", "training.result_framework_version", "framework_version must be a non-empty string")
         )
-    for key in ("dataset_fingerprint", "config_fingerprint"):
-        value = raw.get(key)
-        if value is None or value == "":
-            diagnostics.append(_diagnostic("error", f"training.result_{key}", f"{key} is required"))
-        elif value != parameters.get(key):
+    expected_paths = {
+        "dataset_path": _project_path(context, _mapping(context.get("inputs")).get("data")),
+        "config_path": _project_path(context, _mapping(context.get("inputs")).get("config")),
+    }
+    for key, expected in expected_paths.items():
+        if raw.get(key) != expected:
             diagnostics.append(
-                _diagnostic("error", f"training.{key}_mismatch", f"result {key} does not match the approved plan")
+                _diagnostic("error", f"training.{key}_mismatch", f"result {key} does not match the requested path")
             )
     for key in ("operation", "device", "precision"):
         if not _plain_string(raw.get(key)):
@@ -178,13 +178,15 @@ def _load_result(path: Path, context: dict[str, Any]) -> tuple[dict[str, Any] | 
                 _diagnostic("error", f"training.{key}_mismatch", f"result {key} does not match the approved plan")
             )
     if parameters.get("operation") == "finetune":
-        value = raw.get("foundation_model_fingerprint")
-        if value != parameters.get("foundation_model_fingerprint"):
+        expected_foundation = _project_path(
+            context, _mapping(context.get("inputs")).get("foundation_model")
+        )
+        if raw.get("foundation_model_path") != expected_foundation:
             diagnostics.append(
                 _diagnostic(
                     "error",
-                    "training.foundation_model_fingerprint_mismatch",
-                    "result foundation model fingerprint does not match the approved plan",
+                    "training.foundation_model_path_mismatch",
+                    "result foundation model path does not match the requested path",
                 )
             )
 
@@ -226,23 +228,6 @@ def _load_result(path: Path, context: dict[str, Any]) -> tuple[dict[str, Any] | 
 # ---------------------------------------------------------------------------
 # Scheduled DeepMD training
 # ---------------------------------------------------------------------------
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
-def _is_fingerprint(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and value.startswith("sha256:")
-        and len(value) == 71
-        and all(character in "0123456789abcdef" for character in value[7:])
-    )
 
 
 def _positive_int(value: Any) -> bool:
@@ -327,7 +312,7 @@ def _contains_restart_key(value: Any) -> str | None:
 
 
 def _parse_deepmd_config(path: Path) -> tuple[dict[str, Any] | None, str | None]:
-    """Extract the trajectory-relevant identity of a DeepMD training config.
+    """Extract the trajectory-relevant settings of a DeepMD training config.
 
     Nothing here interprets the science; it reads the declared fields so the
     approval summary states what will actually be optimised, and refuses a
@@ -447,8 +432,8 @@ def _parse_deepmd_config(path: Path) -> tuple[dict[str, Any] | None, str | None]
 def _parse_dataset_reference(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     """Read the project's logical dataset reference.
 
-    The project names a dataset by id and pins its content fingerprint.  Where
-    that id lives on a given cluster is site knowledge and stays in the remote
+    The project names a dataset by id and path. Where it lives on a given
+    cluster is site knowledge and stays in the remote
     template library, exactly like a partition or a module name.
     """
 
@@ -460,15 +445,12 @@ def _parse_dataset_reference(path: Path) -> tuple[dict[str, Any] | None, str | N
     dataset_id = raw.get("dataset_id")
     if not _plain_string(dataset_id) or not _safe_relative(dataset_id) or "/" in str(dataset_id):
         return None, "dataset reference dataset_id must be a single safe path segment"
-    if not _is_fingerprint(raw.get("fingerprint")):
-        return None, "dataset reference fingerprint must be sha256:<64 hex>"
     counts = _mapping(raw.get("systems"))
     for role in ("training", "validation"):
         if role in counts and not _positive_int(counts.get(role)):
             return None, f"dataset reference systems.{role} must be a positive integer"
     return {
         "dataset_id": str(dataset_id),
-        "fingerprint": str(raw["fingerprint"]),
         "systems": {key: counts[key] for key in sorted(counts) if key in {"training", "validation"}},
         "description": raw.get("description"),
     }, None
@@ -478,8 +460,6 @@ def _staged_record(source: Path, remote_name: str) -> dict[str, Any]:
     return {
         "source": str(source.absolute()),
         "remote_name": remote_name,
-        "sha256": _sha256(source),
-        "size_bytes": source.stat().st_size,
         "sensitive": False,
         "fetch_allowed": False,
     }
@@ -528,9 +508,9 @@ def _validate_scheduled(context: dict[str, Any]) -> list[dict[str, str]]:
 def _plan_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
     """Plan one scheduler job that runs one DeepMD fresh training.
 
-    The plan pins what determines the optimisation trajectory — seeds, learning
-    rate schedule, loss prefactors, model architecture, system order, dataset
-    fingerprint — so an approval reviewer sees the science, while the site
+    The plan records what determines the optimisation trajectory — seeds, learning
+    rate schedule, loss prefactors, model architecture, system order, and dataset
+    path — so an approval reviewer sees the science, while the site
     template alone knows which ``dp`` binary and which dataset root are used.
     """
 
@@ -574,23 +554,6 @@ def _plan_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
             "diagnostics": diagnostics,
         }
 
-    config_fingerprint = _sha256(config_path)
-    if parameters.get("config_fingerprint") != config_fingerprint:
-        diagnostics.append(
-            _diagnostic(
-                "error",
-                "training.config_fingerprint_mismatch",
-                "parameters.config_fingerprint does not match the reviewed training config",
-            )
-        )
-    if parameters.get("dataset_fingerprint") != dataset["fingerprint"]:
-        diagnostics.append(
-            _diagnostic(
-                "error",
-                "training.dataset_fingerprint_mismatch",
-                "parameters.dataset_fingerprint does not match the dataset reference",
-            )
-        )
     if parameters.get("seed") != config["training"]["seed"]:
         diagnostics.append(
             _diagnostic(
@@ -680,10 +643,10 @@ def _plan_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
         "diagnostics": [],
         "operation": "train",
         "framework": str(parameters["framework"]),
-        "training_identity": {
-            "config_fingerprint": config_fingerprint,
+        "training_calculation": {
+            "config_path": str(config_path),
             "dataset_id": dataset["dataset_id"],
-            "dataset_fingerprint": dataset["fingerprint"],
+            "dataset_reference_path": str(dataset_path),
             "type_map": config["type_map"],
             "descriptor": config["descriptor"],
             "fitting_net": config["fitting_net"],
@@ -693,16 +656,7 @@ def _plan_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
             "system_counts": {
                 role: len(items) for role, items in sorted(config["systems"].items())
             },
-            # Order matters to the optimisation trajectory, so it is pinned by
-            # content rather than by an unordered set.
-            "system_order_fingerprint": "sha256:"
-            + hashlib.sha256(
-                "\n".join(
-                    f"{role}\t{item}"
-                    for role in sorted(config["systems"])
-                    for item in config["systems"][role]
-                ).encode("utf-8")
-            ).hexdigest(),
+            "systems": config["systems"],
         },
         "approval_summary": {
             "expensive": True,
@@ -728,9 +682,9 @@ def _plan_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
             "fetch_allowlist": sorted(item["remote_name"] for item in fetch_outputs),
             "staged_file_count": len(staged),
         },
-        "input_fingerprints": {
-            "training_config": config_fingerprint,
-            "dataset_reference": _sha256(dataset_path),
+        "input_paths": {
+            "training_config": str(config_path),
+            "dataset_reference": str(dataset_path),
         },
         "scheduled_execution": {
             "schema_version": 3,
@@ -816,16 +770,16 @@ def _check_scheduled_training(context: dict[str, Any]) -> tuple[list[dict[str, s
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
     parameters = _mapping(context.get("parameters"))
     planned = _scheduled_plan(context)
-    identity = _mapping(planned.get("training_identity"))
+    calculation = _mapping(planned.get("training_calculation"))
     scheduled = _mapping(planned.get("scheduled_execution"))
     hpc_execution = _mapping(_mapping(context.get("execution")).get("hpc_execution"))
-    expected_steps = _mapping(identity.get("training")).get("numb_steps")
-    disp_freq = _mapping(identity.get("training")).get("disp_freq")
+    expected_steps = _mapping(calculation.get("training")).get("numb_steps")
+    disp_freq = _mapping(calculation.get("training")).get("disp_freq")
     if not _positive_int(expected_steps) or not _positive_int(disp_freq):
         diagnostics.append(
             _diagnostic(
                 "error",
-                "training.plan_identity",
+                "training.plan",
                 "the pinned plan does not declare numb_steps and disp_freq",
             )
         )
@@ -845,7 +799,7 @@ def _check_scheduled_training(context: dict[str, Any]) -> tuple[list[dict[str, s
         diagnostics.append(
             _diagnostic("error", "training.report_schema", "training-report.json schema_version must be 1")
         )
-    if report.get("framework") != identity.get("framework", parameters.get("framework")):
+    if report.get("framework") != calculation.get("framework", parameters.get("framework")):
         diagnostics.append(
             _diagnostic("error", "training.report_framework", "the remote report names a different framework")
         )
@@ -861,25 +815,9 @@ def _check_scheduled_training(context: dict[str, Any]) -> tuple[list[dict[str, s
         diagnostics.append(
             _diagnostic("error", "training.report_version", "the remote report records no framework version")
         )
-    if report.get("config_sha256") != identity.get("config_fingerprint"):
-        diagnostics.append(
-            _diagnostic(
-                "error",
-                "training.report_config_identity",
-                "the staged training config on the cluster is not the approved one",
-            )
-        )
-    if report.get("dataset_id") != identity.get("dataset_id"):
+    if report.get("dataset_id") != calculation.get("dataset_id"):
         diagnostics.append(
             _diagnostic("error", "training.report_dataset_id", "the remote report names a different dataset")
-        )
-    if report.get("dataset_fingerprint") != identity.get("dataset_fingerprint"):
-        diagnostics.append(
-            _diagnostic(
-                "error",
-                "training.report_dataset_identity",
-                "the dataset recomputed on the cluster does not match the approved fingerprint",
-            )
         )
     checkpoints = report.get("checkpoint_files")
     if not isinstance(checkpoints, list) or not checkpoints:
@@ -889,14 +827,12 @@ def _check_scheduled_training(context: dict[str, Any]) -> tuple[list[dict[str, s
         checkpoints = []
     else:
         for index, item in enumerate(checkpoints):
-            if not isinstance(item, dict) or not _plain_string(item.get("name")) or not _positive_int(
-                item.get("size_bytes")
-            ):
+            if not isinstance(item, dict) or not _plain_string(item.get("name")):
                 diagnostics.append(
                     _diagnostic(
                         "error",
                         f"training.report_checkpoint_{index}",
-                        "each checkpoint record needs a name and a positive size",
+                        "each checkpoint record needs a name",
                     )
                 )
     if scheduled.get("template_family") and report.get("template_family") not in {
@@ -980,7 +916,7 @@ def _collect_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
     parameters = _mapping(context["parameters"])
     planned = _scheduled_plan(context)
-    identity = _mapping(planned.get("training_identity"))
+    calculation = _mapping(planned.get("training_calculation"))
     hpc_execution = _mapping(_mapping(context.get("execution")).get("hpc_execution"))
     report = analysis["report"]
     curve = analysis["curve"]
@@ -997,22 +933,22 @@ def _collect_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
         "device": parameters.get("device"),
         "precision": parameters.get("precision"),
         "seed": parameters.get("seed"),
-        "config_fingerprint": identity.get("config_fingerprint"),
+        "config_path": calculation.get("config_path"),
         "dataset": {
-            "id": identity.get("dataset_id"),
-            "fingerprint": identity.get("dataset_fingerprint"),
-            "system_counts": identity.get("system_counts"),
-            "system_order_fingerprint": identity.get("system_order_fingerprint"),
+            "id": calculation.get("dataset_id"),
+            "reference_path": calculation.get("dataset_reference_path"),
+            "system_counts": calculation.get("system_counts"),
+            "systems": calculation.get("systems"),
         },
         "model": {
-            "type_map": identity.get("type_map"),
-            "descriptor": identity.get("descriptor"),
-            "fitting_net": identity.get("fitting_net"),
+            "type_map": calculation.get("type_map"),
+            "descriptor": calculation.get("descriptor"),
+            "fitting_net": calculation.get("fitting_net"),
         },
         "optimization": {
-            "learning_rate": identity.get("learning_rate"),
-            "loss": identity.get("loss"),
-            "training": identity.get("training"),
+            "learning_rate": calculation.get("learning_rate"),
+            "loss": calculation.get("loss"),
+            "training": calculation.get("training"),
         },
         "training_curve": {
             "columns": curve["columns"],
@@ -1020,7 +956,7 @@ def _collect_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
             "records": curve["records"],
         },
         "completed_steps": curve["steps"][-1],
-        "requested_steps": _mapping(identity.get("training")).get("numb_steps"),
+        "requested_steps": _mapping(calculation.get("training")).get("numb_steps"),
         "model_artifacts": analysis["checkpoints"],
         "execution": {
             "template_family": _mapping(planned.get("scheduled_execution")).get("template_family"),
@@ -1029,7 +965,7 @@ def _collect_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
             "threads": report.get("threads"),
         },
         "artifacts": [
-            {"name": name, "path": name, "sha256": _sha256(attempt / name), "size_bytes": (attempt / name).stat().st_size}
+            {"name": name, "path": name}
             for name in ("lcurve.out", "training-report.json", "checkpoint", "model.ckpt.index")
             if _ordinary_file(attempt / name)
         ],
@@ -1119,7 +1055,7 @@ class Adapter:
         seed = parameters.get("seed")
         if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
             diagnostics.append(_diagnostic("error", "training.seed", "parameters.seed must be a non-negative integer"))
-        for key in ("device", "precision", "dataset_fingerprint", "config_fingerprint"):
+        for key in ("device", "precision"):
             if not _plain_string(parameters.get(key)):
                 diagnostics.append(_diagnostic("error", f"training.{key}", f"parameters.{key} is required"))
 
@@ -1139,16 +1075,6 @@ class Adapter:
         if operation == "finetune" and _reference(inputs.get("foundation_model")) is None:
             diagnostics.append(
                 _diagnostic("error", "training.foundation_model", "inputs.foundation_model is required for finetune")
-            )
-        if operation == "finetune" and not _plain_string(
-            parameters.get("foundation_model_fingerprint")
-        ):
-            diagnostics.append(
-                _diagnostic(
-                    "error",
-                    "training.foundation_model_fingerprint",
-                    "parameters.foundation_model_fingerprint is required for finetune",
-                )
             )
         for key in ("output", "result_manifest"):
             if _reference(inputs.get(key)) is not None:
@@ -1194,19 +1120,9 @@ class Adapter:
             str(parameters["device"]),
             "--precision",
             str(parameters["precision"]),
-            "--dataset-fingerprint",
-            str(parameters["dataset_fingerprint"]),
-            "--config-fingerprint",
-            str(parameters["config_fingerprint"]),
         ]
         if parameters.get("operation", "train") == "finetune":
             argv.extend(["--foundation-model", _project_path(context, inputs["foundation_model"])])
-            argv.extend(
-                [
-                    "--foundation-model-fingerprint",
-                    str(parameters["foundation_model_fingerprint"]),
-                ]
-            )
         return {
             "plugin_id": PLUGIN_ID,
             "status": "READY",

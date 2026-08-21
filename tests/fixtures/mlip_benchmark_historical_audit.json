@@ -5,9 +5,7 @@
   "families": {
     "deepmd-se_e2_a": {
       "status": "REPLAY_VERIFIED",
-      "parser_identity": "deepmd-metrics-xlsx",
-      "source_sha256": "sha256:9502e8f88c945babcf64f494bbfb330894a1c45fd1ac0eb6733137cb298574e2",
-      "output_sha256": "sha256:372466826862174d4e993bf594a3fa35cfceb6f5efc7f0464099e0ffc614597f",
+      "parser": "deepmd-metrics-xlsx",
       "split": "test_all-li8-li10-li16",
       "energy_normalization": "per-atom",
       "energy_unit": "source-unit-unspecified",
@@ -21,9 +19,7 @@
     },
     "deepmd-se_e2_r": {
       "status": "REPLAY_VERIFIED",
-      "parser_identity": "deepmd-metrics-xlsx",
-      "source_sha256": "sha256:9502e8f88c945babcf64f494bbfb330894a1c45fd1ac0eb6733137cb298574e2",
-      "output_sha256": "sha256:7f354fbf8837719252a160e8e9b6f5ac1ac9c465eafa46a5bad8186678bdb67e",
+      "parser": "deepmd-metrics-xlsx",
       "split": "test_all-li8-li10-li16",
       "energy_normalization": "per-atom",
       "energy_unit": "source-unit-unspecified",
@@ -37,9 +33,7 @@
     },
     "deepmd-se_atten_v2": {
       "status": "REPLAY_VERIFIED",
-      "parser_identity": "deepmd-metrics-xlsx",
-      "source_sha256": "sha256:9502e8f88c945babcf64f494bbfb330894a1c45fd1ac0eb6733137cb298574e2",
-      "output_sha256": "sha256:9f39aefdb7fe2ffe53fd30c71a920f20582f82befb4b04489a941318d792a296",
+      "parser": "deepmd-metrics-xlsx",
       "split": "test_all-li8-li10-li16",
       "energy_normalization": "per-atom",
       "energy_unit": "source-unit-unspecified",
@@ -57,14 +51,11 @@
     },
     "m3gnet": {
       "status": "MISSING_SOURCE",
-      "source_sha256": "sha256:2289d14e42cef1ccdd1e7f8509354ee414aadaae9bef043fcb96f9275f4adfce",
       "reason": "Evaluation source was found, but no benchmark output, workbook, prediction pairs, or evaluation log was found."
     },
     "chgnet": {
       "status": "REPLAY_VERIFIED",
-      "parser_identity": "chgnet-efs-metrics-xlsx",
-      "source_sha256": "sha256:7f6e1daaa2651dbc17b4f5b4f5af32fd156cf507d7388d87f6d2dc0ff1a76df0",
-      "output_sha256": "sha256:ddcf67b68105b0728501707fe9d17ef0432eea9c28d9d5c34c0117f35255f0c8",
+      "parser": "chgnet-efs-metrics-xlsx",
       "split": "test",
       "energy_normalization": "per-atom",
       "energy_unit": "source-unit-unspecified",

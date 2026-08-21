@@ -27,7 +27,9 @@ CLUSTER_FIELDS = frozenset(
 REQUIRED_CLUSTER_FIELDS = frozenset(
     {"backend", "ssh_profile", "remote_template_root", "work_root"}
 )
-SCHEDULER_FIELDS = frozenset({"partition_candidates"})
+SCHEDULER_FIELDS = frozenset({"partition_candidates", "memory_constraint"})
+REQUIRED_SCHEDULER_FIELDS = frozenset({"partition_candidates"})
+MEMORY_CONSTRAINTS = frozenset({"reported", "unreported"})
 
 
 @dataclass(frozen=True)
@@ -35,9 +37,13 @@ class SchedulerConfig:
     """Site-owned scheduler routing policy for one cluster."""
 
     partition_candidates: tuple[str, ...]
+    memory_constraint: str = "reported"
 
-    def to_plan_dict(self) -> dict[str, list[str]]:
-        return {"partition_candidates": list(self.partition_candidates)}
+    def to_plan_dict(self) -> dict[str, Any]:
+        return {
+            "partition_candidates": list(self.partition_candidates),
+            "memory_constraint": self.memory_constraint,
+        }
 
 
 @dataclass(frozen=True)
@@ -164,7 +170,9 @@ def validate_site_config(
                 raise ConfigError(
                     f"{source}: cluster {name!r} scheduler must be a mapping"
                 )
-            missing_scheduler = sorted(SCHEDULER_FIELDS - set(scheduler_value))
+            missing_scheduler = sorted(
+                REQUIRED_SCHEDULER_FIELDS - set(scheduler_value)
+            )
             unknown_scheduler = sorted(set(scheduler_value) - SCHEDULER_FIELDS)
             if missing_scheduler:
                 raise ConfigError(
@@ -191,7 +199,13 @@ def validate_site_config(
                     f"{source}: cluster {name!r} scheduler.partition_candidates "
                     "must be a non-empty unique list of safe partition names"
                 )
-            scheduler = SchedulerConfig(tuple(candidates))
+            memory_constraint = scheduler_value.get("memory_constraint", "reported")
+            if memory_constraint not in MEMORY_CONSTRAINTS:
+                raise ConfigError(
+                    f"{source}: cluster {name!r} scheduler.memory_constraint must be "
+                    "reported or unreported"
+                )
+            scheduler = SchedulerConfig(tuple(candidates), str(memory_constraint))
         clusters[name] = ClusterProfile(
             name=name,
             backend=backend,

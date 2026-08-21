@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -22,10 +21,6 @@ cd {{RUN_DIR}}
 """
 
 
-def _sha(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _library() -> FakeTemplateLibrary:
     templates = dict(FakeTemplateLibrary().templates)
     templates["ase-md-mace/run.sh"] = ASE_MD_RUN_TEMPLATE
@@ -41,7 +36,6 @@ def _build_project(root: Path) -> Path:
         "Li 0 0 0\n",
         encoding="utf-8",
     )
-    model_fp = "sha256:" + "2" * 64
     write_json(
         root / "inputs" / "mace-model.json",
         {
@@ -49,7 +43,6 @@ def _build_project(root: Path) -> Path:
             "model_id": "mace-model-v1",
             "relative_path": "mace/model-v1.model",
             "kind": "file",
-            "fingerprint": model_fp,
         },
     )
     node = {
@@ -77,8 +70,6 @@ def _build_project(root: Path) -> Path:
             "default_dtype": "float64",
             "friction_per_fs": 0.01,
             "fix_com": True,
-            "model_fingerprint": model_fp,
-            "structure_fingerprint": _sha(structure),
             "input_index": "-1",
         },
         "resources": {"cpus": 8, "gpus": 0, "memory": "32G", "walltime": "00:05:00"},
@@ -97,6 +88,7 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
     remote = tmp_path / "fake-remote"
 
     run_plan = make_run_plan(project, "md", PLUGINS, site, library)
+    assert run_plan["adapter_plan"]["status"] == "READY"
 
     def stage(_remote_dir, _files):
         return _remote_dir
@@ -111,7 +103,7 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
             project,
             "md",
             PLUGINS,
-            run_plan["plan_digest"],
+            True,
             site,
             library,
         )
@@ -141,7 +133,6 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
             "path": remote_path,
             "exists": True,
             "size_bytes": path.stat().st_size,
-            "sha256": _sha(path),
         }
 
     def fetch(_self, _cwd, remote_path, destination):
@@ -169,7 +160,6 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
     assert finalization["terminal_target"] == "FAIL"
     inventory = {item["remote_name"]: item for item in finalization["outputs"]}
     assert inventory["md-checkpoint.json"]["exists"] is True
-    assert inventory["md-checkpoint.json"]["sha256"] == _sha(checkpoint)
     assert not (
         tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1" / "md-checkpoint.json"
     ).exists()
@@ -185,7 +175,6 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
         autospec=True,
         side_effect=fetch,
     ):
-        assert "plan_digest" not in salvage_plan
         outcome = advance(project, PLUGINS)
 
     assert outcome["changed"][0]["state"] == "FAIL"
@@ -193,4 +182,4 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
         tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1" / "md-checkpoint.json"
     )
     assert local_checkpoint.is_file()
-    assert _sha(local_checkpoint) == _sha(checkpoint)
+    assert local_checkpoint.read_bytes() == checkpoint.read_bytes()

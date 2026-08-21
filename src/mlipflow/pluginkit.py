@@ -1,7 +1,7 @@
 """Stable helper API for plugin adapters.
 
 Every bundled adapter had been re-deriving the same primitives: ``_diagnostic``
-appears in all eight, ``_sha256`` / ``_read_json`` / ``_mapping`` in five,
+appears in all eight, while JSON and mapping helpers appear in five,
 ``_safe_relative`` / ``_path`` / ``_plain_string`` / ``_operation`` in four.  Two
 of those — ``_safe_relative`` and the path-containment check — are security
 boundaries, so having four independently drifting copies means a fix to one is
@@ -25,16 +25,13 @@ module cannot make it miss an error it used to catch.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
-import re
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
 __all__ = [
-    "SHA256_PATTERN",
     "diagnostic",
     "errors",
     "has_errors",
@@ -45,20 +42,15 @@ __all__ = [
     "positive_number",
     "positive_int",
     "nonnegative_int",
-    "is_fingerprint",
     "safe_relative",
     "is_within",
     "has_symlink_component",
     "ordinary_file",
     "under_root",
     "join_under",
-    "sha256_file",
     "read_json",
     "operation",
 ]
-
-
-SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 # --- diagnostics -----------------------------------------------------------
@@ -142,12 +134,6 @@ def nonnegative_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
-def is_fingerprint(value: Any) -> bool:
-    """True for a canonical ``sha256:<64 hex>`` fingerprint string."""
-
-    return isinstance(value, str) and bool(SHA256_PATTERN.fullmatch(value))
-
-
 # --- path safety -----------------------------------------------------------
 
 
@@ -226,16 +212,6 @@ def join_under(root: Any, relative: Any) -> Path:
 
 
 # --- filesystem reads ------------------------------------------------------
-
-
-def sha256_file(path: Path) -> str:
-    """Stream a file and return its canonical ``sha256:`` fingerprint."""
-
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def read_json(

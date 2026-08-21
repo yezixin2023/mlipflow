@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import math
@@ -24,17 +23,6 @@ def load_transport_module() -> ModuleType:
 
 
 TRANSPORT = load_transport_module()
-
-
-def source_snapshot(paths: list[Path]) -> dict[Path, tuple[int, int, str]]:
-    return {
-        path: (
-            path.stat().st_size,
-            path.stat().st_mtime_ns,
-            hashlib.sha256(path.read_bytes()).hexdigest(),
-        )
-        for path in paths
-    }
 
 
 class ManuscriptTransportFixtureTests(unittest.TestCase):
@@ -61,9 +49,9 @@ class ManuscriptTransportFixtureTests(unittest.TestCase):
 
     def test_small_target_msd_reproduces_both_historical_diffusivity_methods(self) -> None:
         target = self.write_target("400K", slope_a2_fs=6.0e-4)
-        before = source_snapshot([target])
+        before = target.read_bytes()
         result = TRANSPORT.analyze_historical_target_msd(target, "mace_li10_legacy_v1")
-        after = source_snapshot([target])
+        after = target.read_bytes()
 
         self.assertEqual(before, after)
         self.assertEqual("OK", result["status"])
@@ -112,7 +100,7 @@ class ManuscriptTransportFixtureTests(unittest.TestCase):
             encoding="utf-8",
         )
         output = self.root / "normalized.json"
-        before = source_snapshot([history])
+        before = history.read_bytes()
         returncode = TRANSPORT.manuscript_transport_main(
             ["parse-historical-output", str(history), "--output", str(output)]
         )
@@ -120,7 +108,7 @@ class ManuscriptTransportFixtureTests(unittest.TestCase):
 
         self.assertEqual(0, returncode)
         self.assertEqual("mlipflow.historical_transport_output", normalized["artifact_type"])
-        self.assertEqual(before, source_snapshot([history]))
+        self.assertEqual(before, history.read_bytes())
 
     def test_legacy_n7_and_corrected_n10_are_separate_and_ratio_is_explicit(self) -> None:
         runs = {

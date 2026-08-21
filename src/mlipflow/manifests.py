@@ -18,7 +18,6 @@ def run_manifest(
     plugin_version: str,
     mode: str,
     backend: str,
-    plan_digest: str,
     inputs: dict[str, Any],
     parameters: dict[str, Any],
     artifacts: Iterable[dict[str, Any]] = (),
@@ -36,13 +35,11 @@ def run_manifest(
     command: list[str] | None = None,
     resources: dict[str, Any] | None = None,
     source_run_id: str | None = None,
-    source_root: str | None = None,
     execution_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    captured = capture(source_root=source_root)
+    captured = capture()
     time_values = timestamps or {}
     provenance = {
-        "plan_digest": plan_digest,
         "created_by": "mlipflow",
         "software": [{"name": "mlipflow", "version": __version__}],
         "environment": {
@@ -50,7 +47,6 @@ def run_manifest(
             "platform": captured["platform"],
             "variables": captured["environment"],
         },
-        "source_git_commit": captured["source_git_commit"],
         "captured_at": captured["captured_at"],
         "source_run_id": source_run_id,
     }

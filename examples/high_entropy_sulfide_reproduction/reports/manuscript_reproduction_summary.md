@@ -4,12 +4,12 @@ Status: **REPLAY_VERIFIED** (`evidence-replay`).
 
 No MLIP, MD, AIMD, DFT, training, or structure generation was executed.
 
-## Pinned source revisions
+## Source documents
 
-| Document | SHA-256 | Included |
-| --- | --- | --- |
-| Manuscirpt_0510zdl.docx | `sha256:22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b` | no; read-only external source |
-| SI_0510zdl.docx | `sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732` | no; read-only external source |
+| Document | Included |
+| --- | --- |
+| Manuscirpt_0510zdl.docx | no; read-only external source |
+| SI_0510zdl.docx | no; read-only external source |
 
 ## Evidence-driven routes
 
@@ -33,7 +33,7 @@ The registry contains no `recommended_tasks` hints; each route is obtained from 
 
 Status: **REPLAY_VERIFIED**. Candidate/evaluated count: **247/247**; excluded for missing metrics: **0**.
 
-Metric: `ionic_conductivity_300k_s_per_m` (S/m; direction `maximize`). The candidate and transport manifests are pinned as `sha256:d030d2fdbd9c042b13a1a15c6a124ef2b953d62ca1170e963c272a57b43aa90d` and `sha256:e3c4f4466b872b575345e4a10560b311fff19a8ed049383a82c18132534cd1c0`.
+Metric: `ionic_conductivity_300k_s_per_m` (S/m; direction `maximize`). Candidate and transport records: `external-screening-artifact/candidates.json` and `external-screening-artifact/transport.json`.
 
 | Rank | Candidate | Composition (Mn/Fe/Ni/Cu/Zn) | Conductivity (S/m) |
 | ---: | --- | --- | ---: |
@@ -60,7 +60,7 @@ AIMD/DFT high-fidelity status: **EXTERNAL_VALIDATION_PENDING**; numerical parity
 
 Evidence level: **CLAIM_LEVEL_DOCUMENT_EVIDENCE**; status: **EXTERNAL_VALIDATION_PENDING**; numerical parity: **NOT_TESTABLE_WITH_AVAILABLE_DATA**.
 
-Pinned source: `Manuscirpt_0510zdl.docx` (`sha256:22bfc6c405bc972bca86c141a14239ad4a91718b086e9418784a51ab0aa67e9b`). The document reports 787 AIMD configurations for Li24M12(PS4)16 and three qualitative conductivity comparisons, but supplies no paired values needed for numerical parity.
+Recorded source: `Manuscirpt_0510zdl.docx`. The document reports 787 AIMD configurations for Li24M12(PS4)16 and three qualitative conductivity comparisons, but supplies no paired values needed for numerical parity.
 
 Blocking evidence:
 

@@ -8,7 +8,6 @@ M3GNet/MatGL, CHGNet, and MACE through one staged remote runner.
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import math
@@ -68,23 +67,6 @@ def _blocked(items: list[dict[str, str]]) -> dict[str, Any]:
     return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": items}
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
-def _is_fingerprint(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 71
-        and value.startswith("sha256:")
-        and all(char in "0123456789abcdef" for char in value[7:])
-    )
-
-
 def _plain(value: Any) -> bool:
     return isinstance(value, str) and bool(value) and "\x00" not in value and "\n" not in value
 
@@ -98,7 +80,12 @@ def _safe_relative(value: Any, *, plain_name: bool = False) -> bool:
     return not plain_name or len(path.parts) == 1
 
 
-def _project_file(root: Path) -> Path | None:
+def _project_file(root: Path, selected: Any = None) -> Path | None:
+    if isinstance(selected, str) and selected:
+        path = Path(selected).expanduser().absolute()
+        if path.is_file() and not path.is_symlink() and path.resolve().parent == root.resolve():
+            return path.resolve()
+        return None
     for name in ("project.yaml", "project.yml", "project.json"):
         path = root / name
         if path.is_file() and not path.is_symlink():
@@ -147,14 +134,10 @@ def _artifact_reference(
         kind = raw.get("kind", default_kind)
         if kind not in {"file", "directory"}:
             raise ValueError("kind must be file or directory")
-        fingerprint = raw.get("fingerprint")
-        if not _is_fingerprint(fingerprint):
-            raise ValueError("fingerprint must be sha256:<64 hex>")
         return {
             "id": str(artifact_id),
             "relative_path": str(relative),
             "kind": str(kind),
-            "fingerprint": str(fingerprint),
         }, None
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         return None, str(exc)
@@ -206,8 +189,6 @@ def _staged(path: Path, remote_name: str) -> dict[str, Any]:
     return {
         "source": str(path),
         "remote_name": remote_name,
-        "sha256": _sha256(path),
-        "size_bytes": path.stat().st_size,
         "sensitive": False,
         "fetch_allowed": False,
     }
@@ -282,26 +263,6 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
                 "error", "training.chgnet_precision", "CHGNet scheduled training requires float32"
             )
         )
-    if not _is_fingerprint(parameters.get("config_fingerprint")):
-        diagnostics.append(
-            _diag(
-                "error",
-                "training.config_fingerprint",
-                "parameters.config_fingerprint must be sha256:<64 hex>",
-            )
-        )
-    declared_dataset_fingerprint = parameters.get("dataset_fingerprint")
-    if declared_dataset_fingerprint is not None and not _is_fingerprint(
-        declared_dataset_fingerprint
-    ):
-        diagnostics.append(
-            _diag(
-                "error",
-                "training.dataset_fingerprint",
-                "parameters.dataset_fingerprint must be sha256:<64 hex> when supplied",
-            )
-        )
-
     allowed_inputs = {"training_config", "dataset_reference", "foundation_model_reference"}
     unknown = sorted(set(inputs) - allowed_inputs)
     if unknown:
@@ -325,14 +286,6 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
     else:
         try:
             _json(config)
-            if _sha256(config) != parameters.get("config_fingerprint"):
-                diagnostics.append(
-                    _diag(
-                        "error",
-                        "training.config_fingerprint_mismatch",
-                        "config fingerprint differs from parameters.config_fingerprint",
-                    )
-                )
         except Exception as exc:
             diagnostics.append(_diag("error", "training.config_unreadable", str(exc)))
     if dataset_path is None:
@@ -355,17 +308,6 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
                         "training.dataset_kind",
                         f"{framework} scheduled data kind must be one of "
                         + ", ".join(sorted(_framework_dataset_kinds(str(framework)))),
-                    )
-                )
-            if (
-                declared_dataset_fingerprint is not None
-                and dataset["fingerprint"] != declared_dataset_fingerprint
-            ):
-                diagnostics.append(
-                    _diag(
-                        "error",
-                        "training.dataset_fingerprint_mismatch",
-                        "dataset reference differs from parameters.dataset_fingerprint",
                     )
                 )
 
@@ -402,23 +344,7 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
                             f"{framework} foundation model must be a {_framework_foundation_kind(str(framework))}",
                         )
                     )
-                if foundation["fingerprint"] != parameters.get("foundation_model_fingerprint"):
-                    diagnostics.append(
-                        _diag(
-                            "error",
-                            "training.foundation_fingerprint_mismatch",
-                            "foundation reference differs from parameters.foundation_model_fingerprint",
-                        )
-                    )
-        if not _is_fingerprint(parameters.get("foundation_model_fingerprint")):
-            diagnostics.append(
-                _diag(
-                    "error",
-                    "training.foundation_model_fingerprint",
-                    "finetune requires foundation_model_fingerprint",
-                )
-            )
-    elif foundation_path is not None or parameters.get("foundation_model_fingerprint") is not None:
+    elif foundation_path is not None:
         diagnostics.append(
             _diag(
                 "error",
@@ -464,7 +390,7 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
                 "result_manifest must be a plain relative file name",
             )
         )
-    if _project_file(root) is None:
+    if _project_file(root, context.get("project_path")) is None:
         diagnostics.append(
             _diag(
                 "error",
@@ -497,7 +423,7 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
     parameters = dict(context.get("parameters", {}))
     framework = str(parameters["framework"])
     operation = str(parameters.get("operation", "train"))
-    project = _project_file(root)
+    project = _project_file(root, context.get("project_path"))
     config = _resolve_project_file(root, inputs["training_config"])
     dataset_path = _resolve_project_file(root, inputs["dataset_reference"])
     assert project is not None and config is not None and dataset_path is not None
@@ -586,13 +512,13 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
                 "model-reference",
             )
         )
-    identity = {
+    calculation = {
         "framework": framework,
         "operation": operation,
         "seed": parameters["seed"],
         "device": parameters["device"],
         "precision": parameters["precision"],
-        "config_fingerprint": parameters["config_fingerprint"],
+        "config_path": str(config),
         "dataset": dataset,
         "foundation_model": foundation,
         "publish_model": publish_model,
@@ -610,7 +536,7 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
         "argv": [f"template-family:{template_family}"],
         "cwd": "remote-attempt-workspace",
         "expected_outputs": [item["remote_name"] for item in fetch_outputs if item["required"]],
-        "training_identity": identity,
+        "training_calculation": calculation,
         "approval_summary": {
             "expensive": True,
             "submits_jobs": True,
@@ -620,7 +546,7 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             "operation": operation,
             "fine_tune": operation == "finetune",
             "dataset_id": dataset["id"],
-            "dataset_fingerprint": dataset["fingerprint"],
+            "dataset_path": dataset["relative_path"],
             "foundation_model_id": foundation["id"] if foundation else None,
             "publish_model": publish_model,
             "seed": parameters["seed"],
@@ -628,10 +554,10 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             "precision": parameters["precision"],
             "fetch_allowlist": sorted(item["remote_name"] for item in fetch_outputs),
         },
-        "input_fingerprints": {
-            "training_config": _sha256(config),
-            "dataset_reference": _sha256(dataset_path),
-            **({"foundation_model_reference": _sha256(source)} if operation == "finetune" else {}),
+        "input_paths": {
+            "training_config": str(config),
+            "dataset_reference": str(dataset_path),
+            **({"foundation_model_reference": str(source)} if operation == "finetune" else {}),
         },
         "scheduled_execution": {
             "schema_version": 3,
@@ -819,23 +745,28 @@ def _chgnet_completion_diagnostics(
     generated_split = (
         isinstance(split, Mapping)
         and split.get("seed") == result.get("seed")
-        and _is_fingerprint(split.get("train_indices_sha256"))
-        and _is_fingerprint(split.get("val_indices_sha256"))
+        and all(
+            isinstance(split.get(key), list)
+            and all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in split[key])
+            for key in ("train_indices", "validation_indices", "test_indices")
+        )
     )
     predefined_split = (
         isinstance(split, Mapping)
         and split.get("source") == "predefined"
         and _plain(split.get("split_id"))
-        and all(_is_fingerprint(split.get(key)) for key in (
-            "train_record_ids_sha256", "validation_record_ids_sha256", "test_record_ids_sha256"
-        ))
+        and all(
+            isinstance(split.get(key), list)
+            and all(_plain(item) for item in split[key])
+            for key in ("train_record_ids", "validation_record_ids", "test_record_ids")
+        )
     )
     if not generated_split and not predefined_split:
         diagnostics.append(
             _diag(
                 "error",
                 "training.chgnet_split",
-                "CHGNet result lacks the approved seed and split identity evidence",
+                "CHGNet result lacks the seed and explicit split records",
             )
         )
     environment = provenance.get("environment") if isinstance(provenance, Mapping) else None
@@ -931,24 +862,28 @@ def _m3gnet_completion_diagnostics(
     generated_split = (
         isinstance(split, Mapping)
         and split.get("seed") == result.get("seed")
-        and _is_fingerprint(split.get("train_indices_sha256"))
-        and _is_fingerprint(split.get("val_indices_sha256"))
-        and (split.get("include_test") is not True or _is_fingerprint(split.get("test_indices_sha256")))
+        and all(
+            isinstance(split.get(key), list)
+            and all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in split[key])
+            for key in ("train_indices", "validation_indices", "test_indices")
+        )
     )
     predefined_split = (
         isinstance(split, Mapping)
         and split.get("source") == "predefined"
         and _plain(split.get("split_id"))
-        and all(_is_fingerprint(split.get(key)) for key in (
-            "train_record_ids_sha256", "validation_record_ids_sha256", "test_record_ids_sha256"
-        ))
+        and all(
+            isinstance(split.get(key), list)
+            and all(_plain(item) for item in split[key])
+            for key in ("train_record_ids", "validation_record_ids", "test_record_ids")
+        )
     )
     if not generated_split and not predefined_split:
         diagnostics.append(
             _diag(
                 "error",
                 "training.m3gnet_split",
-                "M3GNet result lacks the approved seed and split identity evidence",
+                "M3GNet result lacks the seed and explicit split records",
             )
         )
     expected_refs = result.get("operation") == "finetune"
@@ -1003,11 +938,11 @@ def _check_generic(
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
     execution = context.get("execution", {})
     plan = execution.get("plan") if isinstance(execution, Mapping) else None
-    identity = plan.get("training_identity") if isinstance(plan, Mapping) else None
+    calculation = plan.get("training_calculation") if isinstance(plan, Mapping) else None
     parameters = context.get("parameters", {})
-    if not isinstance(identity, Mapping) or not isinstance(parameters, Mapping):
+    if not isinstance(calculation, Mapping) or not isinstance(parameters, Mapping):
         return [
-            _diag("error", "training.plan_identity", "pinned bundled training identity is missing")
+            _diag("error", "training.plan", "bundled training calculation record is missing")
         ], None
     result_name = str(parameters.get("result_manifest", "mlip-training-result.json"))
     result, error = _read_json(attempt / result_name)
@@ -1023,15 +958,11 @@ def _check_generic(
     expected = {
         "plugin_id": PLUGIN_ID,
         "status": "OK",
-        "framework": identity.get("framework"),
-        "operation": identity.get("operation"),
-        "seed": identity.get("seed"),
-        "device": identity.get("device"),
-        "precision": identity.get("precision"),
-        "config_fingerprint": identity.get("config_fingerprint"),
-        "dataset_fingerprint": (identity.get("dataset") or {}).get("fingerprint")
-        if isinstance(identity.get("dataset"), Mapping)
-        else None,
+        "framework": calculation.get("framework"),
+        "operation": calculation.get("operation"),
+        "seed": calculation.get("seed"),
+        "device": calculation.get("device"),
+        "precision": calculation.get("precision"),
     }
     if result.get("schema_version") != 1:
         diagnostics.append(
@@ -1054,21 +985,17 @@ def _check_generic(
                 "training result must record framework_version",
             )
         )
-    foundation = identity.get("foundation_model")
-    if identity.get("operation") == "finetune":
-        expected_foundation = (
-            foundation.get("fingerprint") if isinstance(foundation, Mapping) else None
-        )
-        if result.get("foundation_model_fingerprint") != expected_foundation:
+    if calculation.get("operation") == "finetune":
+        if not _plain(result.get("foundation_model_path")):
             diagnostics.append(
                 _diag(
                     "error",
                     "training.foundation_result",
-                    "foundation model fingerprint differs from the approved plan",
+                    "training result does not record the foundation model path",
                 )
             )
     published_reference: dict[str, Any] | None = None
-    approved_publish = identity.get("publish_model")
+    approved_publish = calculation.get("publish_model")
     if isinstance(approved_publish, Mapping):
         reference, reference_error = _read_json(attempt / "model-reference.json")
         expected_reference = {
@@ -1085,7 +1012,6 @@ def _check_generic(
             )
         elif (
             any(reference.get(key) != value for key, value in expected_reference.items())
-            or not _is_fingerprint(reference.get("fingerprint"))
             or report.get("published_model") != reference
         ):
             diagnostics.append(
@@ -1115,17 +1041,6 @@ def _check_generic(
         diagnostics.append(
             _diag("error", "training.model_missing", "fetched model-artifact is missing or unsafe")
         )
-    else:
-        if model.get("size_bytes") != model_path.stat().st_size or model.get("sha256") != _sha256(
-            model_path
-        ):
-            diagnostics.append(
-                _diag(
-                    "error",
-                    "training.model_identity",
-                    "fetched model identity differs from training-result.json",
-                )
-            )
     if (
         report.get("schema_version") != 1
         or report.get("status") != "OK"
@@ -1138,8 +1053,8 @@ def _check_generic(
                 "cluster runner did not report successful completion",
             )
         )
-    for key in ("framework", "operation", "config_fingerprint"):
-        if report.get(key) != identity.get(key):
+    for key in ("framework", "operation"):
+        if report.get(key) != calculation.get(key):
             diagnostics.append(
                 _diag(
                     "error",
@@ -1148,25 +1063,27 @@ def _check_generic(
                 )
             )
     dataset = report.get("dataset")
-    approved_dataset = identity.get("dataset")
+    approved_dataset = calculation.get("dataset")
     if not isinstance(dataset, Mapping) or not isinstance(approved_dataset, Mapping):
         diagnostics.append(
-            _diag("error", "training.cluster_dataset", "cluster report lacks dataset identity")
+            _diag("error", "training.cluster_dataset", "cluster report lacks dataset record")
         )
     else:
-        if dataset.get("id") != approved_dataset.get("id") or dataset.get(
-            "observed_fingerprint"
-        ) != approved_dataset.get("fingerprint"):
+        if (
+            dataset.get("id") != approved_dataset.get("id")
+            or dataset.get("relative_path") != approved_dataset.get("relative_path")
+            or not _plain(dataset.get("resolved_path"))
+        ):
             diagnostics.append(
                 _diag(
                     "error",
-                    "training.cluster_dataset_identity",
-                    "cluster dataset content differs from approved identity",
+                    "training.cluster_dataset_record",
+                    "cluster dataset record differs from the requested path",
                 )
             )
-    if identity.get("operation") == "finetune":
+    if calculation.get("operation") == "finetune":
         reported_foundation = report.get("foundation_model")
-        approved_foundation = identity.get("foundation_model")
+        approved_foundation = calculation.get("foundation_model")
         if not isinstance(reported_foundation, Mapping) or not isinstance(
             approved_foundation, Mapping
         ):
@@ -1174,19 +1091,20 @@ def _check_generic(
                 _diag(
                     "error",
                     "training.cluster_foundation",
-                    "cluster report lacks foundation model identity",
+                    "cluster report lacks foundation model record",
                 )
             )
-        elif reported_foundation.get("id") != approved_foundation.get(
-            "id"
-        ) or reported_foundation.get("observed_fingerprint") != approved_foundation.get(
-            "fingerprint"
+        elif (
+            reported_foundation.get("id") != approved_foundation.get("id")
+            or reported_foundation.get("relative_path")
+            != approved_foundation.get("relative_path")
+            or not _plain(reported_foundation.get("resolved_path"))
         ):
             diagnostics.append(
                 _diag(
                     "error",
-                    "training.cluster_foundation_identity",
-                    "cluster foundation model content differs from approved identity",
+                    "training.cluster_foundation_record",
+                    "cluster foundation model record differs from the requested path",
                 )
             )
     metrics = result.get("metrics", {})
@@ -1203,11 +1121,11 @@ def _check_generic(
                 diagnostics.append(
                     _diag("error", "training.metric_value", f"metric {name!r} must be finite")
                 )
-    if identity.get("framework") == "mace":
+    if calculation.get("framework") == "mace":
         diagnostics.extend(_mace_completion_diagnostics(context, result))
-    if identity.get("framework") == "chgnet":
+    if calculation.get("framework") == "chgnet":
         diagnostics.extend(_chgnet_completion_diagnostics(context, result))
-    if identity.get("framework") == "m3gnet":
+    if calculation.get("framework") == "m3gnet":
         diagnostics.extend(_m3gnet_completion_diagnostics(context, result))
     if diagnostics:
         return diagnostics, None
@@ -1292,11 +1210,7 @@ class Adapter:
 
     def plan(self, context: dict[str, Any]) -> dict[str, Any]:
         if context.get("backend") != "ssh-slurm" or _legacy_scheduled(context):
-            plan = self.legacy.plan(context)
-            if isinstance(plan, dict):
-                plan = dict(plan)
-                plan["delegated_adapter_sha256"] = _sha256(LEGACY_PATH)
-            return plan
+            return self.legacy.plan(context)
         return _plan_generic(context)
 
     def prepare(self, context: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:

@@ -100,9 +100,9 @@ class DirectAdapterTests(unittest.TestCase):
             "not-exposed-by-bundled-maml-interface",
             plan["assumptions"]["seed_control"],
         )
-        self.assertRegex(
-            plan["input_fingerprints"]["direct_wrapper"]["sha256"],
-            r"^sha256:[0-9a-f]{64}$",
+        self.assertEqual(
+            str(ROOT / "plugins" / "pes-sampling" / "direct_select.py"),
+            plan["input_paths"]["direct_wrapper"],
         )
 
     def test_external_direct_script_is_not_part_of_the_operation_contract(self) -> None:
@@ -159,14 +159,10 @@ class DirectAdapterTests(unittest.TestCase):
 
     def test_check_and_collect_read_only_explicit_manifest(self) -> None:
         context, manifest, selected = self.result_context()
-        before = {
-            path: (path.stat().st_mtime_ns, path.read_bytes()) for path in (manifest, selected)
-        }
+        before = {path: path.read_bytes() for path in (manifest, selected)}
         checked = self.adapter.check(context)
         collected = self.adapter.collect(context)
-        after = {
-            path: (path.stat().st_mtime_ns, path.read_bytes()) for path in (manifest, selected)
-        }
+        after = {path: path.read_bytes() for path in (manifest, selected)}
 
         self.assertEqual(before, after)
         self.assertEqual("OK", checked["status"])
@@ -402,10 +398,10 @@ class IonicTransportAdapterTests(unittest.TestCase):
 
     def test_check_and_collect_are_read_only_and_standardized(self) -> None:
         context, files = self.result_context()
-        before = {path: (path.stat().st_mtime_ns, path.read_bytes()) for path in files}
+        before = {path: path.read_bytes() for path in files}
         checked = self.adapter.check(context)
         collected = self.adapter.collect(context)
-        after = {path: (path.stat().st_mtime_ns, path.read_bytes()) for path in files}
+        after = {path: path.read_bytes() for path in files}
 
         self.assertEqual(before, after)
         self.assertEqual("OK", checked["status"])
@@ -474,10 +470,7 @@ class IonicTransportAdapterTests(unittest.TestCase):
         )
         checked = self.adapter.check(context)
         self.assertEqual("FAIL", checked["status"])
-        self.assertTrue(
-            {"result.manifest_sha256", "result.pymatgen_recheck"}
-            & diagnostic_codes(checked)
-        )
+        self.assertIn("result.pymatgen_recheck", diagnostic_codes(checked))
 
     def test_checker_rejects_tampered_pymatgen_result(self) -> None:
         context, files = self.result_context()
@@ -494,10 +487,7 @@ class IonicTransportAdapterTests(unittest.TestCase):
             writer.writerows(rows)
         checked = self.adapter.check(context)
         self.assertEqual("FAIL", checked["status"])
-        self.assertTrue(
-            {"result.manifest_sha256", "result.pymatgen_value"}
-            & diagnostic_codes(checked)
-        )
+        self.assertIn("result.pymatgen_value", diagnostic_codes(checked))
 
     def test_checker_rejects_tampered_runtime_provenance(self) -> None:
         context, files = self.result_context()
@@ -509,7 +499,7 @@ class IonicTransportAdapterTests(unittest.TestCase):
         checked = self.adapter.check(context)
 
         self.assertEqual("FAIL", checked["status"])
-        self.assertIn("result.runtime_identity", diagnostic_codes(checked))
+        self.assertIn("result.runtime_version", diagnostic_codes(checked))
 
     def test_msd_structure_enables_pymatgen_conductivity(self) -> None:
         from pymatgen.analysis.diffusion.analyzer import get_conversion_factor

@@ -30,13 +30,13 @@
       "Version 0.3 keeps lammps-prepare local; operation=execute is separately approved ssh-slurm work. Preparation success is never execution success.",
       "Periodic restart is opt-in through checkpoint_interval. The execution runner adds LAMMPS restart N checkpoint.1.restart checkpoint.2.restart to the reviewed generated deck; two fixed files alternate so a hard interruption can leave a previous complete checkpoint.",
       "restart_policy=auto-from-previous-attempt resumes only the immediately previous scheduler-terminal FAIL/STOPPED attempt after bounded failure salvage. A scheduler COMPLETED calculation that later fails the scientific checker is not auto-resumed.",
-      "Binary restart compatibility is fail-closed: retry requires the previous LAMMPS executable SHA-256, platform identity, site-launcher hash, prepared-launcher hash, resources, model fingerprint, prepared-manifest fingerprint, target, and checkpoint cadence to match before read_restart is attempted.",
+      "Binary restart compatibility is fail-closed: retry requires the previous LAMMPS executable path, platform record, site/prepared launcher arguments, resources, model/manifest paths, target, and checkpoint cadence to match before read_restart is attempted.",
       "The restart deck uses read_restart, reissues the reviewed MLIP pair_style/pair_coeff, reuses the exact fix ID/style/arguments from the fresh generated fix mlipflow all nvt/npt command, does not recreate velocities, and uses run <original-total-steps> upto.",
-      "LAMMPS documents binary restart files as same-executable/same-platform artifacts. Even with this runtime binding, bitwise trajectory identity is not guaranteed because MPI decomposition and round-off can change between attempts; version 0.3 promises state-continuous restart, not universal bitwise reproducibility.",
+      "LAMMPS documents binary restart files as same-executable/same-platform artifacts. Even with this runtime binding, bitwise trajectory equality is not guaranteed because MPI decomposition and round-off can change between attempts; version 0.3 promises state-continuous restart, not universal bitwise reproducibility.",
       "If interruption occurs before the first checkpoint interval, no automatic restart is possible. Retry is blocked rather than falling back to final.data or reinitializing velocities.",
       "On successful completion the temporary periodic checkpoint pair and restart-runtime sidecar are removed before normal output inventory, so only final.restart is collected as the successful restart artifact; failure salvage retains the periodic files when present.",
       "Cluster-specific executable paths, MPI/srun launchers, modules, partitions, CUDA architecture, template root, work root, and absolute model root remain site-owned.",
-      "The model is never copied through the control plane. The compute-node runner resolves the approved site-root-relative model below MODEL_ROOT and recomputes file SHA-256 or deterministic directory tree-sha256-v1 before and after LAMMPS execution.",
+      "The model is never copied through the control plane. The compute-node runner resolves the recorded site-root-relative model path below MODEL_ROOT.",
       "DeepMD CPU/GPU decks both use pair_style deepmd; site runtime owns GPU mapping. MACE and MatGL/M3GNet GPU remain pinned to one GPU in this contract.",
       "Legacy CHGNet model files remain blocked because version 0.3 does not pin a native CHGNet LAMMPS export/pair-style contract; CHGNet remains available through ase-md.",
       "Version 0.3 supports prepared NVT or isotropic NPT only. The producer does not perform transport analysis; ionic-transport consumes collected old/new dump formats and stitches restart trajectory segments by global timestep."
@@ -60,25 +60,24 @@
   },
   "inputs": [
     {"name": "structure", "kind": "file", "required": false, "description": "Required by lammps-prepare: one project-scoped ASE-readable full-rank 3D periodic structure."},
-    {"name": "model-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Required by lammps-prepare: logical site model identity, export format, type map capability and approved fingerprint."},
+    {"name": "model-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Required by lammps-prepare: site-relative model path, export format, and element/type-map capability."},
     {"name": "lammps-config", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Required by lammps-prepare: explicit ensemble, CPU/GPU targets, type map, timestep, total steps, output intervals and thermostat/barostat inputs."},
-    {"name": "lammps-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Required by execute: project-scoped lammps-md-input-v2 manifest whose sibling structure.data and selected input deck are staged after fingerprint verification."}
+    {"name": "lammps-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Required by execute: project-scoped lammps-md-input-v2 manifest whose sibling structure.data and selected input deck are staged by path."}
   ],
   "parameters": [
     {"name": "operation", "type": "string", "required": true, "description": "lammps-prepare generates reviewed inputs locally; execute submits one already prepared target to ssh-slurm."},
     {"name": "output-dir", "type": "string", "required": false, "description": "lammps-prepare only: fresh attempt-relative output directory; defaults to lammps-inputs."},
     {"name": "structure-format", "type": "string", "required": false, "description": "lammps-prepare only: explicit safe ASE reader format such as lammps-data or extxyz; use when the filename does not identify its format."},
     {"name": "target", "type": "string", "required": false, "description": "execute only: cpu or gpu; the target must already exist in the prepared manifest."},
-    {"name": "input-manifest-fingerprint", "type": "string", "required": false, "description": "execute only: full SHA-256 of the prepared lammps-input-manifest.json, rebound before staging and on the compute node."},
     {"name": "checkpoint-interval", "type": "integer", "required": false, "description": "execute only: positive global-step cadence for two alternating periodic LAMMPS binary restart files; cannot exceed total steps."},
     {"name": "restart-policy", "type": "string", "required": false, "description": "execute only: disabled or auto-from-previous-attempt. Auto requires checkpoint_interval and resumes only approved salvaged scheduler-terminal checkpoints."}
   ],
   "outputs": [
-    {"name": "lammps-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Preparation result binding model/runtime contract and all generated input SHA-256 values."},
+    {"name": "lammps-input-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Preparation result recording model/runtime settings and generated input paths."},
     {"name": "structure-data", "kind": "file", "required": false, "media_type": "text/plain", "description": "Prepared ASE-generated LAMMPS atomic data file."},
     {"name": "cpu-input", "kind": "file", "required": false, "media_type": "text/plain", "description": "Prepared in.cpu.lammps when cpu was requested."},
     {"name": "gpu-input", "kind": "file", "required": false, "media_type": "text/plain", "description": "Prepared in.gpu.lammps when gpu was requested."},
-    {"name": "lammps-execution-result", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Successful execute result with LAMMPS version, temperature/timestep/dump/type-map/ensemble metadata, structure/model identities, completed steps, restart provenance, launcher contract and output fingerprints."},
+    {"name": "lammps-execution-result", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Successful execute result with LAMMPS version, temperature/timestep/dump/type-map/ensemble metadata, structure/model paths, completed steps, restart provenance, launcher arguments and output paths."},
     {"name": "trajectory", "kind": "file", "required": false, "media_type": "text/plain", "description": "Current attempt trajectory segment. New decks include x/y/z plus ix/iy/iz for exact downstream unwrap; scheduler-terminal restart salvage retains the bounded partial segment for later ionic-transport stitching."},
     {"name": "final-data", "kind": "file", "required": false, "media_type": "text/plain", "description": "Final LAMMPS data file written after the approved total run completes."},
     {"name": "final-restart", "kind": "file", "required": false, "media_type": "application/octet-stream", "description": "Final successful LAMMPS binary restart."},
@@ -100,21 +99,21 @@
     "network_access": false,
     "requires_approval_before_execution": true,
     "notes": [
-      "lammps-prepare is the input-construction boundary; execute requires a separate plan approval binding prepared manifest SHA, target, model fingerprint, resources, restart policy and checkpoint cadence.",
-      "Scheduler COMPLETED is not scientific success. Advance inventories and fetches bounded declared outputs before the pinned checker accepts the completion marker, identities and artifact SHA-256 values.",
+      "lammps-prepare is the input-construction boundary; execute requires a separate plan approval recording the prepared manifest path, target, model path, resources, restart policy and checkpoint cadence.",
+      "Scheduler COMPLETED is not scientific success. Advance inventories and fetches bounded declared outputs before the checker accepts the completion marker, physical settings and required artifacts.",
       "Scheduler terminal failure with restart enabled triggers a separate failure-salvage approval. Only already allowlisted logs, runtime sidecar, and alternating checkpoint files can be fetched; partial trajectory/final state is not silently treated as a successful calculation.",
-      "A resumed attempt is fresh remote workspace work. The previous checkpoint/runtime SHA values enter the new approval plan and are staged as immutable scientific inputs."
+      "A resumed attempt is fresh remote workspace work. The previous checkpoint and runtime-record paths enter the new approval plan and are staged as scientific inputs."
     ]
   },
   "completion": {
     "status": "implemented",
     "checks": [
-      {"id": "input-identity", "implemented": true, "description": "Preparation rechecks source fingerprints; execute rechecks the prepared manifest plus selected structure.data/deck fingerprints before staging and again on the compute node."},
-      {"id": "portable-model-binding", "implemented": true, "description": "Generated decks use ${MODEL_FILE}; execute resolves only below site MODEL_ROOT and rejects a changed model fingerprint before or after LAMMPS."},
+      {"id": "input-paths", "implemented": true, "description": "Preparation records source paths; execute checks the prepared manifest plus selected structure.data/deck paths before staging and on the compute node."},
+      {"id": "portable-model-path", "implemented": true, "description": "Generated decks use ${MODEL_FILE}; execute resolves the recorded relative model path only below site MODEL_ROOT."},
       {"id": "lammps-completion-marker", "implemented": true, "description": "Successful execution requires LAMMPS exit code zero plus the exact approved end-of-script marker after final.data/final.restart writes."},
-      {"id": "execution-artifacts", "implemented": true, "description": "Require trajectory, final.data, final.restart, LAMMPS log/screen log, result manifest and cluster report within approved size bounds with matching SHA-256 records."},
-      {"id": "restart-runtime", "implemented": true, "description": "Before binary resume, require previous/current executable SHA, platform, launcher identities, resources, prepared bundle, model, target and checkpoint cadence to match."},
-      {"id": "restart-state", "implemented": true, "description": "Require selected resume checkpoint SHA to be one of the newly approved salvaged candidates, its LAMMPS timestep to be a valid periodic checkpoint below total steps, and successful run completion to reach the original total step."}
+      {"id": "execution-artifacts", "implemented": true, "description": "Require trajectory, final.data, final.restart, LAMMPS log/screen log, result manifest and cluster report within approved size bounds at their declared paths."},
+      {"id": "restart-runtime", "implemented": true, "description": "Before binary resume, require previous/current executable path, platform, launcher arguments, resources, prepared bundle, model path, target and checkpoint cadence to match."},
+      {"id": "restart-state", "implemented": true, "description": "Require the selected resume checkpoint name to be one of the staged salvaged candidates, its LAMMPS timestep to be a valid periodic checkpoint below total steps, and successful run completion to reach the original total step."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"
@@ -132,7 +131,7 @@
   "computational_backends": [
     {"id": "deepmd", "family": "DeePMD-kit LAMMPS pair_style deepmd", "status": "implemented", "operations": ["lammps-prepare", "execute"], "external_programs": ["LAMMPS"], "limitations": ["CPU and GPU use the same pair style; site runtime owns MPI/GPU mapping and must respect at most one GPU per MPI rank."]},
     {"id": "mace", "family": "MACE ML-MACE LAMMPS pair style", "status": "implemented", "operations": ["lammps-prepare", "execute"], "external_programs": ["LAMMPS"], "limitations": ["Requires a pre-exported MACE LAMMPS TorchScript file; GPU execute is pinned to one GPU and the Kokkos no_domain_decomposition launcher contract."]},
-    {"id": "m3gnet", "family": "MatGL M3GNet LAMMPS pair styles", "status": "implemented", "operations": ["lammps-prepare", "execute"], "external_programs": ["LAMMPS"], "limitations": ["The current native matgl/matgl/kk interface requires a pre-exported MatGL LAMMPS TorchScript file. Explicit CPU-only gnnp and legacy m3gnet Python-bridge interfaces instead require a tree-fingerprinted native MatGL model directory and a site-owned interface path; no interface is selected by version guessing."]},
+    {"id": "m3gnet", "family": "MatGL M3GNet LAMMPS pair styles", "status": "implemented", "operations": ["lammps-prepare", "execute"], "external_programs": ["LAMMPS"], "limitations": ["The current native matgl/matgl/kk interface requires a pre-exported MatGL LAMMPS TorchScript file. Explicit CPU-only gnnp and legacy m3gnet Python-bridge interfaces instead require a native MatGL model directory and a site-owned interface path; no interface is selected by version guessing."]},
     {"id": "chgnet", "family": "CHGNet", "status": "declared-only", "operations": [], "external_programs": [], "limitations": ["No pinned native LAMMPS export/pair-style bridge is accepted in version 0.3; use ase-md in the meantime."]}
   ]
 }

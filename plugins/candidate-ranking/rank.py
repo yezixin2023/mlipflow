@@ -9,7 +9,6 @@ selection rule in a small JSON manifest.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import os
@@ -30,14 +29,6 @@ def _load_object(path: Path) -> dict[str, Any]:
     return value
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return f"sha256:{digest.hexdigest()}"
-
-
 def _finite(value: Any) -> bool:
     return (
         not isinstance(value, bool)
@@ -54,7 +45,6 @@ def build_result(
     direction: str,
     top_k: int,
     missing_metric_policy: str,
-    input_fingerprints: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Validate the two inputs and return a deterministic top-k result."""
 
@@ -124,7 +114,6 @@ def build_result(
             {"candidate_id": candidate_id, "rank": rank, "value": value}
             for rank, (candidate_id, value) in enumerate(selected, start=1)
         ],
-        "input_fingerprints": dict(input_fingerprints or {}),
         "implementation": {
             "name": "mlipflow-deterministic-single-metric-ranking",
             "version": 1,
@@ -173,10 +162,6 @@ def main(argv: list[str] | None = None) -> int:
             direction=args.direction,
             top_k=args.top_k,
             missing_metric_policy=args.missing_metric_policy,
-            input_fingerprints={
-                "candidate_manifest": _sha256(args.candidate_manifest),
-                "metric_results_manifest": _sha256(args.metric_results_manifest),
-            },
         )
         _write_new_json(args.result_manifest, result)
     except (OSError, ValueError) as exc:

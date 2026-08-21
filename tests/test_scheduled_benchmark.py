@@ -15,10 +15,6 @@ from .helpers import project_config, write_json
 from .test_scheduled_dft import FakeTemplateLibrary, PLUGINS, write_site
 
 
-FINGERPRINT = "sha256:" + "1" * 64
-DATASET_FINGERPRINT = "sha256:" + "2" * 64
-
-
 def library() -> FakeTemplateLibrary:
     templates = dict(FakeTemplateLibrary().templates)
     templates["benchmark-chgnet-canonical/run.sh"] = """#!/bin/bash
@@ -40,7 +36,6 @@ def build_project(root: Path) -> Path:
             "framework": "chgnet",
             "relative_path": "chgnet/chgnet-loop-test.pt",
             "kind": "file",
-            "fingerprint": FINGERPRINT,
         },
     )
     write_json(
@@ -50,7 +45,6 @@ def build_project(root: Path) -> Path:
             "dataset_id": "loop-test-dataset",
             "relative_path": "loop-test-dataset/benchmark/test.json",
             "kind": "file",
-            "fingerprint": DATASET_FINGERPRINT,
         },
     )
     node = {
@@ -67,8 +61,6 @@ def build_project(root: Path) -> Path:
         "parameters": {
             "operation": "evaluate-fresh",
             "model_family": "chgnet",
-            "model_fingerprint": FINGERPRINT,
-            "dataset_fingerprint": DATASET_FINGERPRINT,
             "task": "static-pes",
             "scenario": "loop-test-v1",
             "split": "test",
@@ -119,9 +111,6 @@ class ScheduledBenchmarkPlanTests(unittest.TestCase):
             for item in adapter["scheduled_execution"]["staged_files"]
         }
         self.assertTrue(portable_sources["model_runtime.py"].startswith("{PACKAGE_DIR}/"))
-        self.assertTrue(
-            portable_sources["artifact_identity.py"].startswith("{PACKAGE_DIR}/")
-        )
 
         plugin = discover_plugins(PLUGINS)["mlip-benchmark"]
         contract = _scheduled_contract(
@@ -140,7 +129,6 @@ class ScheduledBenchmarkPlanTests(unittest.TestCase):
                 "fresh_benchmark_cluster.py",
                 "fresh_benchmark.py",
                 "model_runtime.py",
-                "artifact_identity.py",
             }.issubset(staged)
         )
         fetched = {item["remote_name"] for item in contract["fetch_outputs"]}
@@ -156,15 +144,16 @@ class ScheduledBenchmarkPlanTests(unittest.TestCase):
             }.issubset(fetched)
         )
 
-    def test_upstream_resolved_references_supply_fingerprints(self) -> None:
+    def test_upstream_references_supply_readable_paths(self) -> None:
         plugin = discover_plugins(PLUGINS)["mlip-benchmark"]
         adapter = load_adapter(plugin)
         node = self.project.node("benchmark-chgnet")
         parameters = dict(node["parameters"])
-        expected_model = parameters.pop("model_fingerprint")
-        expected_dataset = parameters.pop("dataset_fingerprint")
+        selected_project = self.root / "continuation.project.json"
+        selected_project.write_bytes((self.root / "project.yaml").read_bytes())
         context = {
             "project_root": str(self.root),
+            "project_path": str(selected_project),
             "attempt_dir": str(self.root / ".mlipflow/runs/benchmark-chgnet/attempt-1"),
             "backend": "ssh-slurm",
             "inputs": {
@@ -181,10 +170,21 @@ class ScheduledBenchmarkPlanTests(unittest.TestCase):
         plan = adapter.plan(context)
 
         self.assertEqual("READY", plan["status"], plan.get("diagnostics"))
-        self.assertEqual(expected_model, plan["fresh_identity"]["model"]["fingerprint"])
+        calculation = plan["fresh_calculation"]
+        self.assertEqual("chgnet-loop-test", calculation["model"]["id"])
         self.assertEqual(
-            expected_dataset, plan["fresh_identity"]["dataset"]["fingerprint"]
+            "chgnet/chgnet-loop-test.pt", calculation["model"]["relative_path"]
         )
+        self.assertEqual("loop-test-dataset", calculation["dataset"]["id"])
+        self.assertEqual(
+            "loop-test-dataset/benchmark/test.json",
+            calculation["dataset"]["relative_path"],
+        )
+        staged = {
+            item["remote_name"]: item["source"]
+            for item in plan["scheduled_execution"]["staged_files"]
+        }
+        self.assertEqual(staged["project.yaml"], str(selected_project.resolve()))
 
 
 if __name__ == "__main__":

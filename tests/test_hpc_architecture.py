@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -61,12 +60,7 @@ class FakeLibrary:
         content = self.values.get(relative)
         if content is None:
             return {"relative_path": relative, "exists": False}
-        payload = content.encode("utf-8")
-        return {
-            "content": content,
-            "size_bytes": len(payload),
-            "sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
-        }
+        return {"content": content}
 
 
 def site_file(root: Path) -> Path:
@@ -142,7 +136,8 @@ class HpcArchitectureTests(unittest.TestCase):
                             "remote_template_root": "/srv/templates/b",
                             "work_root": "/scratch/runs/b",
                             "scheduler": {
-                                "partition_candidates": ["gpu3", "gpu2", "gpu1"]
+                                "partition_candidates": ["gpu3", "gpu2", "gpu1"],
+                                "memory_constraint": "unreported",
                             },
                         },
                     },
@@ -161,6 +156,14 @@ class HpcArchitectureTests(unittest.TestCase):
             site.cluster("cluster-b").to_plan_dict()["scheduler"][
                 "partition_candidates"
             ],
+        )
+        self.assertEqual(
+            "reported",
+            site.cluster("cluster-a").scheduler.memory_constraint,
+        )
+        self.assertEqual(
+            "unreported",
+            site.cluster("cluster-b").scheduler.memory_constraint,
         )
 
     def test_partition_candidates_reject_duplicates_and_unsafe_names(self) -> None:
@@ -504,7 +507,7 @@ class HpcArchitectureTests(unittest.TestCase):
             "expansion directly before closing brace": (
                 'cd {{RUN_DIR}}\necho "{\\"n\\": ${count}}"\n'
             ),
-            "awk field program": "cd {{RUN_DIR}}\nsha256sum f | awk '{print $1}'\n",
+            "awk field program": "cd {{RUN_DIR}}\nawk '{print $1}' values.txt\n",
             "arithmetic base ten": "cd {{RUN_DIR}}\nattempt=$((10#{{ATTEMPT}}))\n",
         }
         for name, text in cases.items():
@@ -552,6 +555,24 @@ class HpcArchitectureTests(unittest.TestCase):
                 }
             )
 
+    def test_unlimited_walltime_is_valid_and_rendered_verbatim(self) -> None:
+        resources = validate_hpc_resources(
+            {
+                "cpus": 128,
+                "gpus": 0,
+                "memory": "128G",
+                "walltime": "UNLIMITED",
+            }
+        )
+        rendered = render_template(
+            "#SBATCH --time={{WALLTIME}}\ncd {{RUN_DIR}}\n",
+            {"RUN_DIR": "/work/attempt-0001", "WALLTIME": resources.walltime},
+            template_name="probe",
+            required=frozenset({"RUN_DIR", "WALLTIME"}),
+        )
+
+        self.assertIn("#SBATCH --time=UNLIMITED", rendered)
+
     def test_execution_implementation_has_no_cluster_specific_launch_knowledge(self) -> None:
         root = Path(__file__).resolve().parents[1]
         sources = list((root / "src/mlipflow").glob("*.py")) + [
@@ -562,7 +583,7 @@ class HpcArchitectureTests(unittest.TestCase):
             "module load",
             "setvars.sh",
             "vasp_std",
-            "cpu192",
+            "cpu-large",
             "mpirun ",
             "srun ",
         )

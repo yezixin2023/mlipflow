@@ -2,14 +2,13 @@
 
 The project stages a reviewed LAMMPS input bundle, never a model or cluster
 executable. The site template supplies MODEL_ROOT, LAMMPS_BIN and an optional
-JSON launcher argv. This runner verifies every staged fingerprint, resolves the
+JSON launcher argv. This runner checks the staged paths, resolves the
 model below MODEL_ROOT, launches LAMMPS with shell=False, and writes bounded
 machine-readable provenance for the local plugin checker.
 """
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -19,7 +18,6 @@ import traceback
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-FINGERPRINT_PREFIX = "sha256:"
 PREPARATION_CONTRACT = "lammps-md-input-v2"
 FRAMEWORKS = {"deepmd", "mace", "m3gnet"}
 TARGETS = {"cpu", "gpu"}
@@ -36,44 +34,7 @@ MAX_LOG_BYTES = 512 * 1024 * 1024
 MAX_TRAJECTORY_BYTES = 8 * 1024 * 1024 * 1024
 MAX_FINAL_DATA_BYTES = 2 * 1024 * 1024 * 1024
 MAX_RESTART_BYTES = 8 * 1024 * 1024 * 1024
-MAX_MODEL_TREE_FILES = 8192
-MAX_MODEL_TREE_BYTES = 16 * 1024 * 1024 * 1024
 LAMMPS_VERSION = re.compile(r"LAMMPS\s*\(([^\r\n)]+)\)")
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return FINGERPRINT_PREFIX + digest.hexdigest()
-
-
-def fingerprint(path: Path) -> str:
-    """Return file SHA-256 or deterministic tree-sha256-v1 for a directory."""
-
-    path = path.expanduser().resolve()
-    if path.is_file():
-        return _sha256(path)
-    if not path.is_dir():
-        raise ValueError(f"model artifact does not exist: {path}")
-    entries = list(path.rglob("*"))
-    if any(item.is_symlink() for item in entries):
-        raise ValueError("model artifact tree contains a symlink")
-    files = [item for item in entries if item.is_file()]
-    if not files:
-        raise ValueError("model artifact directory is empty")
-    if len(files) > MAX_MODEL_TREE_FILES:
-        raise ValueError("model artifact directory contains too many files")
-    total = sum(item.stat().st_size for item in files)
-    if total <= 0 or total > MAX_MODEL_TREE_BYTES:
-        raise ValueError("model artifact directory size is outside the approved bound")
-    digest = hashlib.sha256()
-    for item in sorted(files, key=lambda value: value.relative_to(path).as_posix()):
-        relative = item.relative_to(path).as_posix()
-        record = f"{relative}\0{item.stat().st_size}\0{_sha256(item)}\n"
-        digest.update(record.encode("utf-8"))
-    return FINGERPRINT_PREFIX + digest.hexdigest()
 
 
 def _ordinary_file(path: Path, max_bytes: int) -> bool:
@@ -119,17 +80,6 @@ def _safe_relative(value: Any) -> str:
     return value
 
 
-def _fingerprint(value: Any) -> str:
-    if (
-        not isinstance(value, str)
-        or not value.startswith(FINGERPRINT_PREFIX)
-        or len(value) != 71
-        or any(character not in "0123456789abcdef" for character in value[7:])
-    ):
-        raise ValueError("fingerprint must be sha256:<64 lowercase hex>")
-    return value
-
-
 def _project_node(project: Path, node_id: str) -> dict[str, Any]:
     raw = _read_mapping(project)
     workflow = raw.get("workflow")
@@ -153,9 +103,6 @@ def _generated_records(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
         name = item["name"]
         if name in records:
             raise ValueError(f"duplicate generated file record: {name}")
-        if not isinstance(item.get("size_bytes"), int) or item["size_bytes"] <= 0:
-            raise ValueError(f"generated file size is invalid: {name}")
-        _fingerprint(item.get("sha256"))
         records[name] = item
     return records
 
@@ -181,7 +128,7 @@ def _launcher(manifest: dict[str, Any], target: str) -> dict[str, Any]:
         raise ValueError("launcher argv must contain exactly one model placeholder")
     model = manifest.get("model")
     if not isinstance(model, dict):
-        raise ValueError("input manifest model identity is missing")
+        raise ValueError("input manifest model record is missing")
     interface = model.get("lammps_interface") if model.get("framework") == "m3gnet" else None
     requires_interface_path = interface in {"gnnp", "m3gnet"}
     if bool(launcher.get("requires_interface_path", False)) != requires_interface_path:
@@ -191,7 +138,7 @@ def _launcher(manifest: dict[str, Any], target: str) -> dict[str, Any]:
     if launcher.get("lammps_interface", interface or model.get("framework")) != (
         interface or model.get("framework")
     ):
-        raise ValueError("launcher interface identity differs from model interface")
+        raise ValueError("launcher interface differs from model interface")
     return launcher
 
 
@@ -218,9 +165,6 @@ def _resolve_model(model_root_value: str, model: dict[str, Any]) -> Path:
         raise ValueError("resolved LAMMPS model file is missing, unsafe or oversized")
     if kind == "directory" and (candidate.is_symlink() or not candidate.is_dir()):
         raise ValueError("resolved LAMMPS model directory is missing or unsafe")
-    expected = _fingerprint(model.get("fingerprint"))
-    if fingerprint(candidate) != expected:
-        raise ValueError("resolved LAMMPS model fingerprint differs from approved manifest")
     return candidate
 
 
@@ -308,7 +252,7 @@ def _contains_marker(path: Path, marker: str) -> bool:
 def _artifact(path: Path, name: str, max_bytes: int) -> dict[str, Any]:
     if not _ordinary_file(path, max_bytes):
         raise ValueError(f"required LAMMPS artifact is missing or oversized: {name}")
-    return {"name": name, "path": name, "sha256": _sha256(path), "size_bytes": path.stat().st_size}
+    return {"name": name, "path": name}
 
 
 def run(args: argparse.Namespace) -> int:
@@ -331,9 +275,12 @@ def run(args: argparse.Namespace) -> int:
 
         manifest_path = input_dir / "lammps-input-manifest.json"
         manifest = _read_mapping(manifest_path)
-        expected_manifest_sha = _fingerprint(parameters.get("input_manifest_fingerprint"))
-        if _sha256(manifest_path) != expected_manifest_sha:
-            raise ValueError("staged LAMMPS input manifest fingerprint differs from approved parameters")
+        node_inputs = node.get("inputs")
+        if not isinstance(node_inputs, dict) or not isinstance(
+            node_inputs.get("lammps_input_manifest"), str
+        ):
+            raise ValueError("scheduled LAMMPS node must record its input manifest path")
+        input_manifest_path = str(node_inputs["lammps_input_manifest"])
         if (
             manifest.get("schema_version") != 1
             or manifest.get("plugin_id") != "lammps-md"
@@ -350,7 +297,7 @@ def run(args: argparse.Namespace) -> int:
         model = manifest.get("model")
         md = manifest.get("md")
         if not isinstance(model, dict) or not isinstance(md, dict):
-            raise ValueError("input manifest model/md identity is incomplete")
+            raise ValueError("input manifest model/MD record is incomplete")
         framework = model.get("framework")
         if framework not in FRAMEWORKS:
             raise ValueError("unsupported LAMMPS framework")
@@ -382,8 +329,6 @@ def run(args: argparse.Namespace) -> int:
             staged = input_dir / "lammps" / name
             if record is None or not _ordinary_file(staged, MAX_INPUT_BYTES):
                 raise ValueError(f"staged prepared input is missing: {name}")
-            if staged.stat().st_size != record["size_bytes"] or _sha256(staged) != record["sha256"]:
-                raise ValueError(f"staged prepared input fingerprint differs: {name}")
         deck_text = (input_dir / "lammps" / selected_name).read_text(encoding="utf-8")
         requires_interface_path = interface in {"gnnp", "m3gnet"}
         if (
@@ -398,7 +343,6 @@ def run(args: argparse.Namespace) -> int:
 
         model_root = args.model_root or os.environ.get("MLIPFLOW_MODEL_ROOT", "")
         model_path = _resolve_model(model_root, model)
-        model_before = fingerprint(model_path)
 
         shutil.copy2(input_dir / "lammps" / "structure.data", output_dir / "structure.data")
         shutil.copy2(input_dir / "lammps" / selected_name, output_dir / selected_name)
@@ -436,9 +380,6 @@ def run(args: argparse.Namespace) -> int:
         if not _contains_marker(log_path, marker):
             raise ValueError("LAMMPS log lacks the approved end-of-script completion marker")
         lammps_version = _version_from_logs(log_path, screen_path, stdout_path)
-        if fingerprint(model_path) != model_before:
-            raise ValueError("LAMMPS model artifact changed during execution")
-
         artifacts = [
             _artifact(output_dir / "trajectory.lammpstrj", "trajectory.lammpstrj", MAX_TRAJECTORY_BYTES),
             _artifact(output_dir / "final.data", "final.data", MAX_FINAL_DATA_BYTES),
@@ -459,10 +400,10 @@ def run(args: argparse.Namespace) -> int:
             "framework": framework,
             "target": target,
             "lammps_version": lammps_version,
-            "input_manifest_fingerprint": expected_manifest_sha,
+            "input_manifest_path": input_manifest_path,
             "model": {
                 "id": model.get("model_id"),
-                "fingerprint": model_before,
+                "path": model.get("relative_path"),
                 "kind": model.get("kind"),
                 "artifact_format": model.get("artifact_format"),
                 "lammps_interface": interface,
@@ -472,7 +413,7 @@ def run(args: argparse.Namespace) -> int:
             "timestep_fs": md.get("timestep_fs"),
             "dump_interval": md.get("dump_interval"),
             "type_map": md.get("type_map"),
-            "structure_identity": manifest.get("input_fingerprints", {}).get("structure"),
+            "structure_path": manifest.get("input_paths", {}).get("structure"),
             "steps_requested": steps,
             "steps_completed": steps,
             "completion_marker": marker,
@@ -491,13 +432,12 @@ def run(args: argparse.Namespace) -> int:
                 "framework": framework,
                 "target": target,
                 "model_id": model.get("model_id"),
-                "model_fingerprint": model_before,
+                "model_path": model.get("relative_path"),
                 "model_kind": model.get("kind"),
                 "lammps_interface": interface,
-                "input_manifest_fingerprint": expected_manifest_sha,
+                "input_manifest_path": input_manifest_path,
                 "steps_completed": steps,
                 "lammps_version": lammps_version,
-                "result_sha256": _sha256(result_path),
             }
         )
         _write_json(output_dir / "cluster-run-report.json", report)

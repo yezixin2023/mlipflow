@@ -10,7 +10,7 @@ contract consumed by :mod:`plugins.pes-sampling.adapter`.
 from __future__ import annotations
 
 import argparse
-import hashlib
+import filecmp
 import json
 import math
 import re
@@ -46,18 +46,6 @@ RESERVED_STAGE_NAMES = {
 
 class ContractError(ValueError):
     """Raised when an explicit LASP/SSW contract is incomplete or unsafe."""
-
-
-def _sha256_bytes(payload: bytes) -> str:
-    return "sha256:" + hashlib.sha256(payload).hexdigest()
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def _has_symlink_component(path: Path) -> bool:
@@ -122,8 +110,6 @@ def _artifact(path: Path, base: Path, role: str, media_type: str) -> dict[str, A
         "role": role,
         "path": portable,
         "media_type": media_type,
-        "sha256": _sha256(resolved),
-        "size_bytes": resolved.stat().st_size,
     }
 
 
@@ -216,25 +202,20 @@ def _arc_frames(path: Path, max_frames: int) -> list[dict[str, Any]]:
                 "frame_index": position + 1,
                 "energy_ev": energy,
                 "payload": canonical,
-                "frame_sha256": _sha256_bytes(canonical),
             }
         )
     return frames
 
 
 def _structure_id(source_id: str, role: str, frame: dict[str, Any]) -> str:
-    identity = "\0".join(
-        [source_id, role, str(frame["frame_index"]), str(frame["frame_sha256"])]
-    ).encode("utf-8")
-    return f"lasp-{role}-{hashlib.sha256(identity).hexdigest()[:20]}"
+    return f"lasp-{role}-{int(frame['frame_index']):06d}"
 
 
 def _source_file_record(path: Path, role: str) -> dict[str, Any]:
     return {
         "role": role,
         "name": path.name,
-        "sha256": _sha256(path),
-        "size_bytes": path.stat().st_size,
+        "path": str(path),
     }
 
 
@@ -287,7 +268,6 @@ def _select_ssw_frames(
                     else ("energy-filter-rejected" if not accepted else "stride-not-selected")
                 )
             ),
-            "frame_sha256": frame["frame_sha256"],
             "structure_file": structure_path.relative_to(output_dir).as_posix(),
             "output_file": None,
         }
@@ -326,7 +306,6 @@ def _export_role_frames(
             "frame_index": frame["frame_index"],
             "historical_order": frame["frame_index"],
             "energy_ev": frame["energy_ev"],
-            "frame_sha256": frame["frame_sha256"],
             "output_file": path.relative_to(output_dir).as_posix(),
         }
         records.append(record)
@@ -575,7 +554,7 @@ def _canonicalize_execute_ssw_archive(raw_run: Path) -> dict[str, Any]:
     Scheduled fetch and checker paths stay bounded by binding ``all.arc`` to the
     canonical ``allstr.arc`` name inside the fresh execute workspace.  A
     distinct LASP-native ``allstr.arc`` is preserved with a non-canonical name
-    and fingerprinted in execution metadata.
+    and recorded in execution metadata.
     """
     canonical = raw_run / "allstr.arc"
     walk = raw_run / "all.arc"
@@ -598,14 +577,13 @@ def _canonicalize_execute_ssw_archive(raw_run: Path) -> dict[str, Any]:
     canonicalized = not canonical_exists
     if canonical_exists:
         canonical = _ordinary_file(canonical, "allstr.arc")
-        if _sha256(canonical) != _sha256(walk):
+        if not filecmp.cmp(canonical, walk, shallow=False):
             preserved = raw_run / "allstr.native.arc"
             if preserved.exists() or preserved.is_symlink():
                 raise ContractError("allstr.native.arc already exists")
             preserved_record = {
                 "name": preserved.name,
-                "sha256": _sha256(canonical),
-                "size_bytes": canonical.stat().st_size,
+                "path": str(preserved),
             }
             canonical.rename(preserved)
             canonicalized = True
@@ -648,24 +626,21 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         {
             "role": "input-structure",
             "destination": "input.arc",
-            "sha256": _sha256(raw_run / "input.arc"),
-            "size_bytes": (raw_run / "input.arc").stat().st_size,
+            "source": str(input_structure),
         },
         {
             "role": "lasp-input",
             "destination": "lasp.in",
-            "sha256": _sha256(raw_run / "lasp.in"),
-            "size_bytes": (raw_run / "lasp.in").stat().st_size,
+            "source": str(lasp_input),
         },
     ]
     staged_inputs.extend(
         {
             "role": "auxiliary-input",
             "destination": name,
-            "sha256": _sha256(raw_run / name),
-            "size_bytes": (raw_run / name).stat().st_size,
+            "source": str(path),
         }
-        for name, _ in auxiliary
+        for name, path in auxiliary
     )
 
     command = [str(executable)]
@@ -700,7 +675,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         )
     if completed.returncode != 0:
         raise ContractError(f"LASP process returned {completed.returncode}")
-    ssw_archive_identity = _canonicalize_execute_ssw_archive(raw_run)
+    ssw_archive_record = _canonicalize_execute_ssw_archive(raw_run)
 
     diagnostic_artifacts = [
         (stdout_path, "lasp-stdout", "text/plain"),
@@ -726,14 +701,12 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
             "performed": True,
             "external_program": "LASP",
             "version": args.lasp_version,
-            "executable_name": executable.name,
-            "executable_sha256": _sha256(executable),
-            "mpi_launcher": launcher.name if launcher else None,
-            "mpi_launcher_sha256": _sha256(launcher) if launcher else None,
+            "executable_path": str(executable),
+            "mpi_launcher": str(launcher) if launcher else None,
             "mpi_processes": args.mpi_processes,
             "returncode": completed.returncode,
             "command_uses_shell": False,
-            **ssw_archive_identity,
+            **ssw_archive_record,
             "staged_inputs": staged_inputs,
         },
         extra_artifacts=diagnostic_artifacts,

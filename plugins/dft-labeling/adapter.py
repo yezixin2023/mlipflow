@@ -8,7 +8,6 @@ operation and therefore requires a separate approval.
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import math
@@ -35,7 +34,6 @@ DATASET_CONVERTER_PATH = (
 SHELL_EXECUTABLES = frozenset(
     {"bash", "csh", "cmd", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "tcsh", "zsh"}
 )
-SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SAFE_POTCAR_SYMBOL = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 MAX_INPUT_BYTES = 16 * 1024 * 1024
@@ -63,15 +61,6 @@ MANUSCRIPT_STATIC_INCAR: dict[str, Any] = {
     "ISIF": 2,
     "ISPIN": 2,
 }
-MANUSCRIPT_SUPPLEMENT_SHA256 = (
-    "sha256:0e421d4236d8c9389eddd4e61f9503ada6ff0fd07f70f5bd1c32eea35214e732"
-)
-HISTORICAL_INCAR_SHA256 = (
-    "sha256:69fbece3f536be6aa275d83e39a29bedda4d0ddc0a704d47ba7200642864b01c"
-)
-HISTORICAL_KPOINTS_SHA256 = (
-    "sha256:3eda09df03e3fa250fd362b3f1f97b8a89cd9612eaebbaea5dbac1e2cf7a73a6"
-)
 EXPECTED_FILE_NAMES = frozenset({"POSCAR", "INCAR", "KPOINTS", "POTCAR"})
 
 
@@ -180,14 +169,6 @@ def _explicit_executable(value: Any) -> Path | None:
     return resolved if resolved.stat().st_mode & 0o111 else None
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
 def _read_json(
     path: Path, max_bytes: int = MAX_INPUT_BYTES
 ) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
@@ -204,10 +185,6 @@ def _read_json(
 
 def _positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
-
-
-def _fingerprint(value: Any) -> bool:
-    return isinstance(value, str) and bool(SHA256.fullmatch(value))
 
 
 def _operation(context: Any) -> str:
@@ -377,7 +354,7 @@ def _parse_pseudopotential_reference(path: Path) -> tuple[dict[str, Any] | None,
         return None, error["message"] if error else "pseudopotential_reference 无效"
     allowed = {
         "schema_version", "reference_id", "source_env", "license_acknowledged",
-        "functional", "symbols", "expected_component_sha256", "expected_combined_sha256",
+        "functional", "symbols",
     }
     unknown = sorted(set(value) - allowed)
     if unknown:
@@ -404,17 +381,6 @@ def _parse_pseudopotential_reference(path: Path) -> tuple[dict[str, Any] | None,
             return None, "symbols 含无效元素"
         if not isinstance(symbol, str) or not SAFE_POTCAR_SYMBOL.fullmatch(symbol):
             return None, "symbols 含无效 POTCAR symbol"
-    expected_components = value.get("expected_component_sha256", {})
-    if not isinstance(expected_components, Mapping) or any(
-        not isinstance(symbol, str)
-        or not SAFE_POTCAR_SYMBOL.fullmatch(symbol)
-        or not _fingerprint(digest)
-        for symbol, digest in expected_components.items()
-    ):
-        return None, "expected_component_sha256 必须是 sha256 映射"
-    expected_combined = value.get("expected_combined_sha256")
-    if expected_combined is not None and not _fingerprint(expected_combined):
-        return None, "expected_combined_sha256 必须是完整 sha256"
     return value, None
 
 
@@ -620,9 +586,61 @@ def _dataset_frameworks(parameters: Mapping[str, Any]) -> list[str]:
     return [name for name in DATASET_FRAMEWORKS if name in requested]
 
 
+def _canonical_dataset_material(
+    context: Mapping[str, Any],
+) -> tuple[Path, dict[str, Any], list[tuple[str, Path]]]:
+    project_root = Path(str(context.get("project_root", ""))).expanduser().absolute().resolve()
+    inputs = _mapping(context.get("inputs"))
+    path = _project_input_path(project_root, inputs.get("canonical_dataset"))
+    if path is None or not _ordinary_project_file(path, project_root, MAX_DATASET_INPUT_BYTES):
+        raise ValueError("canonical_dataset must be an ordinary bounded project file")
+    value, read_error = _read_json(path, MAX_DATASET_INPUT_BYTES)
+    if value is None:
+        raise ValueError(
+            str(read_error["message"] if read_error else "canonical dataset is invalid")
+        )
+    if value.get("contract") != "mlipflow/canonical-dataset-merge":
+        errors = DATASETS.validate_canonical_dataset(value)
+        if errors:
+            raise ValueError("; ".join(errors))
+        return path, value, []
+    sources = value.get("sources")
+    if value.get("schema_version") != 1 or not isinstance(sources, list) or not sources:
+        raise ValueError("canonical merge manifest requires schema_version=1 and sources")
+    staged_sources: list[tuple[str, Path]] = []
+    datasets = []
+    seen_names = {"canonical.json", "dataset_convert.py", "dataset_contract.py"}
+    for index, item in enumerate(sources):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"canonical merge source {index} must be an object")
+        relative = item.get("path")
+        if not DATASETS.safe_relative(relative) or str(relative) in seen_names:
+            raise ValueError(f"canonical merge source {index} path is unsafe or reserved")
+        seen_names.add(str(relative))
+        source = (path.parent / str(relative)).resolve()
+        try:
+            source.relative_to(project_root)
+        except ValueError as exc:
+            raise ValueError("canonical merge source escapes project_root") from exc
+        if not _ordinary_project_file(source, project_root, MAX_DATASET_INPUT_BYTES):
+            raise ValueError(f"canonical merge source is not an ordinary file: {relative}")
+        dataset, source_error = _read_json(source, MAX_DATASET_INPUT_BYTES)
+        if dataset is None:
+            raise ValueError(
+                str(
+                    source_error["message"]
+                    if source_error
+                    else f"canonical merge source is invalid: {relative}"
+                )
+            )
+        datasets.append(dataset)
+        staged_sources.append((str(relative), source))
+    merged = DATASETS.merge_canonical_datasets(datasets)
+    return path, merged, staged_sources
+
+
 def _validate_dataset_assemble(context: Mapping[str, Any]) -> list[dict[str, str]]:
     diagnostics = _base_diagnostics(context, frozenset({"ssh-slurm"}))
-    inputs = _mapping(context.get("inputs"))
     parameters = _mapping(context.get("parameters"))
     _validate_input_path(diagnostics, context, "canonical_dataset")
     allowed_parameters = {
@@ -689,42 +707,30 @@ def _validate_dataset_assemble(context: Mapping[str, Any]) -> list[dict[str, str
                 "dataset-assemble result_manifest 必须是安全 basename。",
             )
         )
-    project_root = Path(str(context.get("project_root", ""))).expanduser().absolute()
-    path = _project_input_path(project_root, inputs.get("canonical_dataset"))
-    if path is not None and not _ordinary_project_file(path, project_root, MAX_DATASET_INPUT_BYTES):
-        diagnostics.append(_diagnostic("error", "inputs.canonical_dataset", "canonical_dataset 必须是 project_root 内的普通有界文件。"))
-    if _errors(diagnostics) or path is None:
+    if _errors(diagnostics):
         return diagnostics
-    canonical, canonical_error = _read_json(path, MAX_DATASET_INPUT_BYTES)
-    if canonical is None:
+    try:
+        _, canonical, _ = _canonical_dataset_material(context)
+    except (OSError, TypeError, ValueError) as exc:
         diagnostics.append(
             _diagnostic(
                 "error",
                 "inputs.canonical_dataset",
-                str(canonical_error["message"] if canonical_error else "canonical dataset 无效"),
+                str(exc),
             )
         )
         return diagnostics
-    contract_errors = DATASETS.validate_canonical_dataset(canonical)
-    diagnostics.extend(
-        _diagnostic("error", "inputs.canonical_dataset.contract", message)
-        for message in contract_errors
-    )
-    if canonical is not None:
-        if relative is not None and relative != canonical.get("dataset_id"):
-            diagnostics.append(_diagnostic("error", "parameters.dataset_relative_path", "dataset_relative_path 必须等于 canonical dataset_id。"))
-        try:
-            DATASETS.build_split_manifest(canonical, strategy=strategy, seed=seed, fractions=fractions)
-        except ValueError as exc:
-            diagnostics.append(_diagnostic("error", "parameters.split", str(exc)))
+    if relative is not None and relative != canonical.get("dataset_id"):
+        diagnostics.append(_diagnostic("error", "parameters.dataset_relative_path", "dataset_relative_path 必须等于 canonical dataset_id。"))
+    try:
+        DATASETS.build_split_manifest(canonical, strategy=strategy, seed=seed, fractions=fractions)
+    except ValueError as exc:
+        diagnostics.append(_diagnostic("error", "parameters.split", str(exc)))
     return diagnostics
 
 
-def _file_fingerprints(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
-    return {
-        name: {"path": str(path), "sha256": _sha256(path), "size_bytes": path.stat().st_size}
-        for name, path in paths.items()
-    }
+def _file_paths(paths: Mapping[str, Path]) -> dict[str, str]:
+    return {name: str(path) for name, path in paths.items()}
 
 
 def _read_structure_count(path: Path) -> int | str:
@@ -776,7 +782,7 @@ def _plan_prepare(context: Mapping[str, Any]) -> dict[str, Any]:
         "expected_outputs": [str(result_path)],
         "diagnostics": diagnostics,
         "operation": PREPARE_OPERATION,
-        "input_fingerprints": _file_fingerprints(paths),
+        "input_paths": _file_paths(paths),
         "approval_summary": {
             "expensive": False,
             "runs_vasp": False,
@@ -844,14 +850,7 @@ def _plan_label(context: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _staged_record(source: Path, remote_name: str, *, sensitive: bool = False) -> dict[str, Any]:
-    return {
-        "source": str(source.absolute()),
-        "remote_name": remote_name,
-        "sha256": _sha256(source),
-        "size_bytes": source.stat().st_size,
-        "sensitive": sensitive,
-        "fetch_allowed": False,
-    }
+    return {"source": str(source.absolute()), "remote_name": remote_name}
 
 
 def _attempt_index(path: Path) -> int | None:
@@ -868,17 +867,17 @@ def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
             "executable": False,
             "diagnostics": diagnostics,
         }
-    inputs = _mapping(context["inputs"])
     parameters = _mapping(context["parameters"])
-    project_root = Path(str(context["project_root"])).expanduser().absolute().resolve()
-    canonical_path = _path(project_root, inputs["canonical_dataset"])
-    canonical, _ = _read_json(canonical_path, MAX_DATASET_INPUT_BYTES)
-    assert canonical is not None
+    canonical_path, canonical, canonical_sources = _canonical_dataset_material(context)
     frameworks = _dataset_frameworks(parameters)
     relative = str(parameters.get("dataset_relative_path", canonical["dataset_id"]))
     result_name = str(parameters.get("result_manifest", "dataset-assembly-result.json"))
     staged = [
         _staged_record(canonical_path, "canonical.json"),
+        *[
+            _staged_record(source, remote_name)
+            for remote_name, source in canonical_sources
+        ],
         _staged_record(DATASET_CONVERTER_PATH, "dataset_convert.py"),
         _staged_record(DATASET_CONTRACT_PATH, "dataset_contract.py"),
     ]
@@ -968,10 +967,14 @@ def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
         "argv": [f"template-family:{template_family}"],
         "cwd": "remote-attempt-workspace",
         "expected_outputs": [item["remote_name"] for item in fetch_outputs],
-        "input_fingerprints": {
-            "canonical_dataset": _sha256(canonical_path),
-            "dataset_converter": _sha256(DATASET_CONVERTER_PATH),
-            "dataset_contract": _sha256(DATASET_CONTRACT_PATH),
+        "input_paths": {
+            "canonical_dataset": str(canonical_path),
+            **{
+                f"canonical_source_{index:04d}": str(source)
+                for index, (_, source) in enumerate(canonical_sources, start=1)
+            },
+            "dataset_converter": str(DATASET_CONVERTER_PATH),
+            "dataset_contract": str(DATASET_CONTRACT_PATH),
         },
         "approval_summary": {
             "expensive": False,
@@ -981,6 +984,7 @@ def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
             "operation": DATASET_OPERATION,
             "dataset_id": canonical["dataset_id"],
             "record_count": canonical["record_count"],
+            "canonical_source_count": len(canonical_sources) or 1,
             "frameworks": frameworks,
             "split_strategy": strategy,
             "split_seed": seed,
@@ -1095,18 +1099,15 @@ def _plan_scheduled_label(
         for name in ("POSCAR", "INCAR", "KPOINTS", "POTCAR"):
             record = files.get(name)
             relative = record.get("path") if isinstance(record, Mapping) else None
-            declared = record.get("sha256") if isinstance(record, Mapping) else None
             if not _safe_relative(relative):
                 diagnostics.append(_diagnostic("error", f"inputs.dft_input_manifest.{calc_id}.{name}", f"{calc_id} 的 {name} 路径不安全。"))
                 continue
             source = prepared_root / str(relative)
             if (
                 not _ordinary_project_file(source, project_root)
-                or not _fingerprint(declared)
-                or _sha256(source) != declared
             ):
                 diagnostics.append(
-                    _diagnostic("error", f"inputs.dft_input_manifest.{calc_id}.{name}", f"{calc_id} 的 {name} 缺失或指纹与 prepare manifest 不一致。")
+                    _diagnostic("error", f"inputs.dft_input_manifest.{calc_id}.{name}", f"{calc_id} 的 {name} 缺失。")
                 )
                 continue
             # Nested remote name: calc-0001/POSCAR. POTCAR remains staged-only.
@@ -1277,7 +1278,7 @@ def _plan_scheduled_label(
             "fetch_allowlist": sorted({*required, *optional}),
             "staged_file_count": len(staged),
         },
-        "input_fingerprints": _file_fingerprints(paths),
+        "input_paths": _file_paths(paths),
         "scheduled_execution": scheduled_execution,
     }
 
@@ -1347,11 +1348,11 @@ def _verify_prepare_result(
     parameters = _mapping(context["parameters"])
     project_root = Path(str(context["project_root"])).expanduser().absolute().resolve()
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute().resolve()
-    expected_identity = {
+    expected_fields = {
         "schema_version": 1, "plugin_id": PLUGIN_ID, "operation": PREPARE_OPERATION,
         "status": "OK", "engine": "vasp", "execution_ready": True,
     }
-    for key, expected in expected_identity.items():
+    for key, expected in expected_fields.items():
         if manifest.get(key) != expected:
             diagnostics.append(_diagnostic("error", f"result.{key}", f"结果 {key} 与已批准合同不一致。"))
     generator = manifest.get("generator")
@@ -1366,16 +1367,14 @@ def _verify_prepare_result(
     )
     if (
         not isinstance(runtime, Mapping)
-        or runtime.get("prepare_wrapper_sha256") != _sha256(BUNDLED_PREPARE_WRAPPER)
-    ):
-        diagnostics.append(_diagnostic("error", "result.runtime", "prepare wrapper 指纹与当前批准实现不一致。"))
-    elif (
+        or (
         expected_executable is None
         or runtime.get("python_executable") != str(expected_executable)
         or not _plain_string(runtime.get("python_version"))
         or not _plain_string(runtime.get("pymatgen_version"))
         or not isinstance(generator, Mapping)
         or runtime.get("pymatgen_version") != generator.get("version")
+        )
     ):
         diagnostics.append(
             _diagnostic(
@@ -1389,19 +1388,12 @@ def _verify_prepare_result(
         "labeling_config": _path(project_root, inputs["labeling_config"]),
         "pseudopotential_reference": _path(project_root, inputs["pseudopotential_reference"]),
     }
-    fingerprints = manifest.get("input_fingerprints")
-    if not isinstance(fingerprints, Mapping):
-        diagnostics.append(_diagnostic("error", "result.input_fingerprints", "缺少三个输入指纹。"))
-    else:
+    if verify_files:
         for name, path in input_paths.items():
-            declared = fingerprints.get(name)
-            if not _fingerprint(declared):
-                diagnostics.append(_diagnostic("error", f"result.input_fingerprints.{name}", "必须是完整 sha256。"))
-            elif verify_files and (
-                not _ordinary_project_file(path, project_root, MAX_INPUT_BYTES)
-                or _sha256(path) != declared
-            ):
-                diagnostics.append(_diagnostic("error", f"result.input_fingerprints.{name}", "输入文件已变化或缺失。"))
+            if not _ordinary_project_file(path, project_root, MAX_INPUT_BYTES):
+                diagnostics.append(
+                    _diagnostic("error", f"result.inputs.{name}", "输入文件缺失。")
+                )
     config, config_error = _parse_labeling_contract(input_paths["labeling_config"])
     reference, reference_error = _parse_pseudopotential_reference(input_paths["pseudopotential_reference"])
     if config is None:
@@ -1425,12 +1417,15 @@ def _verify_prepare_result(
         historical = provenance.get("historical_template") if isinstance(provenance, Mapping) else None
         if (
             not isinstance(paper, Mapping)
-            or paper.get("sha256") != MANUSCRIPT_SUPPLEMENT_SHA256
+            or paper.get("locator")
+            != "manuscript-supplement://SI_0510zdl.docx#page=2&figure=S3"
             or paper.get("declared_parameters")
             != {"ENCUT": 450, "EDIFF": 5e-6, "IALGO": 38}
             or not isinstance(historical, Mapping)
-            or historical.get("incar_sha256") != HISTORICAL_INCAR_SHA256
-            or historical.get("kpoints_sha256") != HISTORICAL_KPOINTS_SHA256
+            or historical.get("incar_locator")
+            != "remote-mlp://4-Element/Li8/scf/single/INCAR"
+            or historical.get("kpoints_locator")
+            != "remote-mlp://4-Element/Li8/scf/single/KPOINTS"
         ):
             diagnostics.append(_diagnostic("error", "result.parameter_provenance", "论文/历史模板 provenance 不完整或已变化。"))
     elif provenance != {}:
@@ -1464,26 +1459,22 @@ def _verify_prepare_result(
             continue
         structure_id = source.get("id", source.get("structure_id"))
         source_path = source.get("path", source.get("output_file"))
-        source_digest = source.get("fingerprint", source.get("frame_sha256", source.get("sha256")))
         if not isinstance(structure_id, str) or not SAFE_ID.fullmatch(structure_id):
             diagnostics.append(_diagnostic("error", f"{prefix}.structure_id", "源结构 ID 无效。"))
             continue
-        if not _safe_relative(source_path) or not _fingerprint(source_digest):
-            diagnostics.append(_diagnostic("error", f"{prefix}.source", "源结构必须有安全相对路径和完整 sha256。"))
+        if not _safe_relative(source_path):
+            diagnostics.append(_diagnostic("error", f"{prefix}.source", "源结构必须有安全相对路径。"))
             continue
         expected_dir = f"{output_subdir}/{index:06d}-{structure_id}"
         if calculation.get("order") != index or calculation.get("structure_id") != structure_id or calculation.get("directory") != expected_dir:
-            diagnostics.append(_diagnostic("error", f"{prefix}.identity", "结构顺序、ID 或目录不一致。"))
+            diagnostics.append(_diagnostic("error", f"{prefix}.record", "结构顺序、ID 或目录不一致。"))
         result_source = calculation.get("source")
-        if not isinstance(result_source, Mapping) or result_source.get("path") != source_path or result_source.get("sha256") != source_digest:
-            diagnostics.append(_diagnostic("error", f"{prefix}.source", "结构来源路径/指纹不一致。"))
+        if not isinstance(result_source, Mapping) or result_source.get("path") != source_path:
+            diagnostics.append(_diagnostic("error", f"{prefix}.source", "结构来源路径不一致。"))
         if verify_files and _safe_relative(source_path):
             actual_source = input_paths["structures_manifest"].parent / str(source_path)
-            if (
-                not _ordinary_project_file(actual_source, project_root)
-                or _sha256(actual_source) != source_digest
-            ):
-                diagnostics.append(_diagnostic("error", f"{prefix}.source", "源结构已变化或缺失。"))
+            if not _ordinary_project_file(actual_source, project_root):
+                diagnostics.append(_diagnostic("error", f"{prefix}.source", "源结构缺失。"))
         files = calculation.get("files")
         if not isinstance(files, Mapping) or set(files) != EXPECTED_FILE_NAMES:
             diagnostics.append(_diagnostic("error", f"{prefix}.files", "必须且只能声明 POSCAR/INCAR/KPOINTS/POTCAR。"))
@@ -1491,20 +1482,15 @@ def _verify_prepare_result(
         for name in sorted(EXPECTED_FILE_NAMES):
             record = files.get(name)
             expected_path = f"{expected_dir}/{name}"
-            if not isinstance(record, Mapping) or record.get("path") != expected_path or not _fingerprint(record.get("sha256")):
-                diagnostics.append(_diagnostic("error", f"{prefix}.files.{name}", "文件路径或 sha256 无效。"))
+            if not isinstance(record, Mapping) or record.get("path") != expected_path:
+                diagnostics.append(_diagnostic("error", f"{prefix}.files.{name}", "文件路径无效。"))
                 continue
             if record.get("collectable") is not (name != "POTCAR"):
                 diagnostics.append(_diagnostic("error", f"{prefix}.files.{name}.collectable", "POTCAR 必须禁止收集，其余输入必须可收集。"))
             if verify_files:
                 actual = attempt / expected_path
-                if (
-                    not _ordinary_project_file(actual, project_root)
-                    or actual.stat().st_size != record.get("size_bytes")
-                    or _sha256(actual) != record.get("sha256")
-                ):
-                    diagnostics.append(_diagnostic("error", f"{prefix}.files.{name}.integrity", f"{name} 缺失或指纹不匹配。"))
-        potcar_file = files.get("POTCAR") if isinstance(files.get("POTCAR"), Mapping) else {}
+                if not _ordinary_project_file(actual, project_root):
+                    diagnostics.append(_diagnostic("error", f"{prefix}.files.{name}", f"{name} 缺失。"))
         potcar = calculation.get("potcar")
         expected_symbols = reference.get("symbols")
         if not isinstance(potcar, Mapping) or potcar.get("reference_id") != expected_reference_id or potcar.get("source_env") != "PMG_VASP_PSP_DIR" or potcar.get("functional") != reference.get("functional") or potcar.get("portable_artifact") is not False:
@@ -1514,27 +1500,16 @@ def _verify_prepare_result(
             symbols = potcar.get("symbols")
             if not isinstance(elements, list) or not isinstance(symbols, list) or symbols != [expected_symbols.get(element) for element in elements]:
                 diagnostics.append(_diagnostic("error", f"{prefix}.potcar.symbols", "POTCAR symbols 与显式元素映射不一致。"))
-            if potcar.get("combined_sha256") != potcar_file.get("sha256"):
-                diagnostics.append(_diagnostic("error", f"{prefix}.potcar.sha256", "POTCAR combined sha256 与文件不一致。"))
             components = potcar.get("components")
-            expected_component_hashes = reference.get("expected_component_sha256", {})
             components_valid = isinstance(symbols, list) and isinstance(components, list)
             if components_valid:
                 components_valid = len(components) == len(symbols) and all(
                     isinstance(component, Mapping)
                     and component.get("symbol") == symbol
-                    and _fingerprint(component.get("sha256"))
-                    and (
-                        expected_component_hashes.get(symbol) is None
-                        or component.get("sha256") == expected_component_hashes.get(symbol)
-                    )
                     for component, symbol in zip(components, symbols)
                 )
             if not components_valid:
-                diagnostics.append(_diagnostic("error", f"{prefix}.potcar.components", "POTCAR component symbol/hash 与批准引用不一致。"))
-            expected_combined = reference.get("expected_combined_sha256")
-            if expected_combined is not None and potcar.get("combined_sha256") != expected_combined:
-                diagnostics.append(_diagnostic("error", f"{prefix}.potcar.approved_sha256", "POTCAR 与批准 combined sha256 不一致。"))
+                diagnostics.append(_diagnostic("error", f"{prefix}.potcar.components", "POTCAR component symbols 与引用不一致。"))
         if verify_files and isinstance(files.get("INCAR"), Mapping):
             incar_path = attempt / str(files["INCAR"].get("path", ""))
             if _ordinary_project_file(incar_path, project_root):
@@ -1564,16 +1539,12 @@ def _verify_label_result(
     }
     if _mapping(context["inputs"]).get("dft_input_manifest") is not None:
         input_paths["dft_input_manifest"] = _path(context["project_root"], _mapping(context["inputs"])["dft_input_manifest"])
-    fingerprints = manifest.get("input_fingerprints")
-    if not isinstance(fingerprints, Mapping):
-        diagnostics.append(_diagnostic("error", "result.input_fingerprints", "缺少 input_fingerprints。"))
-    else:
+    if verify_files:
         for name, path in input_paths.items():
-            declared = fingerprints.get(name)
-            if not _fingerprint(declared):
-                diagnostics.append(_diagnostic("error", f"result.input_fingerprints.{name}", "必须声明完整 sha256。"))
-            elif verify_files and (not _ordinary_file(path) or _sha256(path) != declared):
-                diagnostics.append(_diagnostic("error", f"result.input_fingerprints.{name}", "输入 sha256 不匹配。"))
+            if not _ordinary_file(path):
+                diagnostics.append(
+                    _diagnostic("error", f"result.inputs.{name}", "输入文件缺失。")
+                )
     completion = manifest.get("completion")
     if not isinstance(completion, Mapping):
         diagnostics.append(_diagnostic("error", "result.completion", "缺少标准 completion。"))
@@ -1615,16 +1586,15 @@ def _verify_label_result(
         else:
             names.add(str(name))
         relative = artifact.get("path")
-        fingerprint = artifact.get("fingerprint")
-        if not _safe_relative(relative) or not _fingerprint(fingerprint):
-            diagnostics.append(_diagnostic("error", f"{prefix}.integrity", "产物必须有安全路径和完整 sha256。"))
+        if not _safe_relative(relative):
+            diagnostics.append(_diagnostic("error", f"{prefix}.path", "产物必须有安全路径。"))
             continue
         if not _plain_string(artifact.get("media_type")):
             diagnostics.append(_diagnostic("error", f"{prefix}.media_type", "产物必须声明 media_type。"))
         if verify_files:
             path = _path(context["attempt_dir"], relative)
-            if not _ordinary_file(path) or path.stat().st_size == 0 or _sha256(path) != fingerprint:
-                diagnostics.append(_diagnostic("error", f"{prefix}.integrity", "数据产物缺失或 sha256 不匹配。"))
+            if not _ordinary_file(path) or path.stat().st_size == 0:
+                diagnostics.append(_diagnostic("error", f"{prefix}.path", "数据产物缺失或为空。"))
     if context.get("backend") == "ssh-slurm":
         diagnostics.extend(_verify_scheduled_vasp_result(context, manifest, verify_files))
     return diagnostics
@@ -1904,17 +1874,11 @@ def _verify_scheduled_vasp_result(
         if (
             not isinstance(record, Mapping)
             or record.get("path") != name
-            or not _fingerprint(record.get("fingerprint"))
-            or not _positive_int(record.get("size_bytes"))
         ):
             diagnostics.append(_diagnostic("error", f"result.raw_outputs.{name}", "原始 VASP 输出记录无效。"))
             continue
-        if verify_files and (
-            not _ordinary_file(path)
-            or path.stat().st_size != record["size_bytes"]
-            or _sha256(path) != record["fingerprint"]
-        ):
-            diagnostics.append(_diagnostic("error", f"result.raw_outputs.{name}", "拉回的原始 VASP 输出缺失或指纹不匹配。"))
+        if verify_files and not _ordinary_file(path):
+            diagnostics.append(_diagnostic("error", f"result.raw_outputs.{name}", "拉回的原始 VASP 输出缺失。"))
     if not verify_files or _errors(diagnostics):
         return diagnostics
     outcar = (attempt / "OUTCAR").read_text(encoding="utf-8", errors="replace")
@@ -2341,8 +2305,6 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
                 continue
             raw_outputs[f"{calc_id}/{name}"] = {
                 "path": f"{calc_id}/{name}",
-                "fingerprint": _sha256(path),
-                "size_bytes": path.stat().st_size,
                 "source_dft_attempt": analysis["source_dft_attempt"],
             }
     labels_path = attempt / "labels.json"
@@ -2361,10 +2323,6 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
     scheduled_plan = _mapping(
         _mapping(execution_context.get("plan")).get("scheduled_execution")
     )
-    input_fingerprints = {
-        name: _sha256(_path(context["project_root"], inputs[name]))
-        for name in ("structures_manifest", "labeling_config", "dft_input_manifest")
-    }
     completion_path = attempt / "completion.json"
     completion_identity, completion_error = _read_json(completion_path)
     if completion_identity is None:
@@ -2439,7 +2397,6 @@ def _collect_scheduled_result(context: Mapping[str, Any]) -> dict[str, Any]:
         "status": "OK",
         "engine": "vasp",
         "calculation_type": calculation_type,
-        "input_fingerprints": input_fingerprints,
         "completion": {
             "scheduler_success": True,
             "electronic_converged": True,
@@ -2565,9 +2522,7 @@ def _verify_scheduled_label_result(
             not isinstance(record, Mapping)
             or record.get("path") != name
             or source_attempt != expected_source_attempt
-            or not _fingerprint(record.get("fingerprint"))
             or not _ordinary_file(path)
-            or _sha256(path) != record.get("fingerprint")
         ):
             diagnostics.append(_diagnostic("error", f"result.raw_outputs.{name}", "原始 VASP 输出记录无效。"))
     if manifest.get("schema_version") == 3:
@@ -2683,11 +2638,11 @@ def _verify_dataset_assembly(
 ) -> list[dict[str, str]]:
     diagnostics: list[dict[str, str]] = []
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
-    inputs, parameters = _mapping(context["inputs"]), _mapping(context["parameters"])
-    canonical, _ = _read_json(
-        _path(context["project_root"], inputs["canonical_dataset"]),
-        MAX_DATASET_INPUT_BYTES,
-    )
+    parameters = _mapping(context["parameters"])
+    try:
+        _, canonical, _ = _canonical_dataset_material(context)
+    except (OSError, TypeError, ValueError):
+        canonical = None
     split, _ = _read_json(attempt / "split.json", MAX_INPUT_BYTES)
     if canonical is None or split is None:
         return [_diagnostic("error", "dataset.inputs", "canonical 或 split.json 不可读。")]
@@ -2732,7 +2687,6 @@ def _verify_dataset_assembly(
             or reference.get("relative_path") != expected_paths[framework]
             or reference.get("kind") != "directory"
             or reference.get("split_id") != expected_split["split_id"]
-            or not _fingerprint(reference.get("fingerprint"))
         ):
             diagnostics.append(_diagnostic("error", f"dataset.reference.{framework}", "mlip-training dataset reference 无效。"))
     benchmark, _ = _read_json(attempt / "benchmark-test.json", MAX_DATASET_INPUT_BYTES)
@@ -2750,7 +2704,6 @@ def _verify_dataset_assembly(
         or benchmark_reference.get("split_id") != expected_split["split_id"]
         or benchmark_reference.get("split") != "test"
         or benchmark is None
-        or benchmark_reference.get("fingerprint") != _sha256(attempt / "benchmark-test.json")
     ):
         diagnostics.append(_diagnostic("error", "dataset.benchmark_reference", "benchmark dataset reference 无效。"))
     return diagnostics
@@ -2778,7 +2731,6 @@ def _collect_dataset_assembly(
             {
                 "name": f"{framework}-dataset", "role": f"{framework}-dataset",
                 "uri": f"mlipflow-data:///{reference['relative_path']}",
-                "fingerprint": reference["fingerprint"],
                 "metadata": {
                     "kind": "directory", "dataset_id": reference["dataset_id"],
                     "split_id": manifest["split_id"],
@@ -2794,7 +2746,6 @@ def _collect_dataset_assembly(
             "name": "published-benchmark-dataset",
             "role": "published-benchmark-dataset",
             "uri": f"mlipflow-data:///{benchmark_reference['relative_path']}",
-            "fingerprint": benchmark_reference["fingerprint"],
             "metadata": {
                 "kind": "file",
                 "dataset_id": benchmark_reference["dataset_id"],

@@ -1,6 +1,5 @@
 """MACE runner using the official Python parser and run() API."""
 
-import hashlib
 import json
 import math
 import platform
@@ -40,14 +39,6 @@ STRING_BOOLEAN_OPTIONS = {"multiheads_finetuning"}
 EPOCH = re.compile(r"\bEpoch\s+(\d+):")
 
 
-def _sha256(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
 def _auxiliary_test_file(cfg, data_path):
     auxiliary = mapping(cfg.get("auxiliary_data"), "mace.auxiliary_data")
     unknown = sorted(set(auxiliary) - {"test_file"})
@@ -56,22 +47,12 @@ def _auxiliary_test_file(cfg, data_path):
     if "test_file" not in auxiliary:
         return None
     reference = mapping(auxiliary["test_file"], "mace.auxiliary_data.test_file")
-    if set(reference) != {"relative_path", "fingerprint"}:
-        raise TrainingError(
-            "mace.auxiliary_data.test_file requires only relative_path and fingerprint"
-        )
+    if set(reference) != {"relative_path"}:
+        raise TrainingError("mace.auxiliary_data.test_file requires only relative_path")
     relative = reference.get("relative_path")
     path = PurePosixPath(relative) if isinstance(relative, str) else None
     if path is None or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
         raise TrainingError("MACE auxiliary test_file relative_path is unsafe")
-    expected = reference.get("fingerprint")
-    if (
-        not isinstance(expected, str)
-        or len(expected) != 71
-        or not expected.startswith("sha256:")
-        or any(char not in "0123456789abcdef" for char in expected[7:])
-    ):
-        raise TrainingError("MACE auxiliary test_file fingerprint is invalid")
     root = data_path.parent.resolve()
     candidate = (root / Path(*path.parts)).resolve()
     try:
@@ -80,10 +61,7 @@ def _auxiliary_test_file(cfg, data_path):
         raise TrainingError("MACE auxiliary test_file escapes the dataset directory") from exc
     if not candidate.is_file():
         raise TrainingError(f"MACE auxiliary test_file does not exist: {candidate}")
-    observed = _sha256(candidate)
-    if observed != expected:
-        raise TrainingError("MACE auxiliary test_file fingerprint mismatch")
-    return {"path": candidate, "fingerprint": observed}
+    return {"path": candidate}
 
 
 def _argv(args, config, data_path, work):
@@ -189,13 +167,13 @@ def _select_model(directory, name):
     models = list(directory.glob(f"{name}*.model"))
     staged = [path for path in models if path.name.endswith("_stagetwo.model")]
     if staged:
-        return max(staged, key=lambda path: path.stat().st_mtime_ns)
+        return sorted(staged)[-1]
     exact = directory / f"{name}.model"
     if exact.is_file():
         return exact
     native = [path for path in models if "_compiled.model" not in path.name]
     if native:
-        return max(native, key=lambda path: path.stat().st_mtime_ns)
+        return sorted(native)[-1]
     raise TrainingError("MACE completed without a native model artifact")
 
 
@@ -326,10 +304,7 @@ def plan(args, config, config_path, data_path):
         "name": name,
         "output": args.output,
         "auxiliary_test_file": (
-            {
-                "path": str(auxiliary_test["path"]),
-                "fingerprint": auxiliary_test["fingerprint"],
-            }
+            {"path": str(auxiliary_test["path"])}
             if auxiliary_test
             else None
         ),
@@ -364,12 +339,12 @@ def run(args, config, config_path, data_path):
     completion["native_model_class"] = model_class
     if auxiliary_test is not None:
         completion["auxiliary_test_file"] = {
-            "fingerprint": auxiliary_test["fingerprint"],
+            "path": str(auxiliary_test["path"]),
             "name": auxiliary_test["path"].name,
         }
     return (
         "application/x-pytorch",
-        {**metrics, "model_size_bytes": float(output.stat().st_size)},
+        metrics,
         {
             "native_model": str(native),
             "work_dir": str(work),

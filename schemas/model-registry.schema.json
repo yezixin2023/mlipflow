@@ -22,20 +22,11 @@
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9._-]*$"
     },
-    "digest": {
-      "type": "string",
-      "pattern": "^(sha256:)?[a-fA-F0-9]{64}$"
-    },
     "artifact_reference": {
       "type": "object",
-      "required": ["uri", "fingerprint"],
+      "required": ["uri"],
       "properties": {
-        "uri": {"$ref": "#/$defs/non_empty_string"},
-        "fingerprint": {"$ref": "#/$defs/digest"},
-        "size_bytes": {
-          "type": ["integer", "null"],
-          "minimum": 0
-        }
+        "uri": {"$ref": "#/$defs/non_empty_string"}
       },
       "additionalProperties": false
     },

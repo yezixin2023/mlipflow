@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import shutil
@@ -22,8 +21,8 @@ from dataset_contract import (
     canonical_json_bytes,
     cartesian_coordinates,
     framework_json_dataset,
+    merge_canonical_datasets,
     records_for_split,
-    training_tree_fingerprint,
     validate_canonical_dataset,
 )
 
@@ -48,6 +47,36 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ConversionError(f"{path} must contain a JSON object")
     return value
+
+
+def _canonical_input(path: Path) -> dict[str, Any]:
+    value = _read_json(path)
+    if value.get("contract") != "mlipflow/canonical-dataset-merge":
+        return value
+    if value.get("schema_version") != 1 or not isinstance(value.get("sources"), list):
+        raise ConversionError("canonical merge manifest is invalid")
+    sources = []
+    for index, item in enumerate(value["sources"]):
+        if not isinstance(item, dict):
+            raise ConversionError(f"canonical merge source {index} must be an object")
+        relative = item.get("path")
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or "\\" in relative
+            or Path(relative).is_absolute()
+            or ".." in Path(relative).parts
+        ):
+            raise ConversionError(f"canonical merge source {index} path is unsafe")
+        source = (path.parent / relative).resolve()
+        try:
+            source.relative_to(path.parent.resolve())
+        except ValueError as exc:
+            raise ConversionError("canonical merge source escapes the input directory") from exc
+        if not source.is_file() or source.is_symlink():
+            raise ConversionError(f"canonical merge source does not exist: {relative}")
+        sources.append(_read_json(source))
+    return merge_canonical_datasets(sources)
 
 
 def _write_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -159,17 +188,14 @@ def _mace(root: Path, canonical: Mapping[str, Any], split: Mapping[str, Any]) ->
     return {"format": "ASE extxyz", "ase_version": importlib.metadata.version("ase")}
 
 
-def _file_fingerprint(path: Path) -> str:
-    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _reference(dataset_id: str, split_id: str, framework: str, relative_path: str, path: Path) -> dict[str, Any]:
+def _reference(
+    dataset_id: str, split_id: str, framework: str, relative_path: str
+) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "dataset_id": f"{dataset_id}-{framework}-{split_id}",
         "relative_path": f"{relative_path}/{framework}",
         "kind": "directory",
-        "fingerprint": training_tree_fingerprint(path),
         "split_id": split_id,
     }
 
@@ -213,7 +239,6 @@ def _write_collected_references(
     _write_json(output / "split.json", split)
     _write_json(output / result_name, result)
     _write_json(output / "benchmark-test.json", benchmark)
-    benchmark_path = target / "benchmark" / "test.json"
     _write_json(
         output / "benchmark-dataset-reference.json",
         {
@@ -223,7 +248,6 @@ def _write_collected_references(
             ),
             "relative_path": f"{relative_path}/benchmark/test.json",
             "kind": "file",
-            "fingerprint": _file_fingerprint(benchmark_path),
             "split_id": split["split_id"],
             "split": "test",
         },
@@ -236,7 +260,6 @@ def _write_collected_references(
                 str(split["split_id"]),
                 framework,
                 relative_path,
-                target / framework,
             ),
         )
 
@@ -255,9 +278,9 @@ def _reuse_existing(
     if target.is_symlink() or not target.is_dir():
         raise ConversionError("reused dataset path must be an ordinary directory")
     if _read_json(target / "canonical.json") != dict(canonical):
-        raise ConversionError("reused dataset canonical identity differs")
+        raise ConversionError("reused dataset canonical records differ")
     if _read_json(target / "split.json") != dict(split):
-        raise ConversionError("reused dataset split identity differs")
+        raise ConversionError("reused dataset split differs")
     result = _read_json(target / "assembly-result.json")
     expected_paths = {
         framework: f"{relative_path}/{framework}" for framework in frameworks
@@ -283,12 +306,9 @@ def _reuse_existing(
             str(split["split_id"]),
             framework,
             relative_path,
-            target / framework,
         )
         if expected_reference != actual_reference:
-            raise ConversionError(
-                f"reused {framework} dataset fingerprint differs"
-            )
+            raise ConversionError(f"reused {framework} dataset reference differs")
     expected_benchmark_reference = _read_json(
         reference_dir / "benchmark-dataset-reference.json"
     )
@@ -297,12 +317,11 @@ def _reuse_existing(
         "dataset_id": f"{canonical['dataset_id']}-benchmark-{split['split_id']}",
         "relative_path": f"{relative_path}/benchmark/test.json",
         "kind": "file",
-        "fingerprint": _file_fingerprint(target / "benchmark" / "test.json"),
         "split_id": split["split_id"],
         "split": "test",
     }
     if expected_benchmark_reference != actual_benchmark_reference:
-        raise ConversionError("reused benchmark fingerprint differs")
+        raise ConversionError("reused benchmark reference differs")
     output.mkdir(parents=True, exist_ok=True)
     _write_collected_references(
         output=output,
@@ -319,7 +338,7 @@ def _reuse_existing(
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
-    canonical = _read_json(Path(args.canonical).resolve())
+    canonical = _canonical_input(Path(args.canonical).resolve())
     errors = validate_canonical_dataset(canonical)
     if errors:
         raise ConversionError("invalid canonical dataset: " + "; ".join(errors))

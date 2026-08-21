@@ -104,6 +104,6 @@ def run(args, config, config_path, data_path):
         shutil.move(created, output)
     return (
         "application/octet-stream",
-        {"model_size_bytes": float(output.stat().st_size)},
+        {},
         {"backend": backend, "work_dir": str(work)},
     )

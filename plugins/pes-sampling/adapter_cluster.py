@@ -6,7 +6,6 @@ MLIPFlow core owns staging, submission, polling, bounded fetch, and finalization
 """
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import math
@@ -29,7 +28,6 @@ MAX_POTCAR_BYTES = 64 * 1024 * 1024
 MAX_FRAMES = 10000
 HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-FINGERPRINT = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _load_legacy():
@@ -70,14 +68,6 @@ def _blocked(items: list[dict[str, str]]) -> dict[str, Any]:
     return {"plugin_id": "pes-sampling", "status": "BLOCKED", "executable": False, "diagnostics": items}
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
-
-
 def _ordinary(path: Path | None, maximum: int | None = None) -> bool:
     if path is None or path.is_symlink() or not path.is_file():
         return False
@@ -93,7 +83,12 @@ def _within(path: Path, root: Path) -> bool:
         return False
 
 
-def _project_file(root: Path) -> Path | None:
+def _project_file(root: Path, selected: Any = None) -> Path | None:
+    if isinstance(selected, str) and selected:
+        path = Path(selected).expanduser().absolute()
+        if path.is_file() and not path.is_symlink() and path.resolve().parent == root.resolve():
+            return path.resolve()
+        return None
     for name in ("project.yaml", "project.yml", "project.json"):
         candidate = root / name
         if _ordinary(candidate):
@@ -115,8 +110,6 @@ def _stage(path: Path, remote_name: str, *, sensitive: bool = False) -> dict[str
     return {
         "source": str(path),
         "remote_name": remote_name,
-        "sha256": _sha256(path),
-        "size_bytes": path.stat().st_size,
         "sensitive": sensitive,
         "fetch_allowed": False,
     }
@@ -138,21 +131,19 @@ def _potcar_bundle(
         or manifest.get("plugin_id") != "pes-sampling"
         or manifest.get("operation") != "lasp-input-prepare"
     ):
-        raise ValueError("lasp_input_manifest identity is invalid")
+        raise ValueError("lasp_input_manifest schema is invalid")
     structure_record = manifest.get("output")
     if (
         not isinstance(structure_record, Mapping)
         or structure_record.get("path") != "input.arc"
-        or structure_record.get("sha256") != _sha256(structure)
-        or structure_record.get("size_bytes") != structure.stat().st_size
     ):
         raise ValueError("lasp_input_manifest does not bind input_structure")
-    reference_sha256 = manifest.get("pseudopotential_reference_sha256")
+    reference_path = manifest.get("pseudopotential_reference_path")
     potcar = manifest.get("potcar")
-    if not isinstance(reference_sha256, str) or FINGERPRINT.fullmatch(reference_sha256) is None:
-        raise ValueError("lasp_input_manifest lacks a pseudopotential reference fingerprint")
+    if not isinstance(reference_path, str) or not reference_path:
+        raise ValueError("lasp_input_manifest lacks a pseudopotential reference path")
     if not isinstance(potcar, Mapping):
-        raise ValueError("lasp_input_manifest lacks a POTCAR identity")
+        raise ValueError("lasp_input_manifest lacks a POTCAR record")
     reference_id = potcar.get("reference_id")
     functional = potcar.get("functional")
     elements = potcar.get("elements")
@@ -180,42 +171,32 @@ def _potcar_bundle(
         or any(
             not isinstance(component, Mapping)
             or component.get("symbol") != symbol
-            or not isinstance(component.get("sha256"), str)
-            or FINGERPRINT.fullmatch(str(component.get("sha256"))) is None
             for component, symbol in zip(components, symbols)
         )
         or not isinstance(output, Mapping)
         or output.get("path") != "POTCAR"
         or output.get("collectable") is not False
-        or output.get("sha256") != potcar.get("combined_sha256")
-        or not isinstance(output.get("sha256"), str)
-        or FINGERPRINT.fullmatch(str(output.get("sha256"))) is None
-        or isinstance(output.get("size_bytes"), bool)
-        or not isinstance(output.get("size_bytes"), int)
-        or output.get("size_bytes") < 1
     ):
-        raise ValueError("lasp_input_manifest POTCAR identity is invalid")
+        raise ValueError("lasp_input_manifest POTCAR record is invalid")
     potcar_path = manifest_path.parent / "POTCAR"
     if (
         not _ordinary(potcar_path, MAX_POTCAR_BYTES)
         or not _within(potcar_path, project_root)
-        or potcar_path.stat().st_size != output.get("size_bytes")
-        or _sha256(potcar_path) != output.get("sha256")
     ):
         raise ValueError("runtime-only POTCAR is missing or differs from its manifest")
-    identity = {
+    record = {
         "reference_id": reference_id,
-        "reference_sha256": reference_sha256,
+        "reference_path": reference_path,
         "functional": functional,
         "elements": elements,
         "symbols": symbols,
         "components": [dict(component) for component in components],
-        "combined_sha256": output.get("sha256"),
         "configuration_source": potcar.get("configuration_source"),
-        "manifest_sha256": _sha256(manifest_path),
+        "manifest_path": str(manifest_path),
+        "potcar_path": str(potcar_path),
         "portable_or_collectable": False,
     }
-    return potcar_path, identity
+    return potcar_path, record
 
 
 def _operation(context: Mapping[str, Any]) -> str:
@@ -239,7 +220,7 @@ def _validate_scheduled(context: Any) -> list[dict[str, str]]:
     if not root.is_dir():
         diagnostics.append(_diag("ERROR", "path.project_root", "project_root must be an existing directory"))
         return diagnostics
-    project_path = _project_file(root)
+    project_path = _project_file(root, context.get("project_path"))
     if project_path is None:
         diagnostics.append(_diag("ERROR", "path.project_file", "scheduled LASP requires project.yaml/project.yml/project.json"))
 
@@ -397,15 +378,14 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
     root = Path(str(context["project_root"])).expanduser().absolute().resolve()
     inputs = dict(context.get("inputs", {}))
     parameters = dict(context.get("parameters", {}))
-    project_path = _project_file(root)
+    project_path = _project_file(root, context.get("project_path"))
     structure = _resolve_input(inputs["input_structure"], root)
     lasp_input = _resolve_input(inputs["lasp_input"], root)
     assert project_path is not None and structure is not None and lasp_input is not None
     potential = _lasp_potential(lasp_input)
-    canonical_arc, arc_conversion = ARC_CONTRACT.canonicalize_prepared_arc(
+    _canonical_arc, arc_conversion = ARC_CONTRACT.canonicalize_prepared_arc(
         structure.read_bytes()
     )
-    canonical_arc_sha256 = "sha256:" + hashlib.sha256(canonical_arc).hexdigest()
     staged = [
         _stage(project_path, "project.yaml"),
         _stage(structure, "input.arc"),
@@ -451,7 +431,7 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
         _fetch("lasp.stderr.log", "output/lasp-ssw/raw-run/lasp.stderr.log", "lasp-ssw/lasp.stderr.log", False, MAX_LOG_BYTES, "lasp-stderr"),
         _fetch("lasp.out", "output/lasp-ssw/raw-run/lasp.out", "lasp-ssw/lasp.out", False, MAX_LOG_BYTES, "lasp-native-log"),
     ]
-    identity = {
+    calculation = {
         "historical_source_id": parameters["historical_source_id"],
         "selection_stride": parameters["selection_stride"],
         "energy_max_ev": parameters.get("energy_max_ev"),
@@ -463,10 +443,9 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
         "lasp_version": parameters["lasp_version"],
         "potential": potential,
         "pseudopotential": pseudopotential,
-        "input_structure_sha256": _sha256(structure),
-        "canonical_input_structure_sha256": canonical_arc_sha256,
+        "input_structure_path": str(structure),
         "input_arc_conversion": arc_conversion,
-        "lasp_input_sha256": _sha256(lasp_input),
+        "lasp_input_path": str(lasp_input),
     }
     return {
         "plugin_id": "pes-sampling",
@@ -478,7 +457,7 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
         "shell": False,
         "expected_outputs": [item["remote_name"] for item in fetch_outputs if item["required"]],
         "diagnostics": diagnostics,
-        "lasp_scheduled_identity": identity,
+        "lasp_calculation": calculation,
         "approval_summary": {
             "expensive": True,
             "submits_jobs": True,
@@ -492,13 +471,13 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
             "potcar_staged_sensitive": potential == "vasp",
             "potcar_fetch_allowed": False,
             "input_arc_conversion": arc_conversion,
-            "canonical_input_structure_sha256": canonical_arc_sha256,
+            "input_structure_path": str(structure),
             "max_frames": parameters["max_frames"],
             "selection_stride": parameters["selection_stride"],
             "fetch_allowlist": sorted(item["remote_name"] for item in fetch_outputs),
             "staged_file_count": len(staged),
         },
-        "input_fingerprints": {item["remote_name"]: item["sha256"] for item in staged},
+        "input_paths": {item["remote_name"]: item["source"] for item in staged},
         "scheduled_execution": {
             "schema_version": 3,
             "execution_model": "mpi",
@@ -529,7 +508,7 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
     diagnostics: list[dict[str, str]] = []
     execution = context.get("execution", {})
     plan = execution.get("plan", {}) if isinstance(execution, Mapping) else {}
-    identity = plan.get("lasp_scheduled_identity", {}) if isinstance(plan, Mapping) else {}
+    calculation = plan.get("lasp_calculation", {}) if isinstance(plan, Mapping) else {}
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
     root = attempt / "lasp-ssw"
     try:
@@ -543,57 +522,56 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
         if not _ordinary(allstr, MAX_ARC_BYTES) or not _ordinary(archive, MAX_ARC_BYTES):
             raise ValueError("required LASP archive output is missing")
         if report.get("schema_version") != 1 or report.get("plugin_id") != "pes-sampling" or report.get("status") != "OK":
-            raise ValueError("cluster-run-report identity/status is invalid")
+            raise ValueError("cluster-run-report schema/status is invalid")
         if report.get("operation") != "lasp-ssw-execute" or result.get("operation") != "lasp-ssw-execute" or result.get("status") != "OK":
             raise ValueError("remote result operation/status mismatch")
-        if report.get("lasp_version") != identity.get("lasp_version"):
+        if report.get("lasp_version") != calculation.get("lasp_version"):
             raise ValueError("LASP version differs from approved plan")
-        if report.get("potential") != identity.get("potential"):
+        if report.get("potential") != calculation.get("potential"):
             raise ValueError("LASP potential differs from approved plan")
-        if report.get("pseudopotential") != identity.get("pseudopotential"):
-            raise ValueError("LASP pseudopotential identity differs from approved plan")
+        if report.get("pseudopotential") != calculation.get("pseudopotential"):
+            raise ValueError("LASP pseudopotential settings differ from approved plan")
         input_structure = report.get("input_structure", {})
         if (
-            input_structure.get("source_sha256")
-            != identity.get("input_structure_sha256")
-            or input_structure.get("canonical_sha256")
-            != identity.get("canonical_input_structure_sha256")
+            not isinstance(input_structure.get("source_path"), str)
+            or not input_structure.get("source_path")
+            or not isinstance(input_structure.get("canonical_path"), str)
+            or not input_structure.get("canonical_path")
             or input_structure.get("conversion")
-            != identity.get("input_arc_conversion")
+            != calculation.get("input_arc_conversion")
         ):
             raise ValueError("LASP input ARC conversion differs from approved plan")
         policy = report.get("selection_policy")
         expected_policy = {
-            "selection_stride": identity.get("selection_stride"),
-            "energy_max_ev": identity.get("energy_max_ev"),
-            "max_frames": identity.get("max_frames"),
+            "selection_stride": calculation.get("selection_stride"),
+            "energy_max_ev": calculation.get("energy_max_ev"),
+            "max_frames": calculation.get("max_frames"),
             "preserve_historical_order": True,
         }
         if policy != expected_policy:
             raise ValueError("cluster selection policy differs from approved plan")
-        if report.get("source_outputs", {}).get("allstr_arc_sha256") != _sha256(allstr):
-            raise ValueError("allstr.arc hash differs from cluster report")
+        if not report.get("source_outputs", {}).get("allstr_arc_path"):
+            raise ValueError("cluster report lacks the allstr.arc output path")
         archive_record = report.get("selected_archive", {})
-        if archive_record.get("sha256") != _sha256(archive) or archive_record.get("size_bytes") != archive.stat().st_size:
-            raise ValueError("selected archive identity differs from cluster report")
+        if archive_record.get("path") != "selected-structures.tar.gz":
+            raise ValueError("cluster report has an unexpected selected archive path")
 
-        frames = LEGACY._read_arc_frames(allstr, int(identity["max_frames"]))
+        frames = LEGACY._read_arc_frames(allstr, int(calculation["max_frames"]))
         records = structures.get("structures")
         selected_records = selected.get("structures")
         if not isinstance(records, list) or not isinstance(selected_records, list) or len(records) != len(frames):
             raise ValueError("structure manifests do not match allstr.arc frame count")
-        source_id = str(identity["historical_source_id"])
         accepted_order = 0
         expected_selected: list[tuple[dict[str, Any], dict[str, Any], int]] = []
-        threshold = identity.get("energy_max_ev")
-        stride = int(identity["selection_stride"])
+        threshold = calculation.get("energy_max_ev")
+        stride = int(calculation["selection_stride"])
         for frame, record in zip(frames, records):
             if not isinstance(record, dict):
                 raise ValueError("invalid SSW structure record")
             index = int(frame["frame_index"])
-            expected_id = LEGACY._lasp_structure_id(source_id, "ssw", index, str(frame["frame_sha256"]))
-            if record.get("frame_index") != index or record.get("historical_order") != index or record.get("frame_sha256") != frame["frame_sha256"] or record.get("structure_id") != expected_id:
-                raise ValueError(f"SSW frame identity mismatch at frame {index}")
+            expected_id = f"lasp-ssw-{index:06d}"
+            if record.get("frame_index") != index or record.get("historical_order") != index or record.get("structure_id") != expected_id:
+                raise ValueError(f"SSW frame record mismatch at frame {index}")
             if float(record.get("energy_ev")) != float(frame["energy_ev"]):
                 raise ValueError(f"SSW energy mismatch at frame {index}")
             accepted = threshold is None or float(frame["energy_ev"]) <= float(threshold)
@@ -608,8 +586,8 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("selected structure count does not match approved policy")
         expected_names: list[str] = []
         for (frame, record, order), selected_record in zip(expected_selected, selected_records):
-            if not isinstance(selected_record, dict) or selected_record.get("structure_id") != record.get("structure_id") or selected_record.get("frame_sha256") != frame["frame_sha256"] or selected_record.get("selected_order") != order:
-                raise ValueError("selected manifest identity/order mismatch")
+            if not isinstance(selected_record, dict) or selected_record.get("structure_id") != record.get("structure_id") or selected_record.get("selected_order") != order:
+                raise ValueError("selected manifest record/order mismatch")
             expected_names.append(f"selected/input-{order:06d}.arc")
         with tarfile.open(archive, "r:gz") as bundle:
             members = bundle.getmembers()
@@ -623,8 +601,8 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
                 if stream is None:
                     raise ValueError("selected archive member cannot be read")
                 payload = stream.read(MAX_FRAME_BYTES + 1)
-                if len(payload) > MAX_FRAME_BYTES or "sha256:" + hashlib.sha256(payload).hexdigest() != frame["frame_sha256"]:
-                    raise ValueError("selected archive structure hash mismatch")
+                if len(payload) > MAX_FRAME_BYTES or payload != frame["payload"]:
+                    raise ValueError("selected archive structure differs from allstr.arc")
 
         counts = result.get("counts")
         expected_counts = {
@@ -637,22 +615,22 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
         if report.get("counts") != counts:
             raise ValueError("cluster report counts differ from sampling-result")
         meta_parameters = metadata.get("parameters", {})
-        if meta_parameters.get("selection_stride") != identity.get("selection_stride") or meta_parameters.get("energy_max_ev") != identity.get("energy_max_ev") or meta_parameters.get("seed_status") != UNKNOWN:
+        if meta_parameters.get("selection_stride") != calculation.get("selection_stride") or meta_parameters.get("energy_max_ev") != calculation.get("energy_max_ev") or meta_parameters.get("seed_status") != UNKNOWN:
             raise ValueError("LASP metadata differs from approved policy")
-        if identity.get("include_best_arc"):
+        if calculation.get("include_best_arc"):
             best = root / "raw-run" / "best.arc"
             if not _ordinary(best, MAX_ARC_BYTES):
                 raise ValueError("approved best.arc output is missing")
             if counts.get("aimd_seed_candidate_count") != len(
-                LEGACY._read_arc_frames(best, int(identity["max_frames"]))
+                LEGACY._read_arc_frames(best, int(calculation["max_frames"]))
             ):
                 raise ValueError("best.arc count differs from result")
-        if identity.get("include_md_arc"):
+        if calculation.get("include_md_arc"):
             md = root / "raw-run" / "md.arc"
             if not _ordinary(md, MAX_ARC_BYTES):
                 raise ValueError("approved md.arc output is missing")
             if counts.get("md_structure_count") != len(
-                LEGACY._read_arc_frames(md, int(identity["max_frames"]))
+                LEGACY._read_arc_frames(md, int(calculation["max_frames"]))
             ):
                 raise ValueError("md.arc count differs from result")
     except Exception as exc:

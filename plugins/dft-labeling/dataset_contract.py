@@ -1,13 +1,12 @@
 """Canonical DFT records, one shared split, and framework record views."""
-
 from __future__ import annotations
 
-import hashlib
 import json
 import math
+import random
 import re
 from collections.abc import Mapping, Sequence
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Any
 
 ENERGY_CONVENTION = "total-energy-per-configuration"
@@ -22,7 +21,6 @@ VASP_KBAR_PER_EV_PER_ANGSTROM3 = 1602.176621
 FRAMEWORKS = ("deepmd", "m3gnet", "chgnet", "mace")
 SPLIT_NAMES = ("train", "validation", "test")
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
-SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 class DatasetContractError(ValueError):
@@ -31,14 +29,6 @@ class DatasetContractError(ValueError):
 
 def canonical_json_bytes(value: Any) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
-
-
-def sha256_bytes(value: bytes) -> str:
-    return "sha256:" + hashlib.sha256(value).hexdigest()
-
-
-def is_fingerprint(value: Any) -> bool:
-    return isinstance(value, str) and bool(SHA256.fullmatch(value))
 
 
 def safe_relative(value: Any) -> bool:
@@ -80,13 +70,12 @@ def _sources(manifest: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
             raise DatasetContractError(f"structures[{index}] must be an object")
         structure_id = item.get("id", item.get("structure_id"))
         path = item.get("path", item.get("output_file"))
-        fingerprint = item.get("fingerprint", item.get("frame_sha256", item.get("sha256")))
         if (
             not isinstance(structure_id, str) or not SAFE_ID.fullmatch(structure_id)
-            or structure_id in result or not safe_relative(path) or not is_fingerprint(fingerprint)
+            or structure_id in result or not safe_relative(path)
         ):
-            raise DatasetContractError(f"structures[{index}] has invalid identity")
-        source = {"structure_id": structure_id, "path": str(path), "fingerprint": str(fingerprint)}
+            raise DatasetContractError(f"structures[{index}] has an invalid id or path")
+        source = {"structure_id": structure_id, "path": str(path)}
         group = item.get("source_group_id")
         if group is not None:
             if not isinstance(group, str) or not SAFE_ID.fullmatch(group):
@@ -130,24 +119,31 @@ def _sources(manifest: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
                     or not isinstance(record.get("source_order"), int)
                     or record["source_order"] < 1
                     or not safe_relative(record.get("source_path"))
-                    or not is_fingerprint(record.get("source_sha256"))
                 ):
                     raise DatasetContractError(f"structures[{index}].source_records is invalid")
-                normalized_records.append(dict(record))
+                normalized_records.append(
+                    {
+                        key: record[key]
+                        for key in (
+                            "sampling_method",
+                            "source_group_id",
+                            "source_id",
+                            "source_order",
+                            "source_path",
+                        )
+                    }
+                )
             source["source_records"] = normalized_records
         result[structure_id] = source
     return result
 
 
 def _record_id(attempt: Mapping[str, Any], source: Mapping[str, Any], calculation_id: str, ionic_step: int) -> str:
-    identity = {
-        "source_dft_attempt": dict(attempt),
-        "source_structure_id": source["structure_id"],
-        "source_structure_fingerprint": source["fingerprint"],
-        "calculation_id": calculation_id,
-        "ionic_step": ionic_step,
-    }
-    return "dft-record-" + hashlib.sha256(canonical_json_bytes(identity)).hexdigest()
+    return (
+        f"dft-record-{attempt['project_id']}-{attempt['node_id']}-"
+        f"a{attempt['attempt']:04d}-{source['structure_id']}-{calculation_id}-"
+        f"s{ionic_step:06d}"
+    )
 
 
 def build_canonical_dataset(
@@ -192,7 +188,7 @@ def build_canonical_dataset(
         )
         record_id = _record_id(record_attempt, source, calculation_id, ionic_step)
         if record_id in seen:
-            raise DatasetContractError("canonical record identity collision")
+            raise DatasetContractError("canonical record id is duplicated")
         seen.add(record_id)
         record = {
             "record_id": record_id, "source_structure_id": structure_id,
@@ -218,7 +214,10 @@ def build_canonical_dataset(
         records.append(record)
     if len(stress_presence) != 1:
         raise DatasetContractError("stress must be present for all records or absent for all")
-    dataset_id = "dft-" + hashlib.sha256(canonical_json_bytes([r["record_id"] for r in records])).hexdigest()[:32]
+    dataset_id = (
+        f"dft-{attempt['project_id']}-{attempt['node_id']}-"
+        f"attempt-{attempt['attempt']:04d}"
+    )
     targets = ["total_energy", "atomic_forces"] + (["stress"] if True in stress_presence else [])
     return {
         "schema_version": 1, "dataset_id": dataset_id, "source_attempt_identity": dict(attempt),
@@ -229,12 +228,74 @@ def build_canonical_dataset(
     }
 
 
+def merge_canonical_datasets(datasets: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Concatenate verified canonical records without changing labels or lineage."""
+
+    if not datasets:
+        raise DatasetContractError("canonical dataset merge requires at least one source")
+    normalized = [dict(value) for value in datasets]
+    for index, value in enumerate(normalized):
+        errors = validate_canonical_dataset(value)
+        if errors:
+            raise DatasetContractError(
+                f"canonical merge source {index} is invalid: " + "; ".join(errors)
+            )
+    first = normalized[0]
+    shared_fields = (
+        "targets",
+        "units",
+        "energy_convention",
+        "coordinate_convention",
+        "stress_convention",
+    )
+    for index, value in enumerate(normalized[1:], start=1):
+        if any(value.get(field) != first.get(field) for field in shared_fields):
+            raise DatasetContractError(
+                f"canonical merge source {index} has incompatible targets or conventions"
+            )
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for value in normalized:
+        for record in value["records"]:
+            record_id = str(record["record_id"])
+            if record_id in seen:
+                raise DatasetContractError(
+                    f"canonical merge contains duplicate record_id: {record_id}"
+                )
+            seen.add(record_id)
+            records.append(dict(record))
+    dataset_id = "dft-merged-" + "-plus-".join(
+        str(value["dataset_id"]) for value in normalized
+    )
+    return {
+        "schema_version": 1,
+        "dataset_id": dataset_id,
+        "source_attempt_identity": dict(first["source_attempt_identity"]),
+        "source_dataset_ids": [value["dataset_id"] for value in normalized],
+        "record_count": len(records),
+        "targets": list(first["targets"]),
+        "units": dict(first["units"]),
+        "energy_convention": first["energy_convention"],
+        "coordinate_convention": first["coordinate_convention"],
+        "stress_convention": first["stress_convention"],
+        "records": records,
+    }
+
+
 def validate_canonical_dataset(value: Any) -> list[str]:
     if not isinstance(value, Mapping):
         return ["canonical dataset must be an object"]
     errors, records = [], value.get("records")
     if value.get("schema_version") != 1:
         errors.append("canonical schema_version must be 1")
+    source_dataset_ids = value.get("source_dataset_ids")
+    if source_dataset_ids is not None and (
+        not isinstance(source_dataset_ids, list)
+        or not source_dataset_ids
+        or len(source_dataset_ids) != len(set(source_dataset_ids))
+        or any(not isinstance(item, str) or not SAFE_ID.fullmatch(item) for item in source_dataset_ids)
+    ):
+        errors.append("canonical source_dataset_ids are invalid")
     try:
         _attempt(value.get("source_attempt_identity", {}))
     except DatasetContractError:
@@ -268,7 +329,7 @@ def validate_canonical_dataset(value: Any) -> list[str]:
         except DatasetContractError:
             normalized_record_attempt = {}
             errors.append(f"canonical record {index} source DFT attempt is invalid")
-        if not isinstance(source, Mapping) or not is_fingerprint(source.get("fingerprint")):
+        if not isinstance(source, Mapping):
             errors.append(f"canonical record {index} source structure is invalid")
         else:
             try:
@@ -283,7 +344,7 @@ def validate_canonical_dataset(value: Any) -> list[str]:
             ):
                 errors.append(f"canonical record {index} stable record_id mismatch")
         if not isinstance(record_id, str) or not SAFE_ID.fullmatch(record_id) or record_id in seen:
-            errors.append(f"canonical record {index} identity is invalid")
+            errors.append(f"canonical record {index} id is invalid")
         else:
             seen.add(record_id)
         group = record.get("source_group_id")
@@ -301,9 +362,10 @@ def validate_canonical_dataset(value: Any) -> list[str]:
         stress = record.get("stress")
         if ("stress" in targets and not _matrix(stress, 3, 3)) or ("stress" not in targets and stress is not None):
             errors.append(f"canonical record {index} stress is invalid")
-    expected_id = "dft-" + hashlib.sha256(canonical_json_bytes([r.get("record_id") for r in records])).hexdigest()[:32]
-    if value.get("dataset_id") != expected_id:
-        errors.append("canonical dataset_id mismatch")
+    if not isinstance(value.get("dataset_id"), str) or not SAFE_ID.fullmatch(
+        value["dataset_id"]
+    ):
+        errors.append("canonical dataset_id is invalid")
     return errors
 
 
@@ -324,10 +386,6 @@ def _split_counts(total: int, fractions: Mapping[str, Any]) -> dict[str, int]:
     return dict(zip(SPLIT_NAMES, counts))
 
 
-def _rank(seed: int, value: str) -> str:
-    return hashlib.sha256(f"{seed}\0{value}".encode()).hexdigest()
-
-
 def build_split_manifest(
     canonical: Mapping[str, Any], *, strategy: str = "deterministic", seed: int = 0,
     fractions: Mapping[str, Any] | None = None,
@@ -341,8 +399,10 @@ def build_split_manifest(
         raise DatasetContractError("split seed must be a non-negative integer")
     targets = _split_counts(len(canonical["records"]), fractions or {"train": .8, "validation": .1, "test": .1})
     assigned = {name: [] for name in SPLIT_NAMES}
+    rng = random.Random(seed)
     if strategy == "deterministic":
-        ordered = sorted((r["record_id"] for r in canonical["records"]), key=lambda x: (_rank(seed, x), x))
+        ordered = sorted(r["record_id"] for r in canonical["records"])
+        rng.shuffle(ordered)
         start = 0
         for name in SPLIT_NAMES:
             assigned[name] = ordered[start:start + targets[name]]
@@ -356,15 +416,19 @@ def build_split_manifest(
             groups.setdefault(group, []).append(record["record_id"])
         if len(groups) < 3:
             raise DatasetContractError("group-aware split requires at least three source groups")
-        for group in sorted(groups, key=lambda x: (-len(groups[x]), _rank(seed, x), x)):
+        ordered_groups = sorted(groups)
+        rng.shuffle(ordered_groups)
+        ordered_groups.sort(key=lambda value: -len(groups[value]))
+        for group in ordered_groups:
             name = max(SPLIT_NAMES, key=lambda x: (targets[x] - len(assigned[x]), -SPLIT_NAMES.index(x)))
-            assigned[name].extend(sorted(groups[group], key=lambda x: (_rank(seed, x), x)))
+            group_records = sorted(groups[group])
+            rng.shuffle(group_records)
+            assigned[name].extend(group_records)
         if any(not assigned[name] for name in SPLIT_NAMES):
             raise DatasetContractError("group-aware split leaves an empty partition")
-    identity = {"dataset_id": canonical["dataset_id"], "strategy": strategy, "seed": seed, **{f"{name}_record_ids": assigned[name] for name in SPLIT_NAMES}}
     return {
         "dataset_id": canonical["dataset_id"],
-        "split_id": "split-" + hashlib.sha256(canonical_json_bytes(identity)).hexdigest()[:32],
+        "split_id": f"{canonical['dataset_id']}-{strategy}-seed-{seed}",
         "strategy": strategy, "seed": seed,
         "train_record_ids": assigned["train"], "validation_record_ids": assigned["validation"],
         "test_record_ids": assigned["test"],
@@ -491,20 +555,3 @@ def framework_json_dataset(dataset_id: str, split_id: str, framework: str, recor
             item["stresses" if framework == "m3gnet" else "stress"] = record["stress"]
         converted.append(item)
     return {"dataset_id": dataset_id, "split_id": split_id, "records": converted}
-
-
-def training_tree_fingerprint(path: Path) -> str:
-    """Match the directory identity required by mlip-training references."""
-    if path.is_symlink() or not path.is_dir():
-        raise DatasetContractError(f"not an ordinary dataset directory: {path}")
-    digest, found = hashlib.sha256(), False
-    for item in sorted(path.rglob("*"), key=lambda p: p.relative_to(path).as_posix()):
-        if item.is_symlink():
-            raise DatasetContractError(f"dataset tree contains a symlink: {item}")
-        if item.is_file():
-            found = True
-            content, relative = item.read_bytes(), item.relative_to(path).as_posix()
-            digest.update(f"{relative}\0{len(content)}\0{sha256_bytes(content)}\n".encode())
-    if not found:
-        raise DatasetContractError("dataset directory is empty")
-    return "sha256:" + digest.hexdigest()

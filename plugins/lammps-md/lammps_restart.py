@@ -7,18 +7,12 @@ parameters or model settings.
 """
 from __future__ import annotations
 
-import hashlib
-
 CHECKPOINT_FILES = ("checkpoint.1.restart", "checkpoint.2.restart")
 RESTART_VARIABLE = "RESTART_FILE"
 
 
 class RestartDeckError(ValueError):
     pass
-
-
-def sha256_text(text: str) -> str:
-    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _line(lines: list[str], prefix: str, *, required: bool = True) -> str | None:

@@ -2,7 +2,7 @@
 
 This module owns the framework-neutral MD loop. It never downloads a model and
 never shells out. Site-specific model lookup is handled by the cluster wrapper;
-this runner receives an already resolved, fingerprinted model path and attaches
+this runner receives an already resolved model path and attaches
 one of the supported ASE calculators.
 
 Version 0.3 adds checkpoint/restart to single-temperature NVT Langevin and
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import importlib.metadata
 import json
 import math
@@ -70,14 +69,6 @@ def _final_structure_copy(atoms: Any, input_constraints: list[Any]) -> Any:
     final_atoms.calc = None
     final_atoms.set_constraint(input_constraints)
     return final_atoms
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
 
 
 def _version(*names: str) -> str:
@@ -320,13 +311,13 @@ def _is_new_callback_step(recorded_steps: list[int], step: int) -> bool:
     return not recorded_steps or recorded_steps[-1] != step
 
 
-def _base_checkpoint_identity(
+def _base_checkpoint_parameters(
     *,
     calculator: str,
     ensemble: str,
     model_id: str,
-    model_fingerprint: str,
-    structure_fingerprint: str,
+    model_record_path: str,
+    structure_record_path: str,
     temperature_k: float,
     timestep_fs: float,
     steps: int,
@@ -346,8 +337,8 @@ def _base_checkpoint_identity(
         "checkpoint_state_version": CHECKPOINT_STATE_VERSION,
         "calculator": calculator,
         "ensemble": ensemble,
-        "model": {"id": model_id, "fingerprint": model_fingerprint},
-        "structure_fingerprint": structure_fingerprint,
+        "model": {"id": model_id, "path": model_record_path},
+        "structure_path": structure_record_path,
         "temperature_K": temperature_k,
         "timestep_fs": timestep_fs,
         "steps_requested": steps,
@@ -376,14 +367,14 @@ def _base_checkpoint_identity(
     return payload
 
 
-def _validate_checkpoint_identity(
+def _validate_checkpoint_parameters(
     checkpoint: dict[str, Any], expected: dict[str, Any], ase_version: str
 ) -> int:
     if checkpoint.get("schema_version") != CHECKPOINT_SCHEMA_VERSION:
         raise AseMDError("restart checkpoint schema_version is unsupported")
     for key, value in expected.items():
         if checkpoint.get(key) != value:
-            raise AseMDError(f"restart checkpoint identity mismatch for {key}")
+            raise AseMDError(f"restart checkpoint parameter mismatch for {key}")
     if checkpoint.get("ase_version") != ase_version:
         raise AseMDError(
             "restart checkpoint ASE version differs from the current environment; "
@@ -428,13 +419,13 @@ def _checkpoint_payload(
     dyn: Any,
     atoms: Any,
     rng: Any,
-    base_identity: dict[str, Any],
+    base_parameters: dict[str, Any],
     ase_version: str,
     ensemble: str,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
-        **base_identity,
+        **base_parameters,
         "ase_version": ase_version,
         "completed_steps": int(dyn.get_number_of_steps()),
         "atomic_numbers": [int(value) for value in atoms.get_atomic_numbers()],
@@ -509,8 +500,8 @@ def run_md(
     calculator: str,
     ensemble: str,
     model_id: str,
-    model_fingerprint: str,
-    structure_fingerprint: str,
+    model_record_path: str,
+    structure_record_path: str,
     temperature_k: float,
     timestep_fs: float,
     steps: int,
@@ -627,12 +618,12 @@ def run_md(
         constraints.append(FixCom())
         atoms.set_constraint(constraints)
 
-    base_checkpoint_identity = _base_checkpoint_identity(
+    base_checkpoint_parameters = _base_checkpoint_parameters(
         calculator=calculator,
         ensemble=ensemble,
         model_id=model_id,
-        model_fingerprint=model_fingerprint,
-        structure_fingerprint=structure_fingerprint,
+        model_record_path=model_record_path,
+        structure_record_path=structure_record_path,
         temperature_k=temperature_k,
         timestep_fs=timestep_fs,
         steps=steps,
@@ -649,14 +640,12 @@ def run_md(
     )
     checkpoint: dict[str, Any] | None = None
     start_step = 0
-    restart_sha256: str | None = None
     if restart_checkpoint is not None:
         checkpoint = _read_checkpoint(restart_checkpoint)
-        start_step = _validate_checkpoint_identity(
-            checkpoint, base_checkpoint_identity, ase_version
+        start_step = _validate_checkpoint_parameters(
+            checkpoint, base_checkpoint_parameters, ase_version
         )
         _restore_atoms_from_checkpoint(atoms, checkpoint, np)
-        restart_sha256 = _sha256(restart_checkpoint)
 
     atoms.calc = _build_calculator(calculator, model, device, default_dtype)
     initial_pressure_gpa: float | None = None
@@ -811,7 +800,7 @@ def run_md(
                 dyn=dyn,
                 atoms=atoms,
                 rng=rng,
-                base_identity=base_checkpoint_identity,
+                base_parameters=base_checkpoint_parameters,
                 ase_version=ase_version,
                 ensemble=ensemble,
             ),
@@ -864,8 +853,6 @@ def run_md(
             {
                 "name": name,
                 "path": path.name,
-                "sha256": _sha256(path),
-                "size_bytes": path.stat().st_size,
             }
         )
     payload: dict[str, Any] = {
@@ -876,8 +863,8 @@ def run_md(
         "calculator_version": framework_version(calculator),
         "ase_version": ase_version,
         "ensemble": ensemble,
-        "model": {"id": model_id, "fingerprint": model_fingerprint},
-        "structure_fingerprint": structure_fingerprint,
+        "model": {"id": model_id, "path": model_record_path},
+        "structure_path": structure_record_path,
         "supercell_repeat": list(repeat),
         "source_atom_count": source_atom_count,
         "atom_count": len(atoms),
@@ -900,7 +887,7 @@ def run_md(
         "fix_com": bool(fix_com),
         "restart": {
             "resumed": checkpoint is not None,
-            "checkpoint_sha256": restart_sha256,
+            "checkpoint_path": "restart/md-checkpoint.json" if restart_checkpoint is not None else None,
             "checkpoint_start_step": start_step if checkpoint is not None else None,
             "checkpoint_interval": checkpoint_interval,
         },
@@ -923,8 +910,6 @@ def run_md(
     if checkpoint_interval is not None:
         payload["checkpoint"] = {
             "path": CHECKPOINT_FILENAME,
-            "sha256": _sha256(checkpoint_path),
-            "size_bytes": checkpoint_path.stat().st_size,
             "completed_steps": int(dyn.get_number_of_steps()),
         }
     if ensemble == "nvt-langevin":
@@ -957,8 +942,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--calculator", choices=CALCULATORS, required=True)
     parser.add_argument("--ensemble", choices=ENSEMBLES, required=True)
     parser.add_argument("--model-id", required=True)
-    parser.add_argument("--model-fingerprint", required=True)
-    parser.add_argument("--structure-fingerprint", required=True)
+    parser.add_argument("--model-record-path", required=True)
+    parser.add_argument("--structure-record-path", required=True)
     parser.add_argument("--temperature-k", type=float, required=True)
     parser.add_argument("--timestep-fs", type=float, required=True)
     parser.add_argument("--steps", type=int, required=True)
@@ -990,8 +975,8 @@ def main(argv: list[str] | None = None) -> int:
         calculator=args.calculator,
         ensemble=args.ensemble,
         model_id=args.model_id,
-        model_fingerprint=args.model_fingerprint,
-        structure_fingerprint=args.structure_fingerprint,
+        model_record_path=args.model_record_path,
+        structure_record_path=args.structure_record_path,
         temperature_k=args.temperature_k,
         timestep_fs=args.timestep_fs,
         steps=args.steps,

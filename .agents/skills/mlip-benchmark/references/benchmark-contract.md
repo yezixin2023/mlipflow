@@ -24,7 +24,7 @@ but prefer the three explicit modes above for new benchmark supervision.
 Read the current exact-family catalog, aliases, and framework mapping from
 `src/mlipflow/science/model_runtime.py` (or its installed package equivalent)
 and confirm the plugin manifest. The current catalog contains six exact
-families, including four DeepMD identities that share one DeepMD inference
+families, including four DeepMD family IDs that share one DeepMD inference
 implementation plus M3GNet/MatGL and CHGNet. Do not copy that catalog into the
 Skill, accept an ambiguous family, or hard-code a preferred model.
 
@@ -37,8 +37,8 @@ deterministic display tie-breaker. Ranking policy, not brand, determines order.
 
 Fresh evaluation requires:
 
-- an explicit model file or directory and matching SHA-256/tree fingerprint;
-- a canonical schema-v1 labeled JSON dataset and matching fingerprint;
+- an explicit model file or directory path;
+- a canonical schema-v1 labeled JSON dataset path;
 - an exact model family;
 - normalized task, scenario, and split identifiers;
 - a non-empty energy/force/stress target subset;
@@ -49,15 +49,14 @@ Fresh evaluation requires:
 
 Local fresh evaluation uses direct model/dataset paths. Reviewed SSH-SLURM fresh
 evaluation instead uses small logical model and benchmark-dataset reference manifests;
-the remote runner resolves them below the selected site's canonical roots, recomputes
-both fingerprints, and emits a cluster report binding the exact family and all fetched
-outputs. Site environments and root paths remain template-owned.
+the remote runner resolves them below the selected site's canonical roots and emits a
+cluster report recording the exact family, software version, parameters, and fetched
+output paths. Site environments and root paths remain template-owned.
 
-The versioned `prediction_evidence.json` binds structure/sample identity,
-structure index, atom count, model family/framework/fingerprint, dataset
-fingerprint, task/scenario/split, references, predictions, units, component
-labels, scalar counts, runtime/framework/version identity, source fingerprints,
-and energy/stress conventions. Fresh evidence and provenance must both state
+The versioned `prediction_evidence.json` records structure/sample ID,
+structure index, atom count, model family/framework/path, dataset path,
+task/scenario/split, references, predictions, units, component labels, scalar counts,
+runtime/framework/version, source paths, and energy/stress conventions. Fresh evidence and provenance must both state
 `mode: fresh` and `model_execution: true`.
 
 Energy contributes one scalar per structure. Force contributes three components
@@ -65,6 +64,13 @@ per atom. The fresh canonical stress contract uses the explicitly approved
 six-component order; do not convert a historical nine-component table to this
 contract without reliable source evidence. Confirm component and structure
 counts rather than inferring them from file size or row count.
+
+When force evidence preserves explicit N×3 vectors, the normalized suite also emits
+`maximum_atomic_force_error`: the maximum over atoms of the L2 norm of each predicted
+minus reference force vector. Its sample count is the atom count, not the flattened
+component count. If any force row is flattened or otherwise loses vector grouping,
+omit this metric; componentwise MAE/RMSE remain valid, but the maximum atomic-vector
+error is unavailable and must not be inferred.
 
 MAE and RMSE are always required for each selected target. Pearson correlation is
 mathematically unavailable with fewer than two scalar pairs or when either series is
@@ -76,9 +82,10 @@ evidence.
 ## Metric-only and replay inputs
 
 `normalize-execute` consumes actual reference/prediction values, groups them by
-their scientific identities, and computes one implementation of MAE, RMSE, and
-Pearson r. Its provenance states `model_execution: false`. It does not establish
-how or when predictions were generated.
+their scientific IDs/units, and computes one implementation of MAE, RMSE, and
+Pearson r. It also computes the maximum atomic L2 force error when explicit N×3
+force vectors are available. Its provenance states `model_execution: false`. It
+does not establish how or when predictions were generated.
 
 One joint comparison may consume prediction evidence from multiple fresh model nodes.
 Each input must have a distinct portable locator even when all source basenames are
@@ -90,8 +97,8 @@ single-model stress group remains useful diagnostic evidence but is excluded fro
 two-model decision when the other model has no comparable stress prediction.
 
 `normalize-replay` parses existing prepared JSON/CSV/XLSX evidence and preserves
-source locator, parser identity, SHA-256, units or unit uncertainty, split,
-sample count, and source-script fingerprint when supplied. It does not execute
+source locator, parser name, units or unit uncertainty, split, sample count, and
+the source-script path when supplied. It does not execute
 the historical script. Never import or run historical source merely to make a
 replay succeed.
 
@@ -107,20 +114,19 @@ All three modes emit:
 Fresh additionally emits `prediction_evidence.json`.
 
 Scheduled fresh evaluation additionally emits `cluster-benchmark-report.json`; it must
-match the approved model/dataset logical identities, remotely observed fingerprints,
-exact framework/family, return code, and all five fetched artifact hashes.
+match the approved model/dataset paths, exact framework/family, return code, and all
+five fetched artifact paths.
 
 Inspect normalized records for finite values, positive sample counts, explicit
-direction, exact model/task/scenario/split identities, units, dimensions, and
-evidence SHA-256. Inspect provenance for mode, `model_execution`, network-access
-claim, source identities, output hashes, and read-only replay markers. Fresh
-provenance also requires exact family, model and dataset fingerprints,
-runtime/framework/version identity, prediction-evidence SHA-256, normalized
-artifact hashes, conventions, structure count, and scalar sample counts.
+direction, exact model/task/scenario/split IDs, units, dimensions, and
+evidence records. Inspect provenance for mode, `model_execution`, network-access
+claim, source paths, output paths, and read-only replay markers. Fresh provenance also
+requires exact family, model and dataset paths, runtime/framework/version,
+conventions, structure count, and scalar sample counts.
 
 Adapter `check/collect` must reject model, dataset, evidence, implementation
-source, mode, task/scenario/split, unit, summary, ranking, or output fingerprint
-drift. Never bypass that rejection, silently overwrite output, or edit artifacts
+source, mode, task/scenario/split, unit, summary, ranking, or declared-output
+mismatches. Never bypass that rejection, silently overwrite output, or edit artifacts
 to make them pass.
 
 ## Unit and convention policy
@@ -136,10 +142,10 @@ energy scalar count, force component count, and stress component count.
 
 ## Historical evidence boundary
 
-- The three audited historical DeepMD families have fingerprint-pinned source
-  and workbook evidence. Source confirms per-atom energy normalization, but
+- The three audited historical DeepMD families have source and workbook evidence.
+  Source confirms per-atom energy normalization, but
   units not declared by the source remain unspecified.
-- CHGNet has fingerprint-pinned historical source/workbook evidence. Historical
+- CHGNet has historical source/workbook evidence. Historical
   energy is per-atom; force/stress units and stress ordering/sign are not all
   reliably established, so report them as unknown where applicable.
 - The audited M3GNet evaluation source currently has no corresponding historical
@@ -159,10 +165,10 @@ Use these checks when mode selection is ambiguous:
 
 | Request | Required behavior |
 |---|---|
-| “Benchmark this labeled dataset with this CHGNet model.” | Fresh; require model/dataset identities and execute the model |
+| “Benchmark this labeled dataset with this CHGNet model.” | Fresh; require model/dataset paths and execute the model |
 | “I have reference/prediction JSON; calculate RMSE and Pearson, then rank.” | Metric-only; do not run a model |
 | “Reproduce this DeepMD historical workbook.” | Replay; require `model_execution=false` |
 | “What is the historical CHGNet stress unit?” | Report unknown when evidence cannot prove it; do not guess |
 | “Which of the six models is best?” | Require comparable metric records and direction; no brand preference |
 | “Use this old workbook for a fresh benchmark.” | Correct the mode to replay unless a model and labeled dataset are supplied |
-| Fingerprint drift or existing output | Stop on Adapter validation failure; do not bypass or overwrite |
+| Changed input paths or existing output | Stop on Adapter validation failure; do not bypass or overwrite |

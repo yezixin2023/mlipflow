@@ -1,7 +1,6 @@
 # Minimal artifact flow after vasp-prepare has produced prepared/dft-input-manifest.json.
-# After assemble-datasets reaches OK, the Agent replaces each all-zero dataset
-# fingerprint below with the exact fingerprint from the corresponding collected
-# *-dataset-reference.json. No dataset conversion command is supplied by the user.
+# Training nodes consume the collected dataset-reference paths directly. No dataset
+# conversion command is supplied by the user.
 schema_version: 1
 project:
   id: dft-to-all-training
@@ -69,8 +68,6 @@ workflow:
         seed: 23
         device: gpu
         precision: float64
-        dataset_fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
-        config_fingerprint: sha256:e8fe8f324915cb29ce63f51ed06c704366c0bb01c9d4532a61ab883721de5daf
       resources:
         cpus: 8
         gpus: 1
@@ -91,8 +88,6 @@ workflow:
         seed: 23
         device: gpu
         precision: float64
-        dataset_fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
-        config_fingerprint: sha256:243fc8a94139d01c04119da308fff82e725279c32819a54106fa6d17626ee7f8
       resources:
         cpus: 8
         gpus: 1
@@ -113,8 +108,6 @@ workflow:
         seed: 23
         device: gpu
         precision: float32
-        dataset_fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
-        config_fingerprint: sha256:5ca45074cec1068e2fa86acf2bf54569e2d3ffa486a746bec112baa1ce3f8f2f
       resources:
         cpus: 8
         gpus: 1
@@ -135,8 +128,6 @@ workflow:
         seed: 23
         device: gpu
         precision: float64
-        dataset_fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
-        config_fingerprint: sha256:0d1e52da62799ae5ae434d4247cea826f74e7a7e93030c1d481b42673b0e3bde
       resources:
         cpus: 8
         gpus: 1

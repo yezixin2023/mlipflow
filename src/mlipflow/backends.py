@@ -211,6 +211,7 @@ class SshSlurmBackend:
         *,
         partition_candidates: Sequence[str] | None = None,
         resources: Mapping[str, Any] | None = None,
+        memory_constraint: str = "reported",
     ) -> ExecutionResult:
         _validate_remote_directory(remote_run_dir, allow_dot=True)
         _validate_remote_name(remote_script)
@@ -219,7 +220,11 @@ class SshSlurmBackend:
         if partition_candidates is not None:
             if resources is None:
                 raise BackendError("partition selection requires requested resources")
-            routing = self.select_partition(partition_candidates, resources)
+            routing = self.select_partition(
+                partition_candidates,
+                resources,
+                memory_constraint=memory_constraint,
+            )
             selected_partition = str(routing["selected_partition"])
         # Arguments are passed as separate argv fields. The remote helper should
         # eventually replace OpenSSH command composition with a fixed RPC.
@@ -253,6 +258,8 @@ class SshSlurmBackend:
         self,
         candidates: Sequence[str],
         resources: Mapping[str, Any],
+        *,
+        memory_constraint: str = "reported",
     ) -> dict[str, Any]:
         """Select a site-owned candidate from one submission-time Slurm snapshot.
 
@@ -262,6 +269,8 @@ class SshSlurmBackend:
         """
 
         validated = _validate_partition_candidates(candidates)
+        if memory_constraint not in {"reported", "unreported"}:
+            raise BackendError("memory_constraint must be reported or unreported")
         requested = _requested_node_resources(resources)
         command = (
             "scontrol show partition -o && "
@@ -293,7 +302,13 @@ class SshSlurmBackend:
         }
         nodes = _parse_scontrol_records(after, "NodeName")
         observations = [
-            _partition_observation(candidate, partitions.get(candidate), nodes, requested)
+            _partition_observation(
+                candidate,
+                partitions.get(candidate),
+                nodes,
+                requested,
+                enforce_memory=memory_constraint == "reported",
+            )
             for candidate in validated
         ]
         available = [item for item in observations if item["currently_available"]]
@@ -340,8 +355,7 @@ class SshSlurmBackend:
             f"[ ! -L {_quote_remote(relative_path)} ]; then "
             f"size=$(stat -c '%s' -- {_quote_remote(relative_path)}); "
             f"if [ \"$size\" -le {max_bytes} ]; then "
-            "printf '%s\\n' \"$size\"; "
-            f"sha256sum -- {_quote_remote(relative_path)}; "
+            "printf 'OK\\n'; "
             f"cat -- {_quote_remote(relative_path)}; "
             "else printf 'TOO_LARGE\\n'; fi; "
             "else printf 'MISSING\\n'; fi; fi"
@@ -372,31 +386,20 @@ class SshSlurmBackend:
             }
         if completed.stdout in {"TOO_LARGE\n", "TOO_LARGE"}:
             raise BackendError(f"remote template exceeds size bound: {relative_path}")
-        first, separator, remainder = completed.stdout.partition("\n")
-        second, separator2, content = remainder.partition("\n")
-        if not separator or not separator2 or not first.isdigit():
+        first, separator, content = completed.stdout.partition("\n")
+        if not separator or first != "OK":
             raise BackendError(f"unexpected remote template response: {relative_path}")
-        digest, digest_separator, returned_name = second.partition("  ")
-        if (
-            not digest_separator
-            or returned_name != relative_path
-            or not re.fullmatch(r"[0-9a-f]{64}", digest)
-            or len(content.encode("utf-8")) != int(first)
-        ):
-            raise BackendError(f"invalid remote template identity: {relative_path}")
         return {
             "relative_path": relative_path,
             "root_exists": True,
             "exists": True,
-            "size_bytes": int(first),
-            "sha256": f"sha256:{digest}",
             "content": content,
         }
 
     def stage_workspace(
         self,
         remote_run_dir: str,
-        files: Sequence[tuple[Path, str, str]],
+        files: Sequence[tuple[Path, str]],
     ) -> str:
         """Create one deterministic attempt workspace and stage an allowlist.
 
@@ -430,7 +433,7 @@ class SshSlurmBackend:
         # never has to issue its own ssh/mkdir and staging stays one deterministic
         # sequence of operations.
         nested: set[str] = set()
-        for _, remote_relative, _ in files:
+        for _, remote_relative in files:
             _validate_remote_relative(remote_relative)
             for ancestor in PurePosixPath(remote_relative).parents:
                 if str(ancestor) not in {".", "/"}:
@@ -459,15 +462,13 @@ class SshSlurmBackend:
                 completed.stderr or completed.stdout or "fresh remote workspace creation failed"
             )
         seen: set[str] = set()
-        for source, remote_relative, expected_sha256 in files:
+        for source, remote_relative in files:
             _validate_remote_relative(remote_relative)
             if remote_relative in seen:
                 raise BackendError(f"duplicate remote staging path: {remote_relative}")
             seen.add(remote_relative)
             if source.is_symlink() or not source.is_file():
                 raise BackendError(f"staging source must be an ordinary file: {source}")
-            if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_sha256):
-                raise BackendError(f"invalid staging fingerprint for {remote_relative}")
             uploaded = subprocess.run(
                 ["scp", "--", str(source), f"{self.profile}:{remote_run_dir}/{remote_relative}"],
                 text=True,
@@ -482,15 +483,10 @@ class SshSlurmBackend:
                     or uploaded.stdout
                     or f"remote staging failed: {remote_relative}"
                 )
-            observed = self.inspect_file(remote_run_dir, remote_relative)
-            if observed.get("sha256") != expected_sha256:
-                raise BackendError(
-                    f"remote staging fingerprint mismatch: {remote_relative}"
-                )
         return remote_run_dir
 
     def inspect_file(self, remote_run_dir: str, remote_name: str) -> dict[str, object]:
-        """Read one remote file's bounded identity without modifying remote state."""
+        """Read whether a remote file exists and its size for transfer bounds."""
 
         _validate_remote_directory(remote_run_dir)
         _validate_remote_relative(remote_name)
@@ -498,8 +494,7 @@ class SshSlurmBackend:
             f"cd -- {_quote_remote(remote_run_dir)} && "
             f"if [ -f {_quote_remote(remote_name)} ] && "
             f"[ ! -L {_quote_remote(remote_name)} ]; then "
-            f"stat -c '%s' -- {_quote_remote(remote_name)} && "
-            f"sha256sum -- {_quote_remote(remote_name)}; "
+            f"stat -c '%s' -- {_quote_remote(remote_name)}; "
             "else printf 'MISSING\\n'; fi"
         )
         completed = subprocess.run(
@@ -517,16 +512,12 @@ class SshSlurmBackend:
         lines = completed.stdout.strip().splitlines()
         if lines == ["MISSING"] or not lines:
             return {"path": remote_name, "exists": False}
-        if len(lines) != 2 or not lines[0].isdigit():
-            raise BackendError(f"unexpected remote fingerprint response for {remote_name}")
-        digest, separator, returned_name = lines[1].partition("  ")
-        if not separator or returned_name != remote_name or not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise BackendError(f"invalid remote fingerprint response for {remote_name}")
+        if len(lines) != 1 or not lines[0].isdigit():
+            raise BackendError(f"unexpected remote file response for {remote_name}")
         return {
             "path": remote_name,
             "exists": True,
             "size_bytes": int(lines[0]),
-            "sha256": f"sha256:{digest}",
         }
 
     def fetch_from(
@@ -752,6 +743,8 @@ def _partition_observation(
     partition: Mapping[str, str] | None,
     nodes: Sequence[Mapping[str, str]],
     requested: Mapping[str, int],
+    *,
+    enforce_memory: bool = True,
 ) -> dict[str, Any]:
     if partition is None:
         return {
@@ -806,7 +799,7 @@ def _partition_observation(
         node_capable = (
             total_cpus >= requested["cpus"]
             and total_gpus >= requested["gpus"]
-            and total_memory >= requested["memory_mib"]
+            and (not enforce_memory or total_memory >= requested["memory_mib"])
         )
         if not node_capable:
             continue
@@ -814,7 +807,10 @@ def _partition_observation(
         if (
             total_cpus - allocated_cpus >= requested["cpus"]
             and total_gpus - allocated_gpus >= requested["gpus"]
-            and total_memory - allocated_memory >= requested["memory_mib"]
+            and (
+                not enforce_memory
+                or total_memory - allocated_memory >= requested["memory_mib"]
+            )
         ):
             available += 1
 

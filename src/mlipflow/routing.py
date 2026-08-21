@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,7 +22,6 @@ class Candidate:
     element_coverage: int = 0
     validation_samples: int = 0
     registry_recommended: bool = False
-    evidence_status: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,11 +34,10 @@ class Candidate:
             "element_coverage": self.element_coverage,
             "validation_samples": self.validation_samples,
             "registry_recommended": self.registry_recommended,
-            "evidence_status": self.evidence_status,
         }
 
 
-def load_registry(path: Path, full_hash_max_bytes: int = 64 * 1024 * 1024) -> dict[str, Any]:
+def load_registry(path: Path) -> dict[str, Any]:
     registry = load_mapping(path)
     if registry.get("schema_version") != 1 or not isinstance(registry.get("models"), list):
         raise ConfigError(f"invalid model registry: {path}")
@@ -49,24 +46,20 @@ def load_registry(path: Path, full_hash_max_bytes: int = 64 * 1024 * 1024) -> di
         raise ConfigError(f"every model in {path} needs a string id")
     if len(set(ids)) != len(ids):
         raise ConfigError(f"duplicate model ids in {path}")
-    registry["_evidence_verification"] = verify_benchmark_evidence(
-        registry, path.parent, full_hash_max_bytes=full_hash_max_bytes
-    )
+    registry["_evidence_files"] = verify_benchmark_evidence(registry, path.parent)
     return registry
 
 
 def verify_benchmark_evidence(
-    registry: dict[str, Any], root: Path, full_hash_max_bytes: int = 64 * 1024 * 1024
+    registry: dict[str, Any], root: Path
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    cache: dict[Path, str] = {}
     for model in registry.get("models", []):
         for benchmark in model.get("benchmarks", []):
             artifact = benchmark.get("artifact", {})
             uri = artifact.get("uri")
-            expected = artifact.get("fingerprint")
-            if not isinstance(uri, str) or not isinstance(expected, str):
-                raise ConfigError(f"benchmark evidence for {model.get('id')} needs uri/fingerprint")
+            if not isinstance(uri, str):
+                raise ConfigError(f"benchmark evidence for {model.get('id')} needs a uri")
             parsed = urlparse(uri)
             if parsed.scheme and parsed.scheme != "file":
                 results.append(
@@ -74,7 +67,7 @@ def verify_benchmark_evidence(
                         "model_id": model.get("id"),
                         "run_id": benchmark.get("run_id"),
                         "uri": uri,
-                        "status": "external-not-verified",
+                        "status": "external",
                     }
                 )
                 continue
@@ -87,35 +80,12 @@ def verify_benchmark_evidence(
                     evidence_path = root / evidence_path
             if not evidence_path.is_file():
                 raise ConfigError(f"benchmark evidence does not exist: {evidence_path}")
-            stat = evidence_path.stat()
-            expected_size = artifact.get("size_bytes")
-            if isinstance(expected_size, int) and expected_size != stat.st_size:
-                raise ConfigError(
-                    f"benchmark evidence size mismatch for {evidence_path}: "
-                    f"expected {expected_size}, got {stat.st_size}"
-                )
-            if stat.st_size > full_hash_max_bytes:
-                status = "metadata-only-size-verified"
-            else:
-                digest = cache.get(evidence_path)
-                if digest is None:
-                    hasher = hashlib.sha256()
-                    with evidence_path.open("rb") as stream:
-                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                            hasher.update(chunk)
-                    digest = f"sha256:{hasher.hexdigest()}"
-                    cache[evidence_path] = digest
-                if digest != expected:
-                    raise ConfigError(
-                        f"benchmark evidence fingerprint mismatch for {evidence_path}"
-                    )
-                status = "sha256-verified"
             results.append(
                 {
                     "model_id": model.get("id"),
                     "run_id": benchmark.get("run_id"),
                     "uri": uri,
-                    "status": status,
+                    "status": "available",
                 }
             )
     return results
@@ -133,12 +103,6 @@ def route_models(
     if not isinstance(metric_rules, list) or not metric_rules:
         raise ConfigError(f"routing policy for {task} has no metrics")
     candidates: list[Candidate] = []
-    verification_present = "_evidence_verification" in registry
-    verification = {
-        (str(item.get("model_id")), str(item.get("run_id"))): str(item.get("status"))
-        for item in registry.get("_evidence_verification", [])
-        if isinstance(item, dict)
-    }
     for model in registry["models"]:
         model_id = str(model["id"])
         supported_elements = set(model.get("elements", []))
@@ -151,21 +115,9 @@ def route_models(
         benchmark = _select_benchmark(model.get("benchmarks", []), task, scenario)
         metrics: dict[str, float] = {}
         samples = 0
-        evidence_status: str | None = None
         if benchmark is None:
             reasons.append(f"no benchmark for task={task}, scenario={scenario}")
         else:
-            if verification_present:
-                evidence_status = verification.get(
-                    (model_id, str(benchmark.get("run_id"))), "not-verified"
-                )
-                if (
-                    evidence_status != "sha256-verified"
-                    and policy.get("allow_unverified_evidence") is not True
-                ):
-                    reasons.append(
-                        f"benchmark evidence is {evidence_status}; full SHA-256 is required"
-                    )
             samples = int(benchmark.get("validation_samples", 0))
             raw_metrics = benchmark.get("metrics", {})
             for rule in metric_rules:
@@ -184,7 +136,6 @@ def route_models(
                 element_coverage=len(supported_elements),
                 validation_samples=samples,
                 registry_recommended=task in set(model.get("recommended_tasks", [])),
-                evidence_status=evidence_status,
             )
         )
 
@@ -233,7 +184,7 @@ def route_models(
         "selected_model": ranked[0].model_id if ranked else None,
         "ranking": [candidate.to_dict() for candidate in ranked],
         "rejected": [candidate.to_dict() for candidate in candidates if not candidate.eligible],
-        "evidence_verification": registry.get("_evidence_verification", []),
+        "evidence_files": registry.get("_evidence_files", []),
     }
 
 

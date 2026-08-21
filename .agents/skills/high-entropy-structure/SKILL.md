@@ -29,7 +29,7 @@ handling replay.
 
 ## Establish the scientific contract
 
-1. Confirm the exact prototype structure and its identity.
+1. Confirm the exact prototype structure path and composition.
 2. Confirm one explicit alloy sublattice selected by `prototype_species`. Do not claim
    arbitrary multi-sublattice support or introduce vacancies/charge disorder.
 3. Confirm the complete unique `allowed_species` list.
@@ -57,20 +57,20 @@ Never search for or execute a historical private script by default.
 
 Keep the operation `generate-sqs` local-only and `shell: false`. Use a fresh attempt;
 never overwrite an output directory/result manifest or delete an earlier attempt to
-simulate retry. Follow the MLIPFlow dry-run and approval token lifecycle before fresh
+simulate retry. Follow the MLIPFlow dry-run and boolean approval lifecycle before fresh
 generation.
 
 After execution, require Adapter `check/collect` and final plugin `OK`. Do not accept
 process exit zero or self-reported JSON alone. Confirm candidate IDs/order and coverage,
 integer compositions, structure count, per-candidate seed policy, prototype and
-composition-manifest identities, structure SHA-256, generator provenance, actual
+composition-manifest paths, generator provenance, actual
 structure composition, and any declared cluster vector.
 
 ## Report without overclaiming
 
 Briefly report mode, prototype, alloy sublattice, allowed species, candidate counts,
-supercell, cutoffs, `n_steps`, seed, generated count, output paths/fingerprints,
-generator/icet identity, and scientific limitations. Do not dump the full JSON unless
+supercell, cutoffs, `n_steps`, seed, generated count, output paths,
+generator/icet version, and scientific limitations. Do not dump the full JSON unless
 asked.
 
 Call each output a **generated SQS candidate**. Never equate deterministic same-seed

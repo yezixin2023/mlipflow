@@ -8,7 +8,6 @@ are tested directly rather than only through the adapters that will use them.
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -93,14 +92,6 @@ class ValueValidationTests(unittest.TestCase):
         self.assertFalse(kit.nonnegative_int(-1))
         self.assertFalse(kit.nonnegative_int(True))
 
-    def test_fingerprint_pattern(self) -> None:
-        self.assertTrue(kit.is_fingerprint("sha256:" + "a" * 64))
-        self.assertFalse(kit.is_fingerprint("sha256:" + "A" * 64))
-        self.assertFalse(kit.is_fingerprint("sha256:" + "a" * 63))
-        self.assertFalse(kit.is_fingerprint("a" * 64))
-        self.assertFalse(kit.is_fingerprint(None))
-
-
 class PathSafetyTests(unittest.TestCase):
     def test_safe_relative_rejects_escapes(self) -> None:
         self.assertTrue(kit.safe_relative("input/POSCAR"))
@@ -122,16 +113,6 @@ class FilesystemTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._temporary.cleanup()
-
-    def test_sha256_matches_hashlib(self) -> None:
-        import hashlib
-
-        path = self.root / "payload.bin"
-        payload = os.urandom(4096)
-        path.write_bytes(payload)
-        self.assertEqual(
-            "sha256:" + hashlib.sha256(payload).hexdigest(), kit.sha256_file(path)
-        )
 
     def test_ordinary_file_rejects_symlink_and_bounds(self) -> None:
         target = self.root / "real.txt"

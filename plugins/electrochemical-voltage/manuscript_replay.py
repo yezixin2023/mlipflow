@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import io
 import json
 import math
-import re
 import sys
 from pathlib import Path
 from typing import Any, Sequence
@@ -30,7 +28,6 @@ MODEL_COLUMNS = (
 )
 CSV_FIELDS = (
     "source_table",
-    "source_document_sha256",
     "unit_source",
     "prototype",
     "metal_composition",
@@ -45,7 +42,6 @@ DISCLAIMER = (
     "This artifact replays voltage values transcribed from SI Table S11; "
     "it does not recompute voltages from DFT or MLIP total energies."
 )
-_SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 class ReplayValidationError(ValueError):
@@ -103,8 +99,7 @@ def _parse_csv(raw: bytes) -> tuple[list[dict[str, Any]], dict[str, str]]:
         raise ReplayValidationError("input CSV must contain at least one evidence row")
 
     rows: list[dict[str, Any]] = []
-    identities: set[tuple[str, str, str, str]] = set()
-    source_document_sha256: str | None = None
+    seen_rows: set[tuple[str, str, str, str]] = set()
     unit_source: str | None = None
 
     for row_number, csv_row in enumerate(csv_rows, start=2):
@@ -116,22 +111,6 @@ def _parse_csv(raw: bytes) -> tuple[list[dict[str, Any]], dict[str, str]]:
         if source_table != SOURCE_TABLE:
             raise ReplayValidationError(
                 f"row {row_number}: source_table must be exactly {SOURCE_TABLE!r}"
-            )
-
-        row_document_sha256 = _text(
-            csv_row.get("source_document_sha256"),
-            field="source_document_sha256",
-            row_number=row_number,
-        ).lower()
-        if not _SHA256_PATTERN.fullmatch(row_document_sha256):
-            raise ReplayValidationError(
-                f"row {row_number}: source_document_sha256 must be 64 hexadecimal characters"
-            )
-        if source_document_sha256 is None:
-            source_document_sha256 = row_document_sha256
-        elif row_document_sha256 != source_document_sha256:
-            raise ReplayValidationError(
-                f"row {row_number}: source_document_sha256 differs from earlier rows"
             )
 
         row_unit_source = _text(
@@ -160,14 +139,14 @@ def _parse_csv(raw: bytes) -> tuple[list[dict[str, Any]], dict[str, str]]:
             row_number=row_number,
         )
         stage = _text(csv_row.get("stage"), field="stage", row_number=row_number)
-        identity = (prototype, composition, lithium_sequence, stage)
-        if identity in identities:
+        row_key = (prototype, composition, lithium_sequence, stage)
+        if row_key in seen_rows:
             raise ReplayValidationError(
                 "row "
                 f"{row_number}: duplicate evidence row for "
                 f"{prototype}/{composition}/{lithium_sequence}/{stage}"
             )
-        identities.add(identity)
+        seen_rows.add(row_key)
 
         reference = _finite_float(
             csv_row.get("reference_dft_v"), field="reference_dft_v", row_number=row_number
@@ -192,11 +171,10 @@ def _parse_csv(raw: bytes) -> tuple[list[dict[str, Any]], dict[str, str]]:
             }
         )
 
-    if source_document_sha256 is None or unit_source is None:  # pragma: no cover - guarded above
+    if unit_source is None:  # pragma: no cover - guarded above
         raise AssertionError("non-empty CSV did not produce source metadata")
     return rows, {
         "source_table": SOURCE_TABLE,
-        "source_document_sha256": source_document_sha256,
         "unit_source": unit_source,
     }
 
@@ -237,7 +215,6 @@ def build_artifacts(raw: bytes) -> dict[str, dict[str, Any]]:
         {"rank": rank, **metrics}
         for rank, metrics in enumerate(ordered, start=1)
     ]
-    evidence_sha256 = hashlib.sha256(raw).hexdigest()
     common = {
         "schema_version": 1,
         "evidence_mode": "manuscript-table-replay",
@@ -266,8 +243,7 @@ def build_artifacts(raw: bytes) -> dict[str, dict[str, Any]]:
         "provenance.json": {
             **common,
             "artifact_type": "manuscript-voltage-replay-provenance",
-            "source_document_sha256": source["source_document_sha256"],
-            "input_evidence_sha256": evidence_sha256,
+            "input_path_recorded_by_adapter": True,
             "unit_source": source["unit_source"],
             "model_execution": False,
             "dft_execution": False,
