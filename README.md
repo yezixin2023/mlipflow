@@ -183,7 +183,6 @@ Start with the [`documentation index`](docs/README.md). It separates user guides
 
 Key references include:
 
-- [`docs/TASKFLOW_REFERENCE.md`](docs/TASKFLOW_REFERENCE.md) — workflow lifecycle and command behavior;
 - [`docs/AGENT_SKILLS.md`](docs/AGENT_SKILLS.md) — detailed Agent Skill contracts;
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — architecture and trust boundaries;
 - [`docs/PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md) — adding or maintaining scientific plugins;
