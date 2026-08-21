@@ -7,4 +7,4 @@ date-released: 2026-08-10
 authors:
   - name: "MLIPFlow contributors"
 license: Apache-2.0
-abstract: "A deterministic, agent-supervised workflow layer for machine-learned interatomic-potential research."
+abstract: "Reproducible workflow orchestration for machine-learned interatomic-potential research across local and HPC environments."
