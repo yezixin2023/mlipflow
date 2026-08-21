@@ -6,14 +6,14 @@ This index separates the main user path from implementation references, validati
 
 1. Read the top-level [`README`](../README.md) for installation, the command model, the combined plugin/Agent Skill capability matrix, and a replay quick start.
 2. Run the small [`high_entropy_sulfide`](../examples/high_entropy_sulfide/) replay example before launching external scientific software.
-3. Use [`TASKFLOW_REFERENCE.md`](TASKFLOW_REFERENCE.md) when building or debugging a project DAG.
+3. Use [`ARCHITECTURE.md`](ARCHITECTURE.md) for execution boundaries, state, plugins, and artifact flow.
 4. Check [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) before depending on a scientific capability.
 
 ## Choose a path
 
 | Goal | Primary documentation | Related examples or references |
 |---|---|---|
-| Create and operate a workflow | [`README`](../README.md), [`TASKFLOW_REFERENCE.md`](TASKFLOW_REFERENCE.md) | [`examples/high_entropy_sulfide/`](../examples/high_entropy_sulfide/) |
+| Create and operate a workflow | [`README`](../README.md), [`ARCHITECTURE.md`](ARCHITECTURE.md) | [`examples/high_entropy_sulfide/`](../examples/high_entropy_sulfide/) |
 | Configure a Slurm cluster | [`CLUSTER_ENVIRONMENTS.md`](CLUSTER_ENVIRONMENTS.md) | [`examples/site_templates/`](../examples/site_templates/), [`HPC_VALIDATION.md`](HPC_VALIDATION.md) |
 | Supervise work with an Agent Skill | [`AGENT_SKILLS.md`](AGENT_SKILLS.md) | [`.agents/skills/`](../.agents/skills/) |
 | Prepare DFT labels and shared datasets | `dft-labeling` [`plugin.yaml`](../plugins/dft-labeling/plugin.yaml) | [`examples/training_all_models/`](../examples/training_all_models/) |
@@ -27,7 +27,6 @@ This index separates the main user path from implementation references, validati
 ## Reference documentation
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) describes core services, execution boundaries, trust assumptions, and artifact flow.
-- [`TASKFLOW_REFERENCE.md`](TASKFLOW_REFERENCE.md) describes CLI behavior, state transitions, approvals, retries, and reconciliation.
 - [`PLUGIN_DEVELOPMENT.md`](PLUGIN_DEVELOPMENT.md) defines the plugin lifecycle and review expectations.
 - [`AGENT_SKILLS.md`](AGENT_SKILLS.md) explains when each bundled Skill should supervise a capability and what must remain delegated to plugins.
 - [`CLUSTER_ENVIRONMENTS.md`](CLUSTER_ENVIRONMENTS.md) documents isolated scientific environments and site-template binding.
