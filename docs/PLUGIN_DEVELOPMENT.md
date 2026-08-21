@@ -43,7 +43,7 @@ class Adapter:
 
 遵守 wrap-before-rewrite：
 
-1. 在 `CODEBASE_INVENTORY.md` 中记录来源和 A–E 分类；
+1. 在 `plugin.yaml`、相关文档或 pull request 中记录来源、版本、许可证/再分发边界、修改范围和验证证据；
 2. 先把硬编码路径/参数变成显式 CLI；
 3. 通过 argv 列表调用，永远 `shell=False`；
 4. 固定 cwd 和允许的环境变量，不继承/记录敏感变量；
