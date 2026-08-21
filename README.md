@@ -31,7 +31,7 @@ cd mlipflow
 python -m venv .venv
 source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install ".[local]"
+python -m pip install -e ".[local]"
 
 mlipflow --version
 ```
@@ -128,11 +128,11 @@ Each handoff retains the producing node, attempt, artifact role, path identity, 
 
 | Install target | Command | Intended use |
 |---|---|---|
-| Core | `python -m pip install .` | Workflow configuration, state, replay, inspection, and plugins. |
-| Scientific helpers | `python -m pip install ".[science]"` | NumPy, ASE, `icet`, pandas, and Plotly helpers. |
-| DFT and datasets | `python -m pip install ".[dft]"` | `pymatgen`, `dpdata`, and ASE support for VASP preparation and conversion. |
-| Formal transport | `python -m pip install ".[transport]"` | `pymatgen-analysis-diffusion` and direct analysis dependencies; Python `>=3.10`. |
-| Complete local | `python -m pip install ".[local]"` | Supported union of `science`, `dft`, and `transport`; Python `>=3.10`. |
+| Core | `python -m pip install -e .` | Workflow configuration, state, replay, inspection, and plugins. |
+| Scientific helpers | `python -m pip install -e ".[science]"` | NumPy, ASE, `icet`, pandas, and Plotly helpers. |
+| DFT and datasets | `python -m pip install -e ".[dft]"` | `pymatgen`, `dpdata`, and ASE support for VASP preparation and conversion. |
+| Formal transport | `python -m pip install -e ".[transport]"` | `pymatgen-analysis-diffusion` and direct analysis dependencies; Python `>=3.10`. |
+| Complete local | `python -m pip install -e ".[local]"` | Supported union of `science`, `dft`, and `transport`; Python `>=3.10`. |
 | Development | `python -m pip install -e ".[dev]"` | Tests, schema validation, linting, and development dependencies. |
 
 Projects declare a named backend profile and abstract resources such as CPUs, GPUs, memory, and wall time. SSH aliases, partitions, accounts, modules, executables, launchers, canonical data/model roots, and remote work roots belong in the user-local site configuration, normally `~/.mlipflow/site.yaml`, and site-owned templates. This keeps `project.yaml` portable and private infrastructure out of research repositories.
@@ -149,7 +149,7 @@ Software implementation, workflow completion, numerical agreement, and real-clus
 
 Researchers remain responsible for validating DFT settings, models, datasets, simulation parameters, convergence, and uncertainty for their system.
 
-The [`documentation index`](docs/README.md) organizes user guidance, HPC setup, extension references, validation evidence, and manuscript-specific reproduction material. Core references include [`ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`AGENT_SKILLS.md`](docs/AGENT_SKILLS.md), [`CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md), and [`PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md).
+The [`documentation index`](docs/README.md) organizes user guidance, HPC setup, extension references, validation evidence, and manuscript-specific reproduction material. Core references include [`TASKFLOW_REFERENCE.md`](docs/TASKFLOW_REFERENCE.md), [`AGENT_SKILLS.md`](docs/AGENT_SKILLS.md), [`ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md).
 
 ## Contributing, security, and citation
 
