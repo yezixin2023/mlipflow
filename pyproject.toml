@@ -22,7 +22,6 @@ keywords = [
 ]
 dependencies = ["PyYAML>=6.0"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
@@ -34,7 +33,7 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/yezixin2023/mlipflow"
 Repository = "https://github.com/yezixin2023/mlipflow"
-Documentation = "https://github.com/yezixin2023/mlipflow#readme"
+Documentation = "https://github.com/yezixin2023/mlipflow/blob/main/docs/README.md"
 Issues = "https://github.com/yezixin2023/mlipflow/issues"
 Changelog = "https://github.com/yezixin2023/mlipflow/blob/main/CHANGELOG.md"
 
@@ -72,12 +71,14 @@ where = ["src"]
 [tool.setuptools.data-files]
 "share/mlipflow/schemas" = ["schemas/*.json"]
 "share/mlipflow/docs" = ["docs/*.md"]
+"share/mlipflow/docs/assets" = ["docs/assets/*.png"]
 "share/mlipflow/reports" = ["reports/*.json", "reports/*.md"]
 "share/mlipflow/examples/high_entropy_sulfide" = ["examples/high_entropy_sulfide/*.md", "examples/high_entropy_sulfide/*.yaml"]
 "share/mlipflow/examples/high_entropy_sulfide_reproduction" = ["examples/high_entropy_sulfide_reproduction/*.md", "examples/high_entropy_sulfide_reproduction/*.yaml", "examples/high_entropy_sulfide_reproduction/*.py"]
 "share/mlipflow/examples/high_entropy_sulfide_reproduction/evidence" = ["examples/high_entropy_sulfide_reproduction/evidence/*.json", "examples/high_entropy_sulfide_reproduction/evidence/*.csv"]
 "share/mlipflow/examples/high_entropy_sulfide_reproduction/benchmark" = ["examples/high_entropy_sulfide_reproduction/benchmark/*.json", "examples/high_entropy_sulfide_reproduction/benchmark/*.csv"]
 "share/mlipflow/examples/high_entropy_sulfide_reproduction/reports" = ["examples/high_entropy_sulfide_reproduction/reports/*.json", "examples/high_entropy_sulfide_reproduction/reports/*.md"]
+"share/mlipflow/examples/aimd_reference_validation" = ["examples/aimd_reference_validation/*.md", "examples/aimd_reference_validation/*.yaml"]
 "share/mlipflow/examples/lasp_random_walk" = ["examples/lasp_random_walk/*.md", "examples/lasp_random_walk/*.in"]
 "share/mlipflow/examples/lasp_random_walk/cluster" = ["examples/lasp_random_walk/cluster/*.example"]
 "share/mlipflow/examples/training_all_models" = ["examples/training_all_models/*.md", "examples/training_all_models/*.json", "examples/training_all_models/*.yaml"]
@@ -86,6 +87,8 @@ where = ["src"]
 "share/mlipflow/examples/lammps_mlip_inputs" = ["examples/lammps_mlip_inputs/*.md", "examples/lammps_mlip_inputs/*.json", "examples/lammps_mlip_inputs/*.example"]
 "share/mlipflow/examples/active_learning_validation" = ["examples/active_learning_validation/*.md", "examples/active_learning_validation/*.py"]
 "share/mlipflow/examples/active_learning_validation/cluster" = ["examples/active_learning_validation/cluster/*.example"]
+"share/mlipflow/examples/site_templates/slurm/mpi" = ["examples/site_templates/slurm/mpi/*.example"]
+"share/mlipflow/examples/site_templates/slurm/single-python" = ["examples/site_templates/slurm/single-python/*.example"]
 "share/mlipflow/plugins/high-entropy-structure" = ["plugins/high-entropy-structure/*.yaml", "plugins/high-entropy-structure/*.py"]
 "share/mlipflow/plugins/pes-sampling" = ["plugins/pes-sampling/*.yaml", "plugins/pes-sampling/*.py"]
 "share/mlipflow/plugins/dft-labeling" = ["plugins/dft-labeling/*.yaml", "plugins/dft-labeling/*.py"]
