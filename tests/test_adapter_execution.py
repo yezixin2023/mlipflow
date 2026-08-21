@@ -10,6 +10,7 @@ from unittest.mock import patch
 from mlipflow.backends import ExecutionResult
 from mlipflow.config import load_project
 from mlipflow.errors import PluginError, StateError
+from mlipflow.portable import ATTEMPT_DIR_TOKEN, PROJECT_ROOT_TOKEN
 from mlipflow.services import (
     initialize,
     make_retry_plan,
@@ -128,7 +129,9 @@ class Adapter:
             )
             third = make_run_plan(project, "bound", plugins)
             self.assertEqual(second, third)
-            self.assertEqual(str(worker), third["adapter_plan"]["argv"][0])
+            recorded_worker = third["adapter_plan"]["argv"][0].replace("\\", "/")
+            self.assertEqual(f"{PROJECT_ROOT_TOKEN}/worker.py", recorded_worker)
+            self.assertEqual(ATTEMPT_DIR_TOKEN, third["adapter_plan"]["cwd"])
 
     def test_retry_limit_and_manifest_lineage_are_enforced(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
