@@ -6,7 +6,7 @@ This index separates the main user path from implementation references, validati
 
 1. Read the top-level [`README`](../README.md) for installation, the command model, the combined plugin/Agent Skill capability matrix, and a replay quick start.
 2. Run the small [`high_entropy_sulfide`](../examples/high_entropy_sulfide/) replay example before launching external scientific software.
-3. Use [`ARCHITECTURE.md`](ARCHITECTURE.md) for execution boundaries, state, plugins, and artifact flow.
+3. Use [`ARCHITECTURE.md`](ARCHITECTURE.md) together with `mlipflow --help` and `mlipflow inspect NODE` when building or debugging a project DAG.
 4. Check [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) before depending on a scientific capability.
 
 ## Choose a path
@@ -27,9 +27,12 @@ This index separates the main user path from implementation references, validati
 ## Reference documentation
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) describes core services, execution boundaries, trust assumptions, and artifact flow.
+- The installed `mlipflow --help` output is the authoritative command reference; [`ARCHITECTURE.md`](ARCHITECTURE.md) explains state transitions, approvals, retries, and reconciliation boundaries.
 - [`PLUGIN_DEVELOPMENT.md`](PLUGIN_DEVELOPMENT.md) defines the plugin lifecycle and review expectations.
 - [`AGENT_SKILLS.md`](AGENT_SKILLS.md) explains when each bundled Skill should supervise a capability and what must remain delegated to plugins.
 - [`CLUSTER_ENVIRONMENTS.md`](CLUSTER_ENVIRONMENTS.md) documents isolated scientific environments and site-template binding.
+
+Historical migration, source-audit, and predecessor-project notes are intentionally omitted from this public navigation. They are not required to install, operate, extend, or validate MLIPFlow.
 
 ## Validation evidence
 
