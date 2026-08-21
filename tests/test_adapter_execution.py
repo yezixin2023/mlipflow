@@ -128,7 +128,7 @@ class Adapter:
             )
             third = make_run_plan(project, "bound", plugins)
             self.assertEqual(second, third)
-            self.assertEqual(str(worker), third["adapter_plan"]["argv"][0])
+            self.assertEqual("{PROJECT_ROOT}/worker.py", third["adapter_plan"]["argv"][0])
 
     def test_retry_limit_and_manifest_lineage_are_enforced(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

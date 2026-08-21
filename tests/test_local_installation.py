@@ -73,7 +73,7 @@ def test_local_extra_excludes_development_and_mlip_frameworks() -> None:
 def test_readme_recommends_the_packaged_local_extra_by_default() -> None:
     assert "local" in _extras()
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    install_section = readme.split("### 1. Install from source", 1)[1]
-    recommended_section = install_section.split("#### Advanced / minimal installation", 1)[0]
-    assert 'python -m pip install -e ".[local]"' in recommended_section
-    assert "python -m pip install -e .\n" not in recommended_section
+    quick_start = readme.split("## Quick start", 1)[1]
+    quick_start = quick_start.split("## Core workflow model", 1)[0]
+    assert 'python -m pip install ".[local]"' in quick_start
+    assert "python -m pip install -e .\n" not in quick_start
