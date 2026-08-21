@@ -17,10 +17,10 @@ MLIPFlow follows semantic versioning for the Python package. Scientific validati
 ### Changed
 
 - Reworked the top-level README around researcher tasks, a shorter quick start, direct artifact handoff, environment boundaries, and scientific validation.
-- Combined scientific plugins and their corresponding Agent Skills into one capability matrix instead of maintaining duplicate tables.
+- Combined scientific plugins and their corresponding Agent Skills into one capability matrix, and shortened the detailed Agent Skills guide to supervision and maintenance rules.
 - Removed the previous maturity qualifier from user-facing documentation and package metadata without changing the package version or creating a release tag.
 - Clarified that MLIP framework environments, cluster software, model weights, datasets, and licensed scientific resources remain user- or site-owned.
-- Refreshed security guidance and package-distribution metadata for external users.
+- Refreshed security guidance, citation metadata, and package-distribution metadata for external users.
 
 ## 0.1.0 - 2026-08-10
 
