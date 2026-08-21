@@ -47,6 +47,57 @@ when creating and validating the environment and in its framework-specific
 `run.sh`. Do not assume that a successful import on a login node proves that a GPU
 compute node has a working runtime.
 
+## External scientific executables
+
+Some MLIPFlow capabilities require scientific programs that are installed and
+maintained by the user or cluster site rather than by MLIPFlow itself.
+
+### LAMMPS for MLIP molecular dynamics
+
+`lammps-md` requires a site-installed LAMMPS build that provides the interface
+used by the selected MLIP backend. A generic `lmp` executable is not necessarily
+sufficient.
+
+DeepMD, MACE, and MatGL/M3GNet use different LAMMPS interfaces, and those
+interfaces may require different LAMMPS versions, compiled packages, external
+libraries, accelerator options, or build configurations. Follow the
+[LAMMPS build documentation](https://docs.lammps.org/Build.html) together with
+the installation instructions for the selected MLIP interface, and validate the
+resulting executable on the target compute nodes.
+
+A site may therefore maintain multiple validated LAMMPS builds. Bind the
+appropriate executable, launcher, modules, and interface paths only in the
+corresponding site-owned `lammps-<framework>-<target>/run.sh` template. Do not
+assume that one LAMMPS binary supports every MLIP backend.
+
+If you do not want to compile and maintain MLIP-specific LAMMPS builds, use
+`ase-md` instead. `ase-md` runs dynamics through the corresponding ASE
+calculator and supports DeepMD, MACE, MatGL/M3GNet, and CHGNet without requiring
+an external LAMMPS executable.
+
+### VASP for DFT labeling
+
+`dft-labeling` does not provide or install VASP. VASP is licensed software and
+must be obtained and compiled independently by a licensed user or site
+administrator following the
+[official VASP installation documentation](https://vasp.at/wiki/Installing_VASP.6.X.X).
+
+The site is responsible for providing a validated VASP executable together with
+the required compiler/runtime modules, MPI launcher, and numerical libraries.
+Bind these only in the site-owned `vasp/run.sh` or `vasp-batch/run.sh` template;
+do not place absolute VASP executable paths or cluster-specific launcher settings
+in portable project files or plugin parameters.
+
+MLIPFlow also does not distribute POTCAR data. `dft-labeling` assembles
+runtime-only POTCAR inputs from the licensed site/user pseudopotential
+installation and excludes POTCAR files from portable results, reports, and
+repository content.
+
+Before production DFT or AIMD runs, validate the VASP build on the target compute
+nodes. Successful process or scheduler termination is not sufficient: the
+`dft-labeling` scientific completion checks must still confirm the required
+electronic and, where applicable, ionic convergence.
+
 ## Create the DeepMD environment
 
 Create an environment only for the backend used by the approved DeepMD config.

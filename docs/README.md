@@ -7,7 +7,6 @@ This index separates the main user path from implementation references, validati
 1. Read the top-level [`README`](../README.md) for installation, the command model, the combined plugin/Agent Skill capability matrix, and a replay quick start.
 2. Run the small [`high_entropy_sulfide`](../examples/high_entropy_sulfide/) replay example before launching external scientific software.
 3. Use [`ARCHITECTURE.md`](ARCHITECTURE.md) together with `mlipflow --help` and `mlipflow inspect NODE` when building or debugging a project DAG.
-4. Check [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) before depending on a scientific capability.
 
 ## Choose a path
 
