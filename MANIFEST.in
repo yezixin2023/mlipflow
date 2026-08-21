@@ -1,8 +1,8 @@
-include README.md LICENSE NOTICE CHANGELOG.md CITATION.cff AGENTS.md CONTRIBUTING.md SECURITY.md
+include README.md LICENSE NOTICE CHANGELOG.md CITATION.cff CONTRIBUTING.md SECURITY.md
 recursive-include schemas *.json
 recursive-include plugins *.yaml *.py
 recursive-include .agents *.md *.yaml
-recursive-include docs *.md
-recursive-include examples *.md *.yaml *.json *.csv *.py
+recursive-include docs *.md *.png
+recursive-include examples *.md *.yaml *.json *.csv *.py *.in *.example
 recursive-include reports *.md *.json
 global-exclude .DS_Store *.py[cod]

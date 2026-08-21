@@ -4,7 +4,7 @@ MLIPFlow coordinates local programs, scientific adapters, SSH connections, sched
 
 ## Supported versions
 
-MLIPFlow is currently an alpha project. Security fixes are targeted at the latest package version and the current `main` branch. Older versions do not currently have a long-term support commitment.
+Security fixes target the latest published package version and the current `main` branch. The project does not currently maintain long-term-support branches for older releases.
 
 ## Reporting a vulnerability
 
@@ -21,7 +21,7 @@ A useful report includes:
 - whether the issue affects local, Slurm, or SSH + Slurm execution;
 - any known mitigation or workaround.
 
-Use fictional hostnames and revoked/test credentials in reproductions.
+Use fictional hostnames and revoked or test credentials in reproductions.
 
 ## Security-relevant issues
 
@@ -30,10 +30,10 @@ Examples include:
 - a documented read-only command performing writes, launching a process, accessing the network, or mutating scheduler state;
 - bypassing the explicit approval requirement for external or expensive work;
 - command, argument, path, manifest, SSH-profile, or template injection;
-- path traversal or artifact handling that can overwrite files outside the intended project/attempt workspace;
+- path traversal or artifact handling that can overwrite files outside the intended project or attempt workspace;
 - leakage of passwords, tokens, private keys, credentials, or sensitive cluster data into logs or manifests;
 - unsafe plugin discovery or configuration loading that executes code unexpectedly;
-- scheduler staging/fetch behavior that accepts the wrong project, node, attempt, or output path;
+- scheduler staging or fetch behavior that accepts the wrong project, node, attempt, or output path;
 - unsafe loading of model or serialized data that creates an unexpected code-execution path in MLIPFlow-controlled behavior.
 
 A disagreement about numerical accuracy is normally a scientific bug rather than a security vulnerability. If a scientific-data path also enables code execution, destructive writes, credential exposure, or another security impact, report it privately as a security issue.
@@ -50,11 +50,11 @@ Treat the following as trusted executable inputs:
 - model formats that may deserialize executable objects;
 - scripts referenced by your research workflow.
 
-Review third-party plugins before running `run --dry-run`: planning a selected adapter imports and executes its Python planning code even though the dry-run is intended to avoid scientific execution or scheduler submission.
+Review third-party plugins before running `run --dry-run`: planning a selected adapter imports and executes its Python planning code even though the dry run is intended to avoid scientific execution or scheduler submission.
 
 ## Operational guidance
 
-- Keep SSH authentication in your normal SSH/agent configuration and user-local site configuration; do not place secrets in `project.yaml`.
+- Keep SSH authentication in your normal SSH or agent configuration and user-local site configuration; do not place secrets in `project.yaml`.
 - Review dry-run plans before approving expensive work, including commands, inputs, backend, resources, remote paths, and staged files.
 - Use least-privilege cluster accounts and filesystem permissions.
 - Keep site-owned templates and scientific environments under normal change control.
@@ -63,6 +63,6 @@ Review third-party plugins before running `run --dry-run`: planning a selected a
 
 ## Current safeguards
 
-The current codebase includes controls such as explicit argv execution for local external programs, bounded project/attempt artifact paths, explicit approval for approval-gated execution, preserved attempt lineage, output allowlists and size bounds, and scientific completion checks after scheduler completion.
+The current codebase includes controls such as explicit argv execution for local external programs, bounded project and attempt artifact paths, explicit approval for approval-gated execution, preserved attempt lineage, output allowlists and size bounds, and scientific completion checks after scheduler completion.
 
 These controls reduce orchestration risk; they do not constitute a security audit of VASP, LAMMPS, LASP, MLIP frameworks, model files, site scripts, SSH, Slurm, or other external components used through MLIPFlow.
