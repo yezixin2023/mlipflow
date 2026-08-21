@@ -480,11 +480,22 @@ def _adapter_context(project: Project, node: dict[str, Any], attempt: int) -> di
             input_paths.extend(
                 str(record["attempt_dir"])
                 for record in upstream_artifacts
-                if record["plugin_id"] in {"ase-md", "lammps-md"}
-                and any(
-                    item.get("role") == "trajectory"
-                    for item in record["artifacts"]
-                    if isinstance(item, dict)
+                if (
+                    record["plugin_id"] in {"ase-md", "lammps-md"}
+                    and any(
+                        item.get("role") == "trajectory"
+                        for item in record["artifacts"]
+                        if isinstance(item, dict)
+                    )
+                )
+                or (
+                    record["plugin_id"] == "dft-labeling"
+                    and record["state"] == RunState.OK.value
+                    and any(
+                        item.get("role") == "aimd-trajectory"
+                        for item in record["artifacts"]
+                        if isinstance(item, dict)
+                    )
                 )
             )
             inputs["input_paths"] = list(dict.fromkeys(input_paths))

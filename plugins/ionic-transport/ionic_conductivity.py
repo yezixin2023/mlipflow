@@ -76,6 +76,7 @@ class RunData:
     uses_ase: bool = False
     source_paths: tuple[Path, ...] = ()
     handoff: dict[str, Any] | None = None
+    structures: tuple[object, ...] = ()
 
 
 def require_formal_diffusion_api():
@@ -329,6 +330,8 @@ def discover_run_dirs(
                 native_segments.setdefault(logical, set()).add(root.parent.resolve())
             continue
         dataset = root.name if root.name else root.parent.name
+        if root.name.startswith("attempt-") and root.parent.parent.name == "runs":
+            dataset = root.parent.name
         if not root.exists():
             raise FileNotFoundError(f"Input path does not exist: {root}")
         for dirpath, _, filenames in os.walk(root):
@@ -689,6 +692,7 @@ def load_ase_trajectory(
         time_step_fs=dt_fs,
         step_skip=int(args.diffusion_analyzer_step_skip),
         uses_ase=True,
+        structures=tuple(used_structures),
     )
 
 
@@ -1188,6 +1192,7 @@ def load_lammps_trajectory(
         structure=used_structures[0],
         time_step_fs=frame_step_fs,
         step_skip=int(args.diffusion_analyzer_step_skip),
+        structures=tuple(used_structures),
     )
 
 
@@ -1385,6 +1390,7 @@ def load_vasp_aimd(run_dir: Path, dataset: str, args) -> RunData:
         structure=used_structures[0],
         time_step_fs=potim_fs,
         step_skip=int(args.diffusion_analyzer_step_skip),
+        structures=tuple(used_structures),
     )
 
 
@@ -1752,6 +1758,73 @@ def load_run_data(
     raise FileNotFoundError(f"No known post-processing input in {run_dir}")
 
 
+def radial_distribution_curve(
+    structures: tuple[object, ...],
+    pair: tuple[str, str],
+    r_min_angstrom: float,
+    r_max_angstrom: float,
+    bins: int,
+) -> dict[str, np.ndarray]:
+    """Average one partial RDF over an explicit trajectory window."""
+
+    if not structures:
+        raise ValueError("RDF requires trajectory structures")
+    edges = np.linspace(float(r_min_angstrom), float(r_max_angstrom), int(bins) + 1)
+    shell_volumes = 4.0 * math.pi / 3.0 * (edges[1:] ** 3 - edges[:-1] ** 3)
+    counts = np.zeros(int(bins), dtype=float)
+    normalization = np.zeros(int(bins), dtype=float)
+    first_specie, second_specie = pair
+
+    for structure in structures:
+        matrix = np.asarray(structure.lattice.matrix, dtype=float)
+        volume = float(abs(np.linalg.det(matrix)))
+        face_areas = [
+            np.linalg.norm(np.cross(matrix[1], matrix[2])),
+            np.linalg.norm(np.cross(matrix[0], matrix[2])),
+            np.linalg.norm(np.cross(matrix[0], matrix[1])),
+        ]
+        half_minimum_height = 0.5 * min(volume / area for area in face_areas)
+        if float(r_max_angstrom) > half_minimum_height + 1.0e-10:
+            raise ValueError(
+                "rdf_r_max_angstrom exceeds half the minimum periodic cell height"
+            )
+
+        symbols = [str(site.specie.symbol) for site in structure]
+        first = np.asarray(
+            [index for index, symbol in enumerate(symbols) if symbol == first_specie],
+            dtype=int,
+        )
+        second = np.asarray(
+            [index for index, symbol in enumerate(symbols) if symbol == second_specie],
+            dtype=int,
+        )
+        if first.size == 0 or second.size == 0:
+            raise ValueError(
+                f"RDF pair {first_specie}-{second_specie} is absent from a trajectory frame"
+            )
+
+        distances = np.asarray(structure.distance_matrix, dtype=float)
+        if first_specie == second_specie:
+            if first.size < 2:
+                raise ValueError(f"RDF pair {first_specie}-{second_specie} needs two atoms")
+            selected = distances[np.ix_(first, first)][np.triu_indices(first.size, k=1)]
+            pair_count = first.size * (first.size - 1) / 2.0
+        else:
+            selected = distances[np.ix_(first, second)].reshape(-1)
+            pair_count = float(first.size * second.size)
+        counts += np.histogram(selected, bins=edges)[0]
+        normalization += pair_count * shell_volumes / volume
+
+    if np.any(normalization <= 0.0):
+        raise ValueError("RDF normalization is not positive")
+    return {
+        "r_min_angstrom": edges[:-1],
+        "r_max_angstrom": edges[1:],
+        "r_center_angstrom": 0.5 * (edges[:-1] + edges[1:]),
+        "g_r": counts / normalization,
+    }
+
+
 def density_m3(n_mobile: int | None, volume_A3: float | None):
     if n_mobile is None or volume_A3 is None or volume_A3 <= 0:
         return None
@@ -1959,6 +2032,28 @@ def summarize_arrhenius_one(results_df: pd.DataFrame, args):
         T, D, float(args.target_temperature_K), mode="linear"
     )
 
+    single = {
+        "Ea_eV": float(ea_eV),
+        "Ea_stderr_eV": finite_or_none(ea_std_eV),
+        "D0_cm2_s": float(prefactor_cm2_s),
+        f"D_{args.target_temperature_K:g}K_cm2_s": float(target_diffusivity),
+    }
+    target_rows = results_df.loc[
+        np.isclose(
+            results_df["temperature_K"].to_numpy(dtype=float),
+            float(args.target_temperature_K),
+            rtol=0.0,
+            atol=1.0e-8,
+        )
+    ]
+    target_conductivity = [
+        finite_or_none(value)
+        for value in target_rows["conductivity_NE_mS_cm"].tolist()
+    ]
+    target_conductivity = [value for value in target_conductivity if value is not None]
+    if len(target_conductivity) == 1:
+        single[f"conductivity_{args.target_temperature_K:g}K_mS_cm"] = target_conductivity[0]
+
     return {
         "fit_scope": "all",
         "specie": args.specie,
@@ -1968,12 +2063,7 @@ def summarize_arrhenius_one(results_df: pd.DataFrame, args):
         "fit_diffusivities_cm2_s": D.tolist(),
         "fit_row_indices": np.flatnonzero(valid).astype(int).tolist(),
         "arrhenius_method": "pymatgen-fit-arrhenius-linear",
-        "single": {
-            "Ea_eV": float(ea_eV),
-            "Ea_stderr_eV": finite_or_none(ea_std_eV),
-            "D0_cm2_s": float(prefactor_cm2_s),
-            f"D_{args.target_temperature_K:g}K_cm2_s": float(target_diffusivity),
-        },
+        "single": single,
     }
 
 
@@ -2001,6 +2091,247 @@ def summarize_arrhenius(results_df: pd.DataFrame, args):
         "datasets": summaries,
         "dataset_fit_failures": failures,
     }
+
+
+def _temperature_pairs(
+    reference_runs: list[RunData], candidate_runs: list[RunData]
+) -> list[tuple[RunData, RunData]]:
+    pairs: list[tuple[RunData, RunData]] = []
+    for reference in reference_runs:
+        matches = [
+            candidate
+            for candidate in candidate_runs
+            if math.isclose(
+                float(candidate.temperature_K),
+                float(reference.temperature_K),
+                rel_tol=0.0,
+                abs_tol=1.0e-8,
+            )
+        ]
+        if len(matches) > 1:
+            raise ValueError(
+                f"multiple MLIP trajectories match {reference.temperature_K:g} K"
+            )
+        if matches:
+            pairs.append((reference, matches[0]))
+    return sorted(pairs, key=lambda item: float(item[0].temperature_K))
+
+
+def _result_row(rows: list[dict[str, Any]], run: RunData) -> dict[str, Any]:
+    matches = [
+        row
+        for row in rows
+        if Path(str(row["run_dir"])).resolve() == run.run_dir.resolve()
+        and math.isclose(
+            float(row["temperature_K"]),
+            float(run.temperature_K),
+            rel_tol=0.0,
+            abs_tol=1.0e-8,
+        )
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"transport result does not uniquely match {run.run_dir}")
+    return matches[0]
+
+
+def _dataset_fit(summary: dict[str, Any], dataset: str) -> dict[str, Any] | None:
+    datasets = summary.get("datasets")
+    if isinstance(datasets, dict):
+        value = datasets.get(dataset)
+        return value if isinstance(value, dict) else None
+    if isinstance(summary.get("single"), dict):
+        return summary
+    return None
+
+
+def build_aimd_mlip_comparison(
+    runs: list[RunData],
+    rows: list[dict[str, Any]],
+    summary: dict[str, Any],
+    args,
+) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
+    """Build RDF curves and metric-only benchmark pairs from analyzed trajectories."""
+
+    reference_runs = [run for run in runs if run.source_kind == "vasp_trajectory"]
+    candidate_runs = [
+        run
+        for run in runs
+        if run.source_kind in {
+            "ase_md_artifact",
+            "ase_trajectory",
+            "lammps_md_artifact",
+            "lammps_trajectory",
+        }
+    ]
+    if not reference_runs or not candidate_runs or len(reference_runs) + len(candidate_runs) != len(runs):
+        raise ValueError(
+            "RDF comparison requires only VASP AIMD reference and ASE/LAMMPS MLIP trajectories"
+        )
+    common = _temperature_pairs(reference_runs, candidate_runs)
+    if not common:
+        raise ValueError("AIMD and MLIP trajectories have no common temperature")
+
+    requested_temperature = getattr(args, "rdf_temperature_K", None)
+    if requested_temperature is None:
+        if len(common) != 1:
+            raise ValueError(
+                "rdf_temperature_k is required when more than one common temperature is available"
+            )
+        rdf_reference, rdf_candidate = common[0]
+    else:
+        selected = [
+            pair
+            for pair in common
+            if math.isclose(
+                float(pair[0].temperature_K),
+                float(requested_temperature),
+                rel_tol=0.0,
+                abs_tol=1.0e-8,
+            )
+        ]
+        if len(selected) != 1:
+            raise ValueError("rdf_temperature_k does not select one common-temperature pair")
+        rdf_reference, rdf_candidate = selected[0]
+
+    pair = tuple(args.rdf_pair)
+    reference_curve = radial_distribution_curve(
+        rdf_reference.structures,
+        pair,
+        args.rdf_r_min_angstrom,
+        args.rdf_r_max_angstrom,
+        args.rdf_bins,
+    )
+    candidate_curve = radial_distribution_curve(
+        rdf_candidate.structures,
+        pair,
+        args.rdf_r_min_angstrom,
+        args.rdf_r_max_angstrom,
+        args.rdf_bins,
+    )
+    difference = candidate_curve["g_r"] - reference_curve["g_r"]
+    curve_table = {
+        "r_min_angstrom": reference_curve["r_min_angstrom"],
+        "r_max_angstrom": reference_curve["r_max_angstrom"],
+        "r_center_angstrom": reference_curve["r_center_angstrom"],
+        "aimd_g_r": reference_curve["g_r"],
+        "mlip_g_r": candidate_curve["g_r"],
+        "difference": difference,
+    }
+
+    def evidence_record(task: str, target: str, unit: str, reference, prediction):
+        return {
+            "model": args.comparison_model,
+            "task": task,
+            "scenario": args.comparison_scenario,
+            "split": args.comparison_split,
+            "target": target,
+            "unit": unit,
+            "reference": json_ready(reference),
+            "prediction": json_ready(prediction),
+        }
+
+    temperature_label = f"{rdf_reference.temperature_K:g}k".replace(".", "p")
+    pair_label = f"{pair[0]}-{pair[1]}".lower()
+    records = [
+        evidence_record(
+            "structural-dynamics",
+            f"rdf_{pair_label}_{temperature_label}",
+            "dimensionless",
+            reference_curve["g_r"],
+            candidate_curve["g_r"],
+        )
+    ]
+    transport_errors = []
+    for reference, candidate in common:
+        reference_row = _result_row(rows, reference)
+        candidate_row = _result_row(rows, candidate)
+        temperature = float(reference.temperature_K)
+        label = f"{temperature:g}k".replace(".", "p")
+        for column, target, unit in (
+            ("diffusivity_cm2_s", f"diffusivity_{label}", "cm^2/s"),
+            ("conductivity_NE_mS_cm", f"conductivity_{label}", "mS/cm"),
+        ):
+            reference_value = finite_or_none(reference_row.get(column))
+            candidate_value = finite_or_none(candidate_row.get(column))
+            if reference_value is None or candidate_value is None:
+                continue
+            records.append(
+                evidence_record(
+                    "ionic-transport", target, unit, reference_value, candidate_value
+                )
+            )
+            absolute_error = abs(candidate_value - reference_value)
+            transport_errors.append(
+                {
+                    "target": target,
+                    "unit": unit,
+                    "reference": reference_value,
+                    "prediction": candidate_value,
+                    "absolute_error": absolute_error,
+                    "relative_error": (
+                        absolute_error / abs(reference_value)
+                        if reference_value != 0.0
+                        else None
+                    ),
+                }
+            )
+
+    reference_fit = _dataset_fit(summary, rdf_reference.dataset)
+    candidate_fit = _dataset_fit(summary, rdf_candidate.dataset)
+    if reference_fit is not None and candidate_fit is not None:
+        reference_single = reference_fit.get("single")
+        candidate_single = candidate_fit.get("single")
+        if isinstance(reference_single, dict) and isinstance(candidate_single, dict):
+            target_keys = [
+                ("Ea_eV", "activation_energy", "eV"),
+                (
+                    f"D_{args.target_temperature_K:g}K_cm2_s",
+                    f"diffusivity_{args.target_temperature_K:g}k_extrapolated".replace(".", "p"),
+                    "cm^2/s",
+                ),
+                (
+                    f"conductivity_{args.target_temperature_K:g}K_mS_cm",
+                    f"conductivity_{args.target_temperature_K:g}k".replace(".", "p"),
+                    "mS/cm",
+                ),
+            ]
+            for key, target, unit in target_keys:
+                reference_value = finite_or_none(reference_single.get(key))
+                candidate_value = finite_or_none(candidate_single.get(key))
+                if reference_value is not None and candidate_value is not None:
+                    records.append(
+                        evidence_record(
+                            "ionic-transport", target, unit, reference_value, candidate_value
+                        )
+                    )
+
+    payload = {
+        "schema_version": 1,
+        "plugin_id": "ionic-transport",
+        "evidence_mode": "metrics-recomputed-from-supplied-reference-prediction-pairs",
+        "model_execution": False,
+        "model": args.comparison_model,
+        "scenario": args.comparison_scenario,
+        "split": args.comparison_split,
+        "rdf": {
+            "pair": list(pair),
+            "temperature_K": float(rdf_reference.temperature_K),
+            "r_min_angstrom": float(args.rdf_r_min_angstrom),
+            "r_max_angstrom": float(args.rdf_r_max_angstrom),
+            "bins": int(args.rdf_bins),
+            "trajectory_start_ps": args.trajectory_start_ps,
+            "trajectory_end_ps": args.trajectory_end_ps,
+            "reference_source": str(rdf_reference.source_path),
+            "candidate_source": str(rdf_candidate.source_path),
+            "reference_frame_count": len(rdf_reference.structures),
+            "candidate_frame_count": len(rdf_candidate.structures),
+            "curve_mae": float(np.mean(np.abs(difference))),
+            "curve_rmse": float(np.sqrt(np.mean(difference**2))),
+        },
+        "transport_errors": transport_errors,
+        "records": records,
+    }
+    return payload, curve_table
 
 
 def plot_all_msd(runs: list[RunData], output_path: Path):
@@ -2228,6 +2559,14 @@ def build_parser():
     parser.add_argument("--min-segment-points", type=int, default=3)
     parser.add_argument("--piecewise-slope-change", type=float, default=0.35)
     parser.add_argument("--piecewise-bic-delta", type=float, default=2.0)
+    parser.add_argument("--rdf-pair", nargs=2, default=None)
+    parser.add_argument("--rdf-r-min-angstrom", type=float, default=None)
+    parser.add_argument("--rdf-r-max-angstrom", type=float, default=None)
+    parser.add_argument("--rdf-bins", type=int, default=None)
+    parser.add_argument("--rdf-temperature-K", type=float, default=None)
+    parser.add_argument("--comparison-model", default=None)
+    parser.add_argument("--comparison-scenario", default=None)
+    parser.add_argument("--comparison-split", default=None)
     return parser
 
 
@@ -2285,6 +2624,27 @@ def main(argv: list[str] | None = None) -> int:
     summary_path = output_dir / "arrhenius_summary.json"
     summary_path.write_text(json.dumps(json_ready(summary), indent=2))
 
+    comparison_paths = []
+    if args.rdf_pair is not None:
+        try:
+            comparison, curve_table = build_aimd_mlip_comparison(
+                runs, rows, summary, args
+            )
+            curve_path = output_dir / "rdf_curves.csv"
+            comparison_path = output_dir / "aimd_mlip_comparison.json"
+            pd.DataFrame(curve_table).to_csv(curve_path, index=False)
+            comparison["rdf"]["curve_csv"] = str(curve_path)
+            comparison_path.write_text(
+                json.dumps(json_ready(comparison), indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            comparison_paths.extend([curve_path, comparison_path])
+        except Exception as exc:
+            failures.append(
+                {"stage": "aimd-mlip-rdf-comparison", "error": str(exc)}
+            )
+            print(f"RDF comparison failed: {exc}", file=sys.stderr)
+
     plot_all_msd(runs, output_dir / "msd_by_temperature.html")
     plot_arrhenius(results_df, summary, output_dir / "arrhenius_fit.html")
     (output_dir / "postprocess_failures.json").write_text(json.dumps(json_ready(failures), indent=2))
@@ -2300,6 +2660,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir / "arrhenius_fit.html",
         *[Path(row["msd_curve_csv"]) for row in rows],
         *[Path(row["msd_fit_html"]) for row in rows],
+        *comparison_paths,
     ]
     manifest = {
         "schema_version": 1,
@@ -2311,6 +2672,7 @@ def main(argv: list[str] | None = None) -> int:
             "msd_only_diffusion": "get_diffusivity_from_msd",
             "msd_only_conductivity": "get_conversion_factor when a real Structure exists",
             "arrhenius": "fit_arrhenius(mode='linear')",
+            "rdf": "periodic partial pair distribution over the approved trajectory window",
             "historical_implementation": "separate adapter-only legacy reproduction",
         },
         "parameters": json_ready(vars(args)),

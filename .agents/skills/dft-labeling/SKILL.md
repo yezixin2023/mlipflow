@@ -48,6 +48,11 @@ For `backend: ssh-slurm`, require a bounded reviewed static/relax/AIMD batch and
 
 After the scheduler reports `COMPLETED`, run ordinary `advance`. Core bounded-fetches only the run's output allowlist and runs the scientific `check/collect`. Treat changed or missing output, malformed/truncated XML, OUTCAR without a normal footer, electronic steps reaching `NELM`, or label/raw-output mismatch as `FAIL`.
 
+For a final `OK` AIMD label, the collected `aimd-trajectory` role is the verified
+`vasprun.xml` for each calculation. A dependent `$ionic-transport` node receives the
+completed AIMD attempt directly and discovers all calculation trajectories; do not
+copy, rename, or manually locate the XML.
+
 For a failed multi-structure label, inspect the calculation-level diagnostics before
 retry. A normal `retry` creates a fresh attempt and never overwrites the failed attempt
 or its remote workspaces. Each canonical record must retain its actual producing DFT

@@ -454,6 +454,119 @@ class FreshBenchmarkTests(unittest.TestCase):
             all(item["metric"].startswith("stress_") for item in diagnostic_only)
         )
 
+    def test_aimd_metric_pairs_rank_explicit_two_three_or_six_model_sets_by_task(self):
+        catalog = [
+            "deepmd-se_e2_a",
+            "deepmd-se_e2_r",
+            "deepmd-se_atten_v2",
+            "deepmd-dpa2",
+            "m3gnet",
+            "chgnet",
+        ]
+        for count in (2, 3, 6):
+            with self.subTest(model_count=count):
+                models = catalog[:count]
+                records = []
+                for index, model in enumerate(models):
+                    records.extend(
+                        [
+                            {
+                                "model": model,
+                                "task": "static-pes",
+                                "scenario": "aimd-reference-v1",
+                                "split": "shared-window",
+                                "target": "energy",
+                                "unit": "eV/atom",
+                                "reference": [0.0, 1.0],
+                                "prediction": [0.1 * index, 1.0],
+                            },
+                            {
+                                "model": model,
+                                "task": "structural-dynamics",
+                                "scenario": "aimd-reference-v1",
+                                "split": "shared-window",
+                                "target": "rdf_li-s_600k",
+                                "unit": "dimensionless",
+                                "reference": [0.0, 1.0, 0.0],
+                                "prediction": [0.0, 1.0 + 0.1 * index, 0.0],
+                            },
+                            {
+                                "model": model,
+                                "task": "ionic-transport",
+                                "scenario": "aimd-reference-v1",
+                                "split": "shared-window",
+                                "target": "diffusivity_600k",
+                                "unit": "cm^2/s",
+                                "reference": 1.0,
+                                "prediction": 1.0 + 0.1 * (count - index - 1),
+                            },
+                        ]
+                    )
+                evidence = self.root / f"aimd-comparison-{count}.json"
+                evidence.write_text(json.dumps({"records": records}), encoding="utf-8")
+                attempt = self.root / f"aimd-ranking-{count}"
+                attempt.mkdir()
+                context = {
+                    "project_root": str(self.root),
+                    "attempt_dir": str(attempt),
+                    "inputs": {
+                        "evidence_inputs": [
+                            {
+                                "path": evidence.name,
+                                "evidence_locator": f"aimd/comparison-{count}.json",
+                            }
+                        ],
+                        "output_dir": "normalized",
+                    },
+                    "parameters": {
+                        "operation": "normalize-execute",
+                        "expected_models": models,
+                        "expected_tasks": [
+                            "static-pes",
+                            "structural-dynamics",
+                            "ionic-transport",
+                        ],
+                        "scenario": "aimd-reference-v1",
+                        "split": "shared-window",
+                    },
+                    "backend": "local",
+                    "resources": {"cpus": 1},
+                }
+                plan = self.adapter.plan(context)
+                self.assertEqual("READY", plan["status"], plan.get("diagnostics"))
+                completed = subprocess.run(
+                    plan["argv"], check=False, capture_output=True, text=True
+                )
+                self.assertEqual(0, completed.returncode, completed.stderr)
+                checked = self.adapter.check(context)
+                self.assertEqual("OK", checked["status"], checked.get("diagnostics"))
+                ranking = json.loads(
+                    (attempt / "normalized" / "model_ranking.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                complete = {
+                    (item["task"], item["metric"]): item
+                    for item in ranking["rankings"]
+                    if item["comparable_model_count"] == count
+                }
+                self.assertEqual(
+                    models[0],
+                    complete[("static-pes", "energy_rmse")]["candidates"][0]["model"],
+                )
+                self.assertEqual(
+                    models[0],
+                    complete[("structural-dynamics", "rdf_li-s_600k_rmse")][
+                        "candidates"
+                    ][0]["model"],
+                )
+                self.assertEqual(
+                    models[-1],
+                    complete[("ionic-transport", "diffusivity_600k_rmse")][
+                        "candidates"
+                    ][0]["model"],
+                )
+
     def test_scheduled_fresh_plan_and_fetched_report_roundtrip(self):
         model_reference = self.root / "model-reference.json"
         dataset_reference = self.root / "benchmark-dataset-reference.json"

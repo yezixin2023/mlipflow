@@ -414,6 +414,52 @@ def test_core_hands_all_preserved_dependency_attempts_to_transport(tmp_path: Pat
     assert context["inputs"]["input_paths"] == [str(first_dir), str(second_dir)]
 
 
+def test_core_hands_only_final_ok_aimd_attempt_to_transport(tmp_path: Path) -> None:
+    from mlipflow.config import Project
+    from mlipflow.services.contracts import _adapter_context
+    from mlipflow.services.paths import attempt_directory, state_path
+    from mlipflow.state import RunState, StateStore
+
+    nodes = [
+        {"id": "aimd", "uses": "dft-labeling", "backend": "ssh-slurm"},
+        {
+            "id": "transport",
+            "uses": "ionic-transport",
+            "needs": ["aimd"],
+            "backend": "local",
+        },
+    ]
+    project = Project(
+        root=tmp_path,
+        path=tmp_path / "project.json",
+        raw={"project": {"id": "aimd-handoff"}, "workflow": {"nodes": nodes}},
+    )
+    with StateStore(state_path(project), readonly=False) as store:
+        store.initialize_project(project.project_id, nodes)
+        failed = store.latest_step(project.project_id, "aimd")
+        failed_dir = attempt_directory(project, "aimd", 1)
+        failed_trajectory = failed_dir / "calc-0001" / "vasprun.xml"
+        failed_trajectory.parent.mkdir(parents=True)
+        failed_trajectory.write_text("<modeling/>", encoding="utf-8")
+        store.add_artifact(failed.run_id, "aimd-trajectory", str(failed_trajectory))
+        store.transition(failed.run_id, RunState.RUNNING)
+        store.transition(failed.run_id, RunState.FAIL)
+
+        completed = store.create_retry(project.project_id, "aimd")
+        completed_dir = attempt_directory(project, "aimd", 2)
+        completed_trajectory = completed_dir / "calc-0001" / "vasprun.xml"
+        completed_trajectory.parent.mkdir(parents=True)
+        completed_trajectory.write_text("<modeling/>", encoding="utf-8")
+        store.add_artifact(
+            completed.run_id, "aimd-trajectory", str(completed_trajectory)
+        )
+        store.transition(completed.run_id, RunState.RUNNING)
+        store.transition(completed.run_id, RunState.OK)
+
+    context = _adapter_context(project, nodes[1], 1)
+    assert context["inputs"]["input_paths"] == [str(completed_dir)]
+
+
 def test_discovery_stitches_only_selected_collected_attempts(tmp_path: Path, runner) -> None:
     node = tmp_path / ".mlipflow" / "runs" / "md"
     for attempt_number in (1, 2, 3):

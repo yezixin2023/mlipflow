@@ -719,7 +719,7 @@ def _validate_unavailable_metrics(
         dimensions = _mapping(record.get("dimensions"))
         target = dimensions.get("target")
         if (
-            target not in {"energy", "force", "stress"}
+            not _plain_string(target)
             or record.get("split") != expected_split
             or record.get("metric") != f"{target}_pearson_r"
             or record.get("unit") != "dimensionless"

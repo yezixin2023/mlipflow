@@ -1,0 +1,218 @@
+schema_version: 1
+project:
+  id: aimd-reference-validation
+  name: Compact AIMD reference validation
+  description: CPU-cluster AIMD, model-cluster MD, common transport, RDF, and task ranking
+workflow:
+  nodes:
+    - id: aimd-600k
+      uses: dft-labeling@0
+      backend: ssh-slurm
+      backend_profile: cpu-cluster
+      inputs:
+        structures_manifest: inputs/structures.json
+        labeling_config: inputs/aimd-600k.json
+        dft_input_manifest: prepared/aimd-600k/dft-input-manifest.json
+      parameters:
+        operation: label
+        engine: vasp
+        completion_policy:
+          require_ionic_convergence: false
+        units:
+          energy: eV
+          length: angstrom
+          force: eV/angstrom
+          stress: kbar-vasp-3x3
+      resources:
+        cpus: 32
+        gpus: 0
+        memory: 64G
+        walltime: "01:00:00"
+
+    - id: deepmd-md-600k
+      uses: ase-md@0
+      backend: ssh-slurm
+      backend_profile: model-compute
+      inputs:
+        structure: inputs/structure.vasp
+        model_reference: inputs/deepmd-model-reference.json
+      parameters:
+        calculator: deepmd
+        ensemble: nvt-langevin
+        temperature-k: 600
+        timestep-fs: 1.0
+        steps: 5000
+        trajectory-interval: 10
+        thermo-interval: 10
+        seed: 17
+        device: cuda
+        default-dtype: float64
+        friction-per-fs: 0.01
+        fix-com: true
+        restart-policy: disabled
+      resources:
+        cpus: 4
+        gpus: 1
+        memory: 16G
+        walltime: "01:00:00"
+
+    - id: chgnet-md-600k
+      uses: ase-md@0
+      backend: ssh-slurm
+      backend_profile: model-compute
+      inputs:
+        structure: inputs/structure.vasp
+        model_reference: inputs/chgnet-model-reference.json
+      parameters:
+        calculator: chgnet
+        ensemble: nvt-langevin
+        temperature-k: 600
+        timestep-fs: 1.0
+        steps: 5000
+        trajectory-interval: 10
+        thermo-interval: 10
+        seed: 17
+        device: cuda
+        default-dtype: float32
+        friction-per-fs: 0.01
+        fix-com: true
+        restart-policy: disabled
+      resources:
+        cpus: 4
+        gpus: 1
+        memory: 16G
+        walltime: "01:00:00"
+
+    - id: compare-deepmd
+      uses: ionic-transport@0
+      needs: [aimd-600k, deepmd-md-600k]
+      backend: local
+      inputs: {}
+      parameters:
+        operation: analyze-existing
+        output_subdir: analysis
+        source: trajectory
+        specie: Li
+        trajectory_start_ps: 1.0
+        trajectory_end_ps: 5.0
+        trajectory_msd_engine: diffusion-analyzer
+        diffusion_analyzer_smoothed: none
+        diffusion_analyzer_min_obs: 30
+        diffusion_analyzer_avg_nsteps: 100
+        diffusion_analyzer_step_skip: 1
+        min_msd_fit_points: 3
+        msd_smooth_window_points: null
+        msd_smooth_window_ps: null
+        fit_smoothed_msd: false
+        ase_frame_step_fs: null
+        lammps_timestep_ps: null
+        lammps_data_name: data.LYC
+        vasp_file_name: vasprun.xml
+        vasp_step_fs: null
+        temperature_k: null
+        aimd_temperature_k: null
+        mobile_type: null
+        msd_file_name: null
+        msd_time_column: null
+        msd_column: null
+        msd_time_unit: auto
+        msd_step_ps: null
+        msd_unit: auto
+        msd_temperature_k: null
+        n_mobile_ions: null
+        volume_a3: null
+        fit_temperatures: null
+        exclude_temperatures: null
+        fit_scope: dataset
+        target_temperature_k: 600
+        piecewise: never
+        min_segment_points: 2
+        piecewise_slope_change: 0.35
+        piecewise_bic_delta: 2.0
+        rdf_pair: [Li, S]
+        rdf_r_min_angstrom: 0.0
+        rdf_r_max_angstrom: 4.0
+        rdf_bins: 80
+        rdf_temperature_k: 600
+        comparison_model: deepmd-dpa2
+        comparison_scenario: aimd-reference-v1
+        comparison_split: trajectory-window-1-5ps
+        allow_partial_results: false
+      resources: {}
+
+    - id: compare-chgnet
+      uses: ionic-transport@0
+      needs: [aimd-600k, chgnet-md-600k]
+      backend: local
+      inputs: {}
+      parameters:
+        operation: analyze-existing
+        output_subdir: analysis
+        source: trajectory
+        specie: Li
+        trajectory_start_ps: 1.0
+        trajectory_end_ps: 5.0
+        trajectory_msd_engine: diffusion-analyzer
+        diffusion_analyzer_smoothed: none
+        diffusion_analyzer_min_obs: 30
+        diffusion_analyzer_avg_nsteps: 100
+        diffusion_analyzer_step_skip: 1
+        min_msd_fit_points: 3
+        msd_smooth_window_points: null
+        msd_smooth_window_ps: null
+        fit_smoothed_msd: false
+        ase_frame_step_fs: null
+        lammps_timestep_ps: null
+        lammps_data_name: data.LYC
+        vasp_file_name: vasprun.xml
+        vasp_step_fs: null
+        temperature_k: null
+        aimd_temperature_k: null
+        mobile_type: null
+        msd_file_name: null
+        msd_time_column: null
+        msd_column: null
+        msd_time_unit: auto
+        msd_step_ps: null
+        msd_unit: auto
+        msd_temperature_k: null
+        n_mobile_ions: null
+        volume_a3: null
+        fit_temperatures: null
+        exclude_temperatures: null
+        fit_scope: dataset
+        target_temperature_k: 600
+        piecewise: never
+        min_segment_points: 2
+        piecewise_slope_change: 0.35
+        piecewise_bic_delta: 2.0
+        rdf_pair: [Li, S]
+        rdf_r_min_angstrom: 0.0
+        rdf_r_max_angstrom: 4.0
+        rdf_bins: 80
+        rdf_temperature_k: 600
+        comparison_model: chgnet
+        comparison_scenario: aimd-reference-v1
+        comparison_split: trajectory-window-1-5ps
+        allow_partial_results: false
+      resources: {}
+
+    - id: rank-aimd-agreement
+      uses: mlip-benchmark@0
+      needs: [compare-deepmd, compare-chgnet]
+      backend: local
+      inputs:
+        evidence_inputs:
+          - from_node: compare-deepmd
+            role: aimd-mlip-comparison
+          - from_node: compare-chgnet
+            role: aimd-mlip-comparison
+        output_dir: normalized
+      parameters:
+        operation: normalize-execute
+        expected_models: [deepmd-dpa2, chgnet]
+        expected_tasks: [structural-dynamics, ionic-transport]
+        scenario: aimd-reference-v1
+        split: trajectory-window-1-5ps
+      resources:
+        cpus: 1

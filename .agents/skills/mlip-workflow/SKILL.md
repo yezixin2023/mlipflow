@@ -44,9 +44,9 @@ second split or derive benchmark labels from framework-specific training views.
 Never continue downstream from `FAIL`, `BLOCKED`, `STOPPED`, a scheduler-only
 `COMPLETED`, or process exit zero without scientific completion checks.
 
-For an ionic-transport objective, treat a final `OK` `ase-md` or `lammps-md` node as
-the trajectory handoff. Pass its collected dependency artifacts to `$ionic-transport`
-directly; core includes preserved restart attempts and the transport loader joins them
+For an ionic-transport objective, treat a final `OK` AIMD `dft-labeling`, `ase-md`, or
+`lammps-md` node as the trajectory handoff. Pass its collected dependency artifacts to
+`$ionic-transport` directly; core includes preserved restart attempts and the transport loader joins them
 by global step. Do not ask the user to identify filenames, rename/copy trajectories,
 concatenate attempts, write metadata, or repeat timestep, temperature, or atom-type
 information already recorded upstream. When several completed temperature nodes are

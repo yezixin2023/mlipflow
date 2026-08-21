@@ -663,6 +663,18 @@ class AimdTests(TemporaryProjectTest):
         # Frames must be distinct, not the final one repeated.
         self.assertEqual(4, len({record["energy_ev"] for record in records}))
 
+        from mlipflow.services.paths import state_path
+        from mlipflow.state import StateStore
+
+        with StateStore(state_path(lifecycle.project), readonly=True) as store:
+            step = store.latest_step(lifecycle.project.project_id, "label-li")
+            trajectories = [
+                item for item in store.artifacts(step.run_id)
+                if item["role"] == "aimd-trajectory"
+            ]
+        self.assertEqual(1, len(trajectories))
+        self.assertTrue(trajectories[0]["uri"].endswith("calc-0001/vasprun.xml"))
+
     def test_aimd_step_count_must_match_requested_nsw(self) -> None:
         lifecycle = self.lifecycle("aimd")
         changed = lifecycle.run(frames=2)

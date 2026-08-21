@@ -4,9 +4,9 @@
   "id": "mlip-benchmark",
   "name": "MLIP benchmark",
   "display_name": "MLIP benchmark",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "api_version": 1,
-  "description": "Local or reviewed SSH-SLURM fresh first-party MLIP inference plus strict multi-model metric normalization with canonical prediction evidence, ranking, and provenance.",
+  "description": "Local or reviewed SSH-SLURM fresh first-party MLIP inference plus strict multi-model metric normalization for static-PES and AIMD-reference structural/transport evidence with task-separated ranking.",
   "category": "benchmarking",
   "contract": {
     "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
@@ -35,6 +35,7 @@
       "MAE and RMSE remain required for every selected target; a mathematically undefined Pearson correlation is omitted from numeric rankings and recorded explicitly with its reason rather than emitted as NaN or invented.",
       "Multi-model normalization accepts same-basename prediction evidence only when every input has a distinct explicit portable locator.",
       "A between-model selection may use only ranking groups whose comparable-model count covers the complete requested model set; model-only metrics remain diagnostic evidence.",
+      "Metric-only normalization accepts explicit AIMD reference/MLIP prediction pairs for arbitrary target names such as RDF, diffusivity, conductivity, and activation energy. Any explicit 2-, 3-, 6-, or other supported model set is ranked separately per task/metric; no universal cross-task score is formed.",
       "Direct execution of path-hard-coded research scripts is not claimed.",
       "No model family is treated as globally preferred; routing must consume benchmark artifacts."
     ]
@@ -64,7 +65,7 @@
     {"name": "benchmark-dataset-reference", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Scheduled evaluate-fresh: dataset name, safe benchmark JSON path below the site data root, and file kind."},
     {"name": "benchmark-config", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Configuration required only by legacy evaluate-static."},
     {"name": "result-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "Legacy evaluate-static output or collect-existing input."},
-    {"name": "evidence-inputs", "kind": "artifact-reference", "required": false, "description": "One or more explicit JSON/CSV/XLSX files for normalize-replay or normalize-execute; runtime context key is evidence_inputs."},
+    {"name": "evidence-inputs", "kind": "artifact-reference", "required": false, "description": "One or more explicit JSON/CSV/XLSX files for normalize-replay or normalize-execute, including ionic-transport AIMD/MLIP comparison JSON; runtime context key is evidence_inputs."},
     {"name": "output-dir", "kind": "directory", "required": false, "description": "Fresh attempt-relative directory receiving four normalize artifacts or five fresh artifacts including prediction evidence; runtime context key is output_dir."},
     {"name": "source-script", "kind": "file", "required": false, "description": "Optional read-only original implementation pinned by normalize-replay provenance; runtime context key is source_script."}
   ],
@@ -123,6 +124,7 @@
       {"id": "fresh-model-inference", "implemented": true, "description": "Load one exact model family, infer canonical labeled structures, emit versioned prediction evidence, reuse normalized metrics/ranking, and verify the scientific output schemas."}
       ,{"id": "scheduled-fresh-report", "implemented": true, "description": "Require the cluster report to record the approved family, model/dataset paths, and all five fetched output paths."}
       ,{"id": "same-test-multi-model-ranking", "implemented": true, "description": "Normalize multiple fresh prediction-evidence files with explicit per-input locators and require the approved exact model set in every comparable ranking."}
+      ,{"id": "aimd-reference-task-ranking", "implemented": true, "description": "Normalize explicit AIMD reference/MLIP RDF and transport pairs for any approved model count, preserve missing evidence, and rank static-PES, structural-dynamics, and ionic-transport groups independently."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"

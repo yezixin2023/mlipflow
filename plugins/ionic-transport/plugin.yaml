@@ -4,7 +4,7 @@
   "id": "ionic-transport",
   "name": "Ionic transport analysis",
   "display_name": "Ionic transport analysis",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "api_version": 1,
   "description": "Local-only formal ionic transport through pymatgen-analysis-diffusion, with separate unchanged historical reproduction and a tightly bounded MD integration smoke.",
   "category": "transport-analysis",
@@ -44,6 +44,7 @@
       "Formal trajectory results directly record DiffusionAnalyzer dt, msd, diffusivity/std-dev, conductivity/std-dev, charge diffusivity/conductivity, and Haven ratio.",
       "analyze-existing exposes no stochastic stage, so a non-null seed is rejected there; md-smoke-and-analyze requires a non-negative seed and records its limited scope.",
       "The formal workflow permits only a single-line ln(D) versus 1/T Arrhenius fit; piecewise fitting is outside this contract.",
+      "When explicitly requested, the same analyzed VASP AIMD and ASE/LAMMPS MLIP trajectories produce one partial RDF comparison at a common temperature and metric-only benchmark records. No separate transport equation or general trajectory-analysis framework is introduced.",
       "Completion verifies source/result paths and reruns the same pymatgen public APIs from original sources; the checker does not clone pymatgen equations. It rejects partial results unless allow_partial_results=true is explicitly reviewed."
     ]
   },
@@ -128,6 +129,14 @@
     {"name": "piecewise_slope_change", "type": "number", "required": false, "description": "Optional packaged-CLI compatibility value; unused when piecewise=never."},
     {"name": "piecewise_bic_delta", "type": "number", "required": false, "description": "Optional packaged-CLI compatibility value; unused when piecewise=never."},
     {"name": "allow_partial_results", "type": "boolean", "required": true, "description": "Adapter-only policy; false rejects any source-reported skipped run."}
+    ,{"name": "rdf_pair", "type": "array", "required": false, "description": "Exactly two explicit element symbols for optional AIMD-versus-MLIP RDF comparison."}
+    ,{"name": "rdf_r_min_angstrom", "type": "number", "required": false, "description": "RDF lower radial bound in angstrom; required with rdf_pair."}
+    ,{"name": "rdf_r_max_angstrom", "type": "number", "required": false, "description": "RDF upper radial bound in angstrom; required with rdf_pair and limited by the periodic cell."}
+    ,{"name": "rdf_bins", "type": "integer", "required": false, "description": "Positive RDF bin count; required with rdf_pair."}
+    ,{"name": "rdf_temperature_k", "type": "number", "required": false, "description": "Common AIMD/MLIP temperature selected for RDF; required when several common temperatures exist."}
+    ,{"name": "comparison_model", "type": "string", "required": false, "description": "Explicit exact MLIP family recorded in metric-only benchmark evidence."}
+    ,{"name": "comparison_scenario", "type": "string", "required": false, "description": "Explicit benchmark scenario identifier for the AIMD comparison."}
+    ,{"name": "comparison_split", "type": "string", "required": false, "description": "Explicit benchmark split/window identifier for the AIMD comparison."}
   ],
   "outputs": [
     {"name": "transport-results", "kind": "file", "required": true, "media_type": "text/csv", "description": "diffusion_results_by_temperature.csv with pymatgen method names and per-run values; MSD-only conductivity may be null without a Structure."},
@@ -137,9 +146,11 @@
     {"name": "msd-diagnostics", "kind": "artifact-reference", "required": true, "description": "Per-run CSV/HTML paths explicitly listed in the transport results CSV."},
     {"name": "production-trajectories", "kind": "artifact-reference", "required": false, "description": "Confined production.traj artifacts created only by md-smoke-and-analyze."},
     {"name": "md-integration-manifest", "kind": "manifest", "required": false, "media_type": "application/json", "description": "integration-smoke-only manifest with source, input, trajectory, result, and wrapper paths."}
+    ,{"name": "rdf-curves", "kind": "file", "required": false, "media_type": "text/csv", "description": "Common-bin AIMD and MLIP partial RDF curves over the approved trajectory window."}
+    ,{"name": "aimd-mlip-comparison", "kind": "artifact-reference", "required": false, "media_type": "application/json", "description": "RDF difference, common-temperature transport errors, and metric-only records consumable by mlip-benchmark."}
   ],
   "dependencies": {
-    "upstream_plugins": ["ase-md", "lammps-md", "pes-sampling", "mlip-benchmark"],
+    "upstream_plugins": ["dft-labeling", "ase-md", "lammps-md", "pes-sampling", "mlip-benchmark"],
     "python_packages": [
       {"name": "numpy", "required": true, "bundled": false, "purpose": "Input arrays, format conversion, and result serialization; scientific fitting is delegated to pymatgen-analysis-diffusion."},
       {"name": "pandas", "required": true, "bundled": false, "purpose": "Input tables and CSV output in the reviewed script."},
@@ -175,6 +186,7 @@
       {"id": "partial-results-policy", "implemented": true, "description": "Reject skipped inputs by default; allow only with explicit allow_partial_results=true."},
       {"id": "md-smoke-handoff-integrity", "implemented": true, "description": "Require fresh confined MD/analysis outputs, shell=false analysis execution, exact temperature coverage, completed Arrhenius fit, explicit integration-smoke-only boundaries, and verified source/input/trajectory/result paths."},
       {"id": "historical-li10-parity", "implemented": true, "description": "Read-only target.msd/Li10 stdout normalization reproduces both historical diffusivity methods, tags sampling/fit/units/provenance, and separates legacy N=7 from explicit or POSCAR-derived corrected carrier counts."}
+      ,{"id": "aimd-mlip-rdf-comparison", "implemented": true, "description": "Rebuild one explicit pair RDF from the original common-window AIMD and MLIP trajectories, verify both curves and difference metrics, and emit task-separated benchmark pairs."}
     ],
     "success_state": "OK",
     "failure_state": "FAIL"

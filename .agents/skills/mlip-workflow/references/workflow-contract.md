@@ -29,7 +29,7 @@ manifests, inspected plans, Adapter results, and specialist Skills remain author
 | Finite offline active-learning campaign | `$mlip-active-learning` | One- or two-model calibrated committees; immutable round projects; local deterministic decisions with existing training/MD/DIRECT/DFT/benchmark stages |
 | ASE MLIP MD | `$ase-md` | Explicit DeepMD, M3GNet/MatGL, CHGNet, or MACE; reviewed SSH-SLURM NVT/NPT |
 | LAMMPS MLIP MD | `$lammps-md` | LAMMPS-ready DeepMD, MACE, or MatGL/M3GNet; prepare/execute/restart contracts |
-| MSD/diffusion/conductivity | `$ionic-transport` | Existing ASE/LAMMPS/VASP trajectory or MSD; local analysis |
+| MSD/diffusion/conductivity and bounded AIMD/MLIP RDF comparison | `$ionic-transport` | Existing ASE/LAMMPS/VASP trajectory or MSD; local analysis |
 | Single-metric top-k | `$candidate-ranking` | Existing candidate and numeric metric manifests; local |
 | Li energy-to-voltage or SI replay | `electrochemical-voltage` plugin | Direct local plugin orchestration; no standalone voltage Skill |
 
@@ -51,7 +51,7 @@ relying on this summary for parameters.
 | Shared-split benchmark reference plus published model references | Compare fresh predictions on the exact same test IDs | One scheduled `$mlip-benchmark` per model, then one local joint normalization |
 | Explicit active-learning policy plus verified split/models/labels | Run or resume a finite offline campaign | `$mlip-active-learning`; enter at the earliest missing artifact in the current immutable round |
 | Trained model plus initial structure | Generate a new trajectory | `$ase-md` or `$lammps-md` according to runtime compatibility and goal |
-| Existing ASE/LAMMPS/VASP trajectory or MSD | Compute transport | `$ionic-transport`; do not rerun MD |
+| Existing ASE/LAMMPS/VASP trajectory or MSD | Compute transport or one explicit-pair AIMD/MLIP RDF comparison | `$ionic-transport`; do not rerun MD |
 | Candidate manifest plus comparable numeric metrics | Select top-k | `$candidate-ranking` |
 | Li-content total-energy sequence | Compute voltage | `electrochemical-voltage` plugin `compute-from-energies` |
 | Existing standard result/evidence manifests | Verify/reconstruct history | Applicable replay/check path; do not default to fresh execution |
@@ -156,6 +156,10 @@ artifacts natively: do not ask for internal filenames, timestep, temperature, ty
 manual metadata, rename/copy, or concatenation. Preserve all collected restart attempts;
 ionic-transport orders their frames by global step and removes a repeated boundary.
 Multiple completed ASE and/or LAMMPS temperature nodes may feed one Arrhenius analysis.
+Likewise, a final `OK` DFT-labeling AIMD node supplies its collected `vasprun.xml`
+trajectory directly. One AIMD reference plus one MLIP trajectory set may request an
+explicit-pair RDF comparison and emit metric-only evidence for task-separated
+`$mlip-benchmark` normalization.
 If a new trajectory is necessary, accept it downstream only after the MD Skill's
 completion checks and artifact collection succeed.
 

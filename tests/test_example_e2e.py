@@ -21,6 +21,7 @@ from mlipflow.services import (
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "high_entropy_sulfide"
+AIMD_EXAMPLE = ROOT / "examples" / "aimd_reference_validation"
 PLUGINS = ROOT / "plugins"
 SCHEMAS = ROOT / "schemas"
 
@@ -125,6 +126,35 @@ class HighEntropySulfideExampleTests(unittest.TestCase):
                     elements={"Li", "Mn", "Fe", "Ni", "Cu", "Zn", "P", "S"},
                     scenario="synthetic-high-entropy-sulfide-v1",
                 )
+
+
+class AimdReferenceValidationExampleTests(unittest.TestCase):
+    def test_compact_example_keeps_compute_and_analysis_boundaries_explicit(self) -> None:
+        project = load_project(AIMD_EXAMPLE)
+        nodes = {node["id"]: node for node in project.nodes}
+        self.assertEqual("ssh-slurm", nodes["aimd-600k"]["backend"])
+        self.assertEqual("cpu-cluster", nodes["aimd-600k"]["backend_profile"])
+        self.assertEqual(0, nodes["aimd-600k"]["resources"]["gpus"])
+        self.assertEqual(
+            {"model-compute"},
+            {
+                nodes["deepmd-md-600k"]["backend_profile"],
+                nodes["chgnet-md-600k"]["backend_profile"],
+            },
+        )
+        for node_id in ("deepmd-md-600k", "chgnet-md-600k"):
+            self.assertEqual("ssh-slurm", nodes[node_id]["backend"])
+            self.assertEqual(1, nodes[node_id]["resources"]["gpus"])
+        for node_id in ("compare-deepmd", "compare-chgnet", "rank-aimd-agreement"):
+            self.assertEqual("local", nodes[node_id]["backend"])
+        ranking = nodes["rank-aimd-agreement"]
+        self.assertEqual(
+            ["deepmd-dpa2", "chgnet"], ranking["parameters"]["expected_models"]
+        )
+        self.assertEqual(
+            ["structural-dynamics", "ionic-transport"],
+            ranking["parameters"]["expected_tasks"],
+        )
 
 
 if __name__ == "__main__":

@@ -87,6 +87,15 @@ selection claim only when `comparable_model_count` equals the number of
 evidence, but never use it to declare that model the winner over a model lacking that
 metric.
 
+For AIMD-reference validation, each `$ionic-transport` comparison may supply one
+`aimd_mlip_comparison.json` containing explicit reference/prediction pairs for RDF and
+available transport quantities. Feed the explicit files for all requested MLIPs to one
+`normalize-execute` node and declare the exact `expected_models` set; the set may contain
+2, 3, 6, or another supported count. Keep `static-pes`, `structural-dynamics`, and
+`ionic-transport` as separate task groups. Do not form a cross-task weighted score
+unless the user supplied that policy explicitly, and keep unavailable AIMD quantities
+absent.
+
 After execution, require Adapter `check` and `collect` to return `OK`. Treat
 partial output, model/dataset/evidence mismatch, unsupported scientific fields, non-finite
 metrics, or provenance mismatch as `FAIL`. Scheduler or process completion alone

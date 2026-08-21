@@ -11,8 +11,15 @@ Use `plugins/ionic-transport` as the deterministic implementation. This Skill su
 
 The plugin is local-only and has two formal operations:
 
-- `analyze-existing` analyzes existing trajectory or MSD evidence. When the node depends on completed `ase-md` or `lammps-md` nodes, core supplies their collected artifacts automatically; `inputs.input_paths` remains available for historical standalone files and explicit mixed-source selection. Never request an external `analysis_script`.
+- `analyze-existing` analyzes existing trajectory or MSD evidence. When the node depends on completed AIMD `dft-labeling`, `ase-md`, or `lammps-md` nodes, core supplies their collected artifacts automatically; `inputs.input_paths` remains available for historical standalone files and explicit mixed-source selection. Never request an external `analysis_script`.
 - `md-smoke-and-analyze` is a tightly bounded local integration test. It invokes an explicitly supplied local ASE-MD source, then sends its tiny trajectories through the same packaged analysis runner and checker used by `analyze-existing`.
+
+`analyze-existing` can also request one bounded AIMD-versus-MLIP partial RDF
+comparison while it analyzes the same trajectories. Require an explicit atom pair,
+radial range, bin count, common temperature when more than one is available, trajectory
+window, model family, scenario, and split. The result contains both curves, curve
+MAE/RMSE, common-temperature transport errors, and metric-only records consumable by
+`$mlip-benchmark`. This is not a general trajectory-analysis framework.
 
 Do not add `ssh-slurm`, scheduler templates, cluster paths, modules, partitions, accounts, MPI launchers, or HPC lifecycle instructions. Use `$ase-md` or `$lammps-md` separately when a user needs production trajectory generation; then pass the completed local trajectory/MSD artifacts to `analyze-existing`.
 
@@ -38,6 +45,7 @@ Do not request formal `charge`, `dimensions`, `haven_ratio`, `drift_correction`,
 
 The packaged runner handles both MLIPFlow-native and historical inputs:
 
+- Collected DFT-labeling AIMD `vasprun.xml` artifacts. Read temperature and timestep from VASP metadata under the same VASP trajectory contract; do not ask the user to copy or locate the XML after a final `OK` AIMD node.
 - Native ASE-MD `trajectory.traj` plus `trajectory-index.json`/`md-result.json`. Read temperature, integration timestep, trajectory interval, global steps, physical time, ensemble, model identity, and structure identity from the collected artifacts. Never ask the user for `ase_frame_step_fs`, temperature metadata, a copied file, or a handwritten `metadata.json`.
 - Historical ASE `production.traj`. Preserve the existing metadata/log/explicit compatibility path.
 - Native LAMMPS-MD `trajectory.lammpstrj` plus `lammps-execution-result.json`, the prepared input manifest when present, or the approved execution identity. Read temperature, timestep, dump interval, type map, ensemble, model identity, and structure identity automatically. Never ask the user for `lammps_timestep_ps`, `temperature`, `mobile_type`, or `lammps_data_name` when native artifacts supply them.
@@ -83,6 +91,11 @@ The runner writes:
 - `postprocess_failures.json`;
 - `analysis_manifest.json`;
 - per-run MSD curves and fit diagnostics.
+
+When RDF comparison is requested it additionally writes `rdf_curves.csv` and
+`aimd_mlip_comparison.json`. The checker rebuilds both curves from the original
+trajectories. The comparison JSON is metric-only evidence: it does not claim that the
+local analysis node executed an MLIP model.
 
 The analysis manifest binds the declared parameters, runtime versions, and scientific source/result artifacts. The checker rereads original sources and calls the same pymatgen public APIs again:
 

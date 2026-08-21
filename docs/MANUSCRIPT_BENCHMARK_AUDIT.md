@@ -49,7 +49,7 @@ production-scale fresh numerical parity。
 
 | model | metric | original source | MLIPFlow implementation | mode | required inputs | current status | remaining work |
 |---|---|---|---|---|---|---|---|
-| 六个模型 | RDF | 论文中的结构比较，但当前已审计紧凑证据没有可分享的 RDF 数值表/原始曲线 | 无 | 无 | 参考/预测轨迹、物种对、bin/range 约定、原始脚本或可信曲线 | MISSING_SOURCE | 先取得最小可分享原始输出；之后再以薄适配器复用历史算法 |
+| 六个模型 | RDF | 论文中的结构比较，但当前已审计紧凑证据没有可分享的 RDF 数值表/原始曲线 | `ionic-transport analyze-existing` 的同温度 AIMD/MLIP partial RDF 与 benchmark handoff | execute（post-process only） | 参考/预测轨迹、物种对、bin/range 约定、原始脚本或可信曲线 | EXECUTABLE / MISSING_SOURCE | 合成 VASP/LAMMPS fixture 已覆盖执行与 checker；论文 parity 仍须最小可分享原始输出，不得从图片反推曲线 |
 | 六个模型 | bond distributions | 当前已审计证据没有可机器读取的键长分布 | 无 | 无 | 参考/预测结构、键定义、bin 约定、历史结果 | MISSING_SOURCE | 不得从论文图片或模型名称反推数值 |
 | 六个模型 | coordination / local-structure metrics | 当前已审计证据没有可机器读取的配位/局域结构结果 | 无 | 无 | 邻居定义、截断、结构与历史结果 | MISSING_SOURCE | 获得源证据后才能判断还需哪一个最小 adapter |
 
@@ -97,6 +97,6 @@ production-scale fresh numerical parity。
 transport → `deepmd-se_atten_v2`、voltage → `chgnet`。这些选择来自
 versioned evidence、方向和 policy，不是核心代码中的模型品牌条件分支。
 
-本审计不支持以下说法：六个真实模型 checkpoint 已完成历史同口径重新推理、RDF/局域结构已重算、
+本审计不支持以下说法：六个真实模型 checkpoint 已完成历史同口径重新推理、论文 RDF/局域结构已重算、
 unseen transfer 已获数值验证、生产 MD/DFT/训练已运行，或任一重放结果是新科学
 计算。

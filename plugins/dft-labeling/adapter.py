@@ -1159,7 +1159,11 @@ def _plan_scheduled_label(
                     "local_name": f"{calc_id}/{name}",
                     "required": True,
                     "max_bytes": limits[name],
-                    "role": "vasp-output",
+                    "role": (
+                        "aimd-trajectory"
+                        if calculation_type == AIMD_TYPE and name == "vasprun.xml"
+                        else "vasp-output"
+                    ),
                 }
             )
         for name in optional:
@@ -2618,6 +2622,17 @@ def _collected_scheduled_label(
         },
         *[{**dict(item), "role": item["name"]} for item in manifest["artifacts"]],
     ]
+    if manifest.get("calculation_type") == AIMD_TYPE:
+        artifacts.extend(
+            {
+                "name": f"aimd-trajectory-{index}",
+                "role": "aimd-trajectory",
+                "path": name,
+                "media_type": "application/xml",
+            }
+            for index, name in enumerate(sorted(_mapping(manifest.get("raw_outputs"))), start=1)
+            if name.endswith("/vasprun.xml")
+        )
     return {
         "plugin_id": PLUGIN_ID,
         "status": "OK",

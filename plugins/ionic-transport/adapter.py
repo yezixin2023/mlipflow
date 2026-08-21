@@ -67,6 +67,8 @@ _REQUIRED_RESULT_NAMES = (
     "analysis_manifest.json",
 )
 _OPTIONAL_RESULT_NAMES = ("msd_by_temperature.html", "arrhenius_fit.html")
+_RDF_CURVES_NAME = "rdf_curves.csv"
+_AIMD_MLIP_COMPARISON_NAME = "aimd_mlip_comparison.json"
 _INTEGRATION_MANIFEST_NAME = "md-integration-manifest.json"
 _SMOKE_OPERATION = "md-smoke-and-analyze"
 _ANALYZE_OPERATION = "analyze-existing"
@@ -138,6 +140,14 @@ _ANALYZE_PARAMETERS = {
     "min_segment_points",
     "piecewise_slope_change",
     "piecewise_bic_delta",
+    "rdf_pair",
+    "rdf_r_min_angstrom",
+    "rdf_r_max_angstrom",
+    "rdf_bins",
+    "rdf_temperature_k",
+    "comparison_model",
+    "comparison_scenario",
+    "comparison_split",
     "allow_partial_results",
 }
 _SMOKE_PARAMETERS = {
@@ -451,6 +461,13 @@ def _analysis_arguments(
         ("volume_a3", "--volume-A3"),
         ("fit_temperatures", "--fit-temperatures"),
         ("exclude_temperatures", "--exclude-temperatures"),
+        ("rdf_r_min_angstrom", "--rdf-r-min-angstrom"),
+        ("rdf_r_max_angstrom", "--rdf-r-max-angstrom"),
+        ("rdf_bins", "--rdf-bins"),
+        ("rdf_temperature_k", "--rdf-temperature-K"),
+        ("comparison_model", "--comparison-model"),
+        ("comparison_scenario", "--comparison-scenario"),
+        ("comparison_split", "--comparison-split"),
     )
     argv: List[str] = []
     for name, flag in always:
@@ -473,6 +490,8 @@ def _analysis_arguments(
         argv.extend(["--ase-frame-step-fs", _stringify(effective_frame_step)])
     if parameters.get("fit_smoothed_msd"):
         argv.append("--fit-smoothed-msd")
+    if parameters.get("rdf_pair") is not None:
+        argv.extend(["--rdf-pair", *[str(value) for value in parameters["rdf_pair"]]])
     return argv
 
 
@@ -2259,6 +2278,7 @@ def _verify_analysis_manifest(
         "aimd_temperature_k": "aimd_temperature_K",
         "msd_temperature_k": "msd_temperature_K",
         "target_temperature_k": "target_temperature_K",
+        "rdf_temperature_k": "rdf_temperature_K",
         "volume_a3": "volume_A3",
     }
     for name, expected in parameters.items():
@@ -2495,6 +2515,102 @@ def _verify_transport_rows(
                     )
                 )
     return diagnostics
+
+
+def _same_scientific_value(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, bool) or expected is None or isinstance(expected, str):
+        return actual == expected
+    if isinstance(expected, (int, float)):
+        return _finite_number(actual) and _numbers_close(float(actual), float(expected))
+    if isinstance(expected, list):
+        return (
+            isinstance(actual, list)
+            and len(actual) == len(expected)
+            and all(
+                _same_scientific_value(left, right)
+                for left, right in zip(actual, expected)
+            )
+        )
+    if isinstance(expected, Mapping):
+        return (
+            isinstance(actual, Mapping)
+            and set(actual) == set(expected)
+            and all(
+                _same_scientific_value(actual[key], value)
+                for key, value in expected.items()
+            )
+        )
+    return actual == expected
+
+
+def _verify_aimd_mlip_comparison(
+    context: Mapping[str, Any],
+    output_dir: Path,
+    rows: Sequence[Mapping[str, str]],
+    summary: Mapping[str, Any],
+) -> List[Dict[str, str]]:
+    parameters = _mapping(context.get("parameters"))
+    if parameters.get("rdf_pair") is None:
+        return []
+    curve_path = output_dir / _RDF_CURVES_NAME
+    comparison_path = output_dir / _AIMD_MLIP_COMPARISON_NAME
+    if not curve_path.is_file() or not comparison_path.is_file():
+        return [
+            _diagnostic(
+                "ERROR",
+                "result.rdf_missing",
+                "requested AIMD/MLIP RDF comparison outputs are missing",
+            )
+        ]
+    try:
+        manifest = json.loads(
+            (output_dir / "analysis_manifest.json").read_text(encoding="utf-8")
+        )
+        runner = _load_formal_runner()
+        args = argparse.Namespace(**_mapping(manifest.get("parameters")))
+        runs = [
+            runner.load_run_data(
+                str(row["dataset"]), Path(str(row["run_dir"])).resolve(), args
+            )
+            for row in rows
+        ]
+        expected, expected_curve = runner.build_aimd_mlip_comparison(
+            runs, [dict(row) for row in rows], dict(summary), args
+        )
+        expected["rdf"]["curve_csv"] = str(curve_path.resolve())
+        actual = json.loads(comparison_path.read_text(encoding="utf-8"))
+        if not _same_scientific_value(actual, runner.json_ready(expected)):
+            raise ValueError("comparison JSON differs from the trajectory rerun")
+
+        reader = csv.DictReader(curve_path.read_text(encoding="utf-8").splitlines())
+        curve_rows = list(reader)
+        if reader.fieldnames is None or set(reader.fieldnames) != set(expected_curve):
+            raise ValueError("RDF curve columns differ from the approved contract")
+        for name, expected_values in expected_curve.items():
+            actual_values = [float(row[name]) for row in curve_rows]
+            if len(actual_values) != len(expected_values) or any(
+                not _numbers_close(actual_value, float(expected_value))
+                for actual_value, expected_value in zip(actual_values, expected_values)
+            ):
+                raise ValueError(f"RDF curve column {name} differs from the trajectory rerun")
+    except (
+        OSError,
+        UnicodeError,
+        csv.Error,
+        json.JSONDecodeError,
+        ImportError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        return [
+            _diagnostic(
+                "ERROR",
+                "result.rdf_recheck",
+                f"AIMD/MLIP RDF comparison cannot be verified: {exc}",
+            )
+        ]
+    return []
 
 
 def _verify_arrhenius_summary(summary: Mapping[str, Any]) -> List[Dict[str, str]]:
@@ -2958,6 +3074,108 @@ class Adapter:
                         "ERROR", "parameter.%s" % name, "%s must be a non-empty string" % name
                     )
                 )
+
+        rdf_names = (
+            "rdf_pair",
+            "rdf_r_min_angstrom",
+            "rdf_r_max_angstrom",
+            "rdf_bins",
+            "rdf_temperature_k",
+            "comparison_model",
+            "comparison_scenario",
+            "comparison_split",
+        )
+        rdf_requested = parameters.get("rdf_pair") is not None
+        if any(parameters.get(name) is not None for name in rdf_names) and not rdf_requested:
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "parameter.rdf_pair",
+                    "rdf_pair is required when AIMD/MLIP comparison parameters are supplied",
+                )
+            )
+        if rdf_requested:
+            pair = parameters.get("rdf_pair")
+            if (
+                not isinstance(pair, list)
+                or len(pair) != 2
+                or any(
+                    not isinstance(value, str)
+                    or re.fullmatch(r"[A-Z][a-z]?", value) is None
+                    for value in pair
+                )
+            ):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "parameter.rdf_pair",
+                        "rdf_pair must contain exactly two element symbols",
+                    )
+                )
+            r_min = parameters.get("rdf_r_min_angstrom")
+            r_max = parameters.get("rdf_r_max_angstrom")
+            if (
+                not _finite_number(r_min)
+                or float(r_min) < 0.0
+                or not _positive_number(r_max)
+                or float(r_max) <= float(r_min)
+            ):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "parameter.rdf_range",
+                        "rdf range must satisfy 0 <= rdf_r_min_angstrom < rdf_r_max_angstrom",
+                    )
+                )
+            if not _positive_int(parameters.get("rdf_bins")):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR", "parameter.rdf_bins", "rdf_bins must be a positive integer"
+                    )
+                )
+            if parameters.get("rdf_temperature_k") is not None and not _positive_number(
+                parameters.get("rdf_temperature_k")
+            ):
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "parameter.rdf_temperature_k",
+                        "rdf_temperature_k must be positive when supplied",
+                    )
+                )
+            for name in (
+                "comparison_model",
+                "comparison_scenario",
+                "comparison_split",
+            ):
+                value = parameters.get(name)
+                if (
+                    not isinstance(value, str)
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value) is None
+                ):
+                    diagnostics.append(
+                        _diagnostic(
+                            "ERROR",
+                            f"parameter.{name}",
+                            f"{name} must be an explicit portable identifier",
+                        )
+                    )
+            if source not in {"auto", "trajectory"}:
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "parameter.rdf_source",
+                        "AIMD/MLIP RDF comparison requires source=auto or trajectory",
+                    )
+                )
+            if parameters.get("fit_scope") != "dataset":
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "parameter.rdf_fit_scope",
+                        "AIMD and MLIP Arrhenius evidence must remain separated with fit_scope=dataset",
+                    )
+                )
         return diagnostics
 
     def plan(self, context: Any) -> Dict[str, Any]:
@@ -3105,6 +3323,14 @@ class Adapter:
         if structure_input := _resolve(inputs.get("structure"), project_root):
             argv.extend(["--msd-structure", str(structure_input)])
 
+        expected_outputs = [str(output_dir / name) for name in _REQUIRED_RESULT_NAMES]
+        if parameters.get("rdf_pair") is not None:
+            expected_outputs.extend(
+                [
+                    str(output_dir / _RDF_CURVES_NAME),
+                    str(output_dir / _AIMD_MLIP_COMPARISON_NAME),
+                ]
+            )
         return {
             "plugin_id": PLUGIN_ID,
             "operation": _ANALYZE_OPERATION,
@@ -3113,7 +3339,7 @@ class Adapter:
             "argv": argv,
             "cwd": str(attempt_dir),
             "shell": False,
-            "expected_outputs": [str(output_dir / name) for name in _REQUIRED_RESULT_NAMES],
+            "expected_outputs": expected_outputs,
             "output_dir": str(output_dir),
             "assumptions": {
                 "formal_scientific_implementation": "pymatgen-analysis-diffusion",
@@ -3358,6 +3584,11 @@ class Adapter:
             )
             diagnostics.extend(_verify_transport_rows(rows, output_dir))
             diagnostics.extend(_verify_arrhenius_summary(summary))
+            diagnostics.extend(
+                _verify_aimd_mlip_comparison(
+                    context, output_dir, rows, summary
+                )
+            )
         integration_manifest: Optional[Dict[str, Any]] = None
         if operation == _SMOKE_OPERATION and isinstance(context, Mapping):
             integration_manifest, _, integration_diagnostics = _verify_smoke_manifest(context)
@@ -3468,6 +3699,25 @@ class Adapter:
                 artifacts.append(
                     {"role": "transport-diagnostic", "path": str(path), "media_type": "text/html"}
                 )
+        comparison: Optional[Dict[str, Any]] = None
+        if _mapping(context.get("parameters")).get("rdf_pair") is not None:
+            curve_path = output_dir / _RDF_CURVES_NAME
+            comparison_path = output_dir / _AIMD_MLIP_COMPARISON_NAME
+            comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
+            artifacts.extend(
+                [
+                    {
+                        "role": "rdf-curves",
+                        "path": str(curve_path),
+                        "media_type": "text/csv",
+                    },
+                    {
+                        "role": "aimd-mlip-comparison",
+                        "path": str(comparison_path),
+                        "media_type": "application/json",
+                    },
+                ]
+            )
         seen = {item["path"] for item in artifacts}
         for row in rows:
             for field, role, media_type in (
@@ -3532,6 +3782,7 @@ class Adapter:
                 "temperature_count": len({item["temperature_K"] for item in by_temperature}),
                 "by_temperature": by_temperature,
                 "arrhenius": summary,
+                "aimd_mlip_comparison": comparison,
                 "assumptions": {
                     "formal_scientific_implementation": "pymatgen-analysis-diffusion",
                     "scientific_use": (
