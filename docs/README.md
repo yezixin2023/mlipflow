@@ -1,6 +1,6 @@
 # MLIPFlow documentation
 
-This index separates the main user path from implementation references, validation evidence, and project-specific reproduction material. Plugin manifests and schemas remain the source of truth for exact operations and data contracts.
+This index separates the main user path from implementation references and validation evidence. Plugin manifests and schemas remain the source of truth for exact operations and data contracts.
 
 ## Start here
 
@@ -32,7 +32,7 @@ This index separates the main user path from implementation references, validati
 - [`AGENT_SKILLS.md`](AGENT_SKILLS.md) explains when each bundled Skill should supervise a capability and what must remain delegated to plugins.
 - [`CLUSTER_ENVIRONMENTS.md`](CLUSTER_ENVIRONMENTS.md) documents isolated scientific environments and site-template binding.
 
-Historical migration, source-audit, and predecessor-project notes are intentionally omitted from this public navigation. They are not required to install, operate, extend, or validate MLIPFlow.
+Historical migration, source-audit, predecessor-project, and project-specific reproduction notes are intentionally omitted from this public navigation. They are not required to install, operate, extend, or validate MLIPFlow.
 
 ## Validation evidence
 
@@ -43,16 +43,6 @@ Validation documents make separate claims about software behavior, scientific ca
 - [`HPC_VALIDATION.md`](HPC_VALIDATION.md) — scheduler lifecycle and real-HPC evidence.
 
 Machine-readable validation records are stored under [`reports/`](../reports/). These records should be retained with the documents that cite them; they are evidence, not general tutorials.
-
-## Manuscript-specific reproduction
-
-The following material supports a particular evidence-reproduction workflow and is not required for ordinary MLIPFlow use:
-
-- [`MANUSCRIPT_REPRODUCTION.md`](MANUSCRIPT_REPRODUCTION.md);
-- [`MANUSCRIPT_BENCHMARK_AUDIT.md`](MANUSCRIPT_BENCHMARK_AUDIT.md);
-- [`examples/high_entropy_sulfide_reproduction/`](../examples/high_entropy_sulfide_reproduction/).
-
-Keep reproduction artifacts separate from general user guidance so that project-specific assumptions are not mistaken for universal defaults.
 
 ## Documentation rules
 
