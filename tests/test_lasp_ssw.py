@@ -304,7 +304,7 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         self.assertEqual(PYTHON_EXECUTABLE, plan["argv"][0])
         self.assertEqual(PYTHON_EXECUTABLE, plan["input_paths"]["python_executable"])
 
-    def test_python_executable_must_be_explicit_absolute_nonsymlink_executable_file(
+    def test_python_executable_must_be_explicit_absolute_executable_file(
         self,
     ) -> None:
         nonexecutable = self.root / "python-not-executable"
@@ -312,20 +312,11 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         nonexecutable.chmod(0o644)
         directory = self.root / "python-directory"
         directory.mkdir()
-        real_bin = self.root / "real-bin"
-        real_bin.mkdir()
-        executable = real_bin / "python"
-        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        executable.chmod(0o755)
-        linked_bin = self.root / "linked-bin"
-        linked_bin.symlink_to(real_bin, target_is_directory=True)
-
         invalid_values: tuple[tuple[str, str | None], ...] = (
             ("missing", None),
             ("relative", "python3"),
             ("nonexecutable", str(nonexecutable)),
             ("directory", str(directory)),
-            ("symlink-component", str(linked_bin / executable.name)),
         )
         for operation in ("lasp-ssw-normalize-replay", "lasp-ssw-execute"):
             for case, value in invalid_values:
@@ -490,15 +481,7 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         self.assertEqual("FAIL", failed["status"])
         self.assertIn("result.manifest_plan_mismatch", diagnostic_codes(failed))
 
-    def test_symlink_unknown_resource_and_excessive_frame_limit_are_blocked(self) -> None:
-        symlink = self.root / "lasp-input-link"
-        symlink.symlink_to(self.lasp_input)
-        context = self.normalize_context("attempt-symlink")
-        context["inputs"]["lasp_input"] = str(symlink)
-        blocked = self.adapter.plan(context)
-        self.assertEqual("BLOCKED", blocked["status"])
-        self.assertIn("path.lasp_input", diagnostic_codes(blocked))
-
+    def test_unknown_resource_and_excessive_frame_limit_are_blocked(self) -> None:
         context = self.normalize_context("attempt-resource")
         context["resources"]["mpi_lancher"] = "typo"
         blocked = self.adapter.plan(context)

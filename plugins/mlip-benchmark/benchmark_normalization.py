@@ -44,8 +44,6 @@ from mlipflow.science.model_runtime import (
 
 PLUGIN_ID = "mlip-benchmark"
 WRAPPER_VERSION = "1.1.0"
-MAX_SOURCE_BYTES = 256 * 1024 * 1024
-MAX_XLSX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 OUTPUT_NAMES = (
     "metrics.json",
     "benchmark_summary.csv",
@@ -127,15 +125,10 @@ def _check_source(path_value: Any) -> Path:
     path = Path(path_value).expanduser().resolve()
     if not path.is_file():
         raise BenchmarkNormalizationError(f"benchmark evidence is not a regular file: {path}")
-    size = path.stat().st_size
-    if size > MAX_SOURCE_BYTES:
-        raise BenchmarkNormalizationError(
-            f"benchmark evidence exceeds the {MAX_SOURCE_BYTES}-byte local replay limit: {path}"
-        )
     return path
 
 
-def _portable_locator(value: Any, source_path: Path, field: str = "evidence_locator") -> str:
+def _public_locator(value: Any, source_path: Path, field: str = "evidence_locator") -> str:
     """Return a stable public locator while keeping the resolved read path private."""
 
     if value in (None, ""):
@@ -211,10 +204,7 @@ def _read_xlsx_tables(path: Path) -> list[dict[str, Any]]:
     except (OSError, zipfile.BadZipFile) as exc:
         raise BenchmarkNormalizationError(f"invalid XLSX evidence: {path}") from exc
     with archive:
-        infos = archive.infolist()
-        if sum(item.file_size for item in infos) > MAX_XLSX_UNCOMPRESSED_BYTES:
-            raise BenchmarkNormalizationError("XLSX evidence exceeds the uncompressed-size limit")
-        names = {item.filename for item in infos}
+        names = {item.filename for item in archive.infolist()}
         required = {"xl/workbook.xml", "xl/_rels/workbook.xml.rels"}
         if not required.issubset(names):
             raise BenchmarkNormalizationError("XLSX evidence is missing workbook metadata")
@@ -722,7 +712,7 @@ def _normalize_deepmd(
 
 def _normalize_replay_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     path = _check_source(spec.get("path"))
-    source_locator = _portable_locator(spec.get("evidence_locator"), path)
+    source_locator = _public_locator(spec.get("evidence_locator"), path)
     defaults = _source_defaults(spec)
     suffix = path.suffix.lower()
     if suffix == ".json":
@@ -822,7 +812,7 @@ def _normalize_replay_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]]
     if source_script_value not in (None, ""):
         source_script = _check_source(source_script_value)
         provenance["original_implementation"] = {
-            "path": _portable_locator(
+            "path": _public_locator(
                 spec.get("source_script_locator"), source_script, "source_script_locator"
             ),
             "read_only_reference": True,
@@ -928,7 +918,7 @@ def _pearson(
 
 def _execute_source(spec: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     path = _check_source(spec.get("path"))
-    source_locator = _portable_locator(spec.get("evidence_locator"), path)
+    source_locator = _public_locator(spec.get("evidence_locator"), path)
     defaults = _source_defaults(spec)
     rows, parser, sheets = _paired_rows(path)
     groups: dict[tuple[str, str, str, str, str, str], dict[str, Any]] = {}

@@ -16,7 +16,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REPLAY_PATH = ROOT / "plugins" / "electrochemical-voltage" / "manuscript_replay.py"
 ADAPTER_PATH = ROOT / "plugins" / "electrochemical-voltage" / "adapter.py"
-PLUGIN_PATH = ROOT / "plugins" / "electrochemical-voltage" / "plugin.yaml"
 def load_replay():
     spec = importlib.util.spec_from_file_location("test_manuscript_voltage_replay", REPLAY_PATH)
     if spec is None or spec.loader is None:
@@ -327,10 +326,11 @@ class ManuscriptVoltageAdapterIntegrationTests(unittest.TestCase):
         }
 
     def test_manifest_advertises_only_implemented_operations(self) -> None:
-        manifest = json.loads(PLUGIN_PATH.read_text(encoding="utf-8"))
+        from mlipflow.plugins import BUILTIN_CAPABILITIES
+
         self.assertEqual(
-            ["compute-from-energies", "replay-si-table-s11"],
-            manifest["execution"]["operations"],
+            ("compute-from-energies", "replay-si-table-s11"),
+            BUILTIN_CAPABILITIES["electrochemical-voltage"]["operations"],
         )
 
     def test_standard_adapter_plan_execute_check_and_collect(self) -> None:

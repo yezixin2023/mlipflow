@@ -1,4 +1,4 @@
-"""Safe external-wrapper planner for MLIP training frameworks.
+"""External-wrapper planner for MLIP training frameworks.
 
 This module is intentionally framework-free.  It translates reviewed,
 explicit context fields into an argv list for a user-owned wrapper and parses
@@ -8,7 +8,7 @@ Two execution shapes are supported.  On the ``local`` backend the adapter plans
 argv for a user-owned wrapper.  On the ``ssh-slurm`` backend it plans one
 scheduler job for a DeepMD fresh training run: the reviewed training config and
 a logical dataset reference are staged, a site-owned remote template launches
-``dp train``, and only bounded, declared artifacts come back.  Neither path
+``dp train``, and declared artifacts come back.  Neither path
 imports or reimplements a training framework, and neither path may carry a
 site-specific absolute path into the approval plan.
 """
@@ -39,11 +39,6 @@ TEMPLATE_FAMILIES = {"deepmd": "deepmd"}
 SHELL_EXECUTABLES = frozenset(
     {"bash", "csh", "cmd", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "tcsh", "zsh"}
 )
-MAX_JSON_BYTES = 8 * 1024 * 1024
-MAX_CONFIG_BYTES = 4 * 1024 * 1024
-MAX_LCURVE_BYTES = 32 * 1024 * 1024
-MAX_TRAINING_LOG_BYTES = 64 * 1024 * 1024
-MAX_CHECKPOINT_INDEX_BYTES = 64 * 1024 * 1024
 # A validation/reproduction run, not production training.  The bound is a
 # refusal, never a silent truncation.
 MAX_SCHEDULED_STEPS = 20000
@@ -98,9 +93,6 @@ def _safe_attempt_output(context: dict[str, Any], value: Any) -> str:
 
 
 def _read_json(path: Path) -> Any:
-    size = path.stat().st_size
-    if size > MAX_JSON_BYTES:
-        raise ValueError(f"JSON artifact exceeds {MAX_JSON_BYTES} bytes: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -251,38 +243,25 @@ def _safe_relative(value: Any) -> bool:
     return bool(parts) and all(part not in {"", ".", ".."} for part in parts)
 
 
-def _ordinary_project_file(path: Path, project_root: Path, max_bytes: int) -> bool:
+def _ordinary_project_file(path: Path, project_root: Path) -> bool:
     try:
-        if path.is_symlink() or not path.is_file():
-            return False
-        resolved = path.resolve()
-        resolved.relative_to(project_root.resolve())
-        for parent in [path, *path.parents]:
-            if parent == project_root:
-                break
-            if parent.is_symlink():
-                return False
-        return 0 < resolved.stat().st_size <= max_bytes
+        path.resolve().relative_to(project_root.resolve())
+        return path.is_file() and path.stat().st_size > 0
     except (OSError, ValueError):
         return False
 
 
-def _ordinary_file(path: Path, max_bytes: int | None = None) -> bool:
+def _ordinary_file(path: Path) -> bool:
     try:
-        if path.is_symlink() or not path.is_file():
-            return False
-        size = path.stat().st_size
-        return size > 0 and (max_bytes is None or size <= max_bytes)
+        return path.is_file() and path.stat().st_size > 0
     except OSError:
         return False
 
 
-def _read_json_file(path: Path, max_bytes: int = MAX_JSON_BYTES) -> tuple[Any, str | None]:
+def _read_json_file(path: Path) -> tuple[Any, str | None]:
     try:
-        if path.is_symlink() or not path.is_file():
-            return None, f"not an ordinary file: {path.name}"
-        if path.stat().st_size > max_bytes:
-            return None, f"exceeds {max_bytes} bytes: {path.name}"
+        if not path.is_file():
+            return None, f"not a file: {path.name}"
         return json.loads(path.read_text(encoding="utf-8")), None
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         return None, str(exc)
@@ -319,7 +298,7 @@ def _parse_deepmd_config(path: Path) -> tuple[dict[str, Any] | None, str | None]
     config whose systems are not portable or whose seeds are not explicit.
     """
 
-    raw, error = _read_json_file(path, MAX_CONFIG_BYTES)
+    raw, error = _read_json_file(path)
     if error is not None:
         return None, f"training config is unreadable: {error}"
     if not isinstance(raw, dict):
@@ -460,8 +439,6 @@ def _staged_record(source: Path, remote_name: str) -> dict[str, Any]:
     return {
         "source": str(source.absolute()),
         "remote_name": remote_name,
-        "sensitive": False,
-        "fetch_allowed": False,
     }
 
 
@@ -520,16 +497,16 @@ def _plan_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
     project_root = Path(str(context["project_root"])).expanduser().absolute()
     config_path = _project_file(context, inputs["training_config"])
     dataset_path = _project_file(context, inputs["dataset_reference"])
-    for name, path, limit in (
-        ("training_config", config_path, MAX_CONFIG_BYTES),
-        ("dataset_reference", dataset_path, MAX_JSON_BYTES),
+    for name, path in (
+        ("training_config", config_path),
+        ("dataset_reference", dataset_path),
     ):
-        if not _ordinary_project_file(path, project_root, limit):
+        if not _ordinary_project_file(path, project_root):
             diagnostics.append(
                 _diagnostic(
                     "error",
                     f"inputs.{name}",
-                    f"{name} must be an ordinary bounded file inside the project root",
+                    f"{name} must be a file inside the project root",
                 )
             )
     if diagnostics:
@@ -591,28 +568,24 @@ def _plan_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
             "remote_name": "lcurve.out",
             "local_name": "lcurve.out",
             "required": True,
-            "max_bytes": MAX_LCURVE_BYTES,
             "role": "training-curve",
         },
         {
             "remote_name": "training-report.json",
             "local_name": "training-report.json",
             "required": True,
-            "max_bytes": MAX_JSON_BYTES,
             "role": "training-report",
         },
         {
             "remote_name": "checkpoint",
             "local_name": "checkpoint",
             "required": True,
-            "max_bytes": 64 * 1024,
             "role": "model-checkpoint-state",
         },
         {
             "remote_name": "model.ckpt.index",
             "local_name": "model.ckpt.index",
             "required": True,
-            "max_bytes": MAX_CHECKPOINT_INDEX_BYTES,
             "role": "model-checkpoint-index",
         },
         {
@@ -620,7 +593,6 @@ def _plan_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
             "remote_path": "logs/train.stderr",
             "local_name": "train.stderr",
             "required": True,
-            "max_bytes": MAX_TRAINING_LOG_BYTES,
             "role": "training-log",
         },
         {
@@ -628,7 +600,6 @@ def _plan_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
             "remote_path": "logs/train.stdout",
             "local_name": "train.stdout",
             "required": False,
-            "max_bytes": MAX_TRAINING_LOG_BYTES,
             "role": "training-log",
         },
     ]
@@ -705,8 +676,8 @@ def _parse_lcurve(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     prints ``nan``.  Nothing here decides what a column means.
     """
 
-    if not _ordinary_file(path, MAX_LCURVE_BYTES):
-        return None, "lcurve.out is missing, empty or oversized"
+    if not _ordinary_file(path):
+        return None, "lcurve.out is missing or empty"
     try:
         text = path.read_text(encoding="utf-8", errors="strict")
     except (OSError, UnicodeError) as exc:
@@ -870,7 +841,7 @@ def _check_scheduled_training(context: dict[str, Any]) -> tuple[list[dict[str, s
         )
 
     log_path = attempt / "train.stderr"
-    if not _ordinary_file(log_path, MAX_TRAINING_LOG_BYTES):
+    if not _ordinary_file(log_path):
         diagnostics.append(
             _diagnostic("error", "training.log_missing", "the DeepMD training log was not fetched")
         )
@@ -885,11 +856,8 @@ def _check_scheduled_training(context: dict[str, Any]) -> tuple[list[dict[str, s
                     "code alone does not establish that training finished",
                 )
             )
-    for name, limit in (
-        ("checkpoint", 64 * 1024),
-        ("model.ckpt.index", MAX_CHECKPOINT_INDEX_BYTES),
-    ):
-        if not _ordinary_file(attempt / name, limit):
+    for name in ("checkpoint", "model.ckpt.index"):
+        if not _ordinary_file(attempt / name):
             diagnostics.append(
                 _diagnostic(
                     "error",
@@ -980,14 +948,6 @@ def _collect_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
             ],
         }
     result_path = attempt / result_name
-    if result_path.is_symlink():
-        return {
-            "plugin_id": PLUGIN_ID,
-            "status": "FAIL",
-            "diagnostics": [
-                _diagnostic("error", "training.result_symlink", "the result manifest path is a symlink")
-            ],
-        }
     result_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     metrics: dict[str, float] = {"completed_steps": float(curve["steps"][-1])}

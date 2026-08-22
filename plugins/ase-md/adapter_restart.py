@@ -17,7 +17,6 @@ PLUGIN_ID = "ase-md"
 RESTART_DISABLED = "disabled"
 RESTART_AUTO = "auto-from-previous-attempt"
 RESTART_POLICIES = {RESTART_DISABLED, RESTART_AUTO}
-MAX_CHECKPOINT_BYTES = 512 * 1024 * 1024
 RECOVERABLE_SCHEDULER_STATES = {
     "FAILED",
     "TIMEOUT",
@@ -80,9 +79,9 @@ def _final_manifest_path(context: dict[str, Any], attempt: int) -> Path:
     return current.parent / f"attempt-{attempt}" / "run-manifest.final.json"
 
 
-def _read_json(path: Path, max_bytes: int) -> dict[str, Any]:
-    if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= max_bytes:
-        raise ValueError(f"missing, unsafe or oversized JSON file: {path}")
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise ValueError(f"missing JSON file: {path}")
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"JSON file must contain an object: {path}")
@@ -170,7 +169,7 @@ def _previous_checkpoint(
         return None
     previous = attempt - 1
     manifest_path = _final_manifest_path(context, previous)
-    manifest = _read_json(manifest_path, legacy.MAX_JSON_BYTES)
+    manifest = _read_json(manifest_path)
     if manifest.get("state") not in {"FAIL", "STOPPED"}:
         raise ValueError("previous attempt is not a failed/stopped scheduler attempt")
     job = _mapping(manifest.get("job"))
@@ -180,7 +179,7 @@ def _previous_checkpoint(
             "previous attempt did not end in a restart-eligible scheduler terminal state"
         )
     checkpoint_path = _checkpoint_path(context, previous)
-    checkpoint = _read_json(checkpoint_path, MAX_CHECKPOINT_BYTES)
+    checkpoint = _read_json(checkpoint_path)
     completed = _checkpoint_matches_parameters(checkpoint, settings)
     return checkpoint_path, checkpoint, completed
 
@@ -289,7 +288,6 @@ def _plan_restart(context: dict[str, Any]) -> dict[str, Any]:
                 "remote_path": "output/md-checkpoint.json",
                 "local_name": "md-checkpoint.json",
                 "required": True,
-                "max_bytes": MAX_CHECKPOINT_BYTES,
                 "role": "md-checkpoint",
             }
         )
@@ -359,7 +357,7 @@ def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
     settings = _mapping(legacy._scheduled_plan(context).get("md_parameters"))
     interval = settings.get("checkpoint_interval")
     try:
-        result = legacy._read_bounded_json(attempt / "md-result.json")
+        result = legacy._read_json(attempt / "md-result.json")
     except Exception as exc:
         return [_diagnostic("error", "ase_md.restart_result", str(exc))]
     if result.get("segment_start_step") != settings.get("segment_start_step"):
@@ -381,7 +379,7 @@ def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
             )
     if interval is not None:
         checkpoint_path = attempt / "md-checkpoint.json"
-        if not legacy._ordinary_file(checkpoint_path, MAX_CHECKPOINT_BYTES):
+        if not legacy._ordinary_file(checkpoint_path):
             diagnostics.append(
                 _diagnostic("error", "ase_md.checkpoint_missing", "final checkpoint is missing")
             )
@@ -397,7 +395,7 @@ def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
                     )
                 )
             try:
-                checkpoint = _read_json(checkpoint_path, MAX_CHECKPOINT_BYTES)
+                checkpoint = _read_json(checkpoint_path)
                 completed = _checkpoint_matches_parameters(checkpoint, settings)
                 if completed != settings.get("steps"):
                     diagnostics.append(
@@ -410,7 +408,7 @@ def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
             except ValueError as exc:
                 # Input restart validation intentionally rejects completed==total.
                 # Validate the final checkpoint parameters separately here.
-                checkpoint = _read_json(checkpoint_path, MAX_CHECKPOINT_BYTES)
+                checkpoint = _read_json(checkpoint_path)
                 expected_total = settings.get("steps")
                 if checkpoint.get("completed_steps") != expected_total:
                     diagnostics.append(_diagnostic("error", "ase_md.checkpoint", str(exc)))
@@ -424,7 +422,7 @@ def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
                             _diagnostic("error", "ase_md.checkpoint", str(parameter_exc))
                         )
     try:
-        report = legacy._read_bounded_json(attempt / "cluster-run-report.json")
+        report = legacy._read_json(attempt / "cluster-run-report.json")
     except Exception as exc:
         diagnostics.append(_diagnostic("error", "ase_md.restart_cluster", str(exc)))
         report = {}
@@ -472,7 +470,7 @@ class Adapter:
         if collected.get("status") != "OK":
             return collected
         attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
-        if legacy._ordinary_file(attempt / "md-checkpoint.json", MAX_CHECKPOINT_BYTES):
+        if legacy._ordinary_file(attempt / "md-checkpoint.json"):
             artifacts = collected.setdefault("artifacts", [])
             if isinstance(artifacts, list):
                 artifacts.append(

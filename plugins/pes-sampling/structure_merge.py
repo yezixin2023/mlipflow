@@ -15,9 +15,6 @@ from typing import Any, Mapping
 
 
 SCHEMA_VERSION = 1
-MAX_JSON_BYTES = 16 * 1024 * 1024
-MAX_STRUCTURE_BYTES = 64 * 1024 * 1024
-MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_STRUCTURES = 10000
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 
@@ -36,13 +33,10 @@ class Candidate:
     structure: Any
 
 
-def _ordinary_file(path: Path, label: str, maximum: int) -> Path:
+def _ordinary_file(path: Path, label: str) -> Path:
     path = path.expanduser().absolute()
-    if path.is_symlink() or not path.is_file():
-        raise MergeError(f"{label} must be an ordinary file")
-    size = path.stat().st_size
-    if not 0 < size <= maximum:
-        raise MergeError(f"{label} size must be between 1 and {maximum} bytes")
+    if not path.is_file() or path.stat().st_size <= 0:
+        raise MergeError(f"{label} must be a non-empty file")
     return path.resolve()
 
 
@@ -70,7 +64,7 @@ def _within(path: Path, root: Path) -> bool:
 
 
 def _read_json(path: Path, label: str) -> dict[str, Any]:
-    path = _ordinary_file(path, label, MAX_JSON_BYTES)
+    path = _ordinary_file(path, label)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -121,7 +115,7 @@ def _read_arc(payload: bytes, adaptor: Any) -> Any:
 def _direct_candidates(
     manifest_path: Path, source_group_id: str, Structure: Any
 ) -> list[Candidate]:
-    manifest_path = _ordinary_file(manifest_path, "direct_manifest", MAX_JSON_BYTES)
+    manifest_path = _ordinary_file(manifest_path, "direct_manifest")
     try:
         reader = csv.DictReader(io.StringIO(manifest_path.read_text(encoding="utf-8")))
         rows = [dict(row) for row in reader]
@@ -144,7 +138,7 @@ def _direct_candidates(
         path = (manifest_path.parent / relative).absolute()
         if not _within(path, manifest_path.parent):
             raise MergeError("DIRECT selected structure escapes the manifest directory")
-        path = _ordinary_file(path, f"DIRECT selected structure {order}", MAX_STRUCTURE_BYTES)
+        path = _ordinary_file(path, f"DIRECT selected structure {order}")
         try:
             structure = Structure.from_file(str(path))
         except Exception as exc:
@@ -163,20 +157,20 @@ def _direct_candidates(
 
 
 def _safe_archive_members(archive_path: Path) -> dict[str, bytes]:
-    archive_path = _ordinary_file(archive_path, "lasp_selected_archive", MAX_ARCHIVE_BYTES)
+    archive_path = _ordinary_file(archive_path, "lasp_selected_archive")
     result: dict[str, bytes] = {}
     try:
         with tarfile.open(archive_path, "r:gz") as archive:
             for member in archive.getmembers():
                 relative = _safe_relative(member.name, "LASP archive member")
-                if not member.isfile() or member.size < 1 or member.size > MAX_STRUCTURE_BYTES:
-                    raise MergeError("LASP archive members must be bounded ordinary files")
+                if not member.isfile() or member.size < 1:
+                    raise MergeError("LASP archive members must be non-empty files")
                 if relative.as_posix() in result:
                     raise MergeError("LASP archive contains duplicate member names")
                 stream = archive.extractfile(member)
                 if stream is None:
                     raise MergeError("LASP archive member could not be read")
-                payload = stream.read(MAX_STRUCTURE_BYTES + 1)
+                payload = stream.read()
                 if len(payload) != member.size:
                     raise MergeError("LASP archive member size changed while reading")
                 result[relative.as_posix()] = payload
@@ -281,13 +275,9 @@ def merge(args: argparse.Namespace) -> dict[str, Any]:
     _write_json(marker, {"schema_version": 1, "operation": "merge-structures", "status": "INCOMPLETE"})
 
     Structure, StructureMatcher, adaptor, pymatgen_version = _load_pymatgen()
-    direct_manifest = _ordinary_file(Path(args.direct_manifest), "direct_manifest", MAX_JSON_BYTES)
-    lasp_manifest = _ordinary_file(
-        Path(args.lasp_selected_manifest), "lasp_selected_manifest", MAX_JSON_BYTES
-    )
-    lasp_archive = _ordinary_file(
-        Path(args.lasp_selected_archive), "lasp_selected_archive", MAX_ARCHIVE_BYTES
-    )
+    direct_manifest = _ordinary_file(Path(args.direct_manifest), "direct_manifest")
+    lasp_manifest = _ordinary_file(Path(args.lasp_selected_manifest), "lasp_selected_manifest")
+    lasp_archive = _ordinary_file(Path(args.lasp_selected_archive), "lasp_selected_archive")
     candidates = _direct_candidates(direct_manifest, direct_group, Structure)
     candidates.extend(_lasp_candidates(lasp_manifest, lasp_archive, lasp_group, adaptor))
     if len(candidates) > args.max_structures:

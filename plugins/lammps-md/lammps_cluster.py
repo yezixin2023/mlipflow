@@ -3,8 +3,8 @@
 The project stages a reviewed LAMMPS input bundle, never a model or cluster
 executable. The site template supplies MODEL_ROOT, LAMMPS_BIN and an optional
 JSON launcher argv. This runner checks the staged paths, resolves the
-model below MODEL_ROOT, launches LAMMPS with shell=False, and writes bounded
-machine-readable provenance for the local plugin checker.
+model below MODEL_ROOT, launches LAMMPS with shell=False, and writes a small
+machine-readable result for the local checker.
 """
 from __future__ import annotations
 
@@ -28,29 +28,19 @@ MODEL_CONTRACTS = {
     ("m3gnet", "gnnp"): ("directory", "matgl-model-directory", {"cpu"}),
     ("m3gnet", "m3gnet"): ("directory", "matgl-model-directory", {"cpu"}),
 }
-MAX_JSON_BYTES = 16 * 1024 * 1024
-MAX_INPUT_BYTES = 256 * 1024 * 1024
-MAX_LOG_BYTES = 512 * 1024 * 1024
-MAX_TRAJECTORY_BYTES = 8 * 1024 * 1024 * 1024
-MAX_FINAL_DATA_BYTES = 2 * 1024 * 1024 * 1024
-MAX_RESTART_BYTES = 8 * 1024 * 1024 * 1024
 LAMMPS_VERSION = re.compile(r"LAMMPS\s*\(([^\r\n)]+)\)")
 
 
-def _ordinary_file(path: Path, max_bytes: int) -> bool:
+def _ordinary_file(path: Path) -> bool:
     try:
-        return (
-            not path.is_symlink()
-            and path.is_file()
-            and 0 < path.stat().st_size <= max_bytes
-        )
+        return path.is_file() and path.stat().st_size > 0
     except OSError:
         return False
 
 
-def _read_mapping(path: Path, max_bytes: int = MAX_JSON_BYTES) -> dict[str, Any]:
-    if not _ordinary_file(path, max_bytes):
-        raise ValueError(f"missing, unsafe or oversized file: {path.name}")
+def _read_mapping(path: Path) -> dict[str, Any]:
+    if not _ordinary_file(path):
+        raise ValueError(f"missing or empty file: {path.name}")
     text = path.read_text(encoding="utf-8")
     if path.suffix.lower() in {".yaml", ".yml"}:
         import yaml
@@ -169,21 +159,15 @@ def _resolve_model(model_root_value: str, model: dict[str, Any]) -> Path:
     if kind not in {"file", "directory"}:
         raise ValueError("scheduled LAMMPS model kind must be file or directory")
     relative = _safe_relative(model.get("relative_path"))
-    unresolved = root / relative
-    current = root
-    for part in PurePosixPath(relative).parts:
-        current = current / part
-        if current.is_symlink():
-            raise ValueError("model reference traverses a symlink below the site model root")
-    candidate = unresolved.resolve()
+    candidate = (root / relative).resolve()
     try:
         candidate.relative_to(root)
     except ValueError as exc:
         raise ValueError("model reference escapes site model root") from exc
-    if kind == "file" and not _ordinary_file(candidate, MAX_RESTART_BYTES):
-        raise ValueError("resolved LAMMPS model file is missing, unsafe or oversized")
-    if kind == "directory" and (candidate.is_symlink() or not candidate.is_dir()):
-        raise ValueError("resolved LAMMPS model directory is missing or unsafe")
+    if kind == "file" and not _ordinary_file(candidate):
+        raise ValueError("resolved LAMMPS model file is missing")
+    if kind == "directory" and not candidate.is_dir():
+        raise ValueError("resolved LAMMPS model directory is missing")
     return candidate
 
 
@@ -194,10 +178,7 @@ def _resolve_interface_path(value: str, required: bool) -> Path | None:
         return None
     if not isinstance(value, str) or not value or "\x00" in value:
         raise ValueError("site LAMMPS interface path is required")
-    unresolved = Path(value).expanduser().absolute()
-    if unresolved.is_symlink():
-        raise ValueError("site LAMMPS interface path must not be a symlink")
-    resolved = unresolved.resolve()
+    resolved = Path(value).expanduser().resolve()
     if not resolved.is_dir():
         raise ValueError("site LAMMPS interface path is not a directory")
     return resolved
@@ -239,7 +220,7 @@ def _replace_model(
 
 def _version_from_logs(*paths: Path) -> str:
     for path in paths:
-        if not _ordinary_file(path, MAX_LOG_BYTES):
+        if not _ordinary_file(path):
             continue
         with path.open("r", encoding="utf-8", errors="replace") as stream:
             for _ in range(128):
@@ -249,11 +230,11 @@ def _version_from_logs(*paths: Path) -> str:
                 match = LAMMPS_VERSION.search(line)
                 if match:
                     return match.group(1).strip()
-    raise ValueError("LAMMPS version banner was not found in bounded logs")
+    raise ValueError("LAMMPS version banner was not found in logs")
 
 
 def _contains_marker(path: Path, marker: str) -> bool:
-    if not _ordinary_file(path, MAX_LOG_BYTES):
+    if not _ordinary_file(path):
         return False
     needle = marker.encode("utf-8")
     with path.open("rb") as stream:
@@ -268,9 +249,9 @@ def _contains_marker(path: Path, marker: str) -> bool:
             carry = data[-max(len(needle) - 1, 0) :]
 
 
-def _artifact(path: Path, name: str, max_bytes: int) -> dict[str, Any]:
-    if not _ordinary_file(path, max_bytes):
-        raise ValueError(f"required LAMMPS artifact is missing or oversized: {name}")
+def _artifact(path: Path, name: str) -> dict[str, Any]:
+    if not _ordinary_file(path):
+        raise ValueError(f"required LAMMPS artifact is missing or empty: {name}")
     return {"name": name, "path": name}
 
 
@@ -281,7 +262,7 @@ def run(args: argparse.Namespace) -> int:
     report: dict[str, Any] = {"schema_version": 1, "status": "FAIL", "node_id": args.node_id}
     try:
         node = _project_node(Path(args.project).expanduser().resolve(), args.node_id)
-        if str(node.get("uses", "")).split("@", 1)[0] != "lammps-md":
+        if node.get("uses") != "lammps-md":
             raise ValueError("scheduled node does not use lammps-md")
         if node.get("backend") != "ssh-slurm":
             raise ValueError("scheduled LAMMPS execute requires ssh-slurm")
@@ -341,7 +322,7 @@ def run(args: argparse.Namespace) -> int:
         for name in ("structure.data", selected_name):
             record = generated.get(name)
             staged = input_dir / "lammps" / name
-            if record is None or not _ordinary_file(staged, MAX_INPUT_BYTES):
+            if record is None or not _ordinary_file(staged):
                 raise ValueError(f"staged prepared input is missing: {name}")
         deck_text = (input_dir / "lammps" / selected_name).read_text(encoding="utf-8")
         requires_interface_path = interface in {"gnnp", "m3gnet"}
@@ -395,16 +376,16 @@ def run(args: argparse.Namespace) -> int:
             raise ValueError("LAMMPS log lacks the approved end-of-script completion marker")
         lammps_version = _version_from_logs(log_path, screen_path, stdout_path)
         artifacts = [
-            _artifact(output_dir / "trajectory.lammpstrj", "trajectory.lammpstrj", MAX_TRAJECTORY_BYTES),
-            _artifact(output_dir / "final.data", "final.data", MAX_FINAL_DATA_BYTES),
-            _artifact(output_dir / "final.restart", "final.restart", MAX_RESTART_BYTES),
-            _artifact(log_path, "lammps.log", MAX_LOG_BYTES),
-            _artifact(screen_path, "lammps.screen.log", MAX_LOG_BYTES),
+            _artifact(output_dir / "trajectory.lammpstrj", "trajectory.lammpstrj"),
+            _artifact(output_dir / "final.data", "final.data"),
+            _artifact(output_dir / "final.restart", "final.restart"),
+            _artifact(log_path, "lammps.log"),
+            _artifact(screen_path, "lammps.screen.log"),
         ]
-        if _ordinary_file(stdout_path, MAX_LOG_BYTES):
-            artifacts.append(_artifact(stdout_path, "lammps.stdout.log", MAX_LOG_BYTES))
-        if _ordinary_file(stderr_path, MAX_LOG_BYTES):
-            artifacts.append(_artifact(stderr_path, "lammps.stderr.log", MAX_LOG_BYTES))
+        if _ordinary_file(stdout_path):
+            artifacts.append(_artifact(stdout_path, "lammps.stdout.log"))
+        if _ordinary_file(stderr_path):
+            artifacts.append(_artifact(stderr_path, "lammps.stderr.log"))
 
         result = {
             "schema_version": 1,

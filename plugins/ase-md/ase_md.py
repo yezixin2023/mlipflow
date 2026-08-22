@@ -250,8 +250,8 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _read_checkpoint(path: Path) -> dict[str, Any]:
-    if path.is_symlink() or not path.is_file():
-        raise AseMDError(f"restart checkpoint is missing or unsafe: {path}")
+    if not path.is_file():
+        raise AseMDError(f"restart checkpoint is missing: {path}")
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:

@@ -26,7 +26,7 @@ A scheduled LASP node has no `lasp_executable` input.  The licensed binary is re
 
 ```yaml
 - id: lasp-walk
-  uses: pes-sampling@0
+  uses: pes-sampling
   mode: execute
   backend: ssh-slurm
   backend_profile: cluster-a
@@ -58,11 +58,11 @@ A scheduled LASP node has no `lasp_executable` input.  The licensed binary is re
 
 ## 3. What MLIPFlow stages
 
-The approved scheduled plan stages only the declared project/plugin files: the project configuration, `input.arc`, `lasp.in`, declared auxiliary files, `lasp_ssw.py`, and `lasp_cluster.py`. The cluster run template invokes the staged helper inside the Slurm allocation.
+The approved scheduled plan stages only the declared project and capability files: the project configuration, `input.arc`, `lasp.in`, declared auxiliary files, `lasp_ssw.py`, and `lasp_cluster.py`. The cluster run template invokes the staged helper inside the Slurm allocation.
 
-## 4. Bounded outputs and verified continuation
+## 4. Declared outputs and verified continuation
 
-The approved run records a fixed output allowlist. After scheduler completion, ordinary `advance` inventories that allowlist and applies the declared size bounds during transport without requiring a second approval. Required LASP outputs include:
+The approved run records a fixed output list. After scheduler completion, ordinary `advance` inventories and fetches that list without requiring a second approval. Required LASP outputs include:
 
 - `cluster-run-report.json`
 - `sampling-result.json`
@@ -77,4 +77,4 @@ The approved run records a fixed output allowlist. After scheduler completion, o
 
 During finalization, the adapter reparses fetched `allstr.arc`, recomputes the energy filter and accepted-order stride, recomputes deterministic structure IDs, verifies the selected manifest, and compares every member of `selected-structures.tar.gz` with its declared source frame before returning scientific `OK`.
 
-This integration validates scheduling, lineage, and bounded transfer.  It does not claim that a fake/local test establishes LASP numerical correctness; production validation still requires a real LASP run on the target cluster.
+This integration validates scheduling, lineage, and declared-output transfer. It does not claim that a fake/local test establishes LASP numerical correctness; production validation still requires a real LASP run on the target cluster.

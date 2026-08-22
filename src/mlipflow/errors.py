@@ -17,10 +17,9 @@ class ApprovalError(MLIPFlowError):
     code = "APPROVAL_REQUIRED"
 
 
-class PluginError(MLIPFlowError):
-    code = "PLUGIN_ERROR"
+class CapabilityError(MLIPFlowError):
+    code = "CAPABILITY_ERROR"
 
 
 class BackendError(MLIPFlowError):
     code = "BACKEND_ERROR"
-

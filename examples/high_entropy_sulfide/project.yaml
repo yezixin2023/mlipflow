@@ -10,7 +10,7 @@
     "nodes": [
       {
         "id": "structure-replay",
-        "uses": "high-entropy-structure@0",
+        "uses": "high-entropy-structure",
         "mode": "replay",
         "backend": "local",
         "inputs": {"result_manifest": "replay/structure-result.json"},
@@ -18,7 +18,7 @@
       },
       {
         "id": "sampling-replay",
-        "uses": "pes-sampling@0",
+        "uses": "pes-sampling",
         "needs": ["structure-replay"],
         "mode": "replay",
         "backend": "local",
@@ -27,7 +27,7 @@
       },
       {
         "id": "labeling-replay",
-        "uses": "dft-labeling@0",
+        "uses": "dft-labeling",
         "needs": ["sampling-replay"],
         "mode": "replay",
         "backend": "local",
@@ -36,7 +36,7 @@
       },
       {
         "id": "training-replay",
-        "uses": "mlip-training@0",
+        "uses": "mlip-training",
         "needs": ["labeling-replay"],
         "mode": "replay",
         "backend": "local",
@@ -45,7 +45,7 @@
       },
       {
         "id": "benchmark-replay",
-        "uses": "mlip-benchmark@0",
+        "uses": "mlip-benchmark",
         "needs": ["training-replay"],
         "mode": "replay",
         "backend": "local",
@@ -54,7 +54,7 @@
       },
       {
         "id": "transport-replay",
-        "uses": "ionic-transport@0",
+        "uses": "ionic-transport",
         "needs": ["benchmark-replay"],
         "mode": "replay",
         "backend": "local",
@@ -63,7 +63,7 @@
       },
       {
         "id": "ranking-replay",
-        "uses": "candidate-ranking@0",
+        "uses": "candidate-ranking",
         "needs": ["benchmark-replay"],
         "mode": "replay",
         "backend": "local",
@@ -72,7 +72,7 @@
       },
       {
         "id": "high-fidelity-validation-replay",
-        "uses": "dft-labeling@0",
+        "uses": "dft-labeling",
         "needs": ["ranking-replay"],
         "mode": "replay",
         "backend": "local",
@@ -81,7 +81,7 @@
       },
       {
         "id": "voltage-replay",
-        "uses": "electrochemical-voltage@0",
+        "uses": "electrochemical-voltage",
         "needs": ["benchmark-replay", "high-fidelity-validation-replay"],
         "mode": "replay",
         "backend": "local",

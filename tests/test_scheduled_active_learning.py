@@ -17,7 +17,7 @@ from mlipflow.services.contracts import _scheduled_contract
 from .helpers import project_config, write_json
 from .test_active_learning import policy
 from .test_scheduled_benchmark import library as benchmark_library
-from .test_scheduled_dft import PLUGINS, FakeTemplateLibrary, write_site
+from .test_scheduled_dft import FakeTemplateLibrary, write_site
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -117,7 +117,7 @@ cd {{RUN_DIR}}
 
 
 class ScheduledActiveLearningTests(unittest.TestCase):
-    def test_core_accepts_bounded_committee_runtime_staging(self) -> None:
+    def test_core_accepts_committee_runtime_staging(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             selected_policy = policy("single")
@@ -126,7 +126,7 @@ class ScheduledActiveLearningTests(unittest.TestCase):
             write_json(root / "committee-model-index.json", model_index())
             node = {
                 "id": "committee-evaluate",
-                "uses": "active-learning@0",
+                "uses": "active-learning",
                 "mode": "execute",
                 "backend": "ssh-slurm",
                 "backend_profile": "cluster-a",
@@ -147,15 +147,16 @@ class ScheduledActiveLearningTests(unittest.TestCase):
             site = write_site(root)
             initialize(root)
             project = load_project(root)
-            plan = make_run_plan(project, "committee-evaluate", PLUGINS, site, active_library())
+            plan = make_run_plan(
+                project, "committee-evaluate", site, active_library()
+            )
             adapter = plan["adapter_plan"]
             self.assertEqual("READY", adapter["status"], adapter.get("diagnostics"))
             self.assertTrue(plan["approval_required"])
             self.assertEqual(2, adapter["approval_summary"]["member_model_count"])
             contract = _scheduled_contract(
                 project,
-                __import__("mlipflow.plugins", fromlist=["discover_plugins"])
-                .discover_plugins(PLUGINS)["active-learning"],
+                "active-learning",
                 plan,
                 node_id="committee-evaluate",
                 attempt=1,
@@ -204,7 +205,7 @@ class ScheduledActiveLearningTests(unittest.TestCase):
                     [
                         {
                             "id": "committee-evaluate",
-                            "uses": "active-learning@0",
+                            "uses": "active-learning",
                             "parameters": {
                                 "operation": "committee-evaluate",
                                 "device": "cpu",

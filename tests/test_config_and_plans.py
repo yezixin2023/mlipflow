@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +9,7 @@ from mlipflow.errors import ConfigError, StateError
 from mlipflow.services import initialize, make_run_plan, run_node, state_path
 from mlipflow.state import StateStore
 
-from .helpers import plugin_manifest, project_config, write_json
+from .helpers import project_config, write_json
 
 
 class ConfigTests(unittest.TestCase):
@@ -35,35 +34,23 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "inside the project root"):
                 initialize(root)
 
-    def test_cycle_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            write_json(
-                root / "project.yaml",
-                project_config(
-                    [
-                        {"id": "a", "uses": "demo@1", "needs": ["b"]},
-                        {"id": "b", "uses": "demo@1", "needs": ["a"]},
-                    ]
-                ),
-            )
-            with self.assertRaises(ConfigError):
-                load_project(root)
-
-    def test_duplicate_node_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            write_json(
-                root / "project.yaml",
-                project_config(
-                    [
-                        {"id": "same", "uses": "demo@1"},
-                        {"id": "same", "uses": "demo@1"},
-                    ]
-                ),
-            )
-            with self.assertRaises(ConfigError):
-                load_project(root)
+    def test_invalid_dag_nodes_are_rejected(self) -> None:
+        cases = (
+            [
+                {"id": "a", "uses": "candidate-ranking", "needs": ["b"]},
+                {"id": "b", "uses": "candidate-ranking", "needs": ["a"]},
+            ],
+            [
+                {"id": "same", "uses": "candidate-ranking"},
+                {"id": "same", "uses": "candidate-ranking"},
+            ],
+        )
+        for nodes in cases:
+            with self.subTest(nodes=nodes), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                write_json(root / "project.yaml", project_config(nodes))
+                with self.assertRaises(ConfigError):
+                    load_project(root)
 
     def test_node_id_cannot_escape_run_directory(self) -> None:
         for unsafe in ("../outside", "/tmp/outside", "nested/node", ".hidden", "NodeA"):
@@ -71,7 +58,9 @@ class ConfigTests(unittest.TestCase):
                 root = Path(temporary)
                 write_json(
                     root / "project.yaml",
-                    project_config([{"id": unsafe, "uses": "demo@1"}]),
+                    project_config(
+                        [{"id": unsafe, "uses": "candidate-ranking"}]
+                    ),
                 )
                 with self.assertRaises(ConfigError):
                     load_project(root)
@@ -80,9 +69,7 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config = project_config([])
-            config["backend_profiles"] = {
-                "legacy": {"ssh_profile": "cluster"}
-            }
+            config["backend_profiles"] = {"legacy": {"ssh_profile": "cluster"}}
             write_json(root / "project.yaml", config)
             with self.assertRaisesRegex(ConfigError, "site.yaml"):
                 load_project(root)
@@ -91,30 +78,29 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for key in ("submit_script", "remote_cwd"):
-                with self.subTest(key=key):
-                    node = {
-                        "id": "hpc",
-                        "uses": "demo@1",
-                        "backend": "ssh-slurm",
-                        "backend_profile": "cluster-a",
-                        "parameters": {key: "legacy-value"},
-                        "resources": {
-                            "cpus": 4,
-                            "gpus": 0,
-                            "memory": "8G",
-                            "walltime": "01:00:00",
-                        },
-                    }
-                    write_json(root / "project.yaml", project_config([node]))
-                    with self.assertRaisesRegex(ConfigError, key):
-                        load_project(root)
+                node = {
+                    "id": "hpc",
+                    "uses": "dft-labeling",
+                    "backend": "ssh-slurm",
+                    "backend_profile": "cluster-a",
+                    "parameters": {key: "legacy-value"},
+                    "resources": {
+                        "cpus": 4,
+                        "gpus": 0,
+                        "memory": "8G",
+                        "walltime": "01:00:00",
+                    },
+                }
+                write_json(root / "project.yaml", project_config([node]))
+                with self.subTest(key=key), self.assertRaisesRegex(ConfigError, key):
+                    load_project(root)
 
     def test_hpc_project_cannot_embed_site_owned_partition_routing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             base = {
                 "id": "hpc",
-                "uses": "demo@1",
+                "uses": "dft-labeling",
                 "backend": "ssh-slurm",
                 "backend_profile": "cluster-a",
                 "resources": {
@@ -130,54 +116,60 @@ class ConfigTests(unittest.TestCase):
                 ("scheduler", {"partition_candidates": ["gpu1"]}),
                 ("ssh_profile", "login"),
             ):
-                with self.subTest(field=field):
-                    write_json(
-                        root / "project.yaml",
-                        project_config([{**base, field: value}]),
-                    )
-                    with self.assertRaisesRegex(ConfigError, "site-owned"):
-                        load_project(root)
+                write_json(
+                    root / "project.yaml", project_config([{**base, field: value}])
+                )
+                with self.subTest(field=field), self.assertRaisesRegex(
+                    ConfigError, "site-owned"
+                ):
+                    load_project(root)
 
-    def test_hpc_project_accepts_explicit_unlimited_walltime(self) -> None:
+    def test_hpc_resource_and_cluster_fields_are_retained(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            node = {
-                "id": "hpc",
-                "uses": "demo@1",
-                "backend": "ssh-slurm",
-                "backend_profile": "cluster-a",
-                "resources": {
-                    "cpus": 128,
-                    "gpus": 0,
-                    "memory": "128G",
-                    "walltime": "UNLIMITED",
+            nodes = [
+                {
+                    "id": "explicit",
+                    "uses": "dft-labeling",
+                    "backend": "ssh-slurm",
+                    "backend_profile": "cluster-a",
+                    "resources": {
+                        "cpus": 128,
+                        "gpus": 0,
+                        "memory": "128G",
+                        "walltime": "UNLIMITED",
+                    },
                 },
-            }
-            write_json(root / "project.yaml", project_config([node]))
-
+                {
+                    "id": "automatic",
+                    "uses": "dft-labeling",
+                    "backend": "ssh-slurm",
+                    "resources": {
+                        "cpus": 128,
+                        "gpus": 0,
+                        "memory": "128G",
+                        "walltime": "48:00:00",
+                    },
+                },
+            ]
+            write_json(root / "project.yaml", project_config(nodes))
             project = load_project(root)
+            self.assertEqual(
+                "UNLIMITED", project.node("explicit")["resources"]["walltime"]
+            )
+            self.assertNotIn("backend_profile", project.node("automatic"))
 
-            self.assertEqual("UNLIMITED", project.node("hpc")["resources"]["walltime"])
-
-    def test_hpc_project_allows_site_selected_cluster(self) -> None:
+    def test_standalone_slurm_backend_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            node = {
-                "id": "hpc",
-                "uses": "demo@1",
-                "backend": "ssh-slurm",
-                "resources": {
-                    "cpus": 128,
-                    "gpus": 0,
-                    "memory": "128G",
-                    "walltime": "48:00:00",
-                },
-            }
-            write_json(root / "project.yaml", project_config([node]))
-
-            project = load_project(root)
-
-            self.assertNotIn("backend_profile", project.node("hpc"))
+            write_json(
+                root / "project.yaml",
+                project_config(
+                    [{"id": "hpc", "uses": "dft-labeling", "backend": "slurm"}]
+                ),
+            )
+            with self.assertRaisesRegex(ConfigError, "local or ssh-slurm"):
+                load_project(root)
 
 
 class PlanTests(unittest.TestCase):
@@ -186,198 +178,90 @@ class PlanTests(unittest.TestCase):
             root = Path(temporary)
             write_json(root / "project.yaml", project_config([]))
             initialize(root)
-
-            config = project_config(
-                [{"id": "x", "uses": "demo@1", "mode": "replay", "parameters": {}}]
+            write_json(
+                root / "project.yaml",
+                project_config(
+                    [{"id": "x", "uses": "candidate-ranking", "mode": "replay"}]
+                ),
             )
-            write_json(root / "project.yaml", config)
             initialize(root)
-
             project = load_project(root)
             with StateStore(state_path(project), readonly=True) as store:
                 self.assertEqual("x", store.latest_step(project.project_id, "x").node_id)
 
-    def test_initialized_workflow_rejects_node_id_or_dependency_changes(self) -> None:
+    def test_project_yaml_remains_the_dag_source_of_truth(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            plugins = root / "plugins"
-            write_json(plugins / "demo" / "plugin.yaml", plugin_manifest())
-            original = project_config(
+            write_json(
+                root / "result.json",
+                {"schema_version": 1, "status": "OK", "artifacts": []},
+            )
+            config = project_config(
                 [
-                    {"id": "x", "uses": "demo@1", "mode": "replay"},
-                    {"id": "y", "uses": "demo@1", "mode": "replay", "needs": ["x"]},
+                    {"id": "x", "uses": "candidate-ranking", "mode": "replay"},
+                    {
+                        "id": "y",
+                        "uses": "candidate-ranking",
+                        "mode": "replay",
+                        "needs": ["x"],
+                        "inputs": {"result_manifest": "result.json"},
+                    },
                 ]
             )
-            write_json(root / "project.yaml", original)
+            write_json(root / "project.yaml", config)
             initialize(root)
-
-            changed_ids = project_config(
-                [
-                    {"id": "x", "uses": "demo@1", "mode": "replay"},
-                    {"id": "z", "uses": "demo@1", "mode": "replay", "needs": ["x"]},
-                ]
-            )
-            write_json(root / "project.yaml", changed_ids)
-            with self.assertRaisesRegex(StateError, "DAG topology"):
-                make_run_plan(load_project(root), "x", plugins)
-
-            changed_needs = copy.deepcopy(original)
-            changed_needs["workflow"]["nodes"][1]["needs"] = []
-            write_json(root / "project.yaml", changed_needs)
-            with self.assertRaisesRegex(StateError, "DAG topology"):
-                make_run_plan(load_project(root), "x", plugins)
+            config["workflow"]["nodes"][1]["needs"] = []
+            write_json(root / "project.yaml", config)
+            project = load_project(root)
+            result = run_node(project, "y")
+            self.assertEqual("OK", result["step"]["state"])
 
     def test_unrelated_config_changes_do_not_block_existing_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            plugins = root / "plugins"
-            manifest = plugin_manifest()
-            manifest["execution"]["backends"] = ["local"]
-            write_json(plugins / "demo" / "plugin.yaml", manifest)
             config = project_config(
-                [
-                    {"id": "x", "uses": "demo@1", "mode": "replay", "parameters": {}},
-                    {"id": "y", "uses": "demo@1", "mode": "replay", "parameters": {}},
-                ]
+                [{"id": "x", "uses": "candidate-ranking", "mode": "replay"}]
             )
             write_json(root / "project.yaml", config)
             initialize(root)
             config["project"]["description"] = "changed after initialization"
-            config["workflow"]["nodes"][1]["parameters"] = {"unrelated": True}
             write_json(root / "project.yaml", config)
-            plan = make_run_plan(load_project(root), "x", plugins)
-            self.assertEqual("x", plan["node_id"])
+            self.assertEqual("x", make_run_plan(load_project(root), "x")["node_id"])
 
     def test_project_identity_still_owns_its_state_database(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            plugins = root / "plugins"
-            write_json(plugins / "demo" / "plugin.yaml", plugin_manifest())
             config = project_config(
-                [{"id": "x", "uses": "demo@1", "mode": "replay", "parameters": {}}]
+                [{"id": "x", "uses": "candidate-ranking", "mode": "replay"}]
             )
             write_json(root / "project.yaml", config)
             initialize(root)
-
             config["project"]["id"] = "different-project"
             write_json(root / "project.yaml", config)
             with self.assertRaisesRegex(StateError, "belongs to project"):
-                make_run_plan(load_project(root), "x", plugins)
-
-    def test_attempt_snapshot_binds_at_execution_and_then_stays_immutable(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            plugins = root / "plugins"
-            write_json(plugins / "demo" / "plugin.yaml", plugin_manifest())
-            write_json(
-                root / "result.json",
-                {"schema_version": 1, "status": "OK", "metrics": {}, "artifacts": []},
-            )
-            config = project_config(
-                [
-                    {
-                        "id": "x",
-                        "uses": "demo@1",
-                        "mode": "replay",
-                        "inputs": {"result_manifest": "result.json"},
-                        "parameters": {"revision": 1},
-                    }
-                ]
-            )
-            write_json(root / "project.yaml", config)
-            initialize(root)
-
-            config["workflow"]["nodes"][0]["parameters"]["revision"] = 2
-            write_json(root / "project.yaml", config)
-            project = load_project(root)
-            run_node(project, "x", plugins)
-            with StateStore(state_path(project), readonly=True) as store:
-                step = store.latest_step(project.project_id, "x")
-                self.assertEqual(2, store.node_snapshot(step.run_id)["parameters"]["revision"])
-
-            config["workflow"]["nodes"][0]["parameters"]["revision"] = 3
-            write_json(root / "project.yaml", config)
-            with StateStore(state_path(project), readonly=True) as store:
-                self.assertEqual(2, store.node_snapshot(step.run_id)["parameters"]["revision"])
-
-    def test_generic_inputs_are_recorded_as_paths(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            plugins = root / "plugins"
-            manifest = plugin_manifest()
-            manifest["implementation"]["status"] = "contract-only"
-            manifest["execution"]["backends"] = ["local"]
-            write_json(plugins / "demo" / "plugin.yaml", manifest)
-            structures = root / "structures.xyz"
-            structures.write_text("one\n", encoding="utf-8")
-            dataset = root / "dataset"
-            dataset.mkdir()
-            (dataset / "part.dat").write_text("alpha\n", encoding="utf-8")
-            node = {
-                "id": "x",
-                "uses": "demo@1",
-                "mode": "execute",
-                "inputs": {"structures": "structures.xyz", "data": "dataset"},
-                "parameters": {"argv": ["true"]},
-            }
-            write_json(root / "project.yaml", project_config([node]))
-            project = load_project(root)
-            first = make_run_plan(project, "x", plugins)
-            structures.write_text("two\n", encoding="utf-8")
-            second = make_run_plan(project, "x", plugins)
-            (dataset / "part.dat").write_text("beta\n", encoding="utf-8")
-            third = make_run_plan(project, "x", plugins)
-            self.assertEqual(first, second)
-            self.assertEqual(second, third)
-            self.assertEqual(
-                {"data": "dataset", "structures": "structures.xyz"}, third["inputs"]
-            )
+                make_run_plan(load_project(root), "x")
 
     def test_replay_plan_records_the_result_path_not_file_content(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            plugins = root / "plugins"
-            manifest_path = plugins / "demo" / "plugin.yaml"
-            manifest = plugin_manifest()
-            manifest["execution"]["backends"] = ["local"]
-            write_json(manifest_path, manifest)
             result_path = root / "result.json"
             write_json(result_path, {"schema_version": 1, "artifacts": []})
             node = {
                 "id": "x",
-                "uses": "demo@1",
+                "uses": "candidate-ranking",
                 "mode": "replay",
                 "inputs": {"result_manifest": "result.json"},
             }
             write_json(root / "project.yaml", project_config([node]))
             project = load_project(root)
-            first = make_run_plan(project, "x", plugins)
-            write_json(result_path, {"schema_version": 1, "metrics": {"changed": 1}, "artifacts": []})
-            second = make_run_plan(project, "x", plugins)
-            self.assertEqual(first, second)
-            manifest["description"] = "Changed without a version bump"
-            write_json(manifest_path, manifest)
-            third = make_run_plan(project, "x", plugins)
-            self.assertEqual(second, third)
-            self.assertEqual("result.json", third["inputs"]["result_manifest"])
-
-    def test_standalone_slurm_backend_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            first = make_run_plan(project, "x")
             write_json(
-                root / "project.yaml",
-                project_config(
-                    [
-                        {
-                            "id": "hpc",
-                            "uses": "demo@1",
-                            "backend": "slurm",
-                        }
-                    ]
-                ),
+                result_path,
+                {"schema_version": 1, "metrics": {"changed": 1}, "artifacts": []},
             )
-            with self.assertRaisesRegex(ConfigError, "local or ssh-slurm"):
-                load_project(root)
+            second = make_run_plan(project, "x")
+            self.assertEqual(first, second)
+            self.assertEqual("result.json", second["inputs"]["result_manifest"])
 
 
 if __name__ == "__main__":

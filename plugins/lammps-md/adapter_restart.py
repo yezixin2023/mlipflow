@@ -85,9 +85,9 @@ def _previous_attempt_path(context: dict[str, Any], attempt: int, name: str) -> 
     return current.parent / f"attempt-{attempt}" / name
 
 
-def _read_json(path: Path, max_bytes: int) -> dict[str, Any]:
-    if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= max_bytes:
-        raise ValueError(f"missing, unsafe or oversized JSON file: {path}")
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.is_file() or path.stat().st_size <= 0:
+        raise ValueError(f"missing or empty JSON file: {path}")
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"JSON file must contain an object: {path}")
@@ -205,7 +205,7 @@ def _previous_restart(
 ) -> tuple[Path, dict[str, Any], dict[str, Path]]:
     previous = attempt - 1
     final_manifest = _read_json(
-        _previous_attempt_path(context, previous, "run-manifest.final.json"), base.MAX_JSON_BYTES
+        _previous_attempt_path(context, previous, "run-manifest.final.json")
     )
     if final_manifest.get("state") not in {"FAIL", "STOPPED"}:
         raise ValueError("previous attempt is not failed/stopped")
@@ -215,14 +215,14 @@ def _previous_restart(
         raise ValueError("previous attempt did not end in a restart-eligible scheduler terminal state")
 
     runtime_path = _previous_attempt_path(context, previous, "restart-runtime.json")
-    runtime = _read_json(runtime_path, base.MAX_JSON_BYTES)
+    runtime = _read_json(runtime_path)
     resources = _mapping(context.get("resources"))
     _runtime_matches(runtime, calculation, resources, previous)
 
     candidates: dict[str, Path] = {}
     for name in CHECKPOINT_FILES:
         path = _previous_attempt_path(context, previous, name)
-        if base._ordinary_file(path, base.MAX_RESTART_BYTES):
+        if base._ordinary_file(path):
             candidates[name] = path
     if not candidates:
         raise ValueError("previous scheduler interruption has no salvaged periodic restart file")
@@ -297,7 +297,6 @@ def _plan_execute(context: dict[str, Any]) -> dict[str, Any]:
                     "remote_path": f"output/{name}",
                     "local_name": name,
                     "required": False,
-                    "max_bytes": base.MAX_RESTART_BYTES,
                     "role": "lammps-periodic-restart",
                 }
             )
@@ -307,7 +306,6 @@ def _plan_execute(context: dict[str, Any]) -> dict[str, Any]:
                 "remote_path": "output/restart-runtime.json",
                 "local_name": "restart-runtime.json",
                 "required": False,
-                "max_bytes": base.MAX_JSON_BYTES,
                 "role": "lammps-restart-runtime",
             }
         )

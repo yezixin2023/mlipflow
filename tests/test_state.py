@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,32 @@ from mlipflow.state import ALLOWED_TRANSITIONS, RunState, StateStore, validate_t
 
 
 class TransitionTests(unittest.TestCase):
+    def test_database_contains_only_minimal_step_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            with StateStore(database):
+                pass
+            connection = sqlite3.connect(database)
+            tables = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                )
+            ]
+            columns = [
+                row[1] for row in connection.execute("PRAGMA table_info(step_runs)")
+            ]
+            connection.close()
+            self.assertEqual(["step_runs"], tables)
+            self.assertEqual(
+                [
+                    "run_id", "project_id", "node_id", "attempt", "state",
+                    "backend", "job_id", "remote_dir", "created_at", "updated_at",
+                    "submitted_at", "started_at", "ended_at", "diagnostic",
+                ],
+                columns,
+            )
+
     def test_every_declared_transition_is_accepted(self) -> None:
         for before, afters in ALLOWED_TRANSITIONS.items():
             validate_transition(before, before)
@@ -31,15 +58,14 @@ class TransitionTests(unittest.TestCase):
     def test_retry_creates_new_attempt_and_preserves_previous(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "state.sqlite3"
-            nodes = [{"id": "train", "uses": "demo@1", "needs": [], "backend": "local"}]
+            nodes = [{"id": "train", "uses": "mlip-training", "needs": [], "backend": "local"}]
             with StateStore(database) as store:
                 store.initialize_project("p", nodes)
                 first = store.latest_step("p", "train")
                 store.transition(first.run_id, RunState.RUNNING)
                 store.transition(first.run_id, RunState.FAIL, diagnostic="fixture failure")
-                second = store.create_retry("p", "train")
+                second = store.create_retry("p", "train", "local")
                 self.assertEqual(second.attempt, 2)
-                self.assertEqual(second.retry_count, 1)
                 self.assertEqual(second.state, RunState.READY.value)
                 preserved = store.step_by_run_id(first.run_id)
                 self.assertEqual(preserved.state, RunState.FAIL.value)
@@ -56,7 +82,7 @@ class TransitionTests(unittest.TestCase):
     def test_state_survives_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "state.sqlite3"
-            nodes = [{"id": "x", "uses": "demo@1", "needs": []}]
+            nodes = [{"id": "x", "uses": "candidate-ranking", "needs": []}]
             with StateStore(database) as store:
                 store.initialize_project("p", nodes)
                 step = store.latest_step("p", "x")

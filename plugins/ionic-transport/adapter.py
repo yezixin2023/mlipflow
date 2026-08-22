@@ -36,7 +36,6 @@ LEGACY_ARRHENIUS_CONVENTION = "legacy_get_sigma_v1"
 _LEGACY_LI10_N_MOBILE_IONS = 7
 _HISTORICAL_ELEMENTARY_CHARGE_C = 1.6e-19
 _HISTORICAL_BOLTZMANN_J_K = 1.38e-23
-_MAX_PARITY_SOURCE_BYTES = 64 * 1024 * 1024
 _FLOAT_PATTERN = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 _SAMPLING_PROFILES: Dict[str, Dict[str, Any]] = {
     "mace_li10_legacy_v1": {
@@ -930,12 +929,6 @@ def _read_parity_source(path_value: Any, role: str) -> Tuple[str, Dict[str, Any]
     path = Path(path_value).expanduser().resolve()
     if not path.is_file():
         raise ManuscriptTransportError("%s must name an existing file: %s" % (role, path))
-    before = path.stat()
-    if before.st_size > _MAX_PARITY_SOURCE_BYTES:
-        raise ManuscriptTransportError(
-            "%s exceeds the %d-byte local parity read limit: %s"
-            % (role, _MAX_PARITY_SOURCE_BYTES, path)
-        )
     payload = path.read_bytes()
     try:
         text = payload.decode("utf-8")
@@ -1943,8 +1936,6 @@ def _verify_smoke_manifest(
         )
         return None, artifacts, diagnostics
     try:
-        if manifest_path.stat().st_size > 8 * 1024 * 1024:
-            raise ValueError("integration manifest exceeds 8 MiB")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         diagnostics.append(

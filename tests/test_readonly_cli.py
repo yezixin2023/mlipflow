@@ -7,20 +7,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mlipflow.services import initialize
-from mlipflow.services.queries import _python_import_name
-
-from .helpers import plugin_manifest, project_config, run_cli, snapshot, write_json
+from .helpers import project_config, run_cli, snapshot, write_json
 
 
 class ReadOnlyCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
-        self.plugins = self.root / "plugins"
-        write_json(self.plugins / "demo" / "plugin.yaml", plugin_manifest())
         node = {
             "id": "benchmark",
-            "uses": "demo@1",
+            "uses": "mlip-benchmark",
             "mode": "replay",
             "needs": [],
             "inputs": {"result_manifest": "result.json"},
@@ -61,12 +57,6 @@ class ReadOnlyCliTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_doctor_uses_the_transport_package_import_path(self) -> None:
-        self.assertEqual(
-            "pymatgen.analysis.diffusion",
-            _python_import_name("pymatgen-analysis-diffusion"),
-        )
-
     def test_uninitialized_queries_create_nothing(self) -> None:
         before = snapshot(self.root)
         commands = [
@@ -83,8 +73,6 @@ class ReadOnlyCliTests(unittest.TestCase):
                     [
                         "--project",
                         str(self.root),
-                        "--plugins",
-                        str(self.plugins),
                         "--format",
                         "json",
                         *command,
@@ -106,8 +94,6 @@ class ReadOnlyCliTests(unittest.TestCase):
                 [
                     "--project",
                     str(self.root),
-                    "--plugins",
-                    str(self.plugins),
                     "--format",
                     "json",
                     *command,
@@ -122,8 +108,6 @@ class ReadOnlyCliTests(unittest.TestCase):
             [
                 "--project",
                 str(self.root),
-                "--plugins",
-                str(self.plugins),
                 "--format",
                 "json",
                 "run",
@@ -136,23 +120,6 @@ class ReadOnlyCliTests(unittest.TestCase):
         self.assertFalse(compact["approval_required"])
         self.assertNotIn("adapter_plan", compact)
 
-        code, stdout, stderr = run_cli(
-            [
-                "--project",
-                str(self.root),
-                "--plugins",
-                str(self.plugins),
-                "--format",
-                "json",
-                "run",
-                "benchmark",
-                "--dry-run",
-                "--audit",
-            ]
-        )
-        self.assertEqual(code, 0, stderr)
-        audit = json.loads(stdout)["data"]
-        self.assertEqual({"result_manifest": "result.json"}, audit["inputs"])
         self.assertEqual(snapshot(self.root), before)
 
 

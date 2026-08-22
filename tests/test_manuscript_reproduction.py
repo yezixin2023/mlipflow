@@ -108,7 +108,7 @@ class ManuscriptReproductionTests(unittest.TestCase):
             {
                 "plugins/mlip-benchmark/benchmark_wrapper.py",
                 "plugins/mlip-benchmark/benchmark_normalization.py",
-                "plugins/mlip-benchmark/plugin.yaml",
+                "plugins/mlip-benchmark/adapter.py",
                 "src/mlipflow/science/model_runtime.py",
             },
             {item["locator"] for item in implementation_files},
@@ -440,12 +440,11 @@ class ManuscriptReproductionTests(unittest.TestCase):
             locators = (
                 "plugins/mlip-benchmark/benchmark_wrapper.py",
                 "plugins/mlip-benchmark/benchmark_normalization.py",
-                "plugins/mlip-benchmark/plugin.yaml",
+                "plugins/mlip-benchmark/adapter.py",
                 "src/mlipflow/science/model_runtime.py",
                 "plugins/candidate-ranking/rank.py",
                 "plugins/candidate-ranking/normalize_legacy.py",
                 "plugins/candidate-ranking/adapter.py",
-                "plugins/candidate-ranking/plugin.yaml",
                 "plugins/ionic-transport/adapter.py",
             )
             for locator in locators:
@@ -459,16 +458,10 @@ class ManuscriptReproductionTests(unittest.TestCase):
                 benchmark_wrapper_path=copied_wrapper,
                 write=True,
             )
-            tampered = checkout / "plugins" / "candidate-ranking" / "plugin.yaml"
-            tampered.write_text(
-                tampered.read_text(encoding="utf-8").replace(
-                    '"id": "candidate-ranking"', '"id": "candidate-rankings"', 1
-                ),
-                encoding="utf-8",
-            )
+            (checkout / "plugins" / "candidate-ranking" / "adapter.py").unlink()
             with self.assertRaisesRegex(
                 self.reproduce.ReproductionEvidenceError,
-                "current candidate-ranking manifest contract drift",
+                "current candidate-ranking adapter locator does not resolve",
             ):
                 self.reproduce.reproduce(
                     relocated,

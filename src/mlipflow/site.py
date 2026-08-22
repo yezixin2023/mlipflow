@@ -97,9 +97,9 @@ def load_site_config(path: Path | None = None) -> SiteConfig:
     """Load one explicit or conventional user-local site configuration."""
 
     candidate = (path if path is not None else default_site_path()).expanduser().absolute()
-    if candidate.is_symlink() or not candidate.is_file():
+    if not candidate.is_file():
         raise ConfigError(
-            f"site config is missing or unsafe: {candidate}; create ~/.mlipflow/site.yaml "
+            f"site config is missing: {candidate}; create ~/.mlipflow/site.yaml "
             "during a separate site bootstrap step or pass --site"
         )
     candidate = candidate.resolve()

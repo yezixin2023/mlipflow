@@ -36,14 +36,14 @@ REPORT_OUTPUTS = (
 BENCHMARK_WRAPPER_LOCATOR = "plugins/mlip-benchmark/benchmark_wrapper.py"
 BENCHMARK_NORMALIZATION_LOCATOR = "plugins/mlip-benchmark/benchmark_normalization.py"
 MODEL_RUNTIME_LOCATOR = "src/mlipflow/science/model_runtime.py"
-BENCHMARK_MANIFEST_LOCATOR = "plugins/mlip-benchmark/plugin.yaml"
+BENCHMARK_ADAPTER_LOCATOR = "plugins/mlip-benchmark/adapter.py"
 LEGACY_RANKING_IMPLEMENTATION = (
     "plugins/composition-screening/screen.py",
     "plugins/composition-screening/normalize_legacy.py",
     "plugins/composition-screening/adapter.py",
     "plugins/composition-screening/plugin.yaml",
 )
-CURRENT_RANKING_MANIFEST_LOCATOR = "plugins/candidate-ranking/plugin.yaml"
+CURRENT_RANKING_ADAPTER_LOCATOR = "plugins/candidate-ranking/adapter.py"
 CURRENT_RANKER_LOCATOR = "plugins/candidate-ranking/rank.py"
 
 
@@ -461,22 +461,11 @@ def _verify_screening_evidence(
     if top_candidates != expected_order:
         raise ReproductionEvidenceError("large-supercell top ten violates value/tie ordering")
 
-    current_manifest_path = _repository_file(
+    _repository_file(
         repository_root,
-        CURRENT_RANKING_MANIFEST_LOCATOR,
-        "current candidate-ranking manifest",
+        CURRENT_RANKING_ADAPTER_LOCATOR,
+        "current candidate-ranking adapter",
     )
-    try:
-        current_manifest = _json(current_manifest_path)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ReproductionEvidenceError("current candidate-ranking manifest is invalid") from exc
-    if (
-        current_manifest.get("id") != "candidate-ranking"
-        or current_manifest.get("name") != "Candidate ranking"
-        or current_manifest.get("display_name") != "Candidate ranking"
-        or current_manifest.get("execution", {}).get("operations") != ["rank-candidates"]
-    ):
-        raise ReproductionEvidenceError("current candidate-ranking manifest contract drift")
 
     ranker_path = _repository_file(
         repository_root,
@@ -872,7 +861,7 @@ def _build_summary(
             BENCHMARK_WRAPPER_LOCATOR,
             BENCHMARK_NORMALIZATION_LOCATOR,
             MODEL_RUNTIME_LOCATOR,
-            BENCHMARK_MANIFEST_LOCATOR,
+            BENCHMARK_ADAPTER_LOCATOR,
         )
     ]
     static = compact_routes["static-pes"]

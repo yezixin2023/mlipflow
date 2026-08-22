@@ -47,7 +47,6 @@ TEMPLATE_FAMILY = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 EXECUTION_MODELS = frozenset({"single-python", "mpi"})
 MEMORY = re.compile(r"^[1-9][0-9]*(?:[KMGTP](?:i?B)?)?$")
 WALLTIME = re.compile(r"^(?:[0-9]{2,3}:[0-5][0-9]:[0-5][0-9]|UNLIMITED)$")
-MAX_TEMPLATE_BYTES = 1024 * 1024
 
 _SLURM_CPU_SEMANTICS = {
     "single-python": {
@@ -172,11 +171,6 @@ def render_template(
     required: frozenset[str],
     allowed_variables: frozenset[str] = TEMPLATE_VARIABLES,
 ) -> str:
-    encoded = text.encode("utf-8")
-    if len(encoded) > MAX_TEMPLATE_BYTES:
-        raise ConfigError(f"remote template is too large: {template_name}")
-    if "\x00" in text:
-        raise ConfigError(f"remote template contains NUL: {template_name}")
     used = set(PLACEHOLDER.findall(text))
     unknown = sorted(used - allowed_variables)
     if unknown:

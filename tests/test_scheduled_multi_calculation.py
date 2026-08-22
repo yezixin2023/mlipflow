@@ -23,11 +23,17 @@ from unittest.mock import patch
 
 from mlipflow.backends import ExecutionResult
 from mlipflow.config import load_project
-from mlipflow.services import advance, initialize, make_advance_plan, make_run_plan, run_node
+from mlipflow.services import (
+    advance,
+    initialize,
+    make_advance_plan,
+    make_run_plan,
+    query_workflow,
+    run_node,
+)
 
 from .helpers import project_config, write_json
 from .test_scheduled_dft import (
-    PLUGINS,
     FakeTemplateLibrary,
     write_calculation_outputs,
     write_completion,
@@ -142,7 +148,7 @@ def build_project(
     )
     node = {
         "id": "label-li",
-        "uses": "dft-labeling@0",
+        "uses": "dft-labeling",
         "backend": "ssh-slurm",
         "backend_profile": "cluster-a",
         "inputs": {
@@ -200,7 +206,7 @@ class ScheduledLifecycle:
 
     def plan(self) -> dict[str, Any]:
         return make_run_plan(
-            self.project, "label-li", PLUGINS, self.site, FakeTemplateLibrary()
+            self.project, "label-li", self.site, FakeTemplateLibrary()
         )
 
     def submit(self) -> dict[str, Any]:
@@ -224,7 +230,6 @@ class ScheduledLifecycle:
             run_node(
                 self.project,
                 "label-li",
-                PLUGINS,
                 True,
                 self.site,
                 FakeTemplateLibrary(),
@@ -316,7 +321,7 @@ class ScheduledLifecycle:
             "mlipflow.services.SshSlurmBackend.inspect_file", autospec=True,
             side_effect=inspect,
         ):
-            make_advance_plan(self.project, PLUGINS)
+            make_advance_plan(self.project)
         with patch(
             "mlipflow.services.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
@@ -327,7 +332,7 @@ class ScheduledLifecycle:
             "mlipflow.services.SshSlurmBackend.fetch_from", autospec=True,
             side_effect=fetch,
         ):
-            return advance(self.project, PLUGINS)
+            return advance(self.project)
 
     def run(self, **overrides: Any) -> dict[str, Any]:
         self.submit()
@@ -444,13 +449,11 @@ class NestedPathTests(TemporaryProjectTest):
     def test_nested_fetch_paths_are_per_calculation(self) -> None:
         """The core turns each declared output into a bounded nested path."""
 
-        from mlipflow.plugins import discover_plugins, select_plugin
         from mlipflow.services.contracts import _scheduled_contract
 
         lifecycle = self.lifecycle("static", 3)
         plan = lifecycle.plan()
-        plugin = select_plugin(discover_plugins(PLUGINS), "dft-labeling@0")
-        contract = _scheduled_contract(lifecycle.project, plugin, plan)
+        contract = _scheduled_contract(lifecycle.project, "dft-labeling", plan)
         remote_paths = {item["remote_path"] for item in contract["fetch_outputs"]}
         for index in range(3):
             self.assertIn(f"output/{calc_id(index)}/OUTCAR", remote_paths)
@@ -517,17 +520,15 @@ class NestedPathTests(TemporaryProjectTest):
                 self.assertTrue(_safe_remote_relative(safe))
 
     def test_duplicate_full_remote_path_is_still_rejected(self) -> None:
-        from mlipflow.errors import PluginError
-        from mlipflow.plugins import discover_plugins, select_plugin
+        from mlipflow.errors import CapabilityError
         from mlipflow.services.contracts import _scheduled_contract
 
         lifecycle = self.lifecycle("static", 2)
         plan = lifecycle.plan()
         staged = plan["adapter_plan"]["scheduled_execution"]["staged_files"]
         staged.append(dict(staged[0]))
-        plugin = select_plugin(discover_plugins(PLUGINS), "dft-labeling@0")
-        with self.assertRaisesRegex(PluginError, "duplicate"):
-            _scheduled_contract(lifecycle.project, plugin, plan)
+        with self.assertRaisesRegex(CapabilityError, "duplicate"):
+            _scheduled_contract(lifecycle.project, "dft-labeling", plan)
 
 
 class StaticLifecycleTests(TemporaryProjectTest):
@@ -569,6 +570,7 @@ class StaticLifecycleTests(TemporaryProjectTest):
             )
         )["submissions"]
         self.assertEqual(["91", "92", "93", "94"], [item["job_id"] for item in submissions])
+        self.assertTrue(all("submission_routing" not in item for item in submissions))
         self.assertTrue((lifecycle.attempt / "completion.json").is_file())
 
     def test_potcar_is_never_fetched_or_collected(self) -> None:
@@ -663,15 +665,10 @@ class AimdTests(TemporaryProjectTest):
         # Frames must be distinct, not the final one repeated.
         self.assertEqual(4, len({record["energy_ev"] for record in records}))
 
-        from mlipflow.services.paths import state_path
-        from mlipflow.state import StateStore
-
-        with StateStore(state_path(lifecycle.project), readonly=True) as store:
-            step = store.latest_step(lifecycle.project.project_id, "label-li")
-            trajectories = [
-                item for item in store.artifacts(step.run_id)
-                if item["role"] == "aimd-trajectory"
-            ]
+        step = query_workflow(lifecycle.project, "label-li")["steps"][0]
+        trajectories = [
+            item for item in step["artifacts"] if item["role"] == "aimd-trajectory"
+        ]
         self.assertEqual(1, len(trajectories))
         self.assertTrue(trajectories[0]["uri"].endswith("calc-0001/vasprun.xml"))
 

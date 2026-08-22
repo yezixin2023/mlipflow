@@ -53,12 +53,12 @@ This document applies only to the current `mlipflow/` repository. The Agent acts
 
    A node may be marked `OK` only when both:
 
-   - the plugin-defined completion criteria pass; and
+   - the capability adapter's completion criteria pass; and
    - the required output schema is valid.
 
 9. Uncertain scientific parameters, units, fitting windows, random seeds, dataset splits, or reference energies must be reported and left unresolved until clarified. Do not guess them.
 
-10. Python adapters are trusted code, and `run --dry-run` may load them. Do not generate execution plans for untrusted third-party plugins.
+10. Built-in Python adapters are trusted code, and `run --dry-run` may load them. Do not generate execution plans from untrusted repository code.
 
     `dft-labeling.label` static calculations are integrated with the generic SSH-SLURM profile/template/workspace contract.
 

@@ -28,16 +28,14 @@ from mlipflow.science import model_runtime
 PLUGIN_ID = "mlip-benchmark"
 MODEL_FAMILIES = frozenset(model_runtime.MODEL_FAMILIES)
 FRESH_MODEL_FAMILIES = frozenset(model_runtime.FRESH_MODEL_FAMILIES)
-LEGACY_OPERATIONS = frozenset({"evaluate-static", "collect-existing"})
+STATIC_OPERATION = "evaluate-static"
 NORMALIZE_OPERATIONS = frozenset({"normalize-replay", "normalize-execute"})
 FRESH_OPERATION = "evaluate-fresh"
-OPERATIONS = LEGACY_OPERATIONS | NORMALIZE_OPERATIONS | {FRESH_OPERATION}
+OPERATIONS = NORMALIZE_OPERATIONS | {FRESH_OPERATION, STATIC_OPERATION}
 EXECUTION_BACKENDS = frozenset({"local", "ssh-slurm"})
 SHELL_EXECUTABLES = frozenset(
     {"bash", "csh", "cmd", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "tcsh", "zsh"}
 )
-MAX_JSON_BYTES = 8 * 1024 * 1024
-MAX_CSV_BYTES = 32 * 1024 * 1024
 NORMALIZED_OUTPUT_NAMES = (
     "metrics.json",
     "benchmark_summary.csv",
@@ -159,7 +157,7 @@ def _normalize_mode(operation: str) -> str:
     raise ValueError("operation is not a normalization operation")
 
 
-def _portable_locator(value: Any, fallback: str, field: str) -> str:
+def _source_locator(value: Any, fallback: str, field: str) -> str:
     if value in (None, ""):
         return fallback
     if not _plain_string(value):
@@ -185,7 +183,7 @@ def _evidence_specs(context: dict[str, Any]) -> list[dict[str, str]]:
             raise ValueError(f"inputs.evidence_inputs[{index}] requires a path")
         resolved = _project_path(context, item)
         locator_value = item.get("evidence_locator") if isinstance(item, dict) else None
-        locator = _portable_locator(
+        locator = _source_locator(
             locator_value, Path(reference).name, f"inputs.evidence_inputs[{index}].evidence_locator"
         )
         result.append({"path": resolved, "locator": locator})
@@ -200,13 +198,13 @@ def _evidence_specs(context: dict[str, Any]) -> list[dict[str, str]]:
 def _project_file(root: Path, selected: Any = None) -> Path | None:
     if isinstance(selected, str) and selected:
         path = Path(selected).expanduser().absolute()
-        if path.is_file() and not path.is_symlink() and path.resolve().parent == root.resolve():
+        if path.is_file() and path.resolve().parent == root.resolve():
             return path.resolve()
         return None
     found = [
         root / name
         for name in ("project.yaml", "project.yml", "project.json")
-        if (root / name).is_file() and not (root / name).is_symlink()
+        if (root / name).is_file()
     ]
     return found[0].resolve() if len(found) == 1 else None
 
@@ -217,7 +215,7 @@ def _project_input(root: Path, value: Any) -> Path | None:
         return None
     candidate = Path(reference)
     candidate = candidate if candidate.is_absolute() else root / candidate
-    if candidate.is_symlink() or not candidate.is_file():
+    if not candidate.is_file():
         return None
     try:
         candidate.resolve().relative_to(root.resolve())
@@ -255,8 +253,6 @@ def _staged(path: Path, remote_name: str) -> dict[str, Any]:
     return {
         "source": str(path),
         "remote_name": remote_name,
-        "sensitive": False,
-        "fetch_allowed": False,
     }
 
 
@@ -264,7 +260,6 @@ def _fetch(
     remote_name: str,
     remote_path: str,
     local_name: str,
-    maximum: int,
     role: str,
 ) -> dict[str, Any]:
     return {
@@ -272,7 +267,6 @@ def _fetch(
         "remote_path": remote_path,
         "local_name": local_name,
         "required": True,
-        "max_bytes": maximum,
         "role": role,
     }
 
@@ -301,7 +295,6 @@ def _plan_scheduled_fresh(context: dict[str, Any]) -> dict[str, Any]:
             name,
             f"output/benchmark/{name}",
             f"{output_subdir}/{name}",
-            MAX_CSV_BYTES if name.endswith(".csv") else MAX_JSON_BYTES,
             "prediction-evidence" if name == "prediction_evidence.json" else "benchmark-output",
         )
         for name in FRESH_OUTPUT_NAMES
@@ -311,7 +304,6 @@ def _plan_scheduled_fresh(context: dict[str, Any]) -> dict[str, Any]:
             "cluster-benchmark-report.json",
             "output/cluster-benchmark-report.json",
             "cluster-benchmark-report.json",
-            MAX_JSON_BYTES,
             "benchmark-cluster-report",
         )
     )
@@ -458,7 +450,7 @@ def _source_script_spec(context: dict[str, Any]) -> dict[str, str] | None:
         locator_value = _mapping(context.get("parameters")).get("source_script_locator")
     return {
         "path": _project_path(context, value),
-        "locator": _portable_locator(
+        "locator": _source_locator(
             locator_value, Path(reference).name, "inputs.source_script.source_script_locator"
         ),
     }
@@ -523,20 +515,14 @@ def _units(parameters: dict[str, Any]) -> dict[str, str]:
 
 def _result_path(context: dict[str, Any]) -> Path:
     inputs = _mapping(context.get("inputs"))
-    operation = _mapping(context.get("parameters")).get("operation", "evaluate-static")
-    if operation == "collect-existing":
-        return Path(_project_path(context, inputs.get("result_manifest")))
     return Path(_safe_attempt_output(context, inputs.get("result_manifest")))
 
 
 def _read_json(path: Path) -> Any:
-    size = path.stat().st_size
-    if size > MAX_JSON_BYTES:
-        raise ValueError(f"JSON artifact exceeds {MAX_JSON_BYTES} bytes: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _portable_child(base: Path, value: Any, field: str) -> Path:
+def _relative_child(base: Path, value: Any, field: str) -> Path:
     reference = _reference(value)
     if reference is None:
         raise ValueError(f"{field} must contain a non-empty path")
@@ -632,7 +618,7 @@ def _load_result(
     metrics_path: Path | None = None
     if metrics_raw is None and raw.get("metrics_file") is not None:
         try:
-            metrics_path = _portable_child(path.parent, raw["metrics_file"], "metrics_file")
+            metrics_path = _relative_child(path.parent, raw["metrics_file"], "metrics_file")
             loaded_metrics = _read_json(metrics_path)
             metrics_raw = loaded_metrics.get("metrics") if isinstance(loaded_metrics, dict) and "metrics" in loaded_metrics else loaded_metrics
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
@@ -649,7 +635,7 @@ def _load_result(
                 diagnostics.append(_diagnostic("error", "benchmark.artifact_record", f"artifacts[{index}] must be an object"))
                 continue
             try:
-                artifact_path = _portable_child(path.parent, item.get("path"), f"artifacts[{index}].path")
+                artifact_path = _relative_child(path.parent, item.get("path"), f"artifacts[{index}].path")
             except ValueError as exc:
                 diagnostics.append(_diagnostic("error", "benchmark.artifact_path", str(exc)))
                 continue
@@ -669,8 +655,6 @@ def _load_result(
 
 
 def _read_summary(path: Path) -> tuple[list[str], list[dict[str, str]]]:
-    if path.stat().st_size > MAX_CSV_BYTES:
-        raise ValueError(f"CSV artifact exceeds {MAX_CSV_BYTES} bytes: {path}")
     with path.open("r", encoding="utf-8", newline="") as stream:
         reader = csv.DictReader(stream)
         if reader.fieldnames is None:
@@ -1424,7 +1408,7 @@ class Adapter:
                 _diagnostic(
                     "error",
                     "benchmark.operation",
-                    "operation must be evaluate-fresh, evaluate-static, collect-existing, normalize-replay, or normalize-execute",
+                    "operation must be evaluate-fresh, evaluate-static, normalize-replay, or normalize-execute",
                 )
             )
             return diagnostics
@@ -1512,7 +1496,7 @@ class Adapter:
 
         if context.get("backend") != "local":
             diagnostics.append(
-                _diagnostic("error", "context.backend", "legacy benchmark operations require local")
+                _diagnostic("error", "context.backend", "evaluate-static requires local")
             )
         if parameters.get("model_family") not in FRESH_MODEL_FAMILIES:
             supported = ", ".join(sorted(FRESH_MODEL_FAMILIES))
@@ -1532,16 +1516,21 @@ class Adapter:
             if not _plain_string(parameters.get(key)):
                 diagnostics.append(_diagnostic("error", f"benchmark.{key}", f"parameters.{key} is required"))
 
-        required_inputs = ["result_manifest"]
-        if operation == "evaluate-static":
-            required_inputs.extend(["executable", "script", "model", "benchmark_dataset", "benchmark_config"])
+        required_inputs = [
+            "result_manifest",
+            "executable",
+            "script",
+            "model",
+            "benchmark_dataset",
+            "benchmark_config",
+        ]
         for key in required_inputs:
             if _reference(inputs.get(key)) is None:
                 diagnostics.append(_diagnostic("error", f"benchmark.input_{key}", f"inputs.{key} is required"))
         executable = _reference(inputs.get("executable"))
         if executable is not None and Path(executable).name.lower() in SHELL_EXECUTABLES:
             diagnostics.append(_diagnostic("error", "benchmark.shell_forbidden", "a shell executable is not permitted"))
-        if operation == "evaluate-static" and _reference(inputs.get("result_manifest")) is not None:
+        if _reference(inputs.get("result_manifest")) is not None:
             try:
                 _safe_attempt_output(context, inputs["result_manifest"])
             except (KeyError, ValueError) as exc:
@@ -1551,14 +1540,6 @@ class Adapter:
     def plan(self, context: dict[str, Any]) -> dict[str, Any]:
         diagnostics = self.validate(context)
         parameters = _mapping(context.get("parameters")) if isinstance(context, dict) else {}
-        if parameters.get("operation", "evaluate-static") == "collect-existing" and not diagnostics:
-            diagnostics.append(
-                _diagnostic(
-                    "error",
-                    "benchmark.collect_is_read_only",
-                    "collect-existing is read-only; call check/collect or replay instead of executing a plan",
-                )
-            )
         if diagnostics:
             return {
                 "plugin_id": PLUGIN_ID,

@@ -15,11 +15,6 @@ TEMPLATE_FAMILIES = {name: f"ase-md-{name}" for name in CALCULATORS}
 TEMPLATE_FAMILIES.update(
     {name: f"ase-md-{name}-canonical" for name in ("m3gnet", "chgnet")}
 )
-MAX_JSON_BYTES = 8 * 1024 * 1024
-MAX_STRUCTURE_BYTES = 64 * 1024 * 1024
-MAX_TRAJECTORY_BYTES = 4 * 1024 * 1024 * 1024
-MAX_THERMO_BYTES = 256 * 1024 * 1024
-MAX_FINAL_BYTES = 64 * 1024 * 1024
 MAX_STEPS = 100_000_000
 MAX_RECORDS = 500_000
 
@@ -51,12 +46,9 @@ def _safe_relative(value: Any) -> bool:
     return not path.is_absolute() and bool(path.parts) and all(part not in {"", ".", ".."} for part in path.parts)
 
 
-def _ordinary_file(path: Path, max_bytes: int | None = None) -> bool:
+def _ordinary_file(path: Path) -> bool:
     try:
-        if path.is_symlink() or not path.is_file():
-            return False
-        size = path.stat().st_size
-        return size > 0 and (max_bytes is None or size <= max_bytes)
+        return path.is_file() and path.stat().st_size > 0
     except OSError:
         return False
 
@@ -82,8 +74,8 @@ def _structure_input(root: Path, value: Any) -> Path:
     return (raw if raw.is_absolute() else root / raw).resolve()
 
 
-def _readable_file(path: Path, max_bytes: int) -> bool:
-    if not _ordinary_file(path, max_bytes):
+def _readable_file(path: Path) -> bool:
+    if not _ordinary_file(path):
         return False
     try:
         with path.open("rb") as stream:
@@ -93,35 +85,27 @@ def _readable_file(path: Path, max_bytes: int) -> bool:
     return True
 
 
-def _ordinary_project_file(path: Path, root: Path, max_bytes: int) -> bool:
+def _ordinary_project_file(path: Path, root: Path) -> bool:
     try:
-        if path.is_symlink() or not path.is_file():
+        if not path.is_file():
             return False
-        resolved = path.resolve()
-        resolved.relative_to(root.resolve())
-        if not 0 < resolved.stat().st_size <= max_bytes:
-            return False
-        current = path
-        while current != root:
-            if current.is_symlink():
-                return False
-            current = current.parent
-        return True
+        path.resolve().relative_to(root.resolve())
+        return path.stat().st_size > 0
     except (OSError, ValueError):
         return False
 
 
 def _project_config(root: Path) -> Path:
     candidates = [root / name for name in ("project.yaml", "project.yml", "project.json")]
-    found = [path for path in candidates if path.is_file() and not path.is_symlink()]
+    found = [path for path in candidates if path.is_file()]
     if len(found) != 1:
         raise ValueError("project root must contain exactly one project.yaml/project.yml/project.json")
     return found[0]
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    if not _ordinary_file(path, MAX_JSON_BYTES):
-        raise ValueError(f"not an ordinary bounded JSON file: {path.name}")
+    if not _ordinary_file(path):
+        raise ValueError(f"JSON file does not exist or is empty: {path.name}")
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"{path.name} must contain an object")
@@ -153,8 +137,6 @@ def _staged_record(source: Path, remote_name: str) -> dict[str, Any]:
     return {
         "source": str(source.absolute()),
         "remote_name": remote_name,
-        "sensitive": False,
-        "fetch_allowed": False,
     }
 
 
@@ -315,20 +297,17 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
                 f"structure file does not exist: {structure}",
             )
         )
-    elif not _readable_file(structure, MAX_STRUCTURE_BYTES):
+    elif not _readable_file(structure):
         diagnostics.append(
             _diagnostic(
                 "error",
                 "ase_md.structure_file",
-                f"structure must be a readable bounded ordinary file: {structure}",
+                f"structure must be a readable file: {structure}",
             )
         )
-    for name, path, limit in (
-        ("project", project, MAX_JSON_BYTES),
-        ("model_reference", model_reference, MAX_JSON_BYTES),
-    ):
-        if not _ordinary_project_file(path, root, limit):
-            diagnostics.append(_diagnostic("error", f"ase_md.{name}_file", f"{name} must be an ordinary bounded file inside project_root"))
+    for name, path in (("project", project), ("model_reference", model_reference)):
+        if not _ordinary_project_file(path, root):
+            diagnostics.append(_diagnostic("error", f"ase_md.{name}_file", f"{name} must be a file inside project_root"))
     if diagnostics:
         return _blocked(diagnostics)
     calculator = str(parameters["calculator"])
@@ -345,20 +324,20 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
     structure_remote = f"structure/{structure.name}"
     staged = [
         _staged_record(project, "project.yaml"),
-        {**_staged_record(structure, structure_remote), "read_only_source": True},
+        _staged_record(structure, structure_remote),
         _staged_record(model_reference, "model-reference.json"),
         _staged_record(runner, "ase_md.py"),
         _staged_record(cluster, "ase_md_cluster.py"),
     ]
     fetch_outputs = [
-        {"remote_name": "md-result.json", "remote_path": "output/md-result.json", "local_name": "md-result.json", "required": True, "max_bytes": MAX_JSON_BYTES, "role": "md-result"},
-        {"remote_name": "trajectory.traj", "remote_path": "output/trajectory.traj", "local_name": "trajectory.traj", "required": True, "max_bytes": MAX_TRAJECTORY_BYTES, "role": "trajectory"},
-        {"remote_name": "trajectory-index.json", "remote_path": "output/trajectory-index.json", "local_name": "trajectory-index.json", "required": True, "max_bytes": MAX_JSON_BYTES, "role": "trajectory-index"},
-        {"remote_name": "thermo.csv", "remote_path": "output/thermo.csv", "local_name": "thermo.csv", "required": True, "max_bytes": MAX_THERMO_BYTES, "role": "thermodynamics"},
-        {"remote_name": "final.extxyz", "remote_path": "output/final.extxyz", "local_name": "final.extxyz", "required": True, "max_bytes": MAX_FINAL_BYTES, "role": "final-structure"},
-        {"remote_name": "cluster-run-report.json", "remote_path": "output/cluster-run-report.json", "local_name": "cluster-run-report.json", "required": True, "max_bytes": MAX_JSON_BYTES, "role": "cluster-run-report"},
-        {"remote_name": "md.stdout.log", "remote_path": "logs/md.stdout.log", "local_name": "md.stdout.log", "required": False, "max_bytes": 256 * 1024 * 1024, "role": "md-log"},
-        {"remote_name": "md.stderr.log", "remote_path": "logs/md.stderr.log", "local_name": "md.stderr.log", "required": False, "max_bytes": 256 * 1024 * 1024, "role": "md-log"},
+        {"remote_name": "md-result.json", "remote_path": "output/md-result.json", "local_name": "md-result.json", "required": True, "role": "md-result"},
+        {"remote_name": "trajectory.traj", "remote_path": "output/trajectory.traj", "local_name": "trajectory.traj", "required": True, "role": "trajectory"},
+        {"remote_name": "trajectory-index.json", "remote_path": "output/trajectory-index.json", "local_name": "trajectory-index.json", "required": True, "role": "trajectory-index"},
+        {"remote_name": "thermo.csv", "remote_path": "output/thermo.csv", "local_name": "thermo.csv", "required": True, "role": "thermodynamics"},
+        {"remote_name": "final.extxyz", "remote_path": "output/final.extxyz", "local_name": "final.extxyz", "required": True, "role": "final-structure"},
+        {"remote_name": "cluster-run-report.json", "remote_path": "output/cluster-run-report.json", "local_name": "cluster-run-report.json", "required": True, "role": "cluster-run-report"},
+        {"remote_name": "md.stdout.log", "remote_path": "logs/md.stdout.log", "local_name": "md.stdout.log", "required": False, "role": "md-log"},
+        {"remote_name": "md.stderr.log", "remote_path": "logs/md.stderr.log", "local_name": "md.stderr.log", "required": False, "role": "md-log"},
     ]
     steps = int(parameters["steps"])
     trajectory_steps = _expected_steps(steps, int(parameters["trajectory_interval"]))
@@ -452,10 +431,6 @@ def _scheduled_plan(context: dict[str, Any]) -> dict[str, Any]:
     return _mapping(_mapping(context.get("execution")).get("plan"))
 
 
-def _read_bounded_json(path: Path) -> dict[str, Any]:
-    return _read_json(path)
-
-
 def _artifact_records(raw: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(raw, list):
         raise ValueError("md-result artifacts must be a list")
@@ -470,9 +445,9 @@ def _artifact_records(raw: Any) -> dict[str, dict[str, Any]]:
     return records
 
 
-def _check_artifact(path: Path, record: dict[str, Any], max_bytes: int) -> str | None:
-    if not _ordinary_file(path, max_bytes):
-        return f"missing, empty, unsafe or oversized artifact: {path.name}"
+def _check_artifact(path: Path, record: dict[str, Any]) -> str | None:
+    if not _ordinary_file(path):
+        return f"missing or empty artifact: {path.name}"
     if record.get("path") != path.name:
         return f"artifact record path mismatch for {path.name}"
     return None
@@ -480,7 +455,7 @@ def _check_artifact(path: Path, record: dict[str, Any], max_bytes: int) -> str |
 
 def _check_trajectory_index(path: Path, settings: dict[str, Any]) -> str | None:
     try:
-        raw = _read_bounded_json(path)
+        raw = _read_json(path)
     except Exception as exc:
         return f"trajectory-index.json is unreadable: {exc}"
     if raw.get("schema_version") != 1:
@@ -499,8 +474,8 @@ def _check_trajectory_index(path: Path, settings: dict[str, Any]) -> str | None:
 
 
 def _check_thermo(path: Path, settings: dict[str, Any]) -> tuple[str | None, dict[str, float] | None]:
-    if not _ordinary_file(path, MAX_THERMO_BYTES):
-        return "thermo.csv is missing, empty, unsafe or oversized", None
+    if not _ordinary_file(path):
+        return "thermo.csv is missing or empty", None
     expected_header = ["step", "time_fs", "temperature_K", "potential_energy_eV", "kinetic_energy_eV", "total_energy_eV", "volume_A3"]
     expected_steps = settings.get("thermo_steps")
     if not isinstance(expected_steps, list):
@@ -628,7 +603,7 @@ def _check(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any
     if not settings:
         return [_diagnostic("error", "ase_md.plan_parameters", "plan lacks md_parameters")], None
     try:
-        result = _read_bounded_json(attempt / "md-result.json")
+        result = _read_json(attempt / "md-result.json")
     except Exception as exc:
         return [_diagnostic("error", "ase_md.result", f"md-result.json is unreadable: {exc}")], None
     expected_pairs = {
@@ -667,16 +642,16 @@ def _check(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any
         diagnostics.append(_diagnostic("error", "ase_md.artifacts", str(exc)))
         artifacts = {}
     expected_artifacts = {
-        "trajectory": ("trajectory.traj", MAX_TRAJECTORY_BYTES),
-        "trajectory-index": ("trajectory-index.json", MAX_JSON_BYTES),
-        "thermo": ("thermo.csv", MAX_THERMO_BYTES),
-        "final-structure": ("final.extxyz", MAX_FINAL_BYTES),
+        "trajectory": "trajectory.traj",
+        "trajectory-index": "trajectory-index.json",
+        "thermo": "thermo.csv",
+        "final-structure": "final.extxyz",
     }
     if set(artifacts) != set(expected_artifacts):
         diagnostics.append(_diagnostic("error", "ase_md.artifact_set", "md-result artifact set is incomplete or unexpected"))
-    for role, (name, limit) in expected_artifacts.items():
+    for role, name in expected_artifacts.items():
         if role in artifacts:
-            error = _check_artifact(attempt / name, artifacts[role], limit)
+            error = _check_artifact(attempt / name, artifacts[role])
             if error:
                 diagnostics.append(_diagnostic("error", f"ase_md.artifact_{role}", error))
     index_error = _check_trajectory_index(attempt / "trajectory-index.json", settings)
@@ -686,7 +661,7 @@ def _check(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any
     if thermo_error:
         diagnostics.append(_diagnostic("error", "ase_md.thermo", thermo_error))
     try:
-        report = _read_bounded_json(attempt / "cluster-run-report.json")
+        report = _read_json(attempt / "cluster-run-report.json")
     except Exception as exc:
         diagnostics.append(_diagnostic("error", "ase_md.cluster_report", f"cluster-run-report.json is unreadable: {exc}"))
         report = {}

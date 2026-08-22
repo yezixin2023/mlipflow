@@ -38,10 +38,6 @@ def load_mapping(path: Path) -> dict[str, Any]:
     return value
 
 
-def canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
 def write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
     """Write JSON using replace(2); mutation services only."""
 

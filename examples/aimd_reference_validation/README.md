@@ -9,7 +9,7 @@ itself.
 - `cpu-cluster` owns the reviewed VASP templates and CPU scheduler environment;
 - `model-compute` owns the reviewed MLIP model environment and ASE-MD templates.
 
-The portable project contains neither site paths nor scheduler setup. Review the AIMD
+The project contains neither site paths nor scheduler setup. Review the AIMD
 deck first, run its dry-run, and approve the VASP job separately. Do the same for each
 MLIP-MD node. The local comparison nodes need no remote model runtime: they receive the
 collected trajectories from their direct dependencies and use one
@@ -36,4 +36,3 @@ Add separately reviewed temperature nodes to each trajectory set when D(T), Ea, 
 target-temperature quantities are required. Use `fit_scope: dataset` so AIMD and each
 MLIP retain separate Arrhenius fits. The RDF temperature selects one shared-temperature
 trajectory pair and uses the same trajectory window already approved for transport.
-

@@ -1,8 +1,8 @@
 """Cluster-aware facade for pes-sampling.
 
 Local DIRECT/LASP behavior is delegated unchanged to ``adapter.py``.  LASP SSW
-execution on ``ssh-slurm`` emits the generic scheduled_execution v3 MPI contract so
-MLIPFlow core owns staging, submission, polling, bounded fetch, and finalization.
+execution on ``ssh-slurm`` emits the scheduled_execution v3 MPI contract so
+MLIPFlow core owns staging, submission, polling, fetch, and finalization.
 """
 from __future__ import annotations
 
@@ -20,11 +20,6 @@ WRAPPER_PATH = HERE / "lasp_ssw.py"
 REMOTE_RUNNER_PATH = HERE / "lasp_cluster.py"
 ARC_CONTRACT_PATH = HERE / "lasp_input_arc.py"
 UNKNOWN = "HISTORICAL_PARAMETER_UNKNOWN"
-MAX_JSON_BYTES = 16 * 1024 * 1024
-MAX_ARC_BYTES = 512 * 1024 * 1024
-MAX_FRAME_BYTES = 8 * 1024 * 1024
-MAX_LOG_BYTES = 64 * 1024 * 1024
-MAX_POTCAR_BYTES = 64 * 1024 * 1024
 MAX_FRAMES = 10000
 HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -68,11 +63,8 @@ def _blocked(items: list[dict[str, str]]) -> dict[str, Any]:
     return {"plugin_id": "pes-sampling", "status": "BLOCKED", "executable": False, "diagnostics": items}
 
 
-def _ordinary(path: Path | None, maximum: int | None = None) -> bool:
-    if path is None or path.is_symlink() or not path.is_file():
-        return False
-    size = path.stat().st_size
-    return size > 0 and (maximum is None or size <= maximum)
+def _ordinary(path: Path | None) -> bool:
+    return path is not None and path.is_file() and path.stat().st_size > 0
 
 
 def _within(path: Path, root: Path) -> bool:
@@ -86,7 +78,7 @@ def _within(path: Path, root: Path) -> bool:
 def _project_file(root: Path, selected: Any = None) -> Path | None:
     if isinstance(selected, str) and selected:
         path = Path(selected).expanduser().absolute()
-        if path.is_file() and not path.is_symlink() and path.resolve().parent == root.resolve():
+        if path.is_file() and path.resolve().parent == root.resolve():
             return path.resolve()
         return None
     for name in ("project.yaml", "project.yml", "project.json"):
@@ -101,17 +93,15 @@ def _resolve_input(value: Any, root: Path) -> Path | None:
         return None
     path = Path(str(value)).expanduser()
     path = path if path.is_absolute() else root / path
-    if path.is_symlink() or not path.is_file():
+    if not path.is_file():
         return None
     return path.resolve()
 
 
-def _stage(path: Path, remote_name: str, *, sensitive: bool = False) -> dict[str, Any]:
+def _stage(path: Path, remote_name: str) -> dict[str, Any]:
     return {
         "source": str(path),
         "remote_name": remote_name,
-        "sensitive": sensitive,
-        "fetch_allowed": False,
     }
 
 
@@ -180,7 +170,7 @@ def _potcar_bundle(
         raise ValueError("lasp_input_manifest POTCAR record is invalid")
     potcar_path = manifest_path.parent / "POTCAR"
     if (
-        not _ordinary(potcar_path, MAX_POTCAR_BYTES)
+        not _ordinary(potcar_path)
         or not _within(potcar_path, project_root)
     ):
         raise ValueError("runtime-only POTCAR is missing or differs from its manifest")
@@ -367,8 +357,8 @@ def _validate_scheduled(context: Any) -> list[dict[str, str]]:
     return diagnostics
 
 
-def _fetch(remote_name: str, remote_path: str, local_name: str, required: bool, maximum: int, role: str) -> dict[str, Any]:
-    return {"remote_name": remote_name, "remote_path": remote_path, "local_name": local_name, "required": required, "max_bytes": maximum, "role": role}
+def _fetch(remote_name: str, remote_path: str, local_name: str, required: bool, role: str) -> dict[str, Any]:
+    return {"remote_name": remote_name, "remote_path": remote_path, "local_name": local_name, "required": required, "role": role}
 
 
 def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
@@ -404,7 +394,7 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
         staged.extend(
             [
                 _stage(lasp_input_manifest, "lasp-input-manifest.json"),
-                _stage(potcar_path, "POTCAR", sensitive=True),
+                _stage(potcar_path, "POTCAR"),
             ]
         )
     auxiliary = inputs.get("lasp_auxiliary_files", {}) or {}
@@ -416,20 +406,20 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
     include_best = bool(parameters.get("include_best_arc", False))
     include_md = bool(parameters.get("include_md_arc", False))
     fetch_outputs = [
-        _fetch("cluster-run-report.json", "output/cluster-run-report.json", "lasp-ssw/cluster-run-report.json", True, MAX_JSON_BYTES, "lasp-cluster-report"),
-        _fetch("sampling-result.json", "output/lasp-ssw/sampling-result.json", "lasp-ssw/sampling-result.json", True, MAX_JSON_BYTES, "sample-manifest"),
-        _fetch("ssw-structures.json", "output/lasp-ssw/ssw-structures.json", "lasp-ssw/ssw-structures.json", True, MAX_JSON_BYTES, "ssw-structure-manifest"),
-        _fetch("selected-structures.json", "output/lasp-ssw/selected-structures.json", "lasp-ssw/selected-structures.json", True, MAX_JSON_BYTES, "selected-structure-manifest"),
-        _fetch("lasp-run-metadata.json", "output/lasp-ssw/lasp-run-metadata.json", "lasp-ssw/lasp-run-metadata.json", True, MAX_JSON_BYTES, "lasp-run-metadata"),
-        _fetch("selected-structures.tar.gz", "output/selected-structures.tar.gz", "lasp-ssw/selected-structures.tar.gz", True, MAX_ARC_BYTES, "selected-structures-archive"),
-        _fetch("allstr.arc", "output/lasp-ssw/raw-run/allstr.arc", "lasp-ssw/raw-run/allstr.arc", True, MAX_ARC_BYTES, "ssw-archive"),
-        _fetch("best.arc", "output/lasp-ssw/raw-run/best.arc", "lasp-ssw/raw-run/best.arc", include_best, MAX_ARC_BYTES, "best-archive"),
-        _fetch("md.arc", "output/lasp-ssw/raw-run/md.arc", "lasp-ssw/raw-run/md.arc", include_md, MAX_ARC_BYTES, "md-archive"),
-        _fetch("aimd-seeds.json", "output/lasp-ssw/aimd-seeds.json", "lasp-ssw/aimd-seeds.json", include_best, MAX_JSON_BYTES, "aimd-seed-manifest"),
-        _fetch("md-structures.json", "output/lasp-ssw/md-structures.json", "lasp-ssw/md-structures.json", include_md, MAX_JSON_BYTES, "md-structure-manifest"),
-        _fetch("lasp.stdout.log", "output/lasp-ssw/raw-run/lasp.stdout.log", "lasp-ssw/lasp.stdout.log", False, MAX_LOG_BYTES, "lasp-stdout"),
-        _fetch("lasp.stderr.log", "output/lasp-ssw/raw-run/lasp.stderr.log", "lasp-ssw/lasp.stderr.log", False, MAX_LOG_BYTES, "lasp-stderr"),
-        _fetch("lasp.out", "output/lasp-ssw/raw-run/lasp.out", "lasp-ssw/lasp.out", False, MAX_LOG_BYTES, "lasp-native-log"),
+        _fetch("cluster-run-report.json", "output/cluster-run-report.json", "lasp-ssw/cluster-run-report.json", True, "lasp-cluster-report"),
+        _fetch("sampling-result.json", "output/lasp-ssw/sampling-result.json", "lasp-ssw/sampling-result.json", True, "sample-manifest"),
+        _fetch("ssw-structures.json", "output/lasp-ssw/ssw-structures.json", "lasp-ssw/ssw-structures.json", True, "ssw-structure-manifest"),
+        _fetch("selected-structures.json", "output/lasp-ssw/selected-structures.json", "lasp-ssw/selected-structures.json", True, "selected-structure-manifest"),
+        _fetch("lasp-run-metadata.json", "output/lasp-ssw/lasp-run-metadata.json", "lasp-ssw/lasp-run-metadata.json", True, "lasp-run-metadata"),
+        _fetch("selected-structures.tar.gz", "output/selected-structures.tar.gz", "lasp-ssw/selected-structures.tar.gz", True, "selected-structures-archive"),
+        _fetch("allstr.arc", "output/lasp-ssw/raw-run/allstr.arc", "lasp-ssw/raw-run/allstr.arc", True, "ssw-archive"),
+        _fetch("best.arc", "output/lasp-ssw/raw-run/best.arc", "lasp-ssw/raw-run/best.arc", include_best, "best-archive"),
+        _fetch("md.arc", "output/lasp-ssw/raw-run/md.arc", "lasp-ssw/raw-run/md.arc", include_md, "md-archive"),
+        _fetch("aimd-seeds.json", "output/lasp-ssw/aimd-seeds.json", "lasp-ssw/aimd-seeds.json", include_best, "aimd-seed-manifest"),
+        _fetch("md-structures.json", "output/lasp-ssw/md-structures.json", "lasp-ssw/md-structures.json", include_md, "md-structure-manifest"),
+        _fetch("lasp.stdout.log", "output/lasp-ssw/raw-run/lasp.stdout.log", "lasp-ssw/lasp.stdout.log", False, "lasp-stdout"),
+        _fetch("lasp.stderr.log", "output/lasp-ssw/raw-run/lasp.stderr.log", "lasp-ssw/lasp.stderr.log", False, "lasp-stderr"),
+        _fetch("lasp.out", "output/lasp-ssw/raw-run/lasp.out", "lasp-ssw/lasp.out", False, "lasp-native-log"),
     ]
     calculation = {
         "historical_source_id": parameters["historical_source_id"],
@@ -469,7 +459,6 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
             "runs_vasp": potential == "vasp",
             "pseudopotential": pseudopotential,
             "potcar_staged_sensitive": potential == "vasp",
-            "potcar_fetch_allowed": False,
             "input_arc_conversion": arc_conversion,
             "input_structure_path": str(structure),
             "max_frames": parameters["max_frames"],
@@ -496,8 +485,8 @@ def _plan_scheduled(context: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _json(path: Path) -> dict[str, Any]:
-    if not _ordinary(path, MAX_JSON_BYTES):
-        raise ValueError(f"missing or oversized JSON artifact: {path.name}")
+    if not _ordinary(path):
+        raise ValueError(f"missing or empty JSON artifact: {path.name}")
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} must contain an object")
@@ -545,7 +534,7 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
         metadata = _json(root / "lasp-run-metadata.json")
         allstr = root / "raw-run" / "allstr.arc"
         archive = root / "selected-structures.tar.gz"
-        if not _ordinary(allstr, MAX_ARC_BYTES) or not _ordinary(archive, MAX_ARC_BYTES):
+        if not _ordinary(allstr) or not _ordinary(archive):
             raise ValueError("required LASP archive output is missing")
         if report.get("schema_version") != 1 or report.get("plugin_id") != "pes-sampling" or report.get("status") != "OK":
             raise ValueError("cluster-run-report schema/status is invalid")
@@ -623,13 +612,13 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
             if names != expected_names:
                 raise ValueError("selected archive members differ from selected manifest")
             for member, (frame, _, _) in zip(members, expected_selected):
-                if not member.isfile() or member.issym() or member.islnk() or member.size > MAX_FRAME_BYTES:
-                    raise ValueError("selected archive contains an unsafe member")
+                if not member.isfile():
+                    raise ValueError("selected archive contains a non-file member")
                 stream = bundle.extractfile(member)
                 if stream is None:
                     raise ValueError("selected archive member cannot be read")
-                payload = stream.read(MAX_FRAME_BYTES + 1)
-                if len(payload) > MAX_FRAME_BYTES or payload != frame["payload"]:
+                payload = stream.read()
+                if payload != frame["payload"]:
                     raise ValueError("selected archive structure differs from allstr.arc")
 
         counts = result.get("counts")
@@ -647,7 +636,7 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("LASP metadata differs from approved policy")
         if calculation.get("include_best_arc"):
             best = root / "raw-run" / "best.arc"
-            if not _ordinary(best, MAX_ARC_BYTES):
+            if not _ordinary(best):
                 raise ValueError("approved best.arc output is missing")
             if counts.get("aimd_seed_candidate_count") != len(
                 LEGACY._read_arc_frames(best, int(calculation["max_frames"]))
@@ -655,7 +644,7 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
                 raise ValueError("best.arc count differs from result")
         if calculation.get("include_md_arc"):
             md = root / "raw-run" / "md.arc"
-            if not _ordinary(md, MAX_ARC_BYTES):
+            if not _ordinary(md):
                 raise ValueError("approved md.arc output is missing")
             if counts.get("md_structure_count") != len(
                 LEGACY._read_arc_frames(md, int(calculation["max_frames"]))
@@ -700,7 +689,7 @@ def _scheduled_collect(context: Mapping[str, Any]) -> dict[str, Any]:
     artifacts = []
     for relative, role in roles.items():
         path = root / relative
-        if path.is_file() and not path.is_symlink():
+        if path.is_file():
             artifacts.append({"role": role, "path": str(path), "media_type": "application/json" if path.suffix == ".json" else "application/octet-stream"})
     return {"plugin_id": "pes-sampling", "status": "OK", "artifacts": artifacts, "metrics": checked.get("metrics", {}), "diagnostics": checked.get("diagnostics", [])}
 

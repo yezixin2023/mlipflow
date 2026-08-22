@@ -66,7 +66,7 @@ def _context(tmp_path: Path, calculator: str) -> dict:
             "nodes": [
                 {
                     "id": "md",
-                    "uses": "ase-md@0",
+                    "uses": "ase-md",
                     "mode": "execute",
                     "backend": "ssh-slurm",
                     "backend_profile": "cluster-a",
@@ -120,8 +120,6 @@ def test_structure_path_runs_adapter_staging_and_cluster_chain(
     from mlipflow import backends as backend_module
     from mlipflow.backends import SshSlurmBackend
     from mlipflow.config import load_project
-    from mlipflow.errors import PluginError
-    from mlipflow.plugins import discover_plugins
     from mlipflow.services.contracts import _scheduled_contract
 
     project_root = tmp_path / "project"
@@ -147,24 +145,14 @@ def test_structure_path_runs_adapter_staging_and_cluster_chain(
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["input_paths"]["structure"] == str(source.resolve())
     project = load_project(project_root)
-    plugin = discover_plugins(ROOT / "plugins")["ase-md"]
-    contract = _scheduled_contract(project, plugin, {"adapter_plan": plan})
+    contract = _scheduled_contract(project, "ase-md", {"adapter_plan": plan})
     staged_structure = next(
         item for item in contract["staged_files"] if item["remote_name"].startswith("structure/")
     )
     assert staged_structure == {
         "source": str(source.resolve()),
         "remote_name": f"structure/{source.name}",
-        "read_only_source": True,
     }
-    if path_kind != "project-relative":
-        unmarked = json.loads(json.dumps(plan))
-        staged = unmarked["scheduled_execution"]["staged_files"]
-        next(item for item in staged if item["remote_name"].startswith("structure/")).pop(
-            "read_only_source"
-        )
-        with pytest.raises(PluginError, match="outside the project/plugin roots"):
-            _scheduled_contract(project, plugin, {"adapter_plan": unmarked})
 
     remote_run_dir = "/work/test/ase-md/attempt-0001"
     remote_workspace = tmp_path / "remote" / "attempt-0001"
@@ -316,7 +304,7 @@ def test_cluster_report_uses_stable_model_path_record(
                 "nodes": [
                     {
                         "id": "md",
-                        "uses": "ase-md@0",
+                        "uses": "ase-md",
                         "backend": "ssh-slurm",
                         "inputs": {"structure": "inputs/start.extxyz"},
                         "parameters": {

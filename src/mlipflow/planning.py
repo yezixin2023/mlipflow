@@ -6,76 +6,55 @@ from pathlib import Path
 from typing import Any
 
 from .config import Project
-from .errors import PluginError
-from .plugins import PluginSpec
-
-
-PLAN_SCHEMA_VERSION = 4
+from .errors import CapabilityError
+from .plugins import capability
 
 
 def node_plan(
-    project: Project, node: dict[str, Any], plugin: PluginSpec, *, attempt: int
+    project: Project, node: dict[str, Any], capability_id: str, *, attempt: int
 ) -> dict[str, Any]:
+    spec = capability(capability_id)
     mode = node.get("mode", "execute")
     backend = node.get("backend", "local")
-    if mode == "execute" and backend not in plugin.raw.get("execution", {}).get("backends", []):
-        raise PluginError(
-            f"plugin {plugin.plugin_id} does not declare execute support on backend {backend}"
+    if mode == "execute" and backend not in spec["backends"]:
+        raise CapabilityError(
+            f"capability {capability_id} does not support execution on backend {backend}"
         )
     warnings: list[str] = []
-    safety = plugin.raw.get("safety", {})
-    cost_class = plugin.raw.get("execution", {}).get("cost_class")
-    if cost_class is None:
-        cost_class = "expensive" if safety.get("expensive") else "standard"
-    if cost_class in {"expensive", "very-expensive"} or safety.get("expensive"):
+    if spec["approval_required"]:
         warnings.append("This plan may consume substantial compute allocation.")
-    if safety.get("destructive"):
-        warnings.append("The plugin declares destructive behavior; inspect overwrite/delete targets.")
-    if safety.get("network_access"):
-        warnings.append("The plugin declares network access.")
     if backend == "ssh-slurm":
         warnings.append("Approval will submit a scheduler job.")
     if mode == "replay":
         warnings.append("Replay only parses and references existing artifacts; it must not run numerics.")
     return {
-        "schema_version": PLAN_SCHEMA_VERSION,
         "action": "run",
         "project_id": project.project_id,
         "node_id": node["id"],
         "attempt": attempt,
-        "plugin": {"id": plugin.plugin_id, "version": plugin.raw["version"]},
+        "capability": capability_id,
         "mode": mode,
         "backend": backend,
         "backend_profile": node.get("backend_profile"),
         "inputs": node.get("inputs", {}),
         "parameters": node.get("parameters", {}),
         "resources": node.get("resources", {}),
-        "cost_class": cost_class,
-        "approval_required": _approval_required(node, plugin),
+        "approval_required": _approval_required(node, spec),
         "warnings": warnings,
     }
 
 
-def _approval_required(node: dict[str, Any], plugin: PluginSpec) -> bool:
+def _approval_required(node: dict[str, Any], spec: dict[str, Any]) -> bool:
     if node.get("mode", "execute") != "execute":
         return False
-    safety = plugin.raw.get("safety", {})
-    explicit = safety.get("requires_approval_before_execution")
-    execution = plugin.raw.get("execution", {})
-    cost_class = execution.get("cost_class")
     return bool(
-        explicit is True
-        or safety.get("expensive")
-        or safety.get("destructive")
-        or safety.get("network_access")
-        or cost_class in {"expensive", "very-expensive"}
+        spec["approval_required"]
         or node.get("backend", "local") == "ssh-slurm"
     )
 
 
 def action_plan(action: str, project: Project, node_id: str | None, details: Any) -> dict[str, Any]:
     return {
-        "schema_version": PLAN_SCHEMA_VERSION,
         "action": action,
         "project_id": project.project_id,
         "node_id": node_id,

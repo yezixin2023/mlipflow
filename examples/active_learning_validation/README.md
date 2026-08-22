@@ -37,7 +37,7 @@ slow-mixing additions are `AMIX=0.2`, `BMIX=0.0001`,
 guidance for difficult magnetic/insulating convergence
 (<https://vasp.at/wiki/Difficult_to_converge_systems>,
 <https://vasp.at/wiki/AMIX_MAG>). These are recorded validation parameters, not
-new plugin defaults.
+new capability defaults.
 
 The literature basis is deliberately limited to scale and committee design:
 
@@ -54,9 +54,9 @@ The literature basis is deliberately limited to scale and committee design:
 ## Utility boundary
 
 `prepare_round_inputs.py` only converts collected ASE trajectories, canonical
-DFT records, split manifests, model references, and plugin results into explicit
+DFT records, split manifests, model references, and capability results into explicit
 handoff files. Model inference, DIRECT, VASP, dataset publication, training, MD,
-benchmarking, and the final decision remain MLIPFlow plugin operations. Every
+benchmarking, and the final decision remain MLIPFlow capability operations. Every
 utility output is fresh and refuses overwrite.
 
 `historical-chgnet-bootstrap` is the bounded replay alternative when a reviewed
@@ -71,7 +71,7 @@ Before assembling the cumulative dataset, run `split-seed-review` with the exact
 canonical sources, previous training split, new QUERY source IDs, and bundled
 `dft-labeling/dataset_contract.py`. It records the lowest non-negative seed for
 which every prior train/validation record and newly acquired QUERY record remains
-in train or validation; the dataset plugin independently recomputes the same
+in train or validation; the dataset adapter independently recomputes the same
 split during assembly. The independent immutable audit records are never part of
 this split. `assessment-inputs` checks the collected split literally and refuses
 to fold an ordinary test partition into the active-learning training pool. The
@@ -100,7 +100,7 @@ It also writes the current campaign handoff with the exact cumulative split and
 a pre-assessment `PENDING` decision. If a selected QUERY static calculation has
 failed, the helper accepts only the verified canonical subset, records each
 missing selection as `DFT_FAIL`, and marks labeling `INCOMPLETE`; it never creates
-a label or treats scheduler completion as scientific convergence. The plugin then
+a label or treats scheduler completion as scientific convergence. The capability then
 returns `SCIENTIFIC_REVIEW_REQUIRED` rather than silently dropping the failure.
 The reported cumulative DFT-label count includes SAFE spot checks even when the
 policy keeps them out of the cumulative training dataset; the canonical training

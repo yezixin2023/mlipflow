@@ -31,9 +31,6 @@ BUNDLED_FILES = (
 PLUGIN_ID = "mlip-training"
 FRAMEWORKS = {"deepmd", "m3gnet", "chgnet", "mace"}
 OPERATIONS = {"train", "finetune"}
-MAX_JSON_BYTES = 16 * 1024 * 1024
-MAX_MODEL_BYTES = 8 * 1024 * 1024 * 1024
-MAX_LOG_BYTES = 128 * 1024 * 1024
 HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
 GENERIC_CONTRACT = "bundled-mlip-v1"
 
@@ -83,12 +80,12 @@ def _safe_relative(value: Any, *, plain_name: bool = False) -> bool:
 def _project_file(root: Path, selected: Any = None) -> Path | None:
     if isinstance(selected, str) and selected:
         path = Path(selected).expanduser().absolute()
-        if path.is_file() and not path.is_symlink() and path.resolve().parent == root.resolve():
+        if path.is_file() and path.resolve().parent == root.resolve():
             return path.resolve()
         return None
     for name in ("project.yaml", "project.yml", "project.json"):
         path = root / name
-        if path.is_file() and not path.is_symlink():
+        if path.is_file():
             return path.resolve()
     return None
 
@@ -100,7 +97,7 @@ def _resolve_project_file(root: Path, value: Any) -> Path | None:
         return None
     candidate = Path(value)
     candidate = candidate if candidate.is_absolute() else root / candidate
-    if candidate.is_symlink() or not candidate.is_file():
+    if not candidate.is_file():
         return None
     try:
         candidate.resolve().relative_to(root.resolve())
@@ -110,8 +107,6 @@ def _resolve_project_file(root: Path, value: Any) -> Path | None:
 
 
 def _json(path: Path) -> dict[str, Any]:
-    if path.stat().st_size > MAX_JSON_BYTES:
-        raise ValueError(f"{path.name} exceeds the JSON size bound")
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} must contain an object")
@@ -189,20 +184,17 @@ def _staged(path: Path, remote_name: str) -> dict[str, Any]:
     return {
         "source": str(path),
         "remote_name": remote_name,
-        "sensitive": False,
-        "fetch_allowed": False,
     }
 
 
 def _fetch(
-    remote_name: str, remote_path: str, local_name: str, required: bool, maximum: int, role: str
+    remote_name: str, remote_path: str, local_name: str, required: bool, role: str
 ) -> dict[str, Any]:
     return {
         "remote_name": remote_name,
         "remote_path": remote_path,
         "local_name": local_name,
         "required": required,
-        "max_bytes": maximum,
         "role": role,
     }
 
@@ -458,7 +450,6 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             "output/cluster-run-report.json",
             "cluster-run-report.json",
             True,
-            MAX_JSON_BYTES,
             "training-cluster-report",
         ),
         _fetch(
@@ -466,7 +457,6 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             "output/training-result.json",
             result_name,
             True,
-            MAX_JSON_BYTES,
             "training-manifest",
         ),
         _fetch(
@@ -474,7 +464,6 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             "output/model-artifact",
             "model-artifact",
             True,
-            MAX_MODEL_BYTES,
             "model",
         ),
         _fetch(
@@ -482,7 +471,6 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             "output/training.stdout.log",
             "training.stdout.log",
             False,
-            MAX_LOG_BYTES,
             "training-log",
         ),
         _fetch(
@@ -490,7 +478,6 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             "output/training.stderr.log",
             "training.stderr.log",
             False,
-            MAX_LOG_BYTES,
             "training-log",
         ),
     ]
@@ -508,7 +495,6 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
                 "output/model-reference.json",
                 "model-reference.json",
                 True,
-                MAX_JSON_BYTES,
                 "model-reference",
             )
         )
@@ -572,8 +558,8 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
 
 def _read_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     try:
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_JSON_BYTES:
-            raise ValueError(f"missing, unsafe, or oversized JSON file: {path.name}")
+        if not path.is_file():
+            raise ValueError(f"missing JSON file: {path.name}")
         value = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):
             raise ValueError("top-level JSON value must be an object")
@@ -1037,9 +1023,9 @@ def _check_generic(
         diagnostics.append(
             _diag("error", "training.model_record", "training result must reference model-artifact")
         )
-    elif model_path.is_symlink() or not model_path.is_file():
+    elif not model_path.is_file():
         diagnostics.append(
-            _diag("error", "training.model_missing", "fetched model-artifact is missing or unsafe")
+            _diag("error", "training.model_missing", "fetched model-artifact is missing")
         )
     if (
         report.get("schema_version") != 1
@@ -1184,7 +1170,7 @@ def _collect_generic(context: Mapping[str, Any]) -> dict[str, Any]:
         )
     for name in ("training.stdout.log", "training.stderr.log"):
         path = attempt / name
-        if path.is_file() and not path.is_symlink():
+        if path.is_file():
             artifacts.append(
                 {"path": str(path), "role": "training-log", "media_type": "text/plain"}
             )

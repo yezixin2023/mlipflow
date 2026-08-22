@@ -67,7 +67,7 @@ def _context(tmp_path: Path, calculator: str) -> dict:
             "nodes": [
                 {
                     "id": "md",
-                    "uses": "ase-md@0",
+                    "uses": "ase-md",
                     "mode": "execute",
                     "backend": "ssh-slurm",
                     "backend_profile": "cluster-a",

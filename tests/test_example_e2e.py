@@ -22,7 +22,6 @@ from mlipflow.services import (
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "high_entropy_sulfide"
 AIMD_EXAMPLE = ROOT / "examples" / "aimd_reference_validation"
-PLUGINS = ROOT / "plugins"
 SCHEMAS = ROOT / "schemas"
 
 
@@ -41,7 +40,7 @@ class HighEntropySulfideExampleTests(unittest.TestCase):
             ):
                 schema = json.loads((SCHEMAS / schema_name).read_text(encoding="utf-8"))
                 Draft202012Validator(schema).validate(value)
-        uses = {node["uses"].split("@", 1)[0] for node in project_data["workflow"]["nodes"]}
+        uses = {node["uses"] for node in project_data["workflow"]["nodes"]}
         self.assertEqual(
             {
                 "high-entropy-structure",
@@ -69,9 +68,9 @@ class HighEntropySulfideExampleTests(unittest.TestCase):
                 workflow = query_workflow(project)
                 for step in workflow["steps"]:
                     if step["state"] == "READY":
-                        plan = make_run_plan(project, step["node_id"], PLUGINS)
-                        self.assertEqual(4, plan["schema_version"])
-                        run_node(project, step["node_id"], PLUGINS, True)
+                        plan = make_run_plan(project, step["node_id"])
+                        self.assertEqual(step["capability"], plan["capability"])
+                        run_node(project, step["node_id"], True)
                 workflow = query_workflow(project)
                 if all(step["state"] == "OK" for step in workflow["steps"]):
                     break
@@ -79,19 +78,12 @@ class HighEntropySulfideExampleTests(unittest.TestCase):
                 advance(project)
             completed = query_workflow(project)
             self.assertEqual({"OK": 9}, completed["counts"])
-            try:
-                from jsonschema import Draft202012Validator
-            except ImportError:
-                Draft202012Validator = None
-            if Draft202012Validator is not None:
-                schema = json.loads(
-                    (SCHEMAS / "run-manifest.schema.json").read_text(encoding="utf-8")
+            for step in completed["steps"]:
+                record = json.loads(
+                    Path(step["manifest_path"]).read_text(encoding="utf-8")
                 )
-                validator = Draft202012Validator(schema)
-                for step in completed["steps"]:
-                    validator.validate(
-                        json.loads(Path(step["manifest_path"]).read_text(encoding="utf-8"))
-                    )
+                self.assertEqual("OK", record["state"])
+                self.assertEqual(step["capability"], record["capability"])
             elements = {"Li", "Mn", "Fe", "Ni", "Cu", "Zn", "P", "S"}
             transport = query_route(
                 project,

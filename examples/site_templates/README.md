@@ -27,8 +27,8 @@ the relevant source for every family enabled at the site:
 
 Replace every `/ABS/PATH/TO/...` value and optional site-setup comment. Preserve
 all `{{...}}` placeholders. Keep SSH aliases, partitions, accounts, modules,
-executables, environments, data/model roots, and work roots out of portable
-projects and the public repository.
+executables, environments, data/model roots, and work roots out of project files
+and the public repository.
 
 Do not create a second template or work root for another framework, partition, or
 validation run. Add the required family under the physical site's existing roots.

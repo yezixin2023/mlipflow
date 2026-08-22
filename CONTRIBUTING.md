@@ -1,6 +1,6 @@
 # Contributing to MLIPFlow
 
-Thanks for helping improve MLIPFlow. Contributions are welcome across the workflow core, scientific plugins, tests, documentation, examples, Agent Skills, and HPC integration patterns.
+Thanks for helping improve MLIPFlow. Contributions are welcome across the workflow core, built-in scientific capabilities, tests, documentation, examples, Agent Skills, and HPC integration patterns.
 
 MLIPFlow sits between workflow orchestration and scientific software, so a good contribution should make both its **software behavior** and its **scientific assumptions** reviewable.
 
@@ -29,12 +29,12 @@ python -m pip install -e ".[dev]"
 
 Useful contribution areas include:
 
-- workflow configuration, state, planning, provenance, and CLI behavior;
-- new or improved scientific plugins;
+- workflow configuration, minimal execution state, planning, and CLI behavior;
+- new or improved built-in scientific capabilities;
 - scientific completion checks and small reference fixtures;
 - local or scheduler integration tests;
 - Agent Skills that supervise existing deterministic capabilities;
-- portable site-template examples for common HPC layouts;
+- site-template examples for common HPC layouts;
 - examples and documentation that make real workflows easier to adopt;
 - reproducibility, packaging, security, and repository-quality improvements.
 
@@ -48,7 +48,7 @@ Prefer focused changes with a clear motivation. A pull request should explain:
 2. why the change is needed;
 3. which user or developer workflow it affects;
 4. how it was validated;
-5. whether it changes a schema, plugin contract, scientific convention, artifact format, or compatibility boundary.
+5. whether it changes a configuration schema, capability operation, scientific convention, artifact format, or compatibility boundary.
 
 If a change affects scientific results, include the relevant units, normalization conventions, seeds, reference values, tolerances, software/model versions, and source provenance. Do not treat "the program ran" as sufficient scientific validation.
 
@@ -65,19 +65,16 @@ Some behaviors are part of the public workflow contract:
 
 Changes to these contracts are possible, but they should be explicit, documented, and covered by regression tests.
 
-## Adding or changing a scientific plugin
+## Adding or changing a built-in scientific capability
 
-Scientific plugins live under:
+Scientific implementations live under:
 
 ```text
-plugins/<plugin-id>/
-  plugin.yaml
+plugins/<capability-id>/
   adapter.py
 ```
 
-Start with [`docs/PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md) and [`schemas/plugin.schema.json`](schemas/plugin.schema.json).
-
-A plugin should expose explicit inputs, parameters, outputs, dependencies, backend capabilities, completion criteria, and safety properties. Core owns generic replay and fresh-attempt retry behavior. Prefer wrapping an existing scientific implementation behind a deterministic contract rather than reimplementing a numerical method without a strong reason.
+MLIPFlow does not discover third-party plugins. Add the capability ID, adapter entrypoint, supported backends, operations, and approval requirement to the literal built-in mapping in `src/mlipflow/plugins.py`. Keep that entry small; scientific validation and completion logic belong in the adapter and its scientific runner. Core owns generic replay and fresh-attempt retry behavior.
 
 Adapter execution should use explicit argv lists and controlled working directories/environment. When an external program is involved, a zero process exit code is not by itself a scientific completion criterion.
 
@@ -93,7 +90,7 @@ Agent Skills live under:
 
 Read the selected Skill's [`SKILL.md`](.agents/skills/) and any references it links.
 
-Skills describe how an agent should supervise a capability: what evidence to request, which MLIPFlow operation to call, when approval is required, and how to interpret results. They should not duplicate scientific computation that belongs in plugins or external tools.
+Skills describe how an agent should supervise a capability: what evidence to request, which MLIPFlow operation to call, when approval is required, and how to interpret results. They should not duplicate scientific computation that belongs in adapters or external tools.
 
 When the repository's Skill validator is available, validate changed Skills before submitting them.
 
@@ -106,7 +103,7 @@ Good fixtures are small enough to review and redistribute, and clearly identify 
 Useful focused commands include:
 
 ```bash
-python -m pytest tests/test_plugin_manifests.py
+python -m pytest tests/test_builtin_capabilities.py
 python -m pytest tests/test_config_and_plans.py
 python -m pytest tests/test_readonly_cli.py
 python -m pytest tests/test_hpc_architecture.py
@@ -118,7 +115,7 @@ Run the broader suite when your environment supports the dependencies needed by 
 
 When adding or wrapping third-party material, document its source, version, license, modifications, redistribution status, and required citations. Do not commit credentials, private keys, private cluster configuration, proprietary executables, VASP POTCAR data, unredistributable datasets, or model weights without explicit redistribution rights.
 
-MLIPFlow's Apache-2.0 license does not replace the terms of software, models, or data used through its plugins. See [`NOTICE`](NOTICE).
+MLIPFlow's Apache-2.0 license does not replace the terms of software, models, or data used through its capabilities. See [`NOTICE`](NOTICE).
 
 ## AI-assisted contributions
 
@@ -131,9 +128,9 @@ The top-level README is the user entry point. Keep it concise, capability-orient
 When behavior changes, update the closest source of truth as needed:
 
 - schemas for configuration contracts;
-- plugin manifests for plugin interfaces;
+- `src/mlipflow/plugins.py` for the built-in capability lookup;
 - `.agents/skills/<skill-name>/SKILL.md` for Agent Skill contracts;
-- the closest plugin manifest and deterministic tests for implementation state;
+- the closest adapter and deterministic tests for implementation state;
 - `CHANGELOG.md` for notable user-facing changes.
 
 ## License

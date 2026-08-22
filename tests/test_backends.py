@@ -121,7 +121,7 @@ class BackendTests(unittest.TestCase):
             with self.assertRaises(BackendError):
                 backend.inspect_file("../escape", "OUTCAR")
 
-    def test_ssh_remote_template_read_is_bounded_and_parsed(self) -> None:
+    def test_ssh_remote_template_is_read_and_parsed(self) -> None:
         backend = SshSlurmBackend("safe-profile")
         content = "#!/bin/bash\n# {{RUN_DIR}}\n"
         completed = subprocess.CompletedProcess(
@@ -197,8 +197,8 @@ class BackendTests(unittest.TestCase):
             )
 
         self.assertEqual("12345", result.job_id)
-        self.assertEqual("preferred", result.submission_provenance["selected_partition"])
-        self.assertEqual("available-now", result.submission_provenance["selection_mode"])
+        self.assertEqual("preferred", result.submission_routing["selected_partition"])
+        self.assertEqual("available-now", result.submission_routing["selection_mode"])
         self.assertIn(
             "sbatch --partition='preferred' -- 'submit.sbatch'",
             invoked.call_args_list[1].args[0][-1],

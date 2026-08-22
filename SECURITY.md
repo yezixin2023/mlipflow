@@ -32,7 +32,7 @@ Examples include:
 - command, argument, path, manifest, SSH-profile, or template injection;
 - path traversal or artifact handling that can overwrite files outside the intended project or attempt workspace;
 - leakage of passwords, tokens, private keys, credentials, or sensitive cluster data into logs or manifests;
-- unsafe plugin discovery or configuration loading that executes code unexpectedly;
+- configuration loading that executes code unexpectedly;
 - scheduler staging or fetch behavior that accepts the wrong project, node, attempt, or output path;
 - unsafe loading of model or serialized data that creates an unexpected code-execution path in MLIPFlow-controlled behavior.
 
@@ -40,17 +40,17 @@ A disagreement about numerical accuracy is normally a scientific bug rather than
 
 ## Trust model
 
-MLIPFlow separates workflow control from scientific execution, but it does not sandbox arbitrary third-party Python adapters or scientific software.
+MLIPFlow separates workflow control from scientific execution, but it does not sandbox its built-in Python adapters or scientific software.
 
 Treat the following as trusted executable inputs:
 
-- Python adapters and plugin code;
+- bundled Python adapters;
 - site-owned scheduler templates;
 - external wrappers and scientific executables;
 - model formats that may deserialize executable objects;
 - scripts referenced by your research workflow.
 
-Review third-party plugins before running `run --dry-run`: planning a selected adapter imports and executes its Python planning code even though the dry run is intended to avoid scientific execution or scheduler submission.
+Planning a selected built-in capability imports and executes its Python adapter even though the dry run is intended to avoid scientific execution or scheduler submission.
 
 ## Operational guidance
 
@@ -59,10 +59,10 @@ Review third-party plugins before running `run --dry-run`: planning a selected a
 - Use least-privilege cluster accounts and filesystem permissions.
 - Keep site-owned templates and scientific environments under normal change control.
 - Review logs and manifests before publishing them.
-- Only run projects, plugins, models, wrappers, and serialized artifacts from sources you trust.
+- Only run projects, models, wrappers, and serialized artifacts from sources you trust.
 
 ## Current safeguards
 
-The current codebase includes controls such as explicit argv execution for local external programs, bounded project and attempt artifact paths, explicit approval for approval-gated execution, preserved attempt lineage, output allowlists and size bounds, and scientific completion checks after scheduler completion.
+The current codebase includes controls such as explicit argv execution for local external programs, project and attempt path containment where execution constructs paths, explicit approval for approval-gated execution, fresh attempt directories, and scientific completion checks after scheduler completion.
 
 These controls reduce orchestration risk; they do not constitute a security audit of VASP, LAMMPS, LASP, MLIP frameworks, model files, site scripts, SSH, Slurm, or other external components used through MLIPFlow.

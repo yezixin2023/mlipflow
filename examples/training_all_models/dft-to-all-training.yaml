@@ -9,7 +9,7 @@ project:
 workflow:
   nodes:
     - id: label-dft
-      uses: dft-labeling@0
+      uses: dft-labeling
       backend: ssh-slurm
       backend_profile: cluster-a
       inputs:
@@ -33,7 +33,7 @@ workflow:
         walltime: "04:00:00"
 
     - id: assemble-datasets
-      uses: dft-labeling@0
+      uses: dft-labeling
       needs: [label-dft]
       backend: ssh-slurm
       backend_profile: cluster-a
@@ -55,7 +55,7 @@ workflow:
         walltime: "00:30:00"
 
     - id: train-deepmd
-      uses: mlip-training@0
+      uses: mlip-training
       needs: [assemble-datasets]
       backend: ssh-slurm
       backend_profile: cluster-a
@@ -75,7 +75,7 @@ workflow:
         walltime: "12:00:00"
 
     - id: train-m3gnet
-      uses: mlip-training@0
+      uses: mlip-training
       needs: [assemble-datasets]
       backend: ssh-slurm
       backend_profile: cluster-a
@@ -95,7 +95,7 @@ workflow:
         walltime: "12:00:00"
 
     - id: train-chgnet
-      uses: mlip-training@0
+      uses: mlip-training
       needs: [assemble-datasets]
       backend: ssh-slurm
       backend_profile: cluster-a
@@ -115,7 +115,7 @@ workflow:
         walltime: "12:00:00"
 
     - id: train-mace
-      uses: mlip-training@0
+      uses: mlip-training
       needs: [assemble-datasets]
       backend: ssh-slurm
       backend_profile: cluster-a

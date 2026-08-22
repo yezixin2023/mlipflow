@@ -136,7 +136,7 @@ def _context(root: Path, attempt: int = 1, policy: str = "auto-from-previous-att
     resources = {"cpus": 8, "gpus": 1, "memory": "32G", "walltime": "01:00:00"}
     node = {
         "id": "lammps-run",
-        "uses": "lammps-md@0",
+        "uses": "lammps-md",
         "mode": "execute",
         "backend": "ssh-slurm",
         "backend_profile": "cluster-a",

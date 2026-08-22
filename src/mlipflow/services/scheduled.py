@@ -1,6 +1,6 @@
 """Scheduler-backed execution: stage, submit, observe, fetch, finalize.
 
-Later scheduler observation, bounded transport, and scientific completion
+Later scheduler observation, output fetching, and scientific completion
 checks continue the reviewed submission without another approval.
 """
 
@@ -13,8 +13,7 @@ from ..artifacts import artifact as artifact_record
 from ..config import Project
 from ..errors import ApprovalError, BackendError, ConfigError, StateError
 from ..io import load_mapping, write_json_atomic, write_text_atomic
-from ..plugins import PluginSpec, discover_plugins, load_adapter
-from ..portable import to_runtime
+from ..plugins import capability, load_adapter
 from ..state import RunState, StateStore, StepRun, utc_now
 from .backend_factory import (
     SchedulerFactory,
@@ -22,7 +21,7 @@ from .backend_factory import (
 )
 from .contracts import (
     _adapter_context,
-    _portable_roots,
+    _attempt_artifacts,
     _normalize_adapter_artifacts,
     _scheduled_contract,
 )
@@ -54,7 +53,7 @@ def _materialize_hpc_scripts(
 def _stage_and_submit_scheduled_adapter(
     project: Project,
     node: dict[str, Any],
-    plugin: PluginSpec,
+    capability_id: str,
     plan: dict[str, Any],
     attempt_dir: Path,
     *,
@@ -63,7 +62,7 @@ def _stage_and_submit_scheduled_adapter(
     node_id = str(node["id"])
     attempt = int(str(attempt_dir.name).rsplit("-", 1)[1])
     scheduled = _scheduled_contract(
-        project, plugin, plan, node_id=node_id, attempt=attempt
+        project, capability_id, plan, node_id=node_id, attempt=attempt
     )
     hpc_execution = plan.get("hpc_execution")
     if not isinstance(hpc_execution, dict):
@@ -77,7 +76,22 @@ def _stage_and_submit_scheduled_adapter(
     if not isinstance(remote_run_dir, str) or not isinstance(ssh_profile, str):
         raise BackendError("approved plan has invalid cluster/workspace settings")
     approved_plan = attempt_dir / "approved-plan.json"
-    write_json_atomic(approved_plan, plan)
+    write_json_atomic(
+        approved_plan,
+        {
+            key: plan[key]
+            for key in (
+                "project_id",
+                "node_id",
+                "attempt",
+                "capability",
+                "backend_profile",
+                "adapter_plan",
+                "hpc_execution",
+            )
+            if key in plan
+        },
+    )
     submit_script, run_script = _materialize_hpc_scripts(attempt_dir, hpc_execution)
     files: list[tuple[Path, str]] = [
         (Path(str(item["source"])), f"input/{item['remote_name']}")
@@ -119,7 +133,7 @@ def _stage_and_submit_scheduled_adapter(
 def _stage_and_submit_independent_jobs(
     project: Project,
     node: dict[str, Any],
-    plugin: PluginSpec,
+    capability_id: str,
     plan: dict[str, Any],
     attempt_dir: Path,
     *,
@@ -130,7 +144,7 @@ def _stage_and_submit_independent_jobs(
     node_id = str(node["id"])
     attempt = int(str(attempt_dir.name).rsplit("-", 1)[1])
     scheduled = _scheduled_contract(
-        project, plugin, plan, node_id=node_id, attempt=attempt
+        project, capability_id, plan, node_id=node_id, attempt=attempt
     )
     if scheduled.get("schema_version") != 4:
         raise BackendError("independent submission requires scheduled schema_version 4")
@@ -154,7 +168,22 @@ def _stage_and_submit_independent_jobs(
     if set(by_id) != set(expected_ids):
         raise BackendError("resolved independent HPC execution ids changed")
 
-    write_json_atomic(attempt_dir / "approved-plan.json", plan)
+    write_json_atomic(
+        attempt_dir / "approved-plan.json",
+        {
+            key: plan[key]
+            for key in (
+                "project_id",
+                "node_id",
+                "attempt",
+                "capability",
+                "backend_profile",
+                "adapter_plan",
+                "hpc_executions",
+            )
+            if key in plan
+        },
+    )
     staged: list[tuple[str, dict[str, Any], Any, str]] = []
     for submission in scheduled["submissions"]:
         submission_id = str(submission["id"])
@@ -225,14 +254,17 @@ def _stage_and_submit_independent_jobs(
                 raise BackendError(
                     result.stderr or result.stdout or "scheduler submission failed"
                 )
-            submitted.append(
-                {
-                    "submission_id": submission_id,
-                    "job_id": result.job_id,
-                    "remote_run_dir": remote_run_dir,
-                    "submission_provenance": result.submission_provenance,
-                }
-            )
+            record = {
+                "submission_id": submission_id,
+                "job_id": result.job_id,
+                "remote_run_dir": remote_run_dir,
+            }
+            routing = result.submission_routing
+            if isinstance(routing, dict) and isinstance(
+                routing.get("selected_partition"), str
+            ):
+                record["partition"] = routing["selected_partition"]
+            submitted.append(record)
     except Exception:
         for record, (_, _, backend, _) in zip(submitted, staged):
             backend.cancel(str(record["job_id"]))
@@ -243,9 +275,9 @@ def _stage_and_submit_independent_jobs(
 def _failure_salvage_outputs(
     plan: dict[str, Any], scheduled: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """Return the approved bounded output subset that may be fetched on failure.
+    """Return the declared output subset that may be fetched on failure.
 
-    Plugins cannot introduce new paths here.  Every requested name must already
+    Adapters cannot introduce new paths here. Every requested name must already
     exist in the validated scheduled fetch allowlist, and salvage treats missing
     files as optional because a hard failure may happen before the first checkpoint.
     """
@@ -302,7 +334,7 @@ def _independent_submission_records(
     project: Project, step: StepRun, plan: dict[str, Any]
 ) -> list[dict[str, Any]]:
     path = attempt_directory(project, step.node_id, step.attempt) / _HPC_SUBMISSIONS
-    if path.is_symlink() or not path.is_file():
+    if not path.is_file():
         raise BackendError("persisted independent scheduler submissions are missing")
     manifest = load_mapping(path)
     records = manifest.get("submissions")
@@ -440,7 +472,7 @@ def _observe_independent_jobs(
         result["scheduler_state"] = "COMPLETED"
         result["reason"] = (
             "all independent scheduler jobs completed; approved outputs are ready "
-            "for bounded fetch and pinned scientific checks"
+            "for fetch and pinned scientific checks"
         )
     else:
         cancelled_only = all(state in successful | {"CANCELLED", "REVOKED"} for state in states)
@@ -458,14 +490,13 @@ def _observe_independent_jobs(
 def _observe_scheduled_step(
     project: Project,
     step: StepRun,
-    plugin_root: Path | None = None,
     *,
     factory: SchedulerFactory | None = None,
 ) -> dict[str, Any]:
-    if step.backend == "ssh-slurm" and plugin_root is not None:
+    if step.backend == "ssh-slurm":
         try:
             pinned_plan, _, scheduled = _load_pinned_scheduled_plan(
-                project, step, plugin_root
+                project, step
             )
             if scheduled.get("schema_version") == 4:
                 return _observe_independent_jobs(
@@ -484,11 +515,7 @@ def _observe_scheduled_step(
             }
     try:
         if step.backend == "ssh-slurm":
-            if plugin_root is None:
-                raise ConfigError(
-                    "plugin root is required to verify the pinned HPC execution plan"
-                )
-            pinned_plan, _, _ = _load_pinned_scheduled_plan(project, step, plugin_root)
+            pinned_plan, _, _ = _load_pinned_scheduled_plan(project, step)
             hpc_execution = pinned_plan.get("hpc_execution")
             cluster_record = (
                 hpc_execution.get("cluster_profile")
@@ -549,10 +576,10 @@ def _observe_scheduled_step(
         approved_plan_path = (
             attempt_directory(project, step.node_id, step.attempt) / "approved-plan.json"
         )
-        if approved_plan_path.is_file() and plugin_root is not None:
+        if approved_plan_path.is_file():
             try:
-                approved_plan, plugin, scheduled = _load_pinned_scheduled_plan(
-                    project, step, plugin_root
+                approved_plan, capability_id, scheduled = _load_pinned_scheduled_plan(
+                    project, step
                 )
                 salvage_outputs = _failure_salvage_outputs(approved_plan, scheduled)
                 if salvage_outputs:
@@ -562,7 +589,7 @@ def _observe_scheduled_step(
                         backend, workspace, salvage_outputs
                     )
                     observation["adapter_finalization"] = {
-                        "plugin_id": plugin.plugin_id,
+                        "capability": capability_id,
                         "remote_run_dir": workspace["run_dir"],
                         "outputs": inventory,
                         "failure_salvage": True,
@@ -571,20 +598,13 @@ def _observe_scheduled_step(
                     existing = [
                         str(item["remote_name"])
                         for item in inventory
-                        if item.get("exists") and not item.get("oversized")
-                    ]
-                    oversized = [
-                        str(item["remote_name"])
-                        for item in inventory
-                        if item.get("oversized")
+                        if item.get("exists")
                     ]
                     detail = (
                         "approved failure salvage is ready for: " + ", ".join(existing)
                         if existing
                         else "no approved salvage output exists yet"
                     )
-                    if oversized:
-                        detail += "; oversized: " + ", ".join(oversized)
                     observation["reason"] = (
                         f"scheduler terminal state {raw_state}; {detail}"
                     )
@@ -606,20 +626,15 @@ def _observe_scheduled_step(
             attempt_directory(project, step.node_id, step.attempt) / "approved-plan.json"
         )
         if approved_plan_path.is_file():
-            if plugin_root is None:
-                observation["reason"] = (
-                    "scheduler completed; plugin root is required for pinned adapter finalization"
-                )
-                return observation
             try:
-                approved_plan, plugin, scheduled = _load_pinned_scheduled_plan(
-                    project, step, plugin_root
+                approved_plan, capability_id, scheduled = _load_pinned_scheduled_plan(
+                    project, step
                 )
                 cluster_record, workspace = _approved_workspace(approved_plan, step)
                 backend = scheduler_from_cluster_record(cluster_record, factory=factory)
                 inventory = _remote_output_inventory(backend, workspace, scheduled)
                 observation["adapter_finalization"] = {
-                    "plugin_id": plugin.plugin_id,
+                    "capability": capability_id,
                     "remote_run_dir": workspace["run_dir"],
                     "outputs": inventory,
                 }
@@ -628,26 +643,15 @@ def _observe_scheduled_step(
                     for item in inventory
                     if item["required"] and not item.get("exists")
                 ]
-                oversized = [
-                    str(item["remote_name"])
-                    for item in inventory
-                    if item.get("oversized")
-                ]
-                if missing or oversized:
-                    details = []
-                    if missing:
-                        details.append("missing required outputs: " + ", ".join(missing))
-                    if oversized:
-                        details.append("oversized outputs: " + ", ".join(oversized))
+                if missing:
                     observation["reason"] = (
-                        "scheduler completed; approved fetch/check will fail safely ("
-                        + "; ".join(details)
-                        + ")"
+                        "scheduler completed; required outputs are missing: "
+                        + ", ".join(missing)
                     )
                 else:
                     observation["reason"] = (
-                        "scheduler completed; approved outputs are ready for bounded fetch and "
-                        "the pinned plugin scientific checker"
+                        "scheduler completed; declared outputs are ready for fetch and "
+                        "the built-in capability scientific checker"
                     )
                 return observation
             except Exception as exc:
@@ -671,19 +675,14 @@ def _remote_output_inventory_items(
         observed = backend.inspect_file(
             str(workspace["run_dir"]), str(item["remote_path"])
         )
-        record = {**item, **observed}
-        if observed.get("exists") and int(observed.get("size_bytes", 0)) > int(
-            item["max_bytes"]
-        ):
-            record["oversized"] = True
-        inventory.append(record)
+        inventory.append({**item, **observed})
     return inventory
 
 
 def _remote_output_inventory(
     backend: Any, workspace: dict[str, Any], scheduled: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """Read the existence and bounded transfer size of every declared output."""
+    """Read whether each declared output exists."""
 
     return _remote_output_inventory_items(
         backend, workspace, list(scheduled["fetch_outputs"])
@@ -693,12 +692,11 @@ def _remote_output_inventory(
 def _load_pinned_scheduled_plan(
     project: Project,
     step: StepRun,
-    plugin_root: Path,
-) -> tuple[dict[str, Any], PluginSpec, dict[str, Any]]:
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
     attempt_dir = attempt_directory(project, step.node_id, step.attempt)
     plan_path = attempt_dir / "approved-plan.json"
-    if plan_path.is_symlink() or not plan_path.is_file():
-        raise ConfigError("approved scheduled plan is missing or is a symlink")
+    if not plan_path.is_file():
+        raise ConfigError("approved scheduled plan is missing")
     plan = load_mapping(plan_path)
     if (
         plan.get("project_id") != step.project_id
@@ -706,53 +704,28 @@ def _load_pinned_scheduled_plan(
         or plan.get("attempt") != step.attempt
     ):
         raise ApprovalError("stored run plan does not match this attempt")
-    _attempt_node(plan, step)
-    pinned_plugin = plan.get("plugin")
-    if not isinstance(pinned_plugin, dict) or not isinstance(pinned_plugin.get("id"), str):
-        raise ApprovalError("stored run plan lacks a plugin id")
-    plugins = discover_plugins(plugin_root)
-    plugin_id = str(pinned_plugin["id"])
-    if plugin_id not in plugins:
-        raise ApprovalError(f"pinned scheduled plugin is unavailable: {plugin_id}")
-    plugin = plugins[plugin_id]
-    if (
-        pinned_plugin.get("id") != plugin.plugin_id
-        or pinned_plugin.get("version") != plugin.raw.get("version")
-    ):
-        raise ApprovalError("stored run plan uses a different plugin version")
+    capability_id = plan.get("capability")
+    if not isinstance(capability_id, str):
+        raise ApprovalError("stored run plan lacks a capability id")
+    capability(capability_id)
     scheduled = _scheduled_contract(
         project,
-        plugin,
+        capability_id,
         plan,
         node_id=step.node_id,
         attempt=step.attempt,
         verify_staged_sources=False,
     )
-    return plan, plugin, scheduled
+    return plan, capability_id, scheduled
 
 
-def _attempt_node(
-    plan: dict[str, Any], step: StepRun, *, needs: list[str] | None = None
-) -> dict[str, Any]:
-    """Recover the node semantics bound into an approved attempt plan."""
-
-    plugin = plan.get("plugin")
-    plugin_id = plugin.get("id") if isinstance(plugin, dict) else step.plugin_id
-    return {
-        "id": step.node_id,
-        "uses": plugin_id,
-        "mode": plan.get("mode", "execute"),
-        "backend": plan.get("backend", step.backend),
-        "backend_profile": plan.get("backend_profile"),
-        # Dependency edges are pinned separately in the state database's node
-        # snapshot rather than duplicated into the approval plan.  Scheduled
-        # finalization still needs those edges to resolve collected-artifact
-        # bindings for the pinned checker context.
-        "needs": list(needs or []),
-        "inputs": plan.get("inputs", {}),
-        "parameters": plan.get("parameters", {}),
-        "resources": plan.get("resources", {}),
-    }
+def _attempt_node(project: Project, plan: dict[str, Any], step: StepRun) -> dict[str, Any]:
+    node = dict(project.node(step.node_id))
+    if node.get("backend_profile") is None and isinstance(
+        plan.get("backend_profile"), str
+    ):
+        node["backend_profile"] = plan["backend_profile"]
+    return node
 
 
 def _write_independent_completion(
@@ -765,7 +738,7 @@ def _write_independent_completion(
     found = 0
     for submission_id in submission_ids:
         path = attempt_dir / "scheduler" / submission_id / "completion.json"
-        if path.is_symlink() or not path.is_file():
+        if not path.is_file():
             all_successful = False
             continue
         completion = load_mapping(path)
@@ -816,7 +789,7 @@ def _finalize_independent_jobs(
     step: StepRun,
     change: dict[str, Any],
     plan: dict[str, Any],
-    plugin: PluginSpec,
+    capability_id: str,
     scheduled: dict[str, Any],
     store: StateStore,
     *,
@@ -859,11 +832,6 @@ def _finalize_independent_jobs(
                         f"{submission_id}: required output is missing: {item['remote_name']}"
                     )
                 continue
-            if item.get("oversized"):
-                fetch_errors.append(
-                    f"{submission_id}: output exceeds approved bound: {item['remote_name']}"
-                )
-                continue
             destination = attempt_dir / str(item["local_name"])
             if destination.exists() or destination.is_symlink():
                 if destination.is_symlink() or not destination.is_file():
@@ -887,7 +855,6 @@ def _finalize_independent_jobs(
     )
     if completion is not None:
         fetched.append(artifact_record(completion) | {"role": "scheduler-completion"})
-    metrics: dict[str, Any] = {}
     if failure_salvage:
         raw_target = details.get("terminal_target")
         if raw_target not in {RunState.FAIL.value, RunState.STOPPED.value}:
@@ -897,9 +864,7 @@ def _finalize_independent_jobs(
         if fetch_errors:
             reason += "; " + "; ".join(fetch_errors)
     else:
-        snapshot = store.node_snapshot(step.run_id)
-        raw_needs = snapshot.get("needs", [])
-        node = _attempt_node(plan, step, needs=list(raw_needs))
+        node = _attempt_node(project, plan, step)
         first_execution = records[0]["hpc_execution"]
         context = _adapter_context(project, node, step.attempt)
         context["execution"] = {
@@ -908,10 +873,7 @@ def _finalize_independent_jobs(
             "remote_output_inventory": [
                 item for record in observed.values() for item in record["outputs"]
             ],
-            "plan": to_runtime(
-                plan["adapter_plan"],
-                _portable_roots(project, plugin, step.node_id, step.attempt),
-            ),
+            "plan": plan["adapter_plan"],
             "hpc_execution": first_execution,
             "hpc_executions": [item["hpc_execution"] for item in records],
         }
@@ -927,16 +889,16 @@ def _finalize_independent_jobs(
             final = RunState.FAIL
             reason = completion_error
         else:
-            adapter = load_adapter(plugin)
+            adapter = load_adapter(capability_id)
             checked = adapter.check(context)
             if checked.get("status") != RunState.OK.value:
                 final = RunState.FAIL
-                reason = f"pinned plugin completion check did not return OK: {checked}"
+                reason = f"built-in capability completion check did not return OK: {checked}"
             else:
                 collected = adapter.collect(context)
                 if collected.get("status") != RunState.OK.value:
                     final = RunState.FAIL
-                    reason = f"pinned plugin collection did not return OK: {collected}"
+                    reason = f"built-in capability collection did not return OK: {collected}"
                 else:
                     normalized = _normalize_adapter_artifacts(
                         project, attempt_dir, collected.get("artifacts", [])
@@ -945,14 +907,13 @@ def _finalize_independent_jobs(
                     fetched.extend(
                         item for item in normalized if str(item["uri"]) not in known
                     )
-                    metrics = collected.get("metrics", {})
                     final = RunState.OK
                     reason = (
-                        "all scheduler jobs completed; bounded fetch and pinned plugin "
+                        "all scheduler jobs completed; output fetch and built-in capability "
                         "checks succeeded"
                     )
 
-    initial_artifacts = store.artifacts(step.run_id)
+    initial_artifacts = _attempt_artifacts(project, step)
     artifacts = list(initial_artifacts)
     known_uris = {str(item["uri"]) for item in artifacts}
     artifacts.extend(item for item in fetched if str(item["uri"]) not in known_uris)
@@ -965,30 +926,18 @@ def _finalize_independent_jobs(
             RunState.RUNNING,
             diagnostic="all scheduler jobs completed between observations",
         )
-    for artifact in fetched:
-        if str(artifact["uri"]) in known_uris:
-            continue
-        known_uris.add(str(artifact["uri"]))
-        store.add_artifact(
-            step.run_id,
-            str(artifact["role"]),
-            str(artifact["uri"]),
-            artifact.get("metadata", {}),
-        )
-    final_manifest = _finalize_scheduler_manifest(
+    _finalize_scheduler_manifest(
         project,
         step,
         final,
         reason,
         str(change.get("scheduler_state", "MIXED")),
         artifacts,
-        metrics,
     )
     return store.transition(
         step.run_id,
         final,
         diagnostic=None if final == RunState.OK else reason,
-        manifest_path=str(final_manifest) if final_manifest else None,
     )
 
 
@@ -996,7 +945,6 @@ def _finalize_scheduled_adapter(
     project: Project,
     step: StepRun,
     change: dict[str, Any],
-    plugin_root: Path,
     store: StateStore,
     *,
     factory: SchedulerFactory | None = None,
@@ -1004,14 +952,14 @@ def _finalize_scheduled_adapter(
     details = change.get("adapter_finalization")
     if not isinstance(details, dict):
         raise StateError("approved transition lacks adapter finalization details")
-    plan, plugin, scheduled = _load_pinned_scheduled_plan(project, step, plugin_root)
+    plan, capability_id, scheduled = _load_pinned_scheduled_plan(project, step)
     if scheduled.get("schema_version") == 4:
         return _finalize_independent_jobs(
             project,
             step,
             change,
             plan,
-            plugin,
+            capability_id,
             scheduled,
             store,
             factory=factory,
@@ -1051,9 +999,6 @@ def _finalize_scheduled_adapter(
             if item["required"]:
                 fetch_errors.append(f"required output is missing: {item['remote_name']}")
             continue
-        if item.get("oversized"):
-            fetch_errors.append(f"output exceeds approved bound: {item['remote_name']}")
-            continue
         destination = attempt_dir / str(item["local_name"])
         if destination.exists() or destination.is_symlink():
             if destination.is_symlink() or not destination.is_file():
@@ -1074,7 +1019,6 @@ def _finalize_scheduled_adapter(
             | {"role": str(item.get("role", "scheduler-output"))}
         )
 
-    metrics: dict[str, Any] = {}
     reason: str
     if failure_salvage:
         raw_target = details.get("terminal_target")
@@ -1086,28 +1030,16 @@ def _finalize_scheduled_adapter(
         else:
             reason = str(change.get("reason", "scheduler terminal failure"))
     else:
-        snapshot = store.node_snapshot(step.run_id)
-        raw_needs = snapshot.get("needs", [])
-        if not isinstance(raw_needs, list) or any(
-            not isinstance(dependency, str) or not dependency
-            for dependency in raw_needs
-        ):
-            raise StateError("attempt node snapshot has invalid dependency edges")
-        node = _attempt_node(plan, step, needs=raw_needs)
+        node = _attempt_node(project, plan, step)
         context = _adapter_context(project, node, step.attempt)
         context["execution"] = {
             "returncode": 0,
             "scheduler_state": "COMPLETED",
             "remote_output_inventory": current_inventory,
-            # Resolve portable tokens so the pinned checker reads the same absolute
-            # paths its planning half emitted.
-            "plan": to_runtime(
-                plan["adapter_plan"],
-                _portable_roots(project, plugin, step.node_id, step.attempt),
-            ),
+            "plan": plan["adapter_plan"],
             "hpc_execution": hpc_execution,
         }
-        adapter = load_adapter(plugin)
+        adapter = load_adapter(capability_id)
         collected: dict[str, Any] | None = None
         checked: dict[str, Any] | None = None
         completion_error = _validate_hpc_completion(attempt_dir / "completion.json", step)
@@ -1121,12 +1053,12 @@ def _finalize_scheduled_adapter(
             checked = adapter.check(context)
             if checked.get("status") != RunState.OK.value:
                 final = RunState.FAIL
-                reason = f"pinned plugin completion check did not return OK: {checked}"
+                reason = f"built-in capability completion check did not return OK: {checked}"
             else:
                 collected = adapter.collect(context)
                 if collected.get("status") != RunState.OK.value:
                     final = RunState.FAIL
-                    reason = f"pinned plugin collection did not return OK: {collected}"
+                    reason = f"built-in capability collection did not return OK: {collected}"
                 else:
                     normalized = _normalize_adapter_artifacts(
                         project, attempt_dir, collected.get("artifacts", [])
@@ -1135,13 +1067,12 @@ def _finalize_scheduled_adapter(
                     fetched.extend(
                         item for item in normalized if str(item["uri"]) not in known
                     )
-                    metrics = collected.get("metrics", {})
                     final = RunState.OK
                     reason = (
-                        "scheduler completed; bounded fetch and pinned plugin checks succeeded"
+                        "scheduler completed; output fetch and built-in capability checks succeeded"
                     )
 
-    initial_artifacts = store.artifacts(step.run_id)
+    initial_artifacts = _attempt_artifacts(project, step)
     artifacts = list(initial_artifacts)
     known_uris = {str(item["uri"]) for item in artifacts}
     artifacts.extend(item for item in fetched if str(item["uri"]) not in known_uris)
@@ -1152,31 +1083,19 @@ def _finalize_scheduled_adapter(
             RunState.RUNNING,
             diagnostic="scheduler completed between approved observations",
         )
-    for artifact in fetched:
-        if str(artifact["uri"]) in known_uris:
-            continue
-        known_uris.add(str(artifact["uri"]))
-        store.add_artifact(
-            step.run_id,
-            str(artifact["role"]),
-            str(artifact["uri"]),
-            artifact.get("metadata", {}),
-        )
     scheduler_state = str(change.get("scheduler_state", "UNKNOWN"))
-    final_manifest = _finalize_scheduler_manifest(
+    _finalize_scheduler_manifest(
         project,
         step,
         final,
         reason,
         scheduler_state,
         artifacts,
-        metrics,
     )
     return store.transition(
         step.run_id,
         final,
         diagnostic=None if final == RunState.OK else reason,
-        manifest_path=str(final_manifest) if final_manifest else None,
     )
 
 
@@ -1187,18 +1106,14 @@ def _finalize_scheduler_manifest(
     reason: str,
     scheduler_state: str,
     artifacts: list[dict[str, Any]],
-    metrics: dict[str, Any],
 ) -> Path | None:
-    if not step.manifest_path:
-        return None
-    initial = Path(step.manifest_path)
+    initial = attempt_directory(project, step.node_id, step.attempt) / "run-manifest.json"
     if not initial.is_file():
         return None
     manifest = load_mapping(initial)
     manifest["state"] = target.value
     manifest["state_reason"] = reason
     manifest["artifacts"] = artifacts or manifest.get("artifacts", [])
-    manifest["metrics"] = metrics or manifest.get("metrics", {})
     manifest["timestamps"]["updated_at"] = utc_now()
     if target in {RunState.OK, RunState.FAIL, RunState.STOPPED}:
         manifest["timestamps"]["finished_at"] = utc_now()
@@ -1210,8 +1125,8 @@ def _finalize_scheduler_manifest(
 
 
 def _validate_hpc_completion(path: Path, step: StepRun) -> str | None:
-    if path.is_symlink() or not path.is_file():
-        return "scheduler completion.json is missing or unsafe"
+    if not path.is_file():
+        return "scheduler completion.json is missing"
     try:
         completion = load_mapping(path)
     except Exception as exc:

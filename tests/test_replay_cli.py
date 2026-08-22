@@ -5,19 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from .helpers import plugin_manifest, project_config, run_cli, write_json
+from .helpers import project_config, run_cli, write_json
 
 
 class ReplayCliTests(unittest.TestCase):
     def test_replay_references_existing_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            plugins = root / "plugins"
-            write_json(plugins / "demo" / "plugin.yaml", plugin_manifest())
-            (plugins / "demo" / "adapter.py").write_text(
-                "raise AssertionError('generic replay imported the Adapter')\n",
-                encoding="utf-8",
-            )
             artifact = root / "evidence.csv"
             artifact.write_text("metric,value\nforce_rmse,0.1\n", encoding="utf-8")
             write_json(
@@ -31,7 +25,7 @@ class ReplayCliTests(unittest.TestCase):
             )
             node = {
                 "id": "benchmark",
-                "uses": "demo@1",
+                "uses": "candidate-ranking",
                 "mode": "replay",
                 "needs": [],
                 "inputs": {"result_manifest": "result.json"},
@@ -42,7 +36,7 @@ class ReplayCliTests(unittest.TestCase):
             write_json(root / "project.yaml", project_config([node]))
             code, _, stderr = run_cli(["--project", str(root), "init"])
             self.assertEqual(code, 0, stderr)
-            base = ["--project", str(root), "--plugins", str(plugins), "--format", "json"]
+            base = ["--project", str(root), "--format", "json"]
             code, stdout, stderr = run_cli([*base, "run", "benchmark", "--dry-run"])
             self.assertEqual(code, 0, stderr)
             self.assertFalse(json.loads(stdout)["data"]["approval_required"])
@@ -51,20 +45,14 @@ class ReplayCliTests(unittest.TestCase):
             result = json.loads(stdout)["data"]
             self.assertEqual(result["state"], "OK")
             self.assertNotIn("step", result)
-            code, status, stderr = run_cli([*base, "json", "benchmark", "--audit"])
-            self.assertEqual(code, 0, stderr)
-            manifest = Path(json.loads(status)["data"]["steps"][0]["manifest_path"])
+            manifest = root / ".mlipflow/runs/benchmark/attempt-1/run-manifest.json"
             self.assertTrue(manifest.is_file())
-            try:
-                import jsonschema
-            except ImportError:
-                jsonschema = None
-            if jsonschema is not None:
-                schema_path = Path(__file__).resolve().parents[1] / "schemas" / "run-manifest.schema.json"
-                jsonschema.Draft202012Validator(
-                    json.loads(schema_path.read_text(encoding="utf-8")),
-                    format_checker=jsonschema.FormatChecker(),
-                ).validate(json.loads(manifest.read_text(encoding="utf-8")))
+            manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertTrue(
+                {"provenance", "retry", "dependencies", "resources"}.isdisjoint(
+                    manifest_data
+                )
+            )
             self.assertEqual(artifact.read_text(encoding="utf-8"), "metric,value\nforce_rmse,0.1\n")
             self.assertFalse((manifest.parent / artifact.name).exists())
             code, status, stderr = run_cli([*base, "json", "benchmark"])
@@ -74,12 +62,6 @@ class ReplayCliTests(unittest.TestCase):
     def test_replay_refuses_explicit_failed_scientific_result(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            plugins = root / "plugins"
-            write_json(plugins / "demo" / "plugin.yaml", plugin_manifest())
-            (plugins / "demo" / "adapter.py").write_text(
-                "raise AssertionError('generic replay imported the Adapter')\n",
-                encoding="utf-8",
-            )
             write_json(
                 root / "result.json",
                 {"schema_version": 1, "status": "FAIL", "metrics": {}, "artifacts": []},
@@ -90,14 +72,14 @@ class ReplayCliTests(unittest.TestCase):
                     [
                         {
                             "id": "failed-result",
-                            "uses": "demo@1",
+                            "uses": "candidate-ranking",
                             "mode": "replay",
                             "inputs": {"result_manifest": "result.json"},
                         }
                     ]
                 ),
             )
-            base = ["--project", str(root), "--plugins", str(plugins), "--format", "json"]
+            base = ["--project", str(root), "--format", "json"]
             code, _, stderr = run_cli(["--project", str(root), "init"])
             self.assertEqual(code, 0, stderr)
             code, stdout, stderr = run_cli([*base, "run", "failed-result", "--dry-run"])

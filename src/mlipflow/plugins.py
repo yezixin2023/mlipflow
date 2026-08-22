@@ -1,140 +1,149 @@
-"""Static plugin discovery and runtime adapter loading."""
+"""Built-in scientific capability lookup and adapter loading."""
 
 from __future__ import annotations
 
 import importlib.util
-import re
 import sys
-from dataclasses import dataclass
+import sysconfig
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Protocol
+from typing import Any
 
-from .errors import PluginError
-from .io import load_mapping
+from .errors import CapabilityError
 
 
-PLUGIN_ID = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
-REQUIRED_FIELDS = {
-    "schema_version",
-    "id",
-    "version",
-    "api_version",
-    "description",
-    "implementation",
-    "execution",
+BUILTIN_CAPABILITIES: dict[str, dict[str, Any]] = {
+    "active-learning": {
+        "adapter": "adapter.py",
+        "backends": ("local", "ssh-slurm"),
+        "operations": ("committee-evaluate", "select-candidates", "assess-round"),
+        "approval_required": True,
+        "description": "Finite offline active-learning rounds and committee selection.",
+    },
+    "ase-md": {
+        "adapter": "adapter_restart.py",
+        "backends": ("ssh-slurm",),
+        "operations": ("run",),
+        "approval_required": True,
+        "description": "ASE NVT/NPT molecular dynamics with restart support.",
+    },
+    "candidate-ranking": {
+        "adapter": "adapter.py",
+        "backends": ("local",),
+        "operations": ("rank-candidates",),
+        "approval_required": False,
+        "description": "Deterministic single-metric candidate ranking.",
+    },
+    "dft-labeling": {
+        "adapter": "adapter.py",
+        "backends": ("local", "ssh-slurm"),
+        "operations": ("vasp-prepare", "label", "dataset-assemble"),
+        "approval_required": True,
+        "description": "VASP preparation, labeling, relaxation/AIMD, and dataset assembly.",
+    },
+    "electrochemical-voltage": {
+        "adapter": "adapter.py",
+        "backends": ("local",),
+        "operations": ("compute-from-energies", "replay-si-table-s11"),
+        "approval_required": False,
+        "description": "Electrochemical voltage analysis and manuscript replay.",
+    },
+    "high-entropy-structure": {
+        "adapter": "adapter.py",
+        "backends": ("local",),
+        "operations": ("generate-sqs",),
+        "approval_required": True,
+        "description": "Seeded high-entropy/SQS structure generation.",
+    },
+    "ionic-transport": {
+        "adapter": "adapter.py",
+        "backends": ("local",),
+        "operations": ("analyze-existing", "md-smoke-and-analyze"),
+        "approval_required": True,
+        "description": "MSD, diffusion, conductivity, RDF, and Arrhenius analysis.",
+    },
+    "lammps-md": {
+        "adapter": "adapter_restart.py",
+        "backends": ("local", "ssh-slurm"),
+        "operations": ("lammps-prepare", "execute"),
+        "approval_required": True,
+        "description": "LAMMPS MLIP preparation/execution with restart support.",
+    },
+    "mlip-benchmark": {
+        "adapter": "adapter.py",
+        "backends": ("local", "ssh-slurm"),
+        "operations": (
+            "evaluate-fresh",
+            "evaluate-static",
+            "normalize-replay",
+            "normalize-execute",
+        ),
+        "approval_required": True,
+        "description": "Fresh and replayed MLIP energy/force/stress benchmarks.",
+    },
+    "mlip-training": {
+        "adapter": "adapter_cluster.py",
+        "backends": ("local", "ssh-slurm"),
+        "operations": ("train", "finetune"),
+        "approval_required": True,
+        "description": "DeepMD, MACE, CHGNet, and MatGL/M3GNet training.",
+    },
+    "pes-sampling": {
+        "adapter": "adapter_cluster.py",
+        "backends": ("local", "ssh-slurm"),
+        "operations": (
+            "direct-select",
+            "lasp-input-prepare",
+            "merge-structures",
+            "lasp-ssw-execute",
+            "lasp-ssw-normalize-replay",
+        ),
+        "approval_required": True,
+        "description": "DIRECT selection and LASP/SSW preparation, execution, and replay.",
+    },
 }
 
 
-@dataclass(frozen=True)
-class PluginSpec:
-    path: Path
-    raw: dict[str, Any]
-
-    @property
-    def plugin_id(self) -> str:
-        return str(self.raw["id"])
-
-    @property
-    def kind(self) -> str:
-        return str(self.raw["implementation"]["kind"])
-
-
-class Adapter(Protocol):
-    def validate(self, context: dict[str, Any]) -> list[dict[str, Any]]: ...
-
-    def plan(self, context: dict[str, Any]) -> dict[str, Any]: ...
-
-    def check(self, context: dict[str, Any]) -> dict[str, Any]: ...
-
-    def collect(self, context: dict[str, Any]) -> dict[str, Any]: ...
-
-
-def discover_plugins(root: Path) -> dict[str, PluginSpec]:
-    """Parse manifests only; never import plugin Python code."""
-
-    if not root.is_dir():
-        return {}
-    found: dict[str, PluginSpec] = {}
-    for manifest in sorted(root.glob("*/plugin.yaml")) + sorted(root.glob("*/plugin.json")):
-        raw = load_mapping(manifest)
-        validate_plugin(raw, manifest)
-        plugin_id = str(raw["id"])
-        if plugin_id in found:
-            raise PluginError(f"duplicate plugin id {plugin_id}: {found[plugin_id].path}, {manifest}")
-        found[plugin_id] = PluginSpec(manifest, raw)
-    return found
-
-
-def validate_plugin(raw: dict[str, Any], source: Path | str = "plugin") -> None:
-    missing = sorted(REQUIRED_FIELDS - set(raw))
-    if missing:
-        raise PluginError(f"{source}: missing fields {missing}")
-    if raw.get("schema_version") != 1 or raw.get("api_version") != 1:
-        raise PluginError(f"{source}: unsupported schema/api version")
-    plugin_id = raw.get("id")
-    if not isinstance(plugin_id, str) or not PLUGIN_ID.fullmatch(plugin_id):
-        raise PluginError(f"{source}: invalid plugin id {plugin_id!r}")
-    implementation = raw.get("implementation")
-    if not isinstance(implementation, dict):
-        raise PluginError(f"{source}: implementation must be a mapping")
-    if implementation.get("kind") not in {"python-adapter", "external-command", "replay-only"}:
-        raise PluginError(f"{source}: unsupported implementation kind")
-    execution = raw.get("execution")
-    if not isinstance(execution, dict) or not isinstance(execution.get("backends"), list):
-        raise PluginError(f"{source}: execution.backends must be a list")
-    invalid_backends = set(execution["backends"]) - {"local", "ssh-slurm"}
-    if invalid_backends:
-        raise PluginError(f"{source}: invalid backends {sorted(invalid_backends)}")
-
-
-def select_plugin(plugins: dict[str, PluginSpec], uses: str) -> PluginSpec:
-    requested, _, requested_major = uses.partition("@")
-    if requested in plugins:
-        spec = plugins[requested]
-    else:
-        candidates = [spec for key, spec in plugins.items() if key.split(".", 1)[0] == requested]
-        if len(candidates) != 1:
-            raise PluginError(f"cannot resolve plugin {uses!r}")
-        spec = candidates[0]
-    if requested_major and not str(spec.raw["version"]).startswith(requested_major + "."):
-        raise PluginError(
-            f"plugin {spec.plugin_id} version {spec.raw['version']} does not satisfy @{requested_major}"
-        )
-    return spec
-
-
-def load_adapter(spec: PluginSpec) -> Adapter:
-    """Load adapter only from an explicitly executing command path."""
-
-    entrypoint = spec.raw["implementation"].get("entrypoint")
-    if not isinstance(entrypoint, str) or ":" not in entrypoint:
-        raise PluginError(f"plugin {spec.plugin_id} has no Python entrypoint")
-    filename, object_name = entrypoint.split(":", 1)
-    adapter_path = (spec.path.parent / filename).resolve()
-    if adapter_path.parent != spec.path.parent.resolve() or not adapter_path.is_file():
-        raise PluginError(f"invalid adapter path for {spec.plugin_id}: {filename}")
-    module = _load_module(adapter_path, f"mlipflow_adapter_{spec.plugin_id.replace('.', '_')}")
+def capability(capability_id: str) -> dict[str, Any]:
     try:
-        factory = getattr(module, object_name)
+        return BUILTIN_CAPABILITIES[capability_id]
+    except KeyError as exc:
+        raise CapabilityError(f"unknown built-in capability {capability_id!r}") from exc
+
+
+def capability_directory(capability_id: str) -> Path:
+    spec = capability(capability_id)
+    source_root = Path(__file__).resolve().parents[2] / "plugins"
+    installed_root = Path(sysconfig.get_path("data")) / "share" / "mlipflow" / "plugins"
+    for root in (source_root, installed_root):
+        directory = root / capability_id
+        if (directory / str(spec["adapter"])).is_file():
+            return directory
+    raise CapabilityError(f"built-in capability implementation is missing: {capability_id}")
+
+
+def load_adapter(capability_id: str) -> Any:
+    spec = capability(capability_id)
+    path = capability_directory(capability_id) / str(spec["adapter"])
+    module = _load_module(path, f"mlipflow_builtin_{capability_id.replace('-', '_')}")
+    try:
+        adapter = getattr(module, "Adapter")
     except AttributeError as exc:
-        raise PluginError(f"adapter object {object_name} not found in {adapter_path}") from exc
-    return factory()
+        raise CapabilityError(f"built-in adapter class is missing: {path}") from exc
+    return adapter()
 
 
 def _load_module(path: Path, name: str) -> ModuleType:
     module_spec = importlib.util.spec_from_file_location(name, path)
     if module_spec is None or module_spec.loader is None:
-        raise PluginError(f"cannot load adapter module {path}")
+        raise CapabilityError(f"cannot load built-in adapter: {path}")
     module = importlib.util.module_from_spec(module_spec)
     previous = sys.dont_write_bytecode
     try:
-        # Planning must not create ``__pycache__`` inside a plugin directory.
-        # SourceFileLoader honours this process flag while executing the module.
         sys.dont_write_bytecode = True
         module_spec.loader.exec_module(module)
     except Exception as exc:
-        raise PluginError(f"adapter import failed for {path}: {exc}") from exc
+        raise CapabilityError(f"built-in adapter import failed for {path}: {exc}") from exc
     finally:
         sys.dont_write_bytecode = previous
     return module

@@ -3,7 +3,7 @@
 This module is a deliberately small local wrapper.  It does not implement SSW,
 ship LASP, submit scheduler jobs, or infer undocumented historical parameters.
 It stages explicit inputs into a fresh directory, invokes argv with
-``shell=False`` for the execute operation, and writes a portable result
+``shell=False`` for the execute operation, and writes a result
 contract consumed by :mod:`plugins.pes-sampling.adapter`.
 """
 
@@ -25,10 +25,6 @@ PLUGIN_ID = "pes-sampling"
 SCHEMA_VERSION = 1
 UNKNOWN = "HISTORICAL_PARAMETER_UNKNOWN"
 ARC_HEADER = b"!BIOSYM archive 2\nPBC=ON\n"
-MAX_ARC_BYTES = 512 * 1024 * 1024
-MAX_FRAME_BYTES = 8 * 1024 * 1024
-MAX_LASP_INPUT_BYTES = 1024 * 1024
-MAX_LOG_ARTIFACT_BYTES = 64 * 1024 * 1024
 MAX_FRAMES = 10000
 INCOMPLETE_MARKER = "INCOMPLETE.json"
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -45,26 +41,18 @@ RESERVED_STAGE_NAMES = {
 
 
 class ContractError(ValueError):
-    """Raised when an explicit LASP/SSW contract is incomplete or unsafe."""
-
-
-def _has_symlink_component(path: Path) -> bool:
-    absolute = path.absolute()
-    for candidate in (absolute, *absolute.parents):
-        if candidate.is_symlink():
-            return True
-    return False
+    """Raised when an explicit LASP/SSW contract is incomplete."""
 
 
 def _ordinary_file(path: Path, field: str) -> Path:
-    if _has_symlink_component(path) or not path.is_file():
-        raise ContractError(f"{field} must be an existing ordinary non-symlink file")
+    if not path.is_file() or path.stat().st_size <= 0:
+        raise ContractError(f"{field} must be an existing non-empty file")
     return path.resolve()
 
 
 def _ordinary_directory(path: Path, field: str) -> Path:
-    if _has_symlink_component(path) or not path.is_dir():
-        raise ContractError(f"{field} must be an existing ordinary non-symlink directory")
+    if not path.is_dir():
+        raise ContractError(f"{field} must be an existing directory")
     return path.resolve()
 
 
@@ -80,7 +68,7 @@ def _portable_source_id(value: str) -> str:
 
 
 def _fresh_output(path: Path) -> Path:
-    if path.exists() or _has_symlink_component(path):
+    if path.exists() or path.is_symlink():
         raise ContractError("output_dir must not already exist")
     path.mkdir(parents=True, exist_ok=False)
     resolved = path.resolve()
@@ -103,19 +91,17 @@ def _json_write(path: Path, value: Any) -> None:
 def _artifact(path: Path, base: Path, role: str, media_type: str) -> dict[str, Any]:
     resolved = _ordinary_file(path, role)
     try:
-        portable = resolved.relative_to(base.resolve()).as_posix()
+        relative = resolved.relative_to(base.resolve()).as_posix()
     except ValueError as exc:
         raise ContractError(f"artifact escapes output_dir: {resolved}") from exc
     return {
         "role": role,
-        "path": portable,
+        "path": relative,
         "media_type": media_type,
     }
 
 
 def _parse_lasp_input(path: Path) -> dict[str, Any]:
-    if path.stat().st_size > MAX_LASP_INPUT_BYTES:
-        raise ContractError(f"lasp.in exceeds {MAX_LASP_INPUT_BYTES} bytes")
     parameters: dict[str, Any] = {}
     for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         stripped = raw_line.split("#", 1)[0].strip()
@@ -172,9 +158,8 @@ def _parse_energy_record(line: bytes, path: Path, frame_index: int) -> float:
 
 
 def _arc_frames(path: Path, max_frames: int) -> list[dict[str, Any]]:
-    size = path.stat().st_size
-    if size == 0 or size > MAX_ARC_BYTES:
-        raise ContractError(f"{path.name} size must be between 1 and {MAX_ARC_BYTES} bytes")
+    if path.stat().st_size == 0:
+        raise ContractError(f"{path.name} is empty")
     payload = path.read_bytes()
     lines = payload.splitlines(keepends=True)
     starts = [index for index, line in enumerate(lines) if line.lstrip().startswith(b"Energy")]
@@ -189,10 +174,6 @@ def _arc_frames(path: Path, max_frames: int) -> list[dict[str, Any]]:
         stop = starts[position + 1] if position + 1 < len(starts) else len(lines)
         block_lines = lines[start:stop]
         canonical = ARC_HEADER + b"".join(block_lines)
-        if len(canonical) > MAX_FRAME_BYTES:
-            raise ContractError(
-                f"{path.name} frame {position + 1} exceeds {MAX_FRAME_BYTES} bytes"
-            )
         end_count = sum(1 for line in block_lines if line.strip() == b"end")
         if end_count < 2:
             raise ContractError(f"{path.name} frame {position + 1} is truncated")
@@ -348,7 +329,7 @@ def _normalize(
     ]
     artifacts = list(selected_artifacts)
     for path, role, media_type in extra_artifacts:
-        if path.is_file() and 0 < path.stat().st_size <= MAX_LOG_ARTIFACT_BYTES:
+        if path.is_file() and path.stat().st_size > 0:
             artifacts.append(_artifact(path, output_dir, role, media_type))
     structure_manifest = output_dir / "ssw-structures.json"
     _json_write(
@@ -494,7 +475,7 @@ def _normalize(
     }
     _json_write(output_dir / "sampling-result.json", result)
     marker = output_dir / INCOMPLETE_MARKER
-    if not marker.is_file() or marker.is_symlink():
+    if not marker.is_file():
         raise ContractError("incomplete marker was unexpectedly removed or replaced")
     marker.unlink()
     return result
@@ -548,10 +529,10 @@ def _parse_auxiliary(values: Iterable[list[str]]) -> list[tuple[str, Path]]:
 def _canonicalize_execute_ssw_archive(raw_run: Path) -> dict[str, Any]:
     """Bind LASP's native SSW archive name to the canonical execute contract.
 
-    LASP 3.6 emits the bounded SSW walk archive as ``all.arc`` and may also emit
+    LASP 3.6 emits the SSW walk archive as ``all.arc`` and may also emit
     a much larger ``allstr.arc`` containing local-optimization frames.  Other
     reviewed runs emit only ``allstr.arc`` or make the two files identical.
-    Scheduled fetch and checker paths stay bounded by binding ``all.arc`` to the
+    Scheduled fetch and checker paths stay attempt-local by binding ``all.arc`` to the
     canonical ``allstr.arc`` name inside the fresh execute workspace.  A
     distinct LASP-native ``allstr.arc`` is preserved with a non-canonical name
     and recorded in execution metadata.
@@ -569,10 +550,6 @@ def _canonicalize_execute_ssw_archive(raw_run: Path) -> dict[str, Any]:
             "native_allstr_preserved": None,
         }
     walk = _ordinary_file(walk, "all.arc")
-    if not 0 < walk.stat().st_size <= MAX_ARC_BYTES:
-        raise ContractError(
-            f"all.arc size must be between 1 and {MAX_ARC_BYTES} bytes"
-        )
     preserved_record: dict[str, Any] | None = None
     canonicalized = not canonical_exists
     if canonical_exists:
@@ -682,7 +659,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         (stderr_path, "lasp-stderr", "text/plain"),
     ]
     native_log = raw_run / "lasp.out"
-    if native_log.is_file() and not native_log.is_symlink():
+    if native_log.is_file():
         diagnostic_artifacts.append((native_log, "lasp-native-log", "text/plain"))
 
     return _normalize(

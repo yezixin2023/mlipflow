@@ -1,8 +1,7 @@
 """Agent-facing projections and text rendering for CLI results.
 
-Query and planning services return the single detailed source of truth used by
-execution and audit workflows. This module never creates an alternative plan
-model; it only projects those objects for normal CLI display.
+Query and planning services return execution data. This module projects those
+objects for concise CLI display.
 """
 
 from __future__ import annotations
@@ -34,11 +33,9 @@ def compact_output(command: str, data: dict[str, Any], *, dry_run: bool = False)
     return data
 
 
-def render_text(command: str, data: dict[str, Any], *, audit: bool = False) -> str:
+def render_text(command: str, data: dict[str, Any]) -> str:
     """Render command output as readable text rather than serialized JSON."""
 
-    if audit:
-        return "\n".join([f"{command} (audit)", *_mapping_lines(data)])
     if command in {"status", "json", "list"}:
         return _render_status(data)
     if command == "inspect":
@@ -63,7 +60,7 @@ def _compact_workflow(data: dict[str, Any]) -> dict[str, Any]:
             continue
         node = {
             "node_id": raw.get("node_id"),
-            "plugin": raw.get("plugin_id"),
+            "capability": raw.get("capability"),
             "state": raw.get("state"),
             "attempt": raw.get("attempt"),
             "backend": raw.get("backend"),
@@ -99,7 +96,7 @@ def _compact_list(data: dict[str, Any]) -> dict[str, Any]:
         "nodes": [
             {
                 "node_id": item.get("node_id"),
-                "plugin": item.get("plugin_id"),
+                "capability": item.get("capability"),
                 "state": item.get("state"),
                 "attempt": item.get("attempt"),
             }
@@ -112,11 +109,8 @@ def _compact_list(data: dict[str, Any]) -> dict[str, Any]:
 def _compact_inspect(data: dict[str, Any]) -> dict[str, Any]:
     node = data.get("node") if isinstance(data.get("node"), dict) else {}
     state = data.get("state") if isinstance(data.get("state"), dict) else {}
-    plugin_record = data.get("plugin") if isinstance(data.get("plugin"), dict) else {}
-    manifest = (
-        plugin_record.get("manifest")
-        if isinstance(plugin_record.get("manifest"), dict)
-        else {}
+    capability = (
+        data.get("capability") if isinstance(data.get("capability"), dict) else {}
     )
     parameters = node.get("parameters", {})
     result: dict[str, Any] = {
@@ -130,25 +124,7 @@ def _compact_inspect(data: dict[str, Any]) -> dict[str, Any]:
         "inputs": node.get("inputs", {}),
         "parameters": parameters,
         "resources": node.get("resources", {}),
-        "plugin": {
-            key: value
-            for key, value in {
-                "id": manifest.get("id"),
-                "name": manifest.get("display_name", manifest.get("name")),
-                "version": manifest.get("version"),
-                "category": manifest.get("category"),
-                "implementation": manifest.get("implementation", {}).get("kind")
-                if isinstance(manifest.get("implementation"), dict)
-                else None,
-                "backends": manifest.get("execution", {}).get("backends")
-                if isinstance(manifest.get("execution"), dict)
-                else None,
-                "operations": manifest.get("execution", {}).get("operations")
-                if isinstance(manifest.get("execution"), dict)
-                else None,
-            }.items()
-            if value not in (None, [], {})
-        },
+        "capability": capability,
     }
     selected = _selected_model(node)
     if selected is not None:
@@ -194,9 +170,7 @@ def _compact_run_plan(data: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "action": "run-plan",
         "node_id": data.get("node_id"),
-        "plugin": data.get("plugin", {}).get("id")
-        if isinstance(data.get("plugin"), dict)
-        else None,
+        "capability": data.get("capability"),
         "state": status,
         "mode": data.get("mode"),
         "backend": data.get("backend"),
@@ -408,7 +382,10 @@ def _render_status(data: dict[str, Any]) -> str:
     for node in nodes:
         if not isinstance(node, dict):
             continue
-        line = f"{node.get('state', 'UNKNOWN'):>9}  {node.get('node_id')}  {node.get('plugin')}"
+        line = (
+            f"{node.get('state', 'UNKNOWN'):>9}  {node.get('node_id')}  "
+            f"{node.get('capability')}"
+        )
         if node.get("attempt") is not None:
             line += f"  attempt {node['attempt']}"
         if node.get("job_id"):
@@ -433,16 +410,15 @@ def _render_inspect(data: dict[str, Any]) -> str:
     _append_section(lines, "inputs", data.get("inputs"))
     _append_section(lines, "parameters", data.get("parameters"))
     _append_section(lines, "resources", data.get("resources"))
-    plugin = data.get("plugin")
-    if isinstance(plugin, dict):
-        summary = " ".join(
-            str(value) for value in (plugin.get("id"), plugin.get("version")) if value
-        )
-        if plugin.get("implementation"):
-            summary += f" ({plugin['implementation']})"
-        lines.append(f"plugin: {summary}")
-        if plugin.get("backends"):
-            lines.append("supported backends: " + ", ".join(plugin["backends"]))
+    capability = data.get("capability")
+    if isinstance(capability, dict):
+        lines.append(f"capability: {capability.get('id')}")
+        if capability.get("description"):
+            lines.append(f"description: {capability['description']}")
+        if capability.get("backends"):
+            lines.append("supported backends: " + ", ".join(capability["backends"]))
+        if capability.get("operations"):
+            lines.append("operations: " + ", ".join(capability["operations"]))
     if data.get("reason"):
         lines.append(f"reason: {data['reason']}")
     return "\n".join(lines)
@@ -471,7 +447,7 @@ def _render_route(data: dict[str, Any]) -> str:
 
 def _render_run_plan(data: dict[str, Any]) -> str:
     lines = [f"run {data.get('node_id')} — {data.get('state')}"]
-    lines.append(f"plugin: {data.get('plugin')}")
+    lines.append(f"capability: {data.get('capability')}")
     lines.append(f"mode/backend: {data.get('mode')} / {data.get('backend')}")
     if data.get("selected_model"):
         lines.append(f"selected model: {data['selected_model']}")

@@ -10,7 +10,7 @@ from mlipflow.config import load_project
 from mlipflow.services import advance, initialize, make_advance_plan, make_run_plan, run_node
 
 from .helpers import project_config, write_json
-from .test_scheduled_dft import PLUGINS, FakeTemplateLibrary, write_site
+from .test_scheduled_dft import FakeTemplateLibrary, write_site
 
 
 ASE_MD_RUN_TEMPLATE = """#!/bin/bash
@@ -47,7 +47,7 @@ def _build_project(root: Path) -> Path:
     )
     node = {
         "id": "md",
-        "uses": "ase-md@0",
+        "uses": "ase-md",
         "mode": "execute",
         "backend": "ssh-slurm",
         "backend_profile": "cluster-a",
@@ -87,7 +87,7 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
     library = _library()
     remote = tmp_path / "fake-remote"
 
-    run_plan = make_run_plan(project, "md", PLUGINS, site, library)
+    run_plan = make_run_plan(project, "md", site, library)
     assert run_plan["adapter_plan"]["status"] == "READY"
 
     def stage(_remote_dir, _files):
@@ -102,7 +102,6 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
         run_node(
             project,
             "md",
-            PLUGINS,
             True,
             site,
             library,
@@ -148,7 +147,7 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
         autospec=True,
         side_effect=inspect,
     ):
-        salvage_plan = make_advance_plan(project, PLUGINS)
+        salvage_plan = make_advance_plan(project)
 
     transitions = salvage_plan["details"]["transitions"]
     assert len(transitions) == 1
@@ -175,7 +174,7 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
         autospec=True,
         side_effect=fetch,
     ):
-        outcome = advance(project, PLUGINS)
+        outcome = advance(project)
 
     assert outcome["changed"][0]["state"] == "FAIL"
     local_checkpoint = (

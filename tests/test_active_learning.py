@@ -1029,7 +1029,7 @@ def test_oracle_full_chain_runs_through_core_and_preserves_prior_round(strategy)
                 "nodes": [
                     {
                         "id": "committee-evaluate",
-                        "uses": "active-learning@0",
+                        "uses": "active-learning",
                         "backend": "local",
                         "inputs": {
                             "policy": "policy.json",
@@ -1039,7 +1039,7 @@ def test_oracle_full_chain_runs_through_core_and_preserves_prior_round(strategy)
                     },
                     {
                         "id": "select-candidates",
-                        "uses": "active-learning@0",
+                        "uses": "active-learning",
                         "needs": ["committee-evaluate"],
                         "backend": "local",
                         "inputs": {
@@ -1055,7 +1055,7 @@ def test_oracle_full_chain_runs_through_core_and_preserves_prior_round(strategy)
                     },
                     {
                         "id": "assess-round",
-                        "uses": "active-learning@0",
+                        "uses": "active-learning",
                         "needs": ["committee-evaluate", "select-candidates"],
                         "backend": "local",
                         "inputs": {
@@ -1089,11 +1089,10 @@ def test_oracle_full_chain_runs_through_core_and_preserves_prior_round(strategy)
             workflow = query_workflow(project)
             for step in workflow["steps"]:
                 if step["state"] == "READY":
-                    make_run_plan(project, step["node_id"], ROOT / "plugins")
+                    make_run_plan(project, step["node_id"])
                     run_node(
                         project,
                         step["node_id"],
-                        ROOT / "plugins",
                         approval=True,
                     )
             workflow = query_workflow(project)

@@ -26,7 +26,7 @@
         "locator": "src/mlipflow/science/model_runtime.py"
       },
       {
-        "locator": "plugins/mlip-benchmark/plugin.yaml"
+        "locator": "plugins/mlip-benchmark/adapter.py"
       }
     ],
     "input": [

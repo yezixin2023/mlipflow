@@ -2,7 +2,7 @@
 
 This file is staged by the pes-sampling adapter.  Cluster-specific executable
 paths stay in the site-owned ``lasp-ssw/run.sh`` template; scientific and
-post-processing parameters are re-read from the staged portable project file.
+post-processing parameters are re-read from the staged project file.
 """
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 UNKNOWN = "HISTORICAL_PARAMETER_UNKNOWN"
-MAX_POTCAR_BYTES = 64 * 1024 * 1024
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -53,7 +52,7 @@ def _lasp_potential(path: Path) -> str:
 def _pseudopotential_record(input_dir: Path) -> dict[str, Any]:
     manifest_path = input_dir / "lasp-input-manifest.json"
     potcar_path = input_dir / "POTCAR"
-    if manifest_path.is_symlink() or not manifest_path.is_file():
+    if not manifest_path.is_file():
         raise ValueError("staged lasp-input-manifest.json is missing")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (
@@ -106,10 +105,8 @@ def _pseudopotential_record(input_dir: Path) -> dict[str, Any]:
         or not isinstance(output, dict)
         or output.get("path") != "POTCAR"
         or output.get("collectable") is not False
-        or potcar_path.is_symlink()
         or not potcar_path.is_file()
         or potcar_path.stat().st_size < 1
-        or potcar_path.stat().st_size > MAX_POTCAR_BYTES
     ):
         raise ValueError("staged runtime-only POTCAR record is invalid")
     return {
@@ -135,7 +132,7 @@ def _node(project: dict[str, Any], node_id: str) -> dict[str, Any]:
     if len(matches) != 1:
         raise ValueError(f"project must contain exactly one node {node_id!r}")
     node = matches[0]
-    if not str(node.get("uses", "")).split("@", 1)[0] == "pes-sampling":
+    if node.get("uses") != "pes-sampling":
         raise ValueError("scheduled LASP node must use pes-sampling")
     if node.get("backend") != "ssh-slurm":
         raise ValueError("scheduled LASP node must use ssh-slurm")

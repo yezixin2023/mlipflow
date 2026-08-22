@@ -203,8 +203,7 @@ class HpcArchitectureTests(unittest.TestCase):
             real = site_file(root)
             linked = root / "linked-site.yaml"
             linked.symlink_to(real)
-            with self.assertRaisesRegex(ConfigError, "missing or unsafe"):
-                load_site_config(linked)
+            self.assertEqual("cluster-a", load_site_config(linked).cluster("cluster-a").name)
             path = root / "site.yaml"
             write_json(
                 path,

@@ -6,7 +6,7 @@ project:
 workflow:
   nodes:
     - id: aimd-600k
-      uses: dft-labeling@0
+      uses: dft-labeling
       backend: ssh-slurm
       backend_profile: cpu-cluster
       inputs:
@@ -30,7 +30,7 @@ workflow:
         walltime: "01:00:00"
 
     - id: deepmd-md-600k
-      uses: ase-md@0
+      uses: ase-md
       backend: ssh-slurm
       backend_profile: model-compute
       inputs:
@@ -57,7 +57,7 @@ workflow:
         walltime: "01:00:00"
 
     - id: chgnet-md-600k
-      uses: ase-md@0
+      uses: ase-md
       backend: ssh-slurm
       backend_profile: model-compute
       inputs:
@@ -84,7 +84,7 @@ workflow:
         walltime: "01:00:00"
 
     - id: compare-deepmd
-      uses: ionic-transport@0
+      uses: ionic-transport
       needs: [aimd-600k, deepmd-md-600k]
       backend: local
       inputs: {}
@@ -141,7 +141,7 @@ workflow:
       resources: {}
 
     - id: compare-chgnet
-      uses: ionic-transport@0
+      uses: ionic-transport
       needs: [aimd-600k, chgnet-md-600k]
       backend: local
       inputs: {}
@@ -198,7 +198,7 @@ workflow:
       resources: {}
 
     - id: rank-aimd-agreement
-      uses: mlip-benchmark@0
+      uses: mlip-benchmark
       needs: [compare-deepmd, compare-chgnet]
       backend: local
       inputs:

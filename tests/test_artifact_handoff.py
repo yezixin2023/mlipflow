@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from mlipflow.config import Project
-from mlipflow.errors import PluginError
+from mlipflow.errors import CapabilityError
+from mlipflow.io import write_json_atomic
 from mlipflow.services.contracts import _adapter_context
 from mlipflow.services.paths import attempt_directory, state_path
 from mlipflow.services.scheduled import _attempt_node
@@ -31,6 +32,10 @@ def _project(tmp_path: Path, binding: object) -> tuple[Project, list[dict[str, o
     return project, nodes
 
 
+def _record(attempt: Path, artifacts: list[dict[str, str]]) -> None:
+    write_json_atomic(attempt / "run-manifest.final.json", {"artifacts": artifacts})
+
+
 def test_explicit_artifact_binding_uses_final_ok_attempt_and_parent(tmp_path: Path) -> None:
     binding = {"from_node": "producer", "role": "trajectory", "resolve": "parent"}
     project, nodes = _project(tmp_path, binding)
@@ -42,16 +47,26 @@ def test_explicit_artifact_binding_uses_final_ok_attempt_and_parent(tmp_path: Pa
     with StateStore(state_path(project), readonly=False) as store:
         store.initialize_project(project.project_id, nodes)
         failed = store.latest_step(project.project_id, "producer")
-        store.add_artifact(failed.run_id, "trajectory", str(failed_trajectory))
+        _record(
+            failed_dir,
+            [{"role": "trajectory", "uri": failed_trajectory.resolve().as_uri()}],
+        )
         store.transition(failed.run_id, RunState.RUNNING)
         store.transition(failed.run_id, RunState.FAIL)
-        successful = store.create_retry(project.project_id, "producer")
+        successful = store.create_retry(project.project_id, "producer", "local")
         successful_dir = attempt_directory(project, "producer", 2)
         successful_dir.mkdir(parents=True)
         successful_trajectory = successful_dir / "trajectory.traj"
         successful_trajectory.write_bytes(b"ok")
-        store.add_artifact(successful.run_id, "trajectory", str(successful_trajectory))
-        store.add_artifact(successful.run_id, "trajectory", str(successful_trajectory))
+        _record(
+            successful_dir,
+            [
+                {
+                    "role": "trajectory",
+                    "uri": successful_trajectory.resolve().as_uri(),
+                }
+            ],
+        )
         store.transition(successful.run_id, RunState.RUNNING)
         store.transition(successful.run_id, RunState.OK)
 
@@ -71,7 +86,10 @@ def test_explicit_artifact_binding_accepts_collected_file_uri(tmp_path: Path) ->
     with StateStore(state_path(project), readonly=False) as store:
         store.initialize_project(project.project_id, nodes)
         producer = store.latest_step(project.project_id, "producer")
-        store.add_artifact(producer.run_id, "trajectory", trajectory.resolve().as_uri())
+        _record(
+            attempt,
+            [{"role": "trajectory", "uri": trajectory.resolve().as_uri()}],
+        )
         store.transition(producer.run_id, RunState.RUNNING)
         store.transition(producer.run_id, RunState.OK)
 
@@ -79,7 +97,7 @@ def test_explicit_artifact_binding_accepts_collected_file_uri(tmp_path: Path) ->
     assert context["inputs"]["input_dirs"] == [str(trajectory.resolve())]
 
 
-def test_pinned_scheduled_node_restores_snapshot_dependency_edges(tmp_path: Path) -> None:
+def test_scheduled_node_reads_dependency_edges_from_project(tmp_path: Path) -> None:
     binding = {"from_node": "producer", "role": "trajectory"}
     project, nodes = _project(tmp_path, binding)
     attempt = attempt_directory(project, "producer", 1)
@@ -90,17 +108,15 @@ def test_pinned_scheduled_node_restores_snapshot_dependency_edges(tmp_path: Path
     with StateStore(state_path(project), readonly=False) as store:
         store.initialize_project(project.project_id, nodes)
         producer = store.latest_step(project.project_id, "producer")
-        store.add_artifact(producer.run_id, "trajectory", trajectory.resolve().as_uri())
+        _record(
+            attempt,
+            [{"role": "trajectory", "uri": trajectory.resolve().as_uri()}],
+        )
         store.transition(producer.run_id, RunState.RUNNING)
         store.transition(producer.run_id, RunState.OK)
         consumer = store.latest_step(project.project_id, "consumer")
-        snapshot = store.node_snapshot(consumer.run_id)
 
-    pinned = _attempt_node(
-        {"inputs": {"input_dirs": [binding]}},
-        consumer,
-        needs=snapshot["needs"],
-    )
+    pinned = _attempt_node(project, {}, consumer)
     context = _adapter_context(project, pinned, 1)
     assert pinned["needs"] == ["producer"]
     assert context["inputs"]["input_dirs"] == [str(trajectory.resolve())]
@@ -118,10 +134,15 @@ def test_artifact_binding_rejects_ambiguous_role(tmp_path: Path) -> None:
     with StateStore(state_path(project), readonly=False) as store:
         store.initialize_project(project.project_id, nodes)
         producer = store.latest_step(project.project_id, "producer")
-        store.add_artifact(producer.run_id, "selected-structure", str(first))
-        store.add_artifact(producer.run_id, "selected-structure", str(second))
+        _record(
+            attempt,
+            [
+                {"role": "selected-structure", "uri": first.resolve().as_uri()},
+                {"role": "selected-structure", "uri": second.resolve().as_uri()},
+            ],
+        )
         store.transition(producer.run_id, RunState.RUNNING)
         store.transition(producer.run_id, RunState.OK)
 
-    with pytest.raises(PluginError, match="exactly one unique artifact"):
+    with pytest.raises(CapabilityError, match="exactly one unique artifact"):
         _adapter_context(project, nodes[1], 1)

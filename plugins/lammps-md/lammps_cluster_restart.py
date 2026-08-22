@@ -166,7 +166,7 @@ def _parse_restart_step(text: str) -> int | None:
 
 
 def _restart_step(executable: Path, options: list[str], candidate: Path) -> int | None:
-    if not base._ordinary_file(candidate, base.MAX_RESTART_BYTES):
+    if not base._ordinary_file(candidate):
         return None
     completed = subprocess.run(
         [str(executable), *options, "-restart2info", str(candidate)],
@@ -263,8 +263,8 @@ def _active_launcher(
 
 def _write_runtime(path: Path, value: dict[str, Any]) -> None:
     base._write_json(path, value)
-    if not base._ordinary_file(path, base.MAX_JSON_BYTES):
-        raise ValueError("restart runtime contract was not written safely")
+    if not base._ordinary_file(path):
+        raise ValueError("restart runtime contract was not written")
 
 
 def _cleanup_success(output_dir: Path) -> None:
@@ -291,7 +291,7 @@ def run(args: argparse.Namespace) -> int:
         node = base._project_node(
             Path(args.project).expanduser().resolve(), args.node_id
         )
-        if str(node.get("uses", "")).split("@", 1)[0] != "lammps-md":
+        if node.get("uses") != "lammps-md":
             raise ValueError("scheduled node does not use lammps-md")
         if node.get("backend") != "ssh-slurm":
             raise ValueError("scheduled LAMMPS execute requires ssh-slurm")
@@ -378,9 +378,7 @@ def run(args: argparse.Namespace) -> int:
         for name in ("structure.data", selected_name):
             record = generated.get(name)
             staged = input_dir / "lammps" / name
-            if record is None or not base._ordinary_file(
-                staged, base.MAX_INPUT_BYTES
-            ):
+            if record is None or not base._ordinary_file(staged):
                 raise ValueError(f"staged prepared input is missing: {name}")
         source_deck = (input_dir / "lammps" / selected_name).read_text(
             encoding="utf-8"
@@ -519,40 +517,16 @@ def run(args: argparse.Namespace) -> int:
             log_path, screen_path, stdout_path
         )
         artifacts = [
-            base._artifact(
-                output_dir / "trajectory.lammpstrj",
-                "trajectory.lammpstrj",
-                base.MAX_TRAJECTORY_BYTES,
-            ),
-            base._artifact(
-                output_dir / "final.data",
-                "final.data",
-                base.MAX_FINAL_DATA_BYTES,
-            ),
-            base._artifact(
-                output_dir / "final.restart",
-                "final.restart",
-                base.MAX_RESTART_BYTES,
-            ),
-            base._artifact(
-                log_path, "lammps.log", base.MAX_LOG_BYTES
-            ),
-            base._artifact(
-                screen_path, "lammps.screen.log", base.MAX_LOG_BYTES
-            ),
+            base._artifact(output_dir / "trajectory.lammpstrj", "trajectory.lammpstrj"),
+            base._artifact(output_dir / "final.data", "final.data"),
+            base._artifact(output_dir / "final.restart", "final.restart"),
+            base._artifact(log_path, "lammps.log"),
+            base._artifact(screen_path, "lammps.screen.log"),
         ]
-        if base._ordinary_file(stdout_path, base.MAX_LOG_BYTES):
-            artifacts.append(
-                base._artifact(
-                    stdout_path, "lammps.stdout.log", base.MAX_LOG_BYTES
-                )
-            )
-        if base._ordinary_file(stderr_path, base.MAX_LOG_BYTES):
-            artifacts.append(
-                base._artifact(
-                    stderr_path, "lammps.stderr.log", base.MAX_LOG_BYTES
-                )
-            )
+        if base._ordinary_file(stdout_path):
+            artifacts.append(base._artifact(stdout_path, "lammps.stdout.log"))
+        if base._ordinary_file(stderr_path):
+            artifacts.append(base._artifact(stderr_path, "lammps.stderr.log"))
 
         result = {
             "schema_version": 1,

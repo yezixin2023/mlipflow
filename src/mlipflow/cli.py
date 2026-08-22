@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import sysconfig
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -34,13 +33,6 @@ READ_ONLY_COMMANDS = frozenset({"list", "status", "json", "inspect", "logs", "ro
 MUTATING_COMMANDS = frozenset({"init", "run", "advance", "retry", "stop"})
 
 
-def default_plugin_root() -> Path:
-    source_root = Path(__file__).resolve().parents[2] / "plugins"
-    if source_root.is_dir():
-        return source_root
-    return Path(sysconfig.get_path("data")) / "share" / "mlipflow" / "plugins"
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mlipflow",
@@ -54,23 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="project directory or project.yaml (no implicit upward search)",
     )
     parser.add_argument(
-        "--plugins",
-        type=Path,
-        default=default_plugin_root(),
-        help="plugin manifest root",
-    )
-    parser.add_argument(
         "--site",
         type=Path,
         default=None,
         help="local site.yaml (defaults to ~/.mlipflow/site.yaml only when HPC resolution needs it)",
     )
     parser.add_argument("--format", choices=("text", "json"), default="text")
-    parser.add_argument(
-        "--audit",
-        action="store_true",
-        help="include detailed provenance and internal planning information",
-    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="create/initialize a project (writes)")
@@ -81,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("node", nargs="?")
     json_parser = subparsers.add_parser("json", help="emit status JSON (strictly read-only)")
     json_parser.add_argument("node", nargs="?")
-    inspect_parser = subparsers.add_parser("inspect", help="inspect a node and plugin (read-only)")
+    inspect_parser = subparsers.add_parser("inspect", help="inspect a node and capability (read-only)")
     inspect_parser.add_argument("node")
     logs_parser = subparsers.add_parser("logs", help="read saved logs (read-only)")
     logs_parser.add_argument("node")
@@ -108,13 +89,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     stop_parser = subparsers.add_parser("stop", help="explicitly cancel/stop a node")
     stop_parser.add_argument("node")
-    for command_parser in subparsers.choices.values():
-        command_parser.add_argument(
-            "--audit",
-            action="store_true",
-            default=argparse.SUPPRESS,
-            help="include detailed provenance and internal planning information",
-        )
     return parser
 
 
@@ -134,22 +108,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_format = "json" if args.command == "json" else args.format
     try:
         raw_data = dispatch(args)
-        audit = bool(getattr(args, "audit", False))
-        data = (
-            raw_data
-            if audit
-            else compact_output(
-                args.command,
-                raw_data,
-                dry_run=bool(getattr(args, "dry_run", False)),
-            )
+        data = compact_output(
+            args.command,
+            raw_data,
+            dry_run=bool(getattr(args, "dry_run", False)),
         )
         envelope = {
             "schema_version": 1,
             "ok": True,
             "command": args.command,
             "read_only": args.command in READ_ONLY_COMMANDS,
-            "audit": audit,
             "data": data,
         }
         _emit(envelope, output_format, error=False)
@@ -174,7 +142,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
     if command == "init":
         return initialize(args.path or args.project)
     if command == "doctor":
-        return query_doctor(args.project, args.plugins, args.site)
+        return query_doctor(args.project, args.site)
     project = load_project(args.project)
     if command == "list":
         data = query_workflow(project)
@@ -184,7 +152,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             "nodes": [
                 {
                     "node_id": step["node_id"],
-                    "plugin_id": step["plugin_id"],
+                    "capability": step["capability"],
                     "state": step["state"],
                     "attempt": step["attempt"],
                 }
@@ -194,7 +162,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
     if command in {"status", "json"}:
         return query_workflow(project, args.node)
     if command == "inspect":
-        return query_inspect(project, args.node, args.plugins)
+        return query_inspect(project, args.node)
     if command == "logs":
         return query_logs(project, args.node, args.tail)
     if command == "route":
@@ -202,18 +170,18 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             project, task=args.task, elements=args.elements, scenario=args.scenario
         )
     if command == "run":
-        plan = make_run_plan(project, args.node, args.plugins, args.site)
+        plan = make_run_plan(project, args.node, args.site)
         if args.dry_run:
             return plan
         if plan.get("approval_required") is True and not args.approve:
             raise ApprovalError(
                 "this run launches approval-required work; review --dry-run, then use --approve"
             )
-        return run_node(project, args.node, args.plugins, args.approve, args.site)
+        return run_node(project, args.node, args.approve, args.site)
     if command == "advance":
         if args.dry_run:
-            return make_advance_plan(project, args.plugins)
-        return advance(project, args.plugins)
+            return make_advance_plan(project)
+        return advance(project)
     if command == "retry":
         if args.dry_run:
             return make_retry_plan(project, args.node)
@@ -233,11 +201,7 @@ def _emit(envelope: dict[str, Any], output_format: str, error: bool) -> None:
         print(f"ERROR [{item['code']}]: {item['message']}", file=stream)
         return
     print(
-        render_text(
-            str(envelope["command"]),
-            envelope["data"],
-            audit=envelope.get("audit") is True,
-        ),
+        render_text(str(envelope["command"]), envelope["data"]),
         file=stream,
     )
 

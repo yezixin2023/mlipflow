@@ -1,4 +1,4 @@
-"""Safe adapter for deterministic VASP preparation and user-owned DFT labeling.
+"""Adapter for deterministic VASP preparation and user-owned DFT labeling.
 
 The adapter is deliberately side-effect free: it builds reviewed local argv and
 verifies explicit manifests.  The bundled preparation wrapper uses pymatgen but
@@ -36,9 +36,6 @@ SHELL_EXECUTABLES = frozenset(
 )
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SAFE_POTCAR_SYMBOL = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
-MAX_INPUT_BYTES = 16 * 1024 * 1024
-MAX_STRUCTURE_BYTES = 64 * 1024 * 1024
-MAX_DATASET_INPUT_BYTES = 512 * 1024 * 1024
 MAX_STRUCTURES = 10000
 DATASET_FRAMEWORKS = ("deepmd", "m3gnet", "chgnet", "mace")
 MANUSCRIPT_STATIC_PRESET = "manuscript-static-v1"
@@ -120,33 +117,16 @@ def _within(path: Path, root: Path) -> bool:
         return False
 
 
-def _has_symlink_component(path: Path) -> bool:
-    absolute = path.absolute()
-    return any(candidate.is_symlink() for candidate in (absolute, *absolute.parents))
+def _ordinary_file(path: Path) -> bool:
+    return path.is_file() and path.stat().st_size > 0
 
 
-def _ordinary_file(path: Path, max_bytes: int | None = None) -> bool:
-    if path.is_symlink() or not path.is_file():
-        return False
-    if max_bytes is None:
-        return True
-    size = path.stat().st_size
-    return 1 <= size <= max_bytes
-
-
-def _ordinary_project_file(path: Path, project_root: Path, max_bytes: int | None = None) -> bool:
-    root = project_root.expanduser().absolute()
-    candidate = path.expanduser().absolute()
+def _ordinary_project_file(path: Path, project_root: Path) -> bool:
     try:
-        relative = candidate.relative_to(root)
-    except ValueError:
+        path.resolve().relative_to(project_root.resolve())
+    except (OSError, ValueError):
         return False
-    current = root
-    for part in relative.parts:
-        current = current / part
-        if current.is_symlink():
-            return False
-    return _within(candidate.resolve(), root.resolve()) and _ordinary_file(candidate, max_bytes)
+    return _ordinary_file(path)
 
 
 def _project_input_path(project_root: Any, value: Any) -> Path | None:
@@ -169,7 +149,7 @@ def _structure_input_path(manifest_path: Path, value: Any) -> Path | None:
 
 
 def _readable_structure_file(path: Path) -> bool:
-    if not _ordinary_file(path, MAX_STRUCTURE_BYTES):
+    if not _ordinary_file(path):
         return False
     try:
         with path.open("rb") as handle:
@@ -183,17 +163,15 @@ def _explicit_executable(value: Any) -> Path | None:
     if not _plain_string(value):
         return None
     path = Path(str(value)).expanduser()
-    if not path.is_absolute() or _has_symlink_component(path) or not _ordinary_file(path):
+    if not path.is_absolute() or not _ordinary_file(path):
         return None
     resolved = path.resolve()
     return resolved if resolved.stat().st_mode & 0o111 else None
 
 
-def _read_json(
-    path: Path, max_bytes: int = MAX_INPUT_BYTES
-) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
-    if not _ordinary_file(path, max_bytes):
-        return None, _diagnostic("warning", "artifact.missing", f"清单不存在或不是普通文件：{path}")
+def _read_json(path: Path) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+    if not _ordinary_file(path):
+        return None, _diagnostic("warning", "artifact.missing", f"清单不存在或为空：{path}")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -227,8 +205,8 @@ def _base_diagnostics(
     if not project_root.is_dir():
         diagnostics.append(_diagnostic("error", "path.project_root", "project_root 必须存在。"))
     attempt_dir = Path(str(context.get("attempt_dir", ""))).expanduser().absolute()
-    if attempt_dir.exists() and (not attempt_dir.is_dir() or attempt_dir.is_symlink()):
-        diagnostics.append(_diagnostic("error", "path.attempt_dir", "attempt_dir 必须是目录且不得为符号链接。"))
+    if attempt_dir.exists() and not attempt_dir.is_dir():
+        diagnostics.append(_diagnostic("error", "path.attempt_dir", "attempt_dir 必须是目录。"))
     elif project_root.is_dir() and not _within(attempt_dir.resolve(), project_root.resolve()):
         diagnostics.append(_diagnostic("error", "path.attempt_escape", "attempt_dir 必须位于 project_root 内。"))
     for key in ("inputs", "parameters", "resources"):
@@ -414,7 +392,7 @@ def _validate_prepare(
         path = _validate_input_path(diagnostics, context, key)
         if path is not None:
             project_root = Path(str(context.get("project_root"))).expanduser().absolute()
-            if not _ordinary_project_file(path, project_root, MAX_INPUT_BYTES):
+            if not _ordinary_project_file(path, project_root):
                 diagnostics.append(_diagnostic("error", f"inputs.{key}.missing", f"{key} 必须是现有普通文件。"))
     structures_path = _project_input_path(
         context.get("project_root"), inputs.get("structures_manifest")
@@ -643,9 +621,9 @@ def _canonical_dataset_material(
     project_root = Path(str(context.get("project_root", ""))).expanduser().absolute().resolve()
     inputs = _mapping(context.get("inputs"))
     path = _project_input_path(project_root, inputs.get("canonical_dataset"))
-    if path is None or not _ordinary_project_file(path, project_root, MAX_DATASET_INPUT_BYTES):
+    if path is None or not _ordinary_project_file(path, project_root):
         raise ValueError("canonical_dataset must be an ordinary bounded project file")
-    value, read_error = _read_json(path, MAX_DATASET_INPUT_BYTES)
+    value, read_error = _read_json(path)
     if value is None:
         raise ValueError(
             str(read_error["message"] if read_error else "canonical dataset is invalid")
@@ -673,9 +651,9 @@ def _canonical_dataset_material(
             source.relative_to(project_root)
         except ValueError as exc:
             raise ValueError("canonical merge source escapes project_root") from exc
-        if not _ordinary_project_file(source, project_root, MAX_DATASET_INPUT_BYTES):
+        if not _ordinary_project_file(source, project_root):
             raise ValueError(f"canonical merge source is not an ordinary file: {relative}")
-        dataset, source_error = _read_json(source, MAX_DATASET_INPUT_BYTES)
+        dataset, source_error = _read_json(source)
         if dataset is None:
             raise ValueError(
                 str(
@@ -937,18 +915,17 @@ def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
             "remote_path": f"output/{result_name}",
             "local_name": result_name,
             "required": True,
-            "max_bytes": MAX_INPUT_BYTES,
             "role": "dataset-assembly-result",
         }, {
             "remote_name": "split.json", "remote_path": "output/split.json",
-            "local_name": "split.json", "required": True, "max_bytes": MAX_INPUT_BYTES,
+            "local_name": "split.json", "required": True,
             "role": "split-manifest",
         }]
     fetch_outputs.extend({
         "remote_name": f"{name}-dataset-reference.json",
         "remote_path": f"output/{name}-dataset-reference.json",
         "local_name": f"{name}-dataset-reference.json", "required": True,
-        "max_bytes": MAX_INPUT_BYTES, "role": f"{name}-dataset-reference",
+        "role": f"{name}-dataset-reference",
     } for name in frameworks)
     fetch_outputs.extend(
         [
@@ -957,7 +934,6 @@ def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
                 "remote_path": "output/benchmark-test.json",
                 "local_name": "benchmark-test.json",
                 "required": True,
-                "max_bytes": MAX_DATASET_INPUT_BYTES,
                 "role": "benchmark-dataset",
             },
             {
@@ -965,7 +941,6 @@ def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
                 "remote_path": "output/benchmark-dataset-reference.json",
                 "local_name": "benchmark-dataset-reference.json",
                 "required": True,
-                "max_bytes": MAX_INPUT_BYTES,
                 "role": "benchmark-dataset-reference",
             },
         ]
@@ -979,12 +954,8 @@ def _plan_dataset_assemble(context: Mapping[str, Any]) -> dict[str, Any]:
     reused_attempt: int | None = None
     if attempt_index is not None and attempt_index > 1:
         previous = attempt_dir.parent / f"attempt-{attempt_index - 1}"
-        previous_result, _ = _read_json(
-            previous / result_name, MAX_DATASET_INPUT_BYTES
-        )
-        previous_completion, _ = _read_json(
-            previous / "completion.json", MAX_INPUT_BYTES
-        )
+        previous_result, _ = _read_json(previous / result_name)
+        previous_completion, _ = _read_json(previous / "completion.json")
         previous_context = {**dict(context), "attempt_dir": str(previous)}
         if (
             previous_result is not None
@@ -1087,7 +1058,7 @@ def _plan_scheduled_label(
         "dft_input_manifest": _path(project_root, inputs["dft_input_manifest"]),
     }
     for name, path in paths.items():
-        if not _ordinary_project_file(path, project_root, MAX_INPUT_BYTES):
+        if not _ordinary_project_file(path, project_root):
             diagnostics.append(_diagnostic("error", f"inputs.{name}", f"{name} 必须是 project_root 内的普通小文件。"))
     prepared, read_error = _read_json(paths["dft_input_manifest"])
     calculations = prepared.get("calculations") if isinstance(prepared, Mapping) else None
@@ -1199,7 +1170,7 @@ def _plan_scheduled_label(
     submitted_job_count = len(active_ids) if independent_jobs else 1
     template_family = "vasp-batch" if independent_jobs else "vasp"
 
-    required, optional, limits = _scheduled_output_spec(calculation_type)
+    required, optional, _ = _scheduled_output_spec(calculation_type)
     fetch_outputs: list[dict[str, Any]] = []
     for item in planned:
         calc_id = str(item["id"])
@@ -1209,7 +1180,6 @@ def _plan_scheduled_label(
                     "remote_name": f"{calc_id}/{name}",
                     "local_name": f"{calc_id}/{name}",
                     "required": True,
-                    "max_bytes": limits[name],
                     "role": (
                         "aimd-trajectory"
                         if calculation_type == AIMD_TYPE and name == "vasprun.xml"
@@ -1223,7 +1193,6 @@ def _plan_scheduled_label(
                     "remote_name": f"{calc_id}/{name}",
                     "local_name": f"{calc_id}/{name}",
                     "required": False,
-                    "max_bytes": limits[name],
                     "role": "vasp-output",
                 }
             )
@@ -1234,7 +1203,6 @@ def _plan_scheduled_label(
                     "remote_path": f"logs/{calc_id}.{stream}",
                     "local_name": f"{calc_id}/{stream}.log",
                     "required": False,
-                    "max_bytes": 16 * 1024 * 1024,
                     "role": "scheduler-log",
                 }
             )
@@ -1445,7 +1413,7 @@ def _verify_prepare_result(
     }
     if verify_files:
         for name, path in input_paths.items():
-            if not _ordinary_project_file(path, project_root, MAX_INPUT_BYTES):
+            if not _ordinary_project_file(path, project_root):
                 diagnostics.append(
                     _diagnostic("error", f"result.inputs.{name}", "输入文件缺失。")
                 )
@@ -2610,13 +2578,13 @@ def _verify_canonical_label_bundle(
         return [_diagnostic("error", "dataset.artifacts.roles", "只应收集 labels 与 canonical dataset。")]
     for name, item in by_name.items():
         path = attempt / str(item.get("path"))
-        if not _safe_relative(item.get("path")) or not _ordinary_file(path, MAX_DATASET_INPUT_BYTES):
+        if not _safe_relative(item.get("path")) or not _ordinary_file(path):
             diagnostics.append(_diagnostic("error", f"dataset.artifacts.{name}", "artifact 路径无效。"))
     canonical_path = attempt / str(by_name["canonical-labeled-dataset"]["path"])
-    canonical, _ = _read_json(canonical_path, MAX_DATASET_INPUT_BYTES)
+    canonical, _ = _read_json(canonical_path)
     completion, _ = _read_json(attempt / "completion.json")
     structures_path = _path(context["project_root"], _mapping(context["inputs"])["structures_manifest"])
-    structures, _ = _read_json(structures_path, MAX_DATASET_INPUT_BYTES)
+    structures, _ = _read_json(structures_path)
     if canonical is None or completion is None or structures is None:
         return diagnostics + [_diagnostic("error", "dataset.json", "canonical 重建输入不可读。")]
     try:
@@ -2711,7 +2679,7 @@ def _verify_dataset_assembly(
         _, canonical, _ = _canonical_dataset_material(context)
     except (OSError, TypeError, ValueError):
         canonical = None
-    split, _ = _read_json(attempt / "split.json", MAX_INPUT_BYTES)
+    split, _ = _read_json(attempt / "split.json")
     if canonical is None or split is None:
         return [_diagnostic("error", "dataset.inputs", "canonical 或 split.json 不可读。")]
     frameworks = _dataset_frameworks(parameters)
@@ -2748,7 +2716,7 @@ def _verify_dataset_assembly(
     if conventions.get("energy") != "total eV per configuration, unchanged" or conventions.get("forces") != "eV/angstrom, unchanged":
         diagnostics.append(_diagnostic("error", "dataset.units", "energy/force convention 不完整。"))
     for framework in frameworks:
-        reference, _ = _read_json(attempt / f"{framework}-dataset-reference.json", MAX_INPUT_BYTES)
+        reference, _ = _read_json(attempt / f"{framework}-dataset-reference.json")
         if (
             reference is None
             or reference.get("schema_version") != 1
@@ -2757,13 +2725,11 @@ def _verify_dataset_assembly(
             or reference.get("split_id") != expected_split["split_id"]
         ):
             diagnostics.append(_diagnostic("error", f"dataset.reference.{framework}", "mlip-training dataset reference 无效。"))
-    benchmark, _ = _read_json(attempt / "benchmark-test.json", MAX_DATASET_INPUT_BYTES)
+    benchmark, _ = _read_json(attempt / "benchmark-test.json")
     expected_benchmark = DATASETS.benchmark_dataset(canonical, expected_split)
     if not _same_numeric_tree(benchmark, expected_benchmark):
         diagnostics.append(_diagnostic("error", "dataset.benchmark", "benchmark test dataset 与 canonical test split 不一致。"))
-    benchmark_reference, _ = _read_json(
-        attempt / "benchmark-dataset-reference.json", MAX_INPUT_BYTES
-    )
+    benchmark_reference, _ = _read_json(attempt / "benchmark-dataset-reference.json")
     if (
         benchmark_reference is None
         or benchmark_reference.get("schema_version") != 1
@@ -2792,7 +2758,7 @@ def _collect_dataset_assembly(
     ]
     for framework in frameworks:
         reference_name = f"{framework}-dataset-reference.json"
-        reference, _ = _read_json(attempt / reference_name, MAX_INPUT_BYTES)
+        reference, _ = _read_json(attempt / reference_name)
         assert reference is not None
         artifacts.extend([
             {"name": f"{framework}-dataset-reference", "role": f"{framework}-dataset-reference", "path": reference_name, "media_type": "application/json"},
@@ -2805,9 +2771,7 @@ def _collect_dataset_assembly(
                 },
             },
         ])
-    benchmark_reference, _ = _read_json(
-        attempt / "benchmark-dataset-reference.json", MAX_INPUT_BYTES
-    )
+    benchmark_reference, _ = _read_json(attempt / "benchmark-dataset-reference.json")
     assert benchmark_reference is not None
     artifacts.append(
         {
@@ -2888,7 +2852,7 @@ class Adapter:
             diagnostics.extend(raw_diagnostics)
             result_path = self._result_path(context)
             if result_path.exists() and not _errors(diagnostics):
-                manifest, read_diagnostic = _read_json(result_path, MAX_DATASET_INPUT_BYTES)
+                manifest, read_diagnostic = _read_json(result_path)
                 if manifest is None:
                     assert read_diagnostic is not None
                     diagnostics.append(read_diagnostic)
@@ -2922,7 +2886,7 @@ class Adapter:
         if context.get("backend") == "ssh-slurm" and _operation(context) == LABEL_OPERATION:
             result_path = self._result_path(context)
             if result_path.exists():
-                manifest, _ = _read_json(result_path, MAX_DATASET_INPUT_BYTES)
+                manifest, _ = _read_json(result_path)
                 assert manifest is not None
                 return _collected_scheduled_label(context, manifest, checked.get("diagnostics", []))
             return _collect_scheduled_result(context)

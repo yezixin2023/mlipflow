@@ -22,7 +22,6 @@ SHARED_ACTIVE_SCIENCE = Path(active_science.__file__).resolve()
 OPERATIONS = ("committee-evaluate", "select-candidates", "assess-round")
 EXECUTION_BACKENDS = frozenset({"local", "ssh-slurm"})
 HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
-MAX_JSON_BYTES = 128 * 1024 * 1024
 MODEL_INDEX_CONTRACT = "mlipflow/active-learning-committee-model-index"
 EVALUATION_DATASET_CONTRACT = "mlipflow/active-learning-evaluation-dataset"
 REQUIRED_INPUTS = {
@@ -94,8 +93,8 @@ def _input_path(context: Mapping[str, Any], value: Any) -> Path:
     candidate = Path(reference).expanduser()
     candidate = candidate if candidate.is_absolute() else root / candidate
     candidate = candidate.absolute()
-    if candidate.is_symlink() or not candidate.is_file() or not _within(candidate.resolve(), root):
-        raise ValueError(f"input must be an ordinary file below project_root: {reference}")
+    if not candidate.is_file() or not _within(candidate.resolve(), root):
+        raise ValueError(f"input must be a file below project_root: {reference}")
     return candidate.resolve()
 
 
@@ -124,13 +123,13 @@ def _read_json(path: Path) -> dict[str, Any]:
 def _project_file(root: Path, selected: Any = None) -> Path:
     if isinstance(selected, str) and selected:
         path = Path(selected).expanduser().absolute()
-        if path.is_file() and not path.is_symlink() and path.resolve().parent == root.resolve():
+        if path.is_file() and path.resolve().parent == root.resolve():
             return path.resolve()
         raise ValueError("selected project file is invalid")
     found = [
         root / name
         for name in ("project.yaml", "project.yml", "project.json")
-        if (root / name).is_file() and not (root / name).is_symlink()
+        if (root / name).is_file()
     ]
     if len(found) != 1:
         raise ValueError("scheduled committee inference requires exactly one project file")
@@ -150,8 +149,6 @@ def _staged(path: Path, remote_name: str) -> dict[str, Any]:
     return {
         "source": str(path),
         "remote_name": remote_name,
-        "sensitive": False,
-        "fetch_allowed": False,
     }
 
 
@@ -163,7 +160,6 @@ def _fetch(
         "remote_path": remote_path,
         "local_name": local_name,
         "required": True,
-        "max_bytes": MAX_JSON_BYTES,
         "role": role,
     }
 
@@ -579,7 +575,7 @@ class Adapter:
                 ],
             }
         result_path = _result_path(context, operation)
-        if not result_path.is_file() or result_path.is_symlink():
+        if not result_path.is_file():
             return {
                 "plugin_id": PLUGIN_ID,
                 "status": "WAIT",

@@ -17,7 +17,7 @@ SENSITIVE_KEY = re.compile(
     r"(password|passwd|token|secret|credential|api[_-]?key|private[_-]?key|identityfile)", re.I
 )
 IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
-PLUGIN_REFERENCE = re.compile(r"^[a-z0-9][a-z0-9._-]*(?:@[0-9]+)?$")
+CAPABILITY_ID = IDENTIFIER
 
 
 @dataclass(frozen=True)
@@ -91,9 +91,9 @@ def validate_project(raw: dict[str, Any], source: Path | str = "project") -> Non
             )
         if node_id in ids:
             raise ConfigError(f"{source}: duplicate node id {node_id}")
-        if not isinstance(uses, str) or not PLUGIN_REFERENCE.fullmatch(uses):
+        if not isinstance(uses, str) or not CAPABILITY_ID.fullmatch(uses):
             raise ConfigError(
-                f"{source}: node {node_id} uses must match {PLUGIN_REFERENCE.pattern!r}"
+                f"{source}: node {node_id} uses must match {CAPABILITY_ID.pattern!r}"
             )
         ids.add(node_id)
         backend = node.get("backend", "local")

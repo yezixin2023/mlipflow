@@ -1,6 +1,6 @@
 # LAMMPS MLIP preparation, cluster execution, and restart
 
-`lammps-md@0.3` keeps the VASP-like approval split and adds an explicit walltime/preemption restart layer:
+`lammps-md` keeps the VASP-like approval split and adds an explicit walltime/preemption restart layer:
 
 1. `lammps-prepare` runs locally and creates a reviewable LAMMPS input bundle.
 2. `execute` consumes one reviewed `lammps-md-input-v2` bundle and submits exactly one CPU or GPU target through `ssh-slurm`.
@@ -24,13 +24,13 @@ LAMMPS-ready artifact formats remain:
 - MACE: `mace-lammps-torchscript` for the reviewed ML-MACE interface.
 - M3GNet/MatGL native: `lammps_interface: matgl`, `kind: file`, and `matgl-lammps-torchscript` exported with `mgl create-lammps-model`.
 - M3GNet/MatGL Python bridges: explicit `lammps_interface: gnnp|m3gnet`, `kind: directory`, and `matgl-model-directory`. The directory must be a native `matgl.load_model` artifact, not a mislabeled single checkpoint.
-- CHGNet: intentionally unsupported by `lammps-md@0.3`; use `ase-md` until a native LAMMPS bridge is supported and reviewed.
+- CHGNet: intentionally unsupported by `lammps-md`; use `ase-md` until a native LAMMPS bridge is supported and reviewed.
 
 ## Prepare workflow node
 
 ```yaml
 - id: prepare-lammps-mace
-  uses: lammps-md@0
+  uses: lammps-md
   mode: execute
   backend: local
   inputs:
@@ -50,7 +50,7 @@ After preparation, pass the generated manifest path to a separate execute node.
 
 ```yaml
 - id: run-lammps-mace-gpu
-  uses: lammps-md@0
+  uses: lammps-md
   mode: execute
   backend: ssh-slurm
   backend_profile: cluster-a
@@ -101,7 +101,7 @@ advance
     ↓
 inventory and verify the bounded failure_salvage outputs
     ↓ approval
-bounded fetch of available checkpoint files + restart-runtime.json + diagnostics
+fetch of available checkpoint files + restart-runtime.json + diagnostics
     ↓
 attempt-1 remains FAIL/STOPPED
     ↓
@@ -172,10 +172,10 @@ Install `run.sh.example` under every framework/target family you expose:
 - `<remote_template_root>/lammps-m3gnet-gnnp-cpu/run.sh`
 - `<remote_template_root>/lammps-m3gnet-legacy-cpu/run.sh`
 
-The v0.3 example invokes the staged `lammps_cluster_restart.py` and passes the MLIPFlow attempt number. Each site template still owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, optional Python-bridge `INTERFACE_PATH`, modules/conda setup, and `LAMMPS_LAUNCHER_JSON`; none belong in the portable project.
+The example invokes the staged `lammps_cluster_restart.py` and passes the MLIPFlow attempt number. Each site template still owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, optional Python-bridge `INTERFACE_PATH`, modules/conda setup, and `LAMMPS_LAUNCHER_JSON`; none belong in the project file.
 
 ## Completion and scope
 
-Normal success still requires process exit zero, the exact approved completion marker, recorded LAMMPS version, matching input/model paths and parameters, bounded output files, and consistent execution/result manifests.
+Normal success still requires process exit zero, the exact approved completion marker, recorded LAMMPS version, matching input/model paths and parameters, required output files, and consistent execution/result records.
 
 Version 0.3 supports NVT and isotropic NPT restart for the currently prepared MLIP interfaces. It does not itself run transport analysis, replicas, or charged/molecular/hybrid force fields. `ionic-transport` now consumes collected trajectory segments across attempts, stitches them by global timestep, and accepts both older wrapped dumps and new dumps containing image flags.

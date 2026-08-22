@@ -50,7 +50,7 @@ class ExecutionResult:
     stdout: str
     stderr: str
     job_id: str | None = None
-    submission_provenance: dict[str, Any] | None = None
+    submission_routing: dict[str, Any] | None = None
 
 
 class SchedulerBackend(Protocol):
@@ -257,25 +257,18 @@ class SshSlurmBackend:
         }
 
     def read_template(
-        self, template_root: str, relative_path: str, max_bytes: int = 1024 * 1024
+        self, template_root: str, relative_path: str
     ) -> dict[str, object]:
-        """Read one bounded ordinary template from the persistent site library."""
+        """Read one template from the persistent site library."""
 
         _validate_absolute_remote_directory(template_root)
         _validate_remote_relative(relative_path)
-        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
-            raise BackendError("template size bound must be a positive integer")
         command = (
-            f"if [ ! -d {_quote_remote(template_root)} ] || "
-            f"[ -L {_quote_remote(template_root)} ]; then printf 'ROOT_MISSING\\n'; "
+            f"if [ ! -d {_quote_remote(template_root)} ]; then printf 'ROOT_MISSING\\n'; "
             f"else cd -- {_quote_remote(template_root)} && "
-            f"if [ -f {_quote_remote(relative_path)} ] && "
-            f"[ ! -L {_quote_remote(relative_path)} ]; then "
-            f"size=$(stat -c '%s' -- {_quote_remote(relative_path)}); "
-            f"if [ \"$size\" -le {max_bytes} ]; then "
+            f"if [ -f {_quote_remote(relative_path)} ]; then "
             "printf 'OK\\n'; "
             f"cat -- {_quote_remote(relative_path)}; "
-            "else printf 'TOO_LARGE\\n'; fi; "
             "else printf 'MISSING\\n'; fi; fi"
         )
         completed = subprocess.run(
@@ -302,8 +295,6 @@ class SshSlurmBackend:
                 "root_exists": True,
                 "exists": False,
             }
-        if completed.stdout in {"TOO_LARGE\n", "TOO_LARGE"}:
-            raise BackendError(f"remote template exceeds size bound: {relative_path}")
         first, separator, content = completed.stdout.partition("\n")
         if not separator or first != "OK":
             raise BackendError(f"unexpected remote template response: {relative_path}")
@@ -385,8 +376,8 @@ class SshSlurmBackend:
             if remote_relative in seen:
                 raise BackendError(f"duplicate remote staging path: {remote_relative}")
             seen.add(remote_relative)
-            if source.is_symlink() or not source.is_file():
-                raise BackendError(f"staging source must be an ordinary file: {source}")
+            if not source.is_file():
+                raise BackendError(f"staging source does not exist: {source}")
             uploaded = subprocess.run(
                 ["scp", "--", str(source), f"{self.profile}:{remote_run_dir}/{remote_relative}"],
                 text=True,
@@ -404,7 +395,7 @@ class SshSlurmBackend:
         return remote_run_dir
 
     def inspect_file(self, remote_run_dir: str, remote_name: str) -> dict[str, object]:
-        """Read whether a remote file exists and its size for transfer bounds."""
+        """Read whether a declared remote output exists."""
 
         _validate_remote_directory(remote_run_dir)
         _validate_remote_relative(remote_name)
@@ -412,7 +403,7 @@ class SshSlurmBackend:
             f"cd -- {_quote_remote(remote_run_dir)} && "
             f"if [ -f {_quote_remote(remote_name)} ] && "
             f"[ ! -L {_quote_remote(remote_name)} ]; then "
-            f"stat -c '%s' -- {_quote_remote(remote_name)}; "
+            "printf 'EXISTS\\n'; "
             "else printf 'MISSING\\n'; fi"
         )
         completed = subprocess.run(
@@ -430,13 +421,9 @@ class SshSlurmBackend:
         lines = completed.stdout.strip().splitlines()
         if lines == ["MISSING"] or not lines:
             return {"path": remote_name, "exists": False}
-        if len(lines) != 1 or not lines[0].isdigit():
+        if lines != ["EXISTS"]:
             raise BackendError(f"unexpected remote file response for {remote_name}")
-        return {
-            "path": remote_name,
-            "exists": True,
-            "size_bytes": int(lines[0]),
-        }
+        return {"path": remote_name, "exists": True}
 
     def fetch_from(
         self, remote_run_dir: str, remote_name: str, destination: Path
@@ -463,8 +450,8 @@ class SshSlurmBackend:
         )
         if completed.returncode != 0:
             raise BackendError(completed.stderr or completed.stdout or "scp fetch failed")
-        if destination.is_symlink() or not destination.is_file():
-            raise BackendError(f"fetched output is not an ordinary file: {destination}")
+        if not destination.is_file():
+            raise BackendError(f"fetched output is missing: {destination}")
         return destination
 
     def cancel(self, job_id: str) -> ExecutionResult:

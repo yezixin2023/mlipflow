@@ -7,7 +7,6 @@ the imports turns each of them into something a change cannot silently break.
 from __future__ import annotations
 
 import ast
-import sys
 import unittest
 from pathlib import Path
 
@@ -68,31 +67,6 @@ class QueryBoundaryTests(unittest.TestCase):
             attribute = f"query_{'workflow' if command in {'list', 'status', 'json'} else command}"
             with self.subTest(command=command):
                 self.assertTrue(hasattr(queries, attribute), attribute)
-
-
-class PluginKitBoundaryTests(unittest.TestCase):
-    """An adapter importing pluginkit must not gain access to execution."""
-
-    def test_pluginkit_imports_only_the_standard_library(self) -> None:
-        if not hasattr(sys, "stdlib_module_names"):  # pragma: no cover - Python 3.9
-            self.skipTest("sys.stdlib_module_names requires Python 3.10+")
-        imports = module_imports(SOURCE / "pluginkit.py")
-        self.assertTrue(imports, "expected pluginkit to import something")
-        for name in sorted(imports):
-            with self.subTest(module=name):
-                self.assertIn(
-                    name,
-                    sys.stdlib_module_names,
-                    f"pluginkit must not import {name!r}; it is a plugin-facing "
-                    "surface and may only depend on the standard library",
-                )
-
-    def test_pluginkit_exports_are_all_defined(self) -> None:
-        from mlipflow import pluginkit
-
-        for name in pluginkit.__all__:
-            with self.subTest(name=name):
-                self.assertTrue(hasattr(pluginkit, name))
 
 
 class BackendConstructionTests(unittest.TestCase):

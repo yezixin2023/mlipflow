@@ -73,7 +73,7 @@ def _context(tmp_path: Path, *, ensemble: str = "nvt-langevin", attempt: int = 1
         )
     node = {
         "id": "md",
-        "uses": "ase-md@0",
+        "uses": "ase-md",
         "mode": "execute",
         "backend": "ssh-slurm",
         "backend_profile": "cluster-a",
@@ -252,7 +252,6 @@ def test_failure_salvage_is_only_a_subset_of_normal_fetch_allowlist() -> None:
                 "remote_path": "output/md-checkpoint.json",
                 "local_name": "md-checkpoint.json",
                 "required": True,
-                "max_bytes": 1024,
                 "role": "md-checkpoint",
             },
             {
@@ -260,7 +259,6 @@ def test_failure_salvage_is_only_a_subset_of_normal_fetch_allowlist() -> None:
                 "remote_path": "output/thermo.csv",
                 "local_name": "thermo.csv",
                 "required": True,
-                "max_bytes": 4096,
                 "role": "thermodynamics",
             },
         ]

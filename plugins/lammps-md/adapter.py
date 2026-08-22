@@ -18,11 +18,6 @@ OPERATION = "lammps-prepare"
 BUNDLED_PREPARE = Path(globals().get("__file__", "adapter.py")).absolute().with_name(
     "lammps_prepare.py"
 )
-MAX_JSON_BYTES = 16 * 1024 * 1024
-MAX_STRUCTURE_BYTES = 128 * 1024 * 1024
-MAX_OUTPUT_BYTES = 256 * 1024 * 1024
-
-
 def _load_generator():
     spec = importlib.util.spec_from_file_location("_mlipflow_lammps_prepare_contract", BUNDLED_PREPARE)
     if spec is None or spec.loader is None:
@@ -65,9 +60,9 @@ def _structure_input(root: Path, value: Any) -> Path:
     return (raw if raw.is_absolute() else root / raw).resolve()
 
 
-def _readable_file(path: Path, max_bytes: int) -> bool:
+def _readable_file(path: Path) -> bool:
     try:
-        if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= max_bytes:
+        if not path.is_file() or path.stat().st_size <= 0:
             return False
         with path.open("rb") as stream:
             stream.read(1)
@@ -76,26 +71,17 @@ def _readable_file(path: Path, max_bytes: int) -> bool:
         return False
 
 
-def _ordinary_project_file(path: Path, root: Path, max_bytes: int) -> bool:
-    base = root.expanduser().absolute()
-    candidate = path.expanduser().absolute()
+def _ordinary_project_file(path: Path, root: Path) -> bool:
     try:
-        relative = candidate.relative_to(base)
-    except ValueError:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
         return False
-    current = base
-    for part in relative.parts:
-        current = current / part
-        if current.is_symlink():
-            return False
-    if candidate.is_symlink() or not candidate.is_file():
-        return False
-    return 0 < candidate.stat().st_size <= max_bytes
+    return path.is_file() and path.stat().st_size > 0
 
 
-def _read_json(path: Path, max_bytes: int = MAX_JSON_BYTES) -> tuple[dict[str, Any] | None, str | None]:
-    if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= max_bytes:
-        return None, "missing, unsafe or oversized JSON file"
+def _read_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    if not path.is_file() or path.stat().st_size <= 0:
+        return None, "missing or empty JSON file"
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -196,25 +182,20 @@ def _validate(context: Any, *, require_fresh_output: bool) -> list[dict[str, str
                 f"structure file does not exist: {structure}",
             )
         )
-    elif not _readable_file(structure, MAX_STRUCTURE_BYTES):
+    elif not _readable_file(structure):
         diagnostics.append(
             _diagnostic(
                 "error",
                 "inputs.structure_file",
-                f"structure must be a readable bounded ordinary file: {structure}",
+                f"structure must be a readable file: {structure}",
             )
         )
-    for name, path, limit in (
-        ("model_reference", model_ref, MAX_JSON_BYTES),
-        ("lammps_config", config, MAX_JSON_BYTES),
-    ):
-        if not _ordinary_project_file(path, root, limit):
+    for name, path in (("model_reference", model_ref), ("lammps_config", config)):
+        if not _ordinary_project_file(path, root):
             diagnostics.append(
-                _diagnostic("error", f"inputs.{name}_file", f"{name} must be an ordinary bounded project file")
+                _diagnostic("error", f"inputs.{name}_file", f"{name} must be a project file")
             )
-    if _ordinary_project_file(model_ref, root, MAX_JSON_BYTES) and _ordinary_project_file(
-        config, root, MAX_JSON_BYTES
-    ):
+    if _ordinary_project_file(model_ref, root) and _ordinary_project_file(config, root):
         try:
             _source_contract(model_ref, config)
         except ValueError as exc:
@@ -374,9 +355,8 @@ class Adapter:
                 path = output_dir / name
                 if (
                     not isinstance(record, dict)
-                    or path.is_symlink()
                     or not path.is_file()
-                    or not 0 < path.stat().st_size <= MAX_OUTPUT_BYTES
+                    or path.stat().st_size <= 0
                 ):
                     diagnostics.append(
                         _diagnostic(

@@ -1,4 +1,4 @@
-"""Safe, side-effect-free adapter for DIRECT and LASP/SSW contracts.
+"""Side-effect-free adapter for DIRECT and LASP/SSW contracts.
 
 The adapter only describes local commands and reads explicit result manifests.  It
 never imports MAML/pymatgen/LASP, starts a process, creates directories, or submits
@@ -42,12 +42,6 @@ BUNDLED_LASP_INPUT_WRAPPER = (
     .absolute()
     .with_name("structure_to_lasp.py")
 )
-MAX_JSON_BYTES = 16 * 1024 * 1024
-MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
-MAX_ARC_BYTES = 512 * 1024 * 1024
-MAX_FRAME_BYTES = 8 * 1024 * 1024
-MAX_LASP_INPUT_BYTES = 1024 * 1024
-MAX_POTCAR_BYTES = 64 * 1024 * 1024
 MAX_LASP_FRAMES = 10000
 ARC_HEADER = b"!BIOSYM archive 2\nPBC=ON\n"
 SAFE_POTCAR_SYMBOL = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
@@ -156,18 +150,6 @@ def _unresolved(value: Any, base: Path) -> Optional[Path]:
     return (path if path.is_absolute() else base / path).absolute()
 
 
-def _has_symlink_component(path: Path) -> bool:
-    absolute = path.absolute()
-    return any(candidate.is_symlink() for candidate in (absolute, *absolute.parents))
-
-
-def _resolve_nonsymlink(value: Any, base: Path) -> Optional[Path]:
-    path = _unresolved(value, base)
-    if path is None or _has_symlink_component(path):
-        return None
-    return path.resolve()
-
-
 def _is_within(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -239,8 +221,8 @@ def _portable_source_id(value: Any) -> bool:
 
 
 def _pseudopotential_reference(path: Path) -> Dict[str, Any]:
-    if not _ordinary_file(path) or path.stat().st_size > MAX_JSON_BYTES:
-        raise ValueError("pseudopotential reference must be an ordinary JSON file")
+    if not _ordinary_file(path):
+        raise ValueError("pseudopotential reference must be a JSON file")
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, Mapping):
         raise ValueError("pseudopotential reference must contain an object")
@@ -291,17 +273,17 @@ def _lasp_structure_id(role: str, frame_index: int) -> str:
 
 
 def _ordinary_file(path: Optional[Path]) -> bool:
-    return path is not None and not path.is_symlink() and path.is_file()
+    return path is not None and path.is_file() and path.stat().st_size > 0
 
 
 def _explicit_executable(value: Any, base: Path) -> Optional[Path]:
-    """Resolve an absolute, non-symlink executable without consulting ``PATH``."""
+    """Resolve an absolute executable without consulting ``PATH``."""
     if not _plain_string(value):
         return None
     unresolved = Path(str(value)).expanduser()
     if not unresolved.is_absolute():
         return None
-    path = _resolve_nonsymlink(unresolved, base)
+    path = _resolve(unresolved, base)
     if not _ordinary_file(path):
         return None
     assert path is not None
@@ -332,9 +314,8 @@ def _parse_energy_record(line: bytes, source: str, frame_index: int) -> float:
 
 
 def _read_arc_frames(path: Path, max_frames: int) -> List[Dict[str, Any]]:
-    size = path.stat().st_size
-    if size == 0 or size > MAX_ARC_BYTES:
-        raise ValueError(f"{path.name} size must be between 1 and {MAX_ARC_BYTES} bytes")
+    if path.stat().st_size == 0:
+        raise ValueError(f"{path.name} is empty")
     lines = path.read_bytes().splitlines(keepends=True)
     starts = [index for index, line in enumerate(lines) if line.lstrip().startswith(b"Energy")]
     if not starts or len(starts) > max_frames:
@@ -344,8 +325,6 @@ def _read_arc_frames(path: Path, max_frames: int) -> List[Dict[str, Any]]:
         stop = starts[position + 1] if position + 1 < len(starts) else len(lines)
         block = lines[start:stop]
         payload = ARC_HEADER + b"".join(block)
-        if len(payload) > MAX_FRAME_BYTES:
-            raise ValueError(f"{path.name} frame {position + 1} exceeds size limit")
         if sum(1 for line in block if line.strip() == b"end") < 2:
             raise ValueError(f"{path.name} frame {position + 1} is truncated")
         frames.append(
@@ -359,8 +338,8 @@ def _read_arc_frames(path: Path, max_frames: int) -> List[Dict[str, Any]]:
 
 
 def _parse_lasp_input(path: Path) -> Dict[str, Any]:
-    if path.stat().st_size == 0 or path.stat().st_size > MAX_LASP_INPUT_BYTES:
-        raise ValueError("lasp.in is empty or exceeds the size limit")
+    if path.stat().st_size == 0:
+        raise ValueError("lasp.in is empty")
     parameters: Dict[str, Any] = {}
     for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         stripped = raw_line.split("#", 1)[0].strip()
@@ -507,7 +486,7 @@ class Adapter:
                     "unsupported DIRECT input(s): %s" % ", ".join(unknown_inputs),
                 )
             )
-        if not BUNDLED_DIRECT_WRAPPER.is_file() or BUNDLED_DIRECT_WRAPPER.is_symlink():
+        if not BUNDLED_DIRECT_WRAPPER.is_file():
             diagnostics.append(
                 _diagnostic(
                     "ERROR",
@@ -846,7 +825,7 @@ class Adapter:
                 )
         pseudopotential = inputs.get("pseudopotential_reference")
         if pseudopotential is not None:
-            reference_path = _resolve_nonsymlink(pseudopotential, project_root)
+            reference_path = _resolve(pseudopotential, project_root)
             if (
                 not _ordinary_file(reference_path)
                 or reference_path is None
@@ -962,7 +941,7 @@ class Adapter:
                     str(parameters["minimum_cell_length_angstrom"]),
                 ]
             )
-        reference_path = _resolve_nonsymlink(
+        reference_path = _resolve(
             inputs.get("pseudopotential_reference"), project_root
         )
         reference = None
@@ -1034,7 +1013,7 @@ class Adapter:
             else _unresolved(_mapping(context.get("inputs")).get("result_manifest"), project_root)
         )
         diagnostics: List[Dict[str, str]] = []
-        if not _ordinary_file(path) or path is None or path.stat().st_size > MAX_JSON_BYTES:
+        if not _ordinary_file(path):
             diagnostics.append(
                 _diagnostic("ERROR", "result.manifest", "LASP input manifest is missing")
             )
@@ -1134,7 +1113,6 @@ class Adapter:
                     or potcar_output.get("collectable") is not False
                     or not _ordinary_file(potcar_path)
                     or potcar_path is None
-                    or potcar_path.stat().st_size > MAX_POTCAR_BYTES
                 ):
                     diagnostics.append(
                         _diagnostic(
@@ -1237,7 +1215,7 @@ class Adapter:
                 )
             )
         for name in ("direct_manifest", "lasp_selected_manifest", "lasp_selected_archive"):
-            path = _resolve_nonsymlink(inputs.get(name), project_root)
+            path = _resolve(inputs.get(name), project_root)
             if not _ordinary_file(path) or path is None or not _is_within(path, project_root):
                 diagnostics.append(
                     _diagnostic(
@@ -1311,10 +1289,10 @@ class Adapter:
                 _diagnostic(
                     "ERROR",
                     "resource.python_executable",
-                    "python_executable must be an absolute non-symlink executable file",
+                    "python_executable must be an absolute executable file",
                 )
             )
-        if not _ordinary_file(BUNDLED_MERGE_WRAPPER) or BUNDLED_MERGE_WRAPPER.is_symlink():
+        if not _ordinary_file(BUNDLED_MERGE_WRAPPER):
             diagnostics.append(
                 _diagnostic("ERROR", "path.bundled_merge_wrapper", "structure_merge.py is missing")
             )
@@ -1330,9 +1308,9 @@ class Adapter:
         parameters = _mapping(context["parameters"])
         resources = _mapping(context["resources"])
         assert project_root is not None and attempt_dir is not None
-        direct = _resolve_nonsymlink(inputs["direct_manifest"], project_root)
-        lasp_manifest = _resolve_nonsymlink(inputs["lasp_selected_manifest"], project_root)
-        lasp_archive = _resolve_nonsymlink(inputs["lasp_selected_archive"], project_root)
+        direct = _resolve(inputs["direct_manifest"], project_root)
+        lasp_manifest = _resolve(inputs["lasp_selected_manifest"], project_root)
+        lasp_archive = _resolve(inputs["lasp_selected_archive"], project_root)
         python_executable = _explicit_executable(resources["python_executable"], project_root)
         assert direct is not None and lasp_manifest is not None and lasp_archive is not None
         assert python_executable is not None
@@ -1498,13 +1476,13 @@ class Adapter:
                     "ERROR", "path.lasp_wrapper", "bundled lasp_ssw.py wrapper is missing"
                 )
             )
-        lasp_input = _resolve_nonsymlink(inputs.get("lasp_input"), project_root)
+        lasp_input = _resolve(inputs.get("lasp_input"), project_root)
         if not _ordinary_file(lasp_input):
             diagnostics.append(
                 _diagnostic(
                     "ERROR",
                     "path.lasp_input",
-                    "inputs.lasp_input must name an ordinary non-symlink lasp.in file",
+                    "inputs.lasp_input must name a lasp.in file",
                 )
             )
         else:
@@ -1546,18 +1524,18 @@ class Adapter:
             )
 
         if operation == "lasp-ssw-normalize-replay":
-            source_dir = _resolve_nonsymlink(inputs.get("historical_run_dir"), project_root)
+            source_dir = _resolve(inputs.get("historical_run_dir"), project_root)
             if source_dir is None or not source_dir.is_dir():
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
                         "path.historical_run_dir",
-                        "inputs.historical_run_dir must be an ordinary non-symlink directory",
+                        "inputs.historical_run_dir must be a directory",
                     )
                 )
             else:
                 allstr = source_dir / "allstr.arc"
-                if _has_symlink_component(allstr) or not _ordinary_file(allstr):
+                if not _ordinary_file(allstr):
                     diagnostics.append(
                         _diagnostic(
                             "ERROR",
@@ -1577,10 +1555,7 @@ class Adapter:
                     (parameters.get("include_best_arc", False), "best.arc"),
                     (parameters.get("include_md_arc", False), "md.arc"),
                 ):
-                    if flag is True and (
-                        _has_symlink_component(source_dir / name)
-                        or not _ordinary_file(source_dir / name)
-                    ):
+                    if flag is True and not _ordinary_file(source_dir / name):
                         diagnostics.append(
                             _diagnostic(
                                 "ERROR", "path.%s" % name.replace(".", "_"), f"missing {name}"
@@ -1603,7 +1578,7 @@ class Adapter:
                     )
                 )
         else:
-            executable = _resolve_nonsymlink(inputs.get("lasp_executable"), project_root)
+            executable = _resolve(inputs.get("lasp_executable"), project_root)
             if not _ordinary_file(executable):
                 diagnostics.append(
                     _diagnostic(
@@ -1618,7 +1593,7 @@ class Adapter:
                         "ERROR", "path.lasp_not_executable", "LASP binary is not executable"
                     )
                 )
-            input_structure = _resolve_nonsymlink(inputs.get("input_structure"), project_root)
+            input_structure = _resolve(inputs.get("input_structure"), project_root)
             if not _ordinary_file(input_structure):
                 diagnostics.append(
                     _diagnostic(
@@ -1664,12 +1639,12 @@ class Adapter:
                         )
                         break
                     seen.add(name)
-                    if not _ordinary_file(_resolve_nonsymlink(raw_path, project_root)):
+                    if not _ordinary_file(_resolve(raw_path, project_root)):
                         diagnostics.append(
                             _diagnostic(
                                 "ERROR",
                                 "path.auxiliary_file",
-                                f"auxiliary input {name} is missing or is a symlink",
+                                f"auxiliary input {name} is missing",
                             )
                         )
                         break
@@ -1684,7 +1659,7 @@ class Adapter:
             launcher = resources.get("mpi_launcher")
             processes = parameters.get("mpi_processes")
             if launcher is not None:
-                launcher_path = _resolve_nonsymlink(launcher, project_root)
+                launcher_path = _resolve(launcher, project_root)
                 if (
                     not _plain_string(launcher)
                     or launcher_path is None
@@ -1796,7 +1771,7 @@ class Adapter:
                 _diagnostic(
                     "ERROR",
                     "resource.python_executable",
-                    "python_executable must be an explicit absolute, executable, non-symlink file",
+                    "python_executable must be an explicit absolute executable file",
                 )
             )
         return diagnostics
@@ -1836,7 +1811,7 @@ class Adapter:
             else "execute",
         ]
         if operation == "lasp-ssw-normalize-replay":
-            source_dir = _resolve_nonsymlink(inputs["historical_run_dir"], project_root)
+            source_dir = _resolve(inputs["historical_run_dir"], project_root)
             assert source_dir is not None
             argv.extend(["--historical-run-dir", str(source_dir)])
             remember_input("allstr.arc", source_dir / "allstr.arc")
@@ -1845,8 +1820,8 @@ class Adapter:
             if parameters.get("include_md_arc", False):
                 remember_input("md.arc", source_dir / "md.arc")
         else:
-            executable = _resolve_nonsymlink(inputs["lasp_executable"], project_root)
-            structure = _resolve_nonsymlink(inputs["input_structure"], project_root)
+            executable = _resolve(inputs["lasp_executable"], project_root)
+            structure = _resolve(inputs["input_structure"], project_root)
             assert executable is not None and structure is not None
             argv.extend(
                 [
@@ -1862,7 +1837,7 @@ class Adapter:
             remember_input("input_structure", structure)
             launcher = resources.get("mpi_launcher")
             if launcher is not None:
-                launcher_path = _resolve_nonsymlink(launcher, project_root)
+                launcher_path = _resolve(launcher, project_root)
                 assert launcher_path is not None
                 argv.extend(
                     [
@@ -1875,11 +1850,11 @@ class Adapter:
                 remember_input("mpi_launcher", launcher_path)
             auxiliary = _mapping(inputs.get("lasp_auxiliary_files"))
             for name in sorted(auxiliary):
-                path = _resolve_nonsymlink(auxiliary[name], project_root)
+                path = _resolve(auxiliary[name], project_root)
                 assert path is not None
                 argv.extend(["--auxiliary", name, str(path)])
                 remember_input(f"auxiliary:{name}", path)
-        lasp_input = _resolve_nonsymlink(inputs["lasp_input"], project_root)
+        lasp_input = _resolve(inputs["lasp_input"], project_root)
         assert lasp_input is not None
         remember_input("lasp_input", lasp_input)
         argv.extend(
@@ -1960,11 +1935,6 @@ class Adapter:
                 )
             )
             return None, [], diagnostics
-        if path.is_symlink():
-            diagnostics.append(
-                _diagnostic("ERROR", "result.manifest_symlink", "manifest must not be a symlink")
-            )
-            return path, [], diagnostics
         if not path.is_file():
             diagnostics.append(
                 _diagnostic("INFO", "result.manifest_missing", "DIRECT manifest does not exist yet")
@@ -2128,11 +2098,6 @@ class Adapter:
                 )
             )
             return None, {}, diagnostics, []
-        if path.is_symlink():
-            diagnostics.append(
-                _diagnostic("ERROR", "result.manifest_symlink", "merge manifest must not be a symlink")
-            )
-            return path, {}, diagnostics, []
         if not path.is_file():
             diagnostics.append(
                 _diagnostic("INFO", "result.manifest_missing", "merge structures.json does not exist yet")
@@ -2182,7 +2147,7 @@ class Adapter:
         project_root = _resolve(context.get("project_root"), Path.cwd()) if isinstance(context, Mapping) else None
         if project_root is not None:
             for key in ("direct_manifest", "lasp_selected_manifest", "lasp_selected_archive"):
-                source = _resolve_nonsymlink(inputs.get(key), project_root)
+                source = _resolve(inputs.get(key), project_root)
                 if source is None or not _ordinary_file(source) or input_artifacts.get(key) != str(source):
                     diagnostics.append(
                         _diagnostic("ERROR", f"result.input_{key}", f"merge input {key} path differs")
@@ -2217,10 +2182,8 @@ class Adapter:
             output = (path.parent / relative).absolute()
             if (
                 not _is_within(output, path.parent.resolve())
-                or output.is_symlink()
                 or not output.is_file()
                 or output.stat().st_size < 1
-                or output.stat().st_size > MAX_ARTIFACT_BYTES
             ):
                 diagnostics.append(
                     _diagnostic("ERROR", "result.structure_file", f"{prefix} file is invalid")
@@ -2314,9 +2277,8 @@ class Adapter:
         self, path: Path, field: str, diagnostics: List[Dict[str, str]]
     ) -> Optional[Dict[str, Any]]:
         try:
-            size = path.stat().st_size
-            if size == 0 or size > MAX_JSON_BYTES:
-                raise ValueError(f"size must be between 1 and {MAX_JSON_BYTES} bytes")
+            if path.stat().st_size == 0:
+                raise ValueError("file is empty")
             value = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(value, dict):
                 raise ValueError("top-level JSON value must be an object")
@@ -2327,7 +2289,7 @@ class Adapter:
             )
             return None
 
-    def _portable_artifact_path(
+    def _artifact_path(
         self,
         manifest: Path,
         value: Any,
@@ -2339,20 +2301,15 @@ class Adapter:
                 _diagnostic("ERROR", "result.artifact_path", f"{field} requires a path")
             )
             return None
-        portable = Path(value)
-        if portable.is_absolute() or ".." in portable.parts:
+        relative = Path(value)
+        if relative.is_absolute() or ".." in relative.parts:
             diagnostics.append(
                 _diagnostic(
-                    "ERROR", "result.artifact_escape", f"{field} must be a portable relative path"
+                    "ERROR", "result.artifact_escape", f"{field} must be a relative path"
                 )
             )
             return None
-        path = manifest.parent / portable
-        if path.is_symlink():
-            diagnostics.append(
-                _diagnostic("ERROR", "result.artifact_symlink", f"{field} must not be a symlink")
-            )
-            return None
+        path = manifest.parent / relative
         resolved = path.resolve()
         if not _is_within(resolved, manifest.parent.resolve()):
             diagnostics.append(
@@ -2360,15 +2317,13 @@ class Adapter:
             )
             return None
         if (
-            not resolved.is_file()
-            or resolved.stat().st_size == 0
-            or resolved.stat().st_size > MAX_ARTIFACT_BYTES
+            not resolved.is_file() or resolved.stat().st_size == 0
         ):
             diagnostics.append(
                 _diagnostic(
                     "ERROR",
                     "result.artifact_missing",
-                    f"{field} is missing, empty, or exceeds {MAX_ARTIFACT_BYTES} bytes",
+                    f"{field} is missing or empty",
                 )
             )
             return None
@@ -2413,13 +2368,6 @@ class Adapter:
                 )
             )
             return None, {}, diagnostics, []
-        if manifest.is_symlink():
-            diagnostics.append(
-                _diagnostic(
-                    "ERROR", "result.manifest_symlink", "sampling-result.json must not be a symlink"
-                )
-            )
-            return manifest, {}, diagnostics, []
         if not manifest.is_file():
             diagnostics.append(
                 _diagnostic(
@@ -2571,7 +2519,7 @@ class Adapter:
                     )
                 )
                 continue
-            path = self._portable_artifact_path(
+            path = self._artifact_path(
                 manifest, item.get("path"), f"artifacts[{index}]", diagnostics
             )
             if path is None:
@@ -2624,10 +2572,10 @@ class Adapter:
                 if isinstance(context, Mapping)
                 else Path.cwd().resolve()
             ) or Path.cwd().resolve()
-            source_dir = _resolve_nonsymlink(
+            source_dir = _resolve(
                 context_inputs.get("historical_run_dir"), project_root
             )
-            lasp_input_path = _resolve_nonsymlink(context_inputs.get("lasp_input"), project_root)
+            lasp_input_path = _resolve(context_inputs.get("lasp_input"), project_root)
             if source_dir is None or not source_dir.is_dir() or lasp_input_path is None:
                 diagnostics.append(
                     _diagnostic(
@@ -2647,7 +2595,7 @@ class Adapter:
                     source_paths["md-archive"] = source_dir / "md.arc"
         else:
             raw_run = manifest.parent / "raw-run"
-            if _has_symlink_component(raw_run) or not raw_run.is_dir():
+            if not raw_run.is_dir():
                 diagnostics.append(
                     _diagnostic(
                         "ERROR",
@@ -2667,7 +2615,7 @@ class Adapter:
                     source_paths["md-archive"] = raw_run / "md.arc"
 
         for role, path in source_paths.items():
-            if _has_symlink_component(path) or not _ordinary_file(path):
+            if not _ordinary_file(path):
                 diagnostics.append(
                     _diagnostic(
                         "ERROR", "result.source_file", f"bound source file is missing: {role}"
@@ -2814,13 +2762,13 @@ class Adapter:
                 if isinstance(context, Mapping)
                 else Path.cwd().resolve()
             ) or Path.cwd().resolve()
-            executable = _resolve_nonsymlink(
+            executable = _resolve(
                 context_inputs.get("lasp_executable"), project_root
             )
-            input_structure = _resolve_nonsymlink(
+            input_structure = _resolve(
                 context_inputs.get("input_structure"), project_root
             )
-            approved_lasp_input = _resolve_nonsymlink(
+            approved_lasp_input = _resolve(
                 context_inputs.get("lasp_input"), project_root
             )
             if not all(
@@ -2871,7 +2819,7 @@ class Adapter:
                 )
             auxiliary = _mapping(context_inputs.get("lasp_auxiliary_files"))
             for name in sorted(auxiliary):
-                path = _resolve_nonsymlink(auxiliary[name], project_root)
+                path = _resolve(auxiliary[name], project_root)
                 if not _ordinary_file(path):
                     diagnostics.append(
                         _diagnostic(
@@ -2920,10 +2868,7 @@ class Adapter:
                         )
                         continue
                     staged_path = raw_run / destination
-                    if (
-                        _has_symlink_component(staged_path)
-                        or not _ordinary_file(staged_path)
-                    ):
+                    if not _ordinary_file(staged_path):
                         diagnostics.append(
                             _diagnostic(
                                 "ERROR",
@@ -2935,7 +2880,7 @@ class Adapter:
             if launcher_value is None:
                 launcher_path_value = None
             else:
-                launcher_path = _resolve_nonsymlink(launcher_value, project_root)
+                launcher_path = _resolve(launcher_value, project_root)
                 launcher_path_value = (
                     str(launcher_path) if _ordinary_file(launcher_path) else None
                 )

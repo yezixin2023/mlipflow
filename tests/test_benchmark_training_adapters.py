@@ -156,15 +156,6 @@ class BenchmarkAdapterTests(unittest.TestCase):
         codes = {item["code"] for item in checked["diagnostics"]}
         self.assertIn("benchmark.scenario_mismatch", codes)
 
-    def test_collect_existing_is_read_only_and_not_an_execution_plan(self) -> None:
-        path = self._write_result()
-        self.context["inputs"] = {"result_manifest": str(path)}
-        self.context["parameters"]["operation"] = "collect-existing"
-        plan = self.adapter.plan(self.context)
-        self.assertEqual("BLOCKED", plan["status"])
-        self.assertEqual("OK", self.adapter.collect(self.context)["status"])
-
-
 class TrainingAdapterTests(unittest.TestCase):
     def setUp(self) -> None:
         self.adapter = load_adapter("mlip-training")

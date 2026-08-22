@@ -120,7 +120,7 @@ def _context(tmp_path: Path, framework: str, target: str, gpus: int | None = Non
     parameters = {"operation": "execute", "target": target}
     node = {
         "id": "lammps-run",
-        "uses": "lammps-md@0",
+        "uses": "lammps-md",
         "mode": "execute",
         "backend": "ssh-slurm",
         "backend_profile": "cluster-a",

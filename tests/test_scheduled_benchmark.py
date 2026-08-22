@@ -7,12 +7,12 @@ import unittest
 from pathlib import Path
 
 from mlipflow.config import load_project
-from mlipflow.plugins import discover_plugins, load_adapter
+from mlipflow.plugins import load_adapter
 from mlipflow.services import initialize, make_run_plan
 from mlipflow.services.contracts import _scheduled_contract
 
 from .helpers import project_config, write_json
-from .test_scheduled_dft import FakeTemplateLibrary, PLUGINS, write_site
+from .test_scheduled_dft import FakeTemplateLibrary, write_site
 
 
 def library() -> FakeTemplateLibrary:
@@ -49,7 +49,7 @@ def build_project(root: Path) -> Path:
     )
     node = {
         "id": "benchmark-chgnet",
-        "uses": "mlip-benchmark@0",
+        "uses": "mlip-benchmark",
         "mode": "execute",
         "backend": "ssh-slurm",
         "backend_profile": "cluster-a",
@@ -100,22 +100,20 @@ class ScheduledBenchmarkPlanTests(unittest.TestCase):
         plan = make_run_plan(
             self.project,
             "benchmark-chgnet",
-            PLUGINS,
             self.site,
             library(),
         )
         adapter = plan["adapter_plan"]
         self.assertEqual("READY", adapter["status"], adapter.get("diagnostics"))
-        portable_sources = {
+        sources = {
             item["remote_name"]: item["source"]
             for item in adapter["scheduled_execution"]["staged_files"]
         }
-        self.assertTrue(portable_sources["model_runtime.py"].startswith("{PACKAGE_DIR}/"))
+        self.assertTrue(Path(sources["model_runtime.py"]).is_file())
 
-        plugin = discover_plugins(PLUGINS)["mlip-benchmark"]
         contract = _scheduled_contract(
             self.project,
-            plugin,
+            "mlip-benchmark",
             plan,
             node_id="benchmark-chgnet",
             attempt=1,
@@ -145,8 +143,7 @@ class ScheduledBenchmarkPlanTests(unittest.TestCase):
         )
 
     def test_upstream_references_supply_readable_paths(self) -> None:
-        plugin = discover_plugins(PLUGINS)["mlip-benchmark"]
-        adapter = load_adapter(plugin)
+        adapter = load_adapter("mlip-benchmark")
         node = self.project.node("benchmark-chgnet")
         parameters = dict(node["parameters"])
         selected_project = self.root / "continuation.project.json"

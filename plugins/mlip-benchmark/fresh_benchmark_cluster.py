@@ -66,10 +66,6 @@ def _resolve(root: Path, reference: dict[str, str]) -> Path:
         raise ValueError(f"referenced file does not exist: {candidate}")
     if reference["kind"] == "directory" and not candidate.is_dir():
         raise ValueError(f"referenced directory does not exist: {candidate}")
-    if candidate.is_symlink() or (
-        candidate.is_dir() and any(item.is_symlink() for item in candidate.rglob("*"))
-    ):
-        raise ValueError("referenced artifact contains a symbolic link")
     return candidate
 
 

@@ -86,11 +86,11 @@ The site is responsible for providing a validated VASP executable together with
 the required compiler/runtime modules, MPI launcher, and numerical libraries.
 Bind these only in the site-owned `vasp/run.sh` or `vasp-batch/run.sh` template;
 do not place absolute VASP executable paths or cluster-specific launcher settings
-in portable project files or plugin parameters.
+in project files or capability parameters.
 
 MLIPFlow also does not distribute POTCAR data. `dft-labeling` assembles
 runtime-only POTCAR inputs from the licensed site/user pseudopotential
-installation and excludes POTCAR files from portable results, reports, and
+installation and excludes POTCAR files from results, reports, and
 repository content.
 
 Before production DFT or AIMD runs, validate the VASP build on the target compute
@@ -294,7 +294,7 @@ remote_template_root/                 persistent site-owned knowledge
 framework execution environment       PyYAML + exactly one framework stack
 
 work_root/<project>/<node>/attempt-XXXX/
-  rendered submit.sbatch/run.sh + staged runners + bounded outputs
+  rendered submit.sbatch/run.sh + staged runners + declared outputs
 ```
 
 - `site.yaml` selects a named cluster profile. It does not contain framework
@@ -330,7 +330,7 @@ Before approving a real training job:
    `mlip-<framework>/run.sh` and `slurm/single-python/{cpu,gpu}.sbatch`.
 5. Run `mlipflow run NODE --dry-run` locally and review the selected backend profile,
    template family, execution model, resources, staged inputs, and output allowlist.
-6. Use a bounded scheduled environment smoke before production-scale training.
+6. Use a short scheduled environment smoke before production-scale training.
 
 Scheduler `COMPLETED` is not enough: MLIPFlow still requires the remote runner,
 output schema, declared paths/parameters, and scientific checker to pass before the

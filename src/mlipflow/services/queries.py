@@ -12,7 +12,6 @@ local site profile.  It still only *reads* that configuration.
 
 from __future__ import annotations
 
-import importlib.util
 import shutil
 from pathlib import Path
 from typing import Any, Iterable
@@ -20,37 +19,39 @@ from typing import Any, Iterable
 from ..config import Project, load_project
 from ..errors import ConfigError, StateError
 from ..planning import resolve_reference
-from ..plugins import discover_plugins, select_plugin
+from ..plugins import BUILTIN_CAPABILITIES, capability
 from ..routing import load_registry, route_models
 from ..site import load_site_config
 from ..state import RunState, StateStore
+from .contracts import _attempt_artifacts
 from .paths import attempt_directory, state_path
-
-
-def _python_import_name(distribution: str) -> str:
-    if distribution == "pymatgen-analysis-diffusion":
-        return "pymatgen.analysis.diffusion"
-    return distribution.replace("-", "_").split(".", 1)[0]
 
 
 def query_workflow(project: Project, node_id: str | None = None) -> dict[str, Any]:
     database = state_path(project)
     if database.is_file():
         with StateStore(database, readonly=True) as store:
-            store.assert_project_topology(project.project_id, project.nodes)
-            steps = [step.to_dict() for step in store.latest_steps(project.project_id)]
-            for step in steps:
-                # The service returns the detailed source of truth. The CLI
-                # presentation layer removes provenance unless --audit is used.
-                step["artifacts"] = store.artifacts(step["run_id"])
+            store.assert_project_id(project.project_id)
+            steps = []
+            for node in project.nodes:
+                record = store.latest_step(project.project_id, str(node["id"]))
+                step = record.to_dict()
+                directory = attempt_directory(project, record.node_id, record.attempt)
+                final = directory / "run-manifest.final.json"
+                initial = directory / "run-manifest.json"
+                manifest = final if final.is_file() else initial
+                step["capability"] = node["uses"]
+                step["manifest_path"] = str(manifest) if manifest.is_file() else None
+                step["artifacts"] = _attempt_artifacts(project, record)
                 step["persisted"] = True
+                steps.append(step)
     else:
         steps = [
             {
                 "run_id": None,
                 "project_id": project.project_id,
                 "node_id": node["id"],
-                "plugin_id": node["uses"],
+                "capability": node["uses"],
                 "attempt": 0,
                 "state": RunState.WAIT.value if node.get("needs") else RunState.READY.value,
                 "backend": node.get("backend", "local"),
@@ -61,7 +62,6 @@ def query_workflow(project: Project, node_id: str | None = None) -> dict[str, An
                 "submitted_at": None,
                 "started_at": None,
                 "ended_at": None,
-                "retry_count": 0,
                 "manifest_path": None,
                 "diagnostic": "preview: project has not been initialized",
                 "artifacts": [],
@@ -85,16 +85,22 @@ def query_workflow(project: Project, node_id: str | None = None) -> dict[str, An
     }
 
 
-def query_inspect(project: Project, node_id: str, plugin_root: Path) -> dict[str, Any]:
+def query_inspect(project: Project, node_id: str) -> dict[str, Any]:
     node = project.node(node_id)
-    plugins = discover_plugins(plugin_root)
-    plugin = select_plugin(plugins, str(node["uses"]))
+    capability_id = str(node["uses"])
+    spec = capability(capability_id)
     workflow = query_workflow(project, node_id)
     return {
         "project_id": project.project_id,
         "node": node,
         "state": workflow["steps"][0],
-        "plugin": {"path": str(plugin.path), "manifest": plugin.raw},
+        "capability": {
+            "id": capability_id,
+            "description": spec["description"],
+            "operations": list(spec["operations"]),
+            "backends": list(spec["backends"]),
+            "approval_required": spec["approval_required"],
+        },
     }
 
 
@@ -105,7 +111,7 @@ def query_logs(project: Project, node_id: str, tail: int = 80) -> dict[str, Any]
     if not database.is_file():
         raise StateError("project has not been initialized")
     with StateStore(database, readonly=True) as store:
-        store.assert_project_topology(project.project_id, project.nodes)
+        store.assert_project_id(project.project_id)
         step = store.latest_step(project.project_id, node_id)
     directory = attempt_directory(project, node_id, step.attempt)
     logs: dict[str, Any] = {}
@@ -143,9 +149,7 @@ def query_route(
     )
 
 
-def query_doctor(
-    project_path: Path, plugin_root: Path, site_path: Path | None = None
-) -> dict[str, Any]:
+def query_doctor(project_path: Path, site_path: Path | None = None) -> dict[str, Any]:
     diagnostics: list[dict[str, Any]] = []
     try:
         project = load_project(project_path)
@@ -153,46 +157,24 @@ def query_doctor(
     except Exception as exc:
         return {"ok": False, "diagnostics": [{"check": "project", "ok": False, "detail": str(exc)}]}
     try:
-        plugins = discover_plugins(plugin_root)
-        diagnostics.append(
-            {"check": "plugins", "ok": bool(plugins), "detail": f"{len(plugins)} discovered"}
-        )
         for node in project.nodes:
-            plugin = select_plugin(plugins, str(node["uses"]))
-            if node.get("mode", "execute") == "replay":
-                continue
-            dependencies = plugin.raw.get("dependencies", {})
-            for dependency in dependencies.get("python_packages", []):
-                if not dependency.get("required"):
-                    continue
-                package = _python_import_name(str(dependency.get("name", "")))
-                available = bool(package) and importlib.util.find_spec(package) is not None
-                diagnostics.append(
-                    {
-                        "check": f"python:{package}",
-                        "ok": available,
-                        "detail": f"required by {plugin.plugin_id}",
-                    }
-                )
-            for dependency in dependencies.get("external_programs", []):
-                if not dependency.get("required"):
-                    continue
-                executable = str(dependency.get("name", ""))
-                path = shutil.which(executable) if executable and ":" not in executable else None
-                diagnostics.append(
-                    {
-                        "check": f"executable:{executable}",
-                        "ok": path is not None,
-                        "detail": path or f"required by {plugin.plugin_id}",
-                    }
-                )
+            capability(str(node["uses"]))
+        diagnostics.append(
+            {
+                "check": "capabilities",
+                "ok": True,
+                "detail": f"{len(BUILTIN_CAPABILITIES)} built in",
+            }
+        )
     except Exception as exc:
-        diagnostics.append({"check": "plugins", "ok": False, "detail": str(exc)})
+        diagnostics.append(
+            {"check": "capabilities", "ok": False, "detail": str(exc)}
+        )
     database = state_path(project)
     if database.is_file():
         try:
             with StateStore(database, readonly=True) as store:
-                store.assert_project_topology(project.project_id, project.nodes)
+                store.assert_project_id(project.project_id)
                 store.latest_steps(project.project_id)
             diagnostics.append({"check": "state", "ok": True, "detail": str(database)})
         except Exception as exc:

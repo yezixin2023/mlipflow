@@ -13,7 +13,6 @@ have to hold independently.
 
 from __future__ import annotations
 
-import copy
 import importlib.util
 import json
 import shutil
@@ -27,7 +26,6 @@ from mlipflow.backends import ExecutionResult
 from mlipflow.config import load_project
 from mlipflow.services import advance, initialize, make_advance_plan, make_run_plan, run_node
 from mlipflow.services.contracts import _scheduled_contract
-from mlipflow.plugins import discover_plugins
 
 from .helpers import project_config, write_json
 from .test_scheduled_dft import PLUGINS, FakeTemplateLibrary, write_site
@@ -158,7 +156,7 @@ def build_project(
             [
                 {
                     "id": "train-deepmd",
-                    "uses": "mlip-training@0",
+                    "uses": "mlip-training",
                     "mode": "execute",
                     "backend": "ssh-slurm",
                     "backend_profile": "cluster-a",
@@ -215,7 +213,7 @@ class TrainingLifecycle:
         self.project = load_project(root)
 
     def plan(self) -> dict[str, Any]:
-        return make_run_plan(self.project, "train-deepmd", PLUGINS, self.site, library())
+        return make_run_plan(self.project, "train-deepmd", self.site, library())
 
     def submit(self) -> dict[str, Any]:
         plan = self.plan()
@@ -234,7 +232,6 @@ class TrainingLifecycle:
             run_node(
                 self.project,
                 "train-deepmd",
-                PLUGINS,
                 True,
                 self.site,
                 library(),
@@ -331,7 +328,7 @@ class TrainingLifecycle:
             autospec=True,
             side_effect=inspect,
         ):
-            make_advance_plan(self.project, PLUGINS)
+            make_advance_plan(self.project)
         with patch(
             "mlipflow.services.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
@@ -344,7 +341,7 @@ class TrainingLifecycle:
             autospec=True,
             side_effect=fetch,
         ):
-            return advance(self.project, PLUGINS)
+            return advance(self.project)
 
     def run(self, **overrides: Any) -> dict[str, Any]:
         self.submit()
@@ -378,7 +375,7 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
         site = build_project(self.root, **kwargs)
         initialize(self.root)
         project = load_project(self.root)
-        return make_run_plan(project, "train-deepmd", PLUGINS, site, library())
+        return make_run_plan(project, "train-deepmd", site, library())
 
     def test_well_formed_node_produces_a_ready_plan(self) -> None:
         plan = self.plan()
@@ -416,10 +413,13 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
             [item["remote_name"] for item in staged], ["input.json", "dataset.json"]
         )
         for item in staged:
-            self.assertTrue(item["source"].startswith("{PROJECT_ROOT}/inputs/"))
-            self.assertFalse(item["fetch_allowed"])
+            self.assertTrue(
+                Path(item["source"])
+                .resolve()
+                .is_relative_to((self.root / "inputs").resolve())
+            )
 
-    def test_fetch_outputs_declare_bounded_required_artifacts(self) -> None:
+    def test_fetch_outputs_declare_required_artifacts(self) -> None:
         outputs = self.plan()["adapter_plan"]["scheduled_execution"]["fetch_outputs"]
         by_name = {item["remote_name"]: item for item in outputs}
         self.assertEqual(
@@ -437,9 +437,6 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
         self.assertTrue(by_name["training-report.json"]["required"])
         self.assertFalse(by_name["train.stdout"]["required"])
         self.assertEqual(by_name["train.stderr"]["remote_path"], "logs/train.stderr")
-        for item in outputs:
-            self.assertIsInstance(item["max_bytes"], int)
-            self.assertGreater(item["max_bytes"], 0)
 
     def test_plan_records_trajectory_relevant_parameters(self) -> None:
         calculation = self.plan()["adapter_plan"]["training_calculation"]
@@ -461,25 +458,13 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
         self.assertEqual(first["system_counts"], second["system_counts"])
         self.assertNotEqual(first["systems"], second["systems"])
 
-    def test_plan_carries_no_absolute_site_path(self) -> None:
-        adapter_plan = self.plan()["adapter_plan"]
-        portable = copy.deepcopy(adapter_plan)
-        # staged_files hold real local sources by construction; every other field
-        # must be free of machine-specific absolute paths.
-        portable["scheduled_execution"].pop("staged_files")
-        serialized = json.dumps(portable)
-        self.assertNotIn("/public/home/", serialized)
-        self.assertNotIn(str(self.root), serialized)
-        self.assertNotIn("/tmp/", serialized)
-
     def test_core_contract_accepts_the_produced_scheduled_execution(self) -> None:
         site = build_project(self.root)
         initialize(self.root)
         project = load_project(self.root)
-        plan = make_run_plan(project, "train-deepmd", PLUGINS, site, library())
-        plugin = discover_plugins(PLUGINS)["mlip-training"]
+        plan = make_run_plan(project, "train-deepmd", site, library())
         contract = _scheduled_contract(
-            project, plugin, plan, node_id="train-deepmd", attempt=1
+            project, "mlip-training", plan, node_id="train-deepmd", attempt=1
         )
         self.assertEqual(contract["template_family"], "deepmd")
         self.assertEqual(contract["schema_version"], 3)
@@ -495,7 +480,7 @@ class ScheduledTrainingRefusalTests(TemporaryProjectTest):
         site = build_project(self.root, **kwargs)
         initialize(self.root)
         project = load_project(self.root)
-        plan = make_run_plan(project, "train-deepmd", PLUGINS, site, library())
+        plan = make_run_plan(project, "train-deepmd", site, library())
         adapter_plan = plan["adapter_plan"]
         self.assertEqual(adapter_plan["status"], "BLOCKED")
         return adapter_plan

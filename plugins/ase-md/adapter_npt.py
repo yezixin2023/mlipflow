@@ -1,7 +1,7 @@
 """ASE MD adapter facade adding isotropic MTK NPT to the stable NVT contract.
 
 NVT remains delegated to adapter.py. NPT reuses the same staging, model-reference
-and bounded-fetch machinery, but has its own pressure/barostat parameters and
+and fetch lifecycle, but has its own pressure/barostat parameters and
 scientific checker. The delegated adapter source is staged with the calculation.
 """
 from __future__ import annotations
@@ -186,8 +186,8 @@ def _npt_thermo_header() -> list[str]:
 def _check_npt_thermo(
     path: Path, settings: dict[str, Any]
 ) -> tuple[str | None, dict[str, float] | None]:
-    if not legacy._ordinary_file(path, legacy.MAX_THERMO_BYTES):
-        return "thermo.csv is missing, empty, unsafe or oversized", None
+    if not legacy._ordinary_file(path):
+        return "thermo.csv is missing or empty", None
     expected_steps = settings.get("thermo_steps")
     if not isinstance(expected_steps, list):
         return "approved plan lacks thermo step schedule", None
@@ -240,7 +240,7 @@ def _check_npt(
             _diagnostic("error", "ase_md.plan_parameters", "plan is not isotropic MTK NPT")
         ], None
     try:
-        result = legacy._read_bounded_json(attempt / "md-result.json")
+        result = legacy._read_json(attempt / "md-result.json")
     except Exception as exc:
         return [
             _diagnostic("error", "ase_md.result", f"md-result.json is unreadable: {exc}")
@@ -314,18 +314,18 @@ def _check_npt(
         diagnostics.append(_diagnostic("error", "ase_md.artifacts", str(exc)))
         artifacts = {}
     expected_artifacts = {
-        "trajectory": ("trajectory.traj", legacy.MAX_TRAJECTORY_BYTES),
-        "trajectory-index": ("trajectory-index.json", legacy.MAX_JSON_BYTES),
-        "thermo": ("thermo.csv", legacy.MAX_THERMO_BYTES),
-        "final-structure": ("final.extxyz", legacy.MAX_FINAL_BYTES),
+        "trajectory": "trajectory.traj",
+        "trajectory-index": "trajectory-index.json",
+        "thermo": "thermo.csv",
+        "final-structure": "final.extxyz",
     }
     if set(artifacts) != set(expected_artifacts):
         diagnostics.append(
             _diagnostic("error", "ase_md.artifact_set", "md-result artifact set is incomplete")
         )
-    for role, (name, limit) in expected_artifacts.items():
+    for role, name in expected_artifacts.items():
         if role in artifacts:
-            error = legacy._check_artifact(attempt / name, artifacts[role], limit)
+            error = legacy._check_artifact(attempt / name, artifacts[role])
             if error:
                 diagnostics.append(_diagnostic("error", f"ase_md.artifact_{role}", error))
 
@@ -337,7 +337,7 @@ def _check_npt(
         diagnostics.append(_diagnostic("error", "ase_md.thermo", thermo_error))
 
     try:
-        report = legacy._read_bounded_json(attempt / "cluster-run-report.json")
+        report = legacy._read_json(attempt / "cluster-run-report.json")
     except Exception as exc:
         diagnostics.append(
             _diagnostic(

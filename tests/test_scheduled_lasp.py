@@ -12,10 +12,9 @@ from pathlib import Path
 from mlipflow.config import load_project
 from mlipflow.services import initialize, make_run_plan
 from mlipflow.services.contracts import _scheduled_contract
-from mlipflow.plugins import discover_plugins
 
 from .helpers import project_config, write_json
-from .test_scheduled_dft import FakeTemplateLibrary, PLUGINS, write_site
+from .test_scheduled_dft import FakeTemplateLibrary, write_site
 
 ROOT = Path(__file__).resolve().parents[1]
 PES = ROOT / "plugins" / "pes-sampling"
@@ -96,7 +95,7 @@ def build_project(root: Path) -> Path:
             [
                 {
                     "id": "lasp-walk",
-                    "uses": "pes-sampling@0",
+                    "uses": "pes-sampling",
                     "mode": "execute",
                     "backend": "ssh-slurm",
                     "backend_profile": "cluster-a",
@@ -163,7 +162,7 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_make_run_plan_produces_lasp_scheduled_contract(self) -> None:
-        plan = make_run_plan(self.project, "lasp-walk", PLUGINS, self.site, library())
+        plan = make_run_plan(self.project, "lasp-walk", self.site, library())
         adapter = plan["adapter_plan"]
         self.assertEqual("READY", adapter["status"], adapter.get("diagnostics"))
         scheduled = adapter["scheduled_execution"]
@@ -174,8 +173,7 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         staged = {item["remote_name"] for item in scheduled["staged_files"]}
         self.assertTrue({"project.yaml", "input.arc", "lasp.in", "lasp-input-manifest.json", "POTCAR", "fixture.pot", "lasp_ssw.py", "lasp_cluster.py"}.issubset(staged))
         staged_records = {item["remote_name"]: item for item in scheduled["staged_files"]}
-        self.assertTrue(staged_records["POTCAR"]["sensitive"])
-        self.assertFalse(staged_records["POTCAR"]["fetch_allowed"])
+        self.assertTrue(Path(staged_records["POTCAR"]["source"]).is_file())
         self.assertEqual("vasp", adapter["lasp_calculation"]["potential"])
         self.assertEqual(
             "fixture-pbe54-plain-v1",
@@ -190,9 +188,10 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         self.assertNotIn("POTCAR", fetched)
 
     def test_core_accepts_the_lasp_scheduled_execution(self) -> None:
-        plan = make_run_plan(self.project, "lasp-walk", PLUGINS, self.site, library())
-        plugin = discover_plugins(PLUGINS)["pes-sampling"]
-        contract = _scheduled_contract(self.project, plugin, plan, node_id="lasp-walk", attempt=1)
+        plan = make_run_plan(self.project, "lasp-walk", self.site, library())
+        contract = _scheduled_contract(
+            self.project, "pes-sampling", plan, node_id="lasp-walk", attempt=1
+        )
         self.assertEqual(3, contract["schema_version"])
         self.assertEqual("mpi", contract["execution_model"])
         self.assertEqual("lasp-ssw", contract["template_family"])
@@ -201,7 +200,7 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         self.assertIn("selected-structures.tar.gz", names)
 
     def test_pseudopotential_check_ignores_site_local_path_prefixes(self) -> None:
-        plan = make_run_plan(self.project, "lasp-walk", PLUGINS, self.site, library())
+        plan = make_run_plan(self.project, "lasp-walk", self.site, library())
         approved = plan["adapter_plan"]["lasp_calculation"]["pseudopotential"]
         reported = json.loads(json.dumps(approved))
         reported["reference_path"] = "/remote/input/pseudopotentials.json"
@@ -227,7 +226,7 @@ class ScheduledLaspPlanTests(unittest.TestCase):
             write_json(root / "project.yaml", project)
             initialize(root)
             current = load_project(root)
-            plan = make_run_plan(current, "lasp-walk", PLUGINS, site, library())
+            plan = make_run_plan(current, "lasp-walk", site, library())
             self.assertEqual("BLOCKED", plan["adapter_plan"]["status"])
             codes = {item["code"] for item in plan["adapter_plan"]["diagnostics"]}
             self.assertIn("input.unknown", codes)

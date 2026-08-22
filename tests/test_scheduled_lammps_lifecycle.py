@@ -12,7 +12,7 @@ from mlipflow.config import load_project
 from mlipflow.services import advance, initialize, make_advance_plan, make_run_plan, run_node
 
 from .helpers import project_config, write_json
-from .test_scheduled_dft import PLUGINS, FakeTemplateLibrary, write_site
+from .test_scheduled_dft import FakeTemplateLibrary, write_site
 
 
 RUN_TEMPLATE = """#!/usr/bin/env bash
@@ -96,7 +96,7 @@ def _build_project(root: Path) -> Path:
     _prepared(root)
     node = {
         "id": "lammps-run",
-        "uses": "lammps-md@0",
+        "uses": "lammps-md",
         "mode": "execute",
         "backend": "ssh-slurm",
         "backend_profile": "cluster-a",
@@ -220,7 +220,7 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
         )
 
     def test_submit_completed_fetch_and_check(self) -> None:
-        plan = make_run_plan(self.project, "lammps-run", PLUGINS, self.site, _library())
+        plan = make_run_plan(self.project, "lammps-run", self.site, _library())
         self.assertEqual(plan["adapter_plan"]["status"], "READY")
         calculation = plan["adapter_plan"]["lammps_calculation"]
 
@@ -234,7 +234,6 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
             run_node(
                 self.project,
                 "lammps-run",
-                PLUGINS,
                 True,
                 self.site,
                 _library(),
@@ -251,7 +250,7 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
             autospec=True,
             side_effect=self._inspect,
         ):
-            approved = make_advance_plan(self.project, PLUGINS)
+            approved = make_advance_plan(self.project)
         self.assertEqual(approved["details"]["transitions"][0]["action"], "adapter-finalize")
         self.assertFalse((attempt / "lammps-execution-result.json").exists())
 
@@ -267,7 +266,7 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
             autospec=True,
             side_effect=self._fetch,
         ):
-            outcome = advance(self.project, PLUGINS)
+            outcome = advance(self.project)
 
         self.assertEqual(outcome["changed"][0]["state"], "OK", outcome)
         self.assertTrue((attempt / "lammps-execution-result.json").is_file())

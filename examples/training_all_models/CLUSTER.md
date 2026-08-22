@@ -30,7 +30,7 @@ collected canonical artifact and declare the shared split:
 
 ```yaml
 - id: assemble-datasets
-  uses: dft-labeling@0
+  uses: dft-labeling
   needs: [label-dft]
   backend: ssh-slurm
   backend_profile: cluster-a
@@ -75,7 +75,7 @@ A scheduled MACE fine-tune node, for example, is shaped like this:
 
 ```yaml
 - id: finetune-mace
-  uses: mlip-training@0
+  uses: mlip-training
   mode: execute
   backend: ssh-slurm
   backend_profile: cluster-a
@@ -101,7 +101,7 @@ The same outer contract works for `deepmd`, `m3gnet`, `chgnet`, and `mace`, and 
 
 ## Scheduler lifecycle
 
-The generic path emits `scheduled_execution schema_version=3` with `execution_model: single-python`. MLIPFlow core stages the small approved files and bundled runner, renders the site-owned `slurm/single-python/{cpu,gpu}.sbatch` plus `mlip-<framework>/run.sh`, submits, polls, then inventories and verifies the bounded remote outputs as a continuation of the approved run.
+The scheduled path emits `scheduled_execution schema_version=3` with `execution_model: single-python`. MLIPFlow core stages the small approved files and bundled runner, renders the site-owned `slurm/single-python/{cpu,gpu}.sbatch` plus `mlip-<framework>/run.sh`, submits, polls, then fetches and verifies the declared remote outputs as a continuation of the approved run.
 
 Training is one Python process. `resources.cpus` is its thread budget, so the Slurm template must use `--ntasks=1` and `--cpus-per-task={{CPUS}}`. Mapping `CPUS` to `--ntasks` is rejected before staging.
 

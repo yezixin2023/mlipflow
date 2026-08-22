@@ -393,18 +393,32 @@ def test_core_hands_all_preserved_dependency_attempts_to_transport(tmp_path: Pat
     first_dir.mkdir(parents=True)
     first_trajectory = first_dir / "trajectory.traj"
     first_trajectory.write_bytes(b"segment-1")
+    (first_dir / "run-manifest.json").write_text(
+        json.dumps(
+            {"artifacts": [{"role": "trajectory", "uri": str(first_trajectory)}]}
+        ),
+        encoding="utf-8",
+    )
     with StateStore(state_path(project), readonly=False) as store:
         store.initialize_project(project.project_id, nodes)
         first = store.latest_step(project.project_id, "md")
-        store.add_artifact(first.run_id, "trajectory", str(first_trajectory))
         store.transition(first.run_id, RunState.RUNNING)
         store.transition(first.run_id, RunState.FAIL)
-        second = store.create_retry(project.project_id, "md")
+        second = store.create_retry(project.project_id, "md", "local")
         second_dir = attempt_directory(project, "md", 2)
         second_dir.mkdir(parents=True)
         second_trajectory = second_dir / "trajectory.traj"
         second_trajectory.write_bytes(b"segment-2")
-        store.add_artifact(second.run_id, "trajectory", str(second_trajectory))
+        (second_dir / "run-manifest.json").write_text(
+            json.dumps(
+                {
+                    "artifacts": [
+                        {"role": "trajectory", "uri": str(second_trajectory)}
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
         store.transition(second.run_id, RunState.RUNNING)
         store.transition(second.run_id, RunState.OK)
 
@@ -441,17 +455,39 @@ def test_core_hands_only_final_ok_aimd_attempt_to_transport(tmp_path: Path) -> N
         failed_trajectory = failed_dir / "calc-0001" / "vasprun.xml"
         failed_trajectory.parent.mkdir(parents=True)
         failed_trajectory.write_text("<modeling/>", encoding="utf-8")
-        store.add_artifact(failed.run_id, "aimd-trajectory", str(failed_trajectory))
+        (failed_dir / "run-manifest.json").write_text(
+            json.dumps(
+                {
+                    "artifacts": [
+                        {
+                            "role": "aimd-trajectory",
+                            "uri": str(failed_trajectory),
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
         store.transition(failed.run_id, RunState.RUNNING)
         store.transition(failed.run_id, RunState.FAIL)
 
-        completed = store.create_retry(project.project_id, "aimd")
+        completed = store.create_retry(project.project_id, "aimd", "ssh-slurm")
         completed_dir = attempt_directory(project, "aimd", 2)
         completed_trajectory = completed_dir / "calc-0001" / "vasprun.xml"
         completed_trajectory.parent.mkdir(parents=True)
         completed_trajectory.write_text("<modeling/>", encoding="utf-8")
-        store.add_artifact(
-            completed.run_id, "aimd-trajectory", str(completed_trajectory)
+        (completed_dir / "run-manifest.json").write_text(
+            json.dumps(
+                {
+                    "artifacts": [
+                        {
+                            "role": "aimd-trajectory",
+                            "uri": str(completed_trajectory),
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
         )
         store.transition(completed.run_id, RunState.RUNNING)
         store.transition(completed.run_id, RunState.OK)

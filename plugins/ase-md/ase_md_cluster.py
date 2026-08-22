@@ -137,8 +137,7 @@ def run(args: argparse.Namespace) -> int:
     report: dict[str, Any] = {"schema_version": 1, "status": "FAIL", "node_id": args.node_id}
     try:
         node = _project_node(Path(args.project).expanduser().resolve(), args.node_id)
-        uses = str(node.get("uses", "")).split("@", 1)[0]
-        if uses != "ase-md":
+        if node.get("uses") != "ase-md":
             raise ValueError("scheduled node does not use ase-md")
         if node.get("backend") != "ssh-slurm":
             raise ValueError("scheduled ASE MD requires backend ssh-slurm")

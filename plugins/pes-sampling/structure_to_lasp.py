@@ -49,8 +49,8 @@ def _minimum_distance(atoms: Any) -> float | None:
 
 
 def _pseudopotential_reference(path: Path) -> dict[str, Any]:
-    if path.is_symlink() or not path.is_file():
-        raise ConversionError("pseudopotential reference must be an ordinary file")
+    if not path.is_file():
+        raise ConversionError("pseudopotential reference must be a file")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -180,8 +180,8 @@ def _prepare_potcar(
 
 def run(args: argparse.Namespace, api: PymatgenApi | None = None) -> dict[str, Any]:
     source = Path(args.input_structure).expanduser().absolute()
-    if source.is_symlink() or not source.is_file():
-        raise ConversionError("input structure must be an ordinary file")
+    if not source.is_file():
+        raise ConversionError("input structure must be a file")
     source = source.resolve()
     output_dir = _fresh_directory(Path(args.output_dir))
 
@@ -218,8 +218,6 @@ def run(args: argparse.Namespace, api: PymatgenApi | None = None) -> dict[str, A
     potcar = None
     if args.pseudopotential_reference is not None:
         reference_path = Path(args.pseudopotential_reference).expanduser().absolute()
-        if reference_path.is_symlink():
-            raise ConversionError("pseudopotential reference must be an ordinary file")
         reference_path = reference_path.resolve()
         potcar = _prepare_potcar(atoms, reference_path, output_dir, api=api)
     manifest = {

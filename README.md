@@ -1,9 +1,9 @@
 <p align="center">
   <img src="docs/assets/mlipflow-logo.png" alt="MLIPFlow logo" width="500">
 </p>
-<p align="center"><strong>Deterministic, auditable workflows for machine-learned interatomic-potential research.</strong></p>
+<p align="center"><strong>Deterministic workflows for machine-learned interatomic-potential research.</strong></p>
 
-MLIPFlow connects structure generation, sampling, DFT labeling, dataset assembly, MLIP training, molecular dynamics, benchmarking, active learning, transport analysis, and candidate selection in one versioned workflow. Plans, approvals, attempts, artifacts, checks, and provenance remain inspectable across local machines and Slurm clusters.
+MLIPFlow connects structure generation, sampling, DFT labeling, dataset assembly, MLIP training, molecular dynamics, benchmarking, active learning, transport analysis, and candidate selection in one explicit workflow. Attempts, scheduler jobs, logs, and scientific results remain inspectable across local machines and Slurm clusters.
 
 MLIPFlow is a **workflow layer**, not a new interatomic-potential framework. Researchers choose the scientific codes, models, datasets, and numerical settings; MLIPFlow coordinates them without hiding execution boundaries or evidence.
 
@@ -14,10 +14,10 @@ MLIPFlow is a **workflow layer**, not a new interatomic-potential framework. Res
 - **Explicit research workflows:** scientific stages and dependencies live in `project.yaml`, not disconnected shell scripts.
 - **Review before execution:** dry runs expose commands, backends, resources, staged inputs, templates, and expected outputs before expensive work is approved.
 - **Immutable attempts:** retries create fresh attempts while prior results, logs, scheduler records, and failures remain available.
-- **Local and HPC execution:** plugins share one contract; private cluster details stay in user-owned site profiles and templates.
+- **Local and HPC execution:** built-in capability adapters support local and SSH-Slurm work; private cluster details stay in user-owned site profiles and templates.
 - **Verified handoff:** checked DFT labels, AIMD trajectories, model references, and restart-aware MD segments flow directly to downstream nodes.
 - **Evidence-based decisions:** routing, benchmarking, active-learning selection, and ranking consume machine-readable evidence rather than hard-coded model preferences.
-- **Optional agent supervision:** bundled Agent Skills help compatible agents plan and supervise work; deterministic scientific operations remain in plugins and external programs.
+- **Optional agent supervision:** bundled Agent Skills help compatible agents plan and supervise work; deterministic scientific operations remain in built-in adapters and external programs.
 
 ## Quick start
 
@@ -63,14 +63,14 @@ mlipflow --project mlipflow-replay-demo advance
 mlipflow --project mlipflow-replay-demo status
 ```
 
-The example consumes bundled manifests and does not launch an expensive scientific program. Other examples cover DFT-to-training data assembly, multi-framework training, ASE and LAMMPS MD, active learning, LASP/SSW, site templates, and AIMD-reference validation under [`examples/`](examples/).
+The example consumes bundled scientific results and does not launch an expensive scientific program. Other examples cover DFT-to-training data assembly, multi-framework training, ASE and LAMMPS MD, active learning, LASP/SSW, site templates, and AIMD-reference validation under [`examples/`](examples/).
 
 
 ## Scientific capabilities and Agent Skills
 
-Plugin manifests define deterministic operations, inputs, outputs, checks, backends, dependencies, and safety policy. MLIPFlow core owns replay and fresh-attempt retry semantics. Agent Skills provide supervision guidance; they do not replace numerical software or plugin code.
+MLIPFlow ships a fixed set of scientific capability adapters. Each adapter validates inputs, plans execution, checks scientific completion, and collects results. MLIPFlow core owns replay, DAG progression, and fresh-attempt retry semantics. Agent Skills provide supervision guidance; they do not replace numerical software or adapter code.
 
-| Research capability | Plugin | Agent Skill | Main scope | Execution |
+| Research capability | Capability ID | Agent Skill | Main scope | Execution |
 |---|---|---|---|---|
 | End-to-end workflow design | MLIPFlow core | `$mlip-workflow` | DAG construction, evidence handoff, approval boundaries, and supervision | Supervision |
 | High-entropy and SQS structures | `high-entropy-structure` | `$high-entropy-structure` | Seeded `icet` SQS generation with explicit composition and supercell contracts | Local |
@@ -85,11 +85,11 @@ Plugin manifests define deterministic operations, inputs, outputs, checks, backe
 | Candidate ranking | `candidate-ranking` | `$candidate-ranking` | Ranking and top-k selection of candidates according to user-defined quantitative metrics | Local |
 | Electrochemical voltage | `electrochemical-voltage` | — | Average Li intercalation voltage calculations between adjacent compositions, with support for replaying existing results | Local |
 
-The voltage plugin is orchestrated directly or through `$mlip-workflow`; it does not currently have a dedicated Agent Skill. Exact operations and limitations are defined by manifests under [`plugins/`](plugins/) and files under [`.agents/skills/`](.agents/skills/).
+The voltage capability is orchestrated directly or through `$mlip-workflow`; it does not currently have a dedicated Agent Skill. Implementations live under [`plugins/`](plugins/), while supervision guidance lives under [`.agents/skills/`](.agents/skills/). `mlipflow inspect NODE` reports the operations supported by a node's built-in capability.
 
 ## Environments and HPC
 
-Projects declare a named backend profile and abstract resources such as CPUs, GPUs, memory, and wall time. SSH aliases, partitions, accounts, modules, executables, launchers, canonical data/model roots, and remote work roots belong in the user-local site configuration, normally `~/.mlipflow/site.yaml`, and site-owned templates. This keeps `project.yaml` portable and private infrastructure out of research repositories.
+Projects declare an optional backend profile and abstract resources such as CPUs, GPUs, memory, and wall time. If the profile is omitted, MLIPFlow selects a suitable configured cluster. SSH aliases, partitions, accounts, modules, executables, launchers, canonical data/model roots, and remote work roots belong in the user-local site configuration, normally `~/.mlipflow/site.yaml`, and site-owned templates. This keeps private infrastructure out of research repositories.
 
 Review [`docs/CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md) and [`examples/site_templates/`](examples/site_templates/) before using a new cluster. Start with `mlipflow doctor`, inspect the dry-run plan, and validate a replay or bounded smoke case before scaling the same contract.
 
@@ -171,25 +171,25 @@ Without the `$mlip-training` prefix, a compatible agent may infer the appropriat
 
 | Command | Purpose |
 |---|---|
-| `mlipflow doctor` | Check project, plugin, dependency, and site configuration without mutation. |
+| `mlipflow doctor` | Check project, built-in capability, state, and site configuration without mutation. |
 | `mlipflow list`, `status`, `json` | Inspect workflow state in human- or machine-readable form. |
-| `mlipflow inspect NODE`, `logs NODE` | Review a node contract, attempts, diagnostics, and collected logs. |
-| `mlipflow run NODE --dry-run --audit` | Build the exact execution plan without launching work. |
+| `mlipflow inspect NODE`, `logs NODE` | Review a node, its capability, current state, diagnostics, and collected logs. |
+| `mlipflow run NODE --dry-run` | Build the execution plan without launching work. |
 | `mlipflow run NODE --approve` | Execute approval-gated work after reviewing the plan. |
-| `mlipflow advance` | Observe submitted work, fetch bounded outputs, run checks, and reconcile state; it never launches a new node. |
+| `mlipflow advance` | Observe submitted work, fetch declared outputs, run checks, and reconcile state; it never launches a new node. |
 | `mlipflow retry NODE`, `stop NODE` | Create a fresh attempt or explicitly stop supported running work. |
 | `mlipflow route ...` | Rank compatible models from versioned benchmark evidence and project policy. |
 
 A typical external or expensive node is operated as follows:
 
 ```bash
-mlipflow --project . run train-model --dry-run --audit
+mlipflow --project . run train-model --dry-run
 mlipflow --project . run train-model --approve
 mlipflow --project . advance
 mlipflow --project . status train-model
 ```
 
-Scheduler completion is not scientific success. A node reaches `OK` only after its plugin verifies declared outputs and completion criteria.
+Scheduler completion is not scientific success. A node reaches `OK` only after its capability adapter verifies declared outputs and completion criteria.
 
 ## Validation and documentation
 
@@ -197,12 +197,12 @@ Software implementation, workflow completion, numerical agreement, and real-clus
 
 Researchers remain responsible for validating DFT settings, models, datasets, simulation parameters, convergence, and uncertainty for their system.
 
-The [`documentation index`](docs/README.md) organizes user guidance, HPC setup, extension references, and manuscript-specific reproduction material. Core references include [`ARCHITECTURE.md`](docs/ARCHITECTURE.md), the bundled [Agent Skills](.agents/skills/), [`CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md), and [`PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md).
+The [`documentation index`](docs/README.md) organizes user guidance, HPC setup, and manuscript-specific reproduction material. Core references include [`ARCHITECTURE.md`](docs/ARCHITECTURE.md), the bundled [Agent Skills](.agents/skills/), and [`CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md).
 
 ## Contributing, security, and citation
 
-Contributions are welcome across the core, plugins, schemas, tests, examples, Agent Skills, and site templates. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Contributions are welcome across the core, built-in capabilities, schemas, tests, examples, Agent Skills, and site templates. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Report security issues according to [`SECURITY.md`](SECURITY.md). Do not commit credentials, private cluster details, licensed pseudopotentials, model weights, large trajectories, or unpublished data.
 
-MLIPFlow is licensed under the [Apache License 2.0](LICENSE). For published research, cite the software version or commit using [`CITATION.cff`](CITATION.cff), together with the scientific methods, datasets, models, and external codes used by the executed plugins.
+MLIPFlow is licensed under the [Apache License 2.0](LICENSE). For published research, cite the software version or commit using [`CITATION.cff`](CITATION.cff), together with the scientific methods, datasets, models, and external codes used by the executed capabilities.

@@ -2,7 +2,7 @@
 
 This executable never launches VASP or a scheduler.  It materializes inputs in a
 fresh MLIPFlow attempt, records exact provenance, and deliberately excludes
-POTCAR content from the portable result manifest.
+POTCAR content from the result manifest.
 """
 
 from __future__ import annotations
@@ -21,8 +21,6 @@ from typing import Any, Iterable, Mapping, NamedTuple
 
 PLUGIN_ID = "dft-labeling"
 OPERATION = "vasp-prepare"
-MAX_JSON_BYTES = 16 * 1024 * 1024
-MAX_STRUCTURE_BYTES = 64 * 1024 * 1024
 MAX_STRUCTURES = 10000
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SAFE_POTCAR_SYMBOL = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
@@ -88,26 +86,6 @@ class PymatgenApi(NamedTuple):
     configured_psp_root: str | None
 
 
-def _has_symlink_component(path: Path) -> bool:
-    absolute = path.absolute()
-    return any(candidate.is_symlink() for candidate in (absolute, *absolute.parents))
-
-
-def _has_symlink_below(path: Path, root: Path) -> bool:
-    candidate = path.expanduser().absolute()
-    base = root.expanduser().absolute()
-    try:
-        relative = candidate.relative_to(base)
-    except ValueError:
-        return True
-    current = base
-    for part in relative.parts:
-        current = current / part
-        if current.is_symlink():
-            return True
-    return False
-
-
 def _within(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -116,21 +94,15 @@ def _within(path: Path, root: Path) -> bool:
         return False
 
 
-def _ordinary_file(path: Path, label: str, max_bytes: int) -> Path:
-    unresolved = path.expanduser().absolute()
-    if unresolved.is_symlink():
-        raise ContractError(f"{label} must not contain symlink path components")
-    resolved = unresolved.resolve()
-    if not resolved.is_file():
-        raise ContractError(f"{label} must be an ordinary file")
-    size = resolved.stat().st_size
-    if size < 1 or size > max_bytes:
-        raise ContractError(f"{label} size must be between 1 and {max_bytes} bytes")
+def _ordinary_file(path: Path, label: str) -> Path:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file() or resolved.stat().st_size < 1:
+        raise ContractError(f"{label} must be a non-empty file")
     return resolved
 
 
-def _read_json(path: Path, label: str, max_bytes: int = MAX_JSON_BYTES) -> dict[str, Any]:
-    path = _ordinary_file(path, label, max_bytes)
+def _read_json(path: Path, label: str) -> dict[str, Any]:
+    path = _ordinary_file(path, label)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -154,7 +126,7 @@ def _safe_relative(value: Any, label: str) -> Path:
     return path
 
 
-def _portable_id(value: Any, label: str) -> str:
+def _safe_id(value: Any, label: str) -> str:
     if not isinstance(value, str) or not SAFE_ID.fullmatch(value):
         raise ContractError(f"{label} must match {SAFE_ID.pattern}")
     return value
@@ -365,7 +337,7 @@ def _structure_records(
         if not isinstance(item, Mapping):
             raise ContractError(f"structure record {index} must be an object")
         structure_id = item.get("id", item.get("structure_id"))
-        structure_id = _portable_id(structure_id, f"structure record {index} id")
+        structure_id = _safe_id(structure_id, f"structure record {index} id")
         if structure_id in seen:
             raise ContractError(f"duplicate structure id: {structure_id}")
         seen.add(structure_id)
@@ -379,7 +351,7 @@ def _structure_records(
         source = source.resolve()
         if not source.exists():
             raise ContractError(f"structure {structure_id} file does not exist: {source}")
-        source = _ordinary_file(source, f"structure {structure_id}", MAX_STRUCTURE_BYTES)
+        source = _ordinary_file(source, f"structure {structure_id}")
         if not os.access(source, os.R_OK):
             raise ContractError(f"structure {structure_id} must be readable")
         records.append(
@@ -434,10 +406,10 @@ def _potcar_component_records(potcar: Iterable[Any], symbols: list[str]) -> list
 
 
 def _file_record(
-    portable_path: Path, media_type: str, collectable: bool
+    relative_path: Path, media_type: str, collectable: bool
 ) -> dict[str, Any]:
     return {
-        "path": portable_path.as_posix(),
+        "path": relative_path.as_posix(),
         "media_type": media_type,
         "collectable": collectable,
     }
@@ -446,21 +418,18 @@ def _file_record(
 def prepare_inputs(args: argparse.Namespace, api: PymatgenApi | None = None) -> dict[str, Any]:
     project_root = Path(args.project_root).expanduser().absolute().resolve()
     attempt_dir = Path(args.attempt_dir).expanduser().absolute()
-    if attempt_dir.is_symlink() or not attempt_dir.is_dir():
-        raise ContractError("attempt_dir must be an existing ordinary directory")
+    if not attempt_dir.is_dir():
+        raise ContractError("attempt_dir must be an existing directory")
     attempt_dir = attempt_dir.resolve()
     if not _within(attempt_dir, project_root):
         raise ContractError("attempt_dir must remain inside project_root")
     output_relative = _safe_relative(args.output_subdir, "output_subdir")
     output_dir = (attempt_dir / output_relative).absolute()
-    if _has_symlink_below(output_dir, attempt_dir) or not _within(
-        output_dir.parent.resolve(), attempt_dir
-    ):
-        raise ContractError("output_subdir must remain inside attempt_dir without symlinks")
+    if not _within(output_dir.parent.resolve(), attempt_dir):
+        raise ContractError("output_subdir must remain inside attempt_dir")
     result_path = Path(args.result_manifest).expanduser().absolute()
     if (
-        _has_symlink_below(result_path, attempt_dir)
-        or not _within(result_path.parent.resolve(), attempt_dir)
+        not _within(result_path.parent.resolve(), attempt_dir)
         or result_path.parent.resolve() != attempt_dir
     ):
         raise ContractError("result_manifest must be a direct child of attempt_dir")
@@ -472,19 +441,17 @@ def prepare_inputs(args: argparse.Namespace, api: PymatgenApi | None = None) -> 
     if max_structures > MAX_STRUCTURES:
         raise ContractError(f"max_structures must not exceed {MAX_STRUCTURES}")
 
-    structures_path = _ordinary_file(
-        Path(args.structures_manifest), "structures_manifest", MAX_JSON_BYTES
-    )
-    labeling_path = _ordinary_file(Path(args.labeling_config), "labeling_config", MAX_JSON_BYTES)
+    structures_path = _ordinary_file(Path(args.structures_manifest), "structures_manifest")
+    labeling_path = _ordinary_file(Path(args.labeling_config), "labeling_config")
     pseudopotential_path = _ordinary_file(
-        Path(args.pseudopotential_reference), "pseudopotential_reference", MAX_JSON_BYTES
+        Path(args.pseudopotential_reference), "pseudopotential_reference"
     )
     for path, label in (
         (structures_path, "structures_manifest"),
         (labeling_path, "labeling_config"),
         (pseudopotential_path, "pseudopotential_reference"),
     ):
-        if _has_symlink_below(path, project_root) or not _within(path, project_root):
+        if not _within(path, project_root):
             raise ContractError(f"{label} must remain inside project_root")
 
     structures_manifest = _read_json(structures_path, "structures_manifest")

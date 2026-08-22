@@ -38,14 +38,6 @@ MODEL_CONTRACTS = {
     ("m3gnet", "gnnp"): ("directory", "matgl-model-directory"),
     ("m3gnet", "m3gnet"): ("directory", "matgl-model-directory"),
 }
-MAX_JSON_BYTES = 16 * 1024 * 1024
-MAX_INPUT_BYTES = 256 * 1024 * 1024
-MAX_LOG_BYTES = 512 * 1024 * 1024
-MAX_TRAJECTORY_BYTES = 8 * 1024 * 1024 * 1024
-MAX_FINAL_DATA_BYTES = 2 * 1024 * 1024 * 1024
-MAX_RESTART_BYTES = 8 * 1024 * 1024 * 1024
-
-
 def _load_legacy():
     path = Path(__file__).resolve().with_name("adapter.py")
     spec = importlib.util.spec_from_file_location("_mlipflow_lammps_prepare_adapter", path)
@@ -81,12 +73,9 @@ def _plain(value: Any) -> bool:
     )
 
 
-def _ordinary_file(path: Path, max_bytes: int | None = None) -> bool:
+def _ordinary_file(path: Path) -> bool:
     try:
-        if path.is_symlink() or not path.is_file():
-            return False
-        size = path.stat().st_size
-        return size > 0 and (max_bytes is None or size <= max_bytes)
+        return path.is_file() and path.stat().st_size > 0
     except OSError:
         return False
 
@@ -115,32 +104,25 @@ def _project_file(root: Path, value: Any) -> Path:
     return candidate
 
 
-def _ordinary_project_file(path: Path, root: Path, max_bytes: int) -> bool:
+def _ordinary_project_file(path: Path, root: Path) -> bool:
     try:
-        if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= max_bytes:
-            return False
         path.resolve().relative_to(root.resolve())
-        current = path
-        while current != root:
-            if current.is_symlink():
-                return False
-            current = current.parent
-        return True
+        return path.is_file() and path.stat().st_size > 0
     except (OSError, ValueError):
         return False
 
 
 def _project_config(root: Path) -> Path:
     candidates = [root / name for name in ("project.yaml", "project.yml", "project.json")]
-    found = [path for path in candidates if path.is_file() and not path.is_symlink()]
+    found = [path for path in candidates if path.is_file()]
     if len(found) != 1:
         raise ValueError("project root must contain exactly one project.yaml/project.yml/project.json")
     return found[0]
 
 
-def _read_json(path: Path, max_bytes: int = MAX_JSON_BYTES) -> dict[str, Any]:
-    if not _ordinary_file(path, max_bytes):
-        raise ValueError(f"missing, unsafe or oversized JSON file: {path.name}")
+def _read_json(path: Path) -> dict[str, Any]:
+    if not _ordinary_file(path):
+        raise ValueError(f"missing or empty JSON file: {path.name}")
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"{path.name} must contain an object")
@@ -196,8 +178,6 @@ def _staged(path: Path, remote_name: str) -> dict[str, Any]:
     return {
         "source": str(path.absolute()),
         "remote_name": remote_name,
-        "sensitive": False,
-        "fetch_allowed": False,
     }
 
 
@@ -293,8 +273,8 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
         manifest_path = _project_file(root, inputs["lammps_input_manifest"])
     except ValueError as exc:
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": [_diagnostic("error", "lammps.project_inputs", str(exc))]}
-    if not _ordinary_project_file(project, root, MAX_JSON_BYTES) or not _ordinary_project_file(manifest_path, root, MAX_JSON_BYTES):
-        return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": [_diagnostic("error", "lammps.project_files", "project and prepared manifest must be ordinary bounded project files")]}
+    if not _ordinary_project_file(project, root) or not _ordinary_project_file(manifest_path, root):
+        return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": [_diagnostic("error", "lammps.project_files", "project and prepared manifest must be project files")]}
     try:
         manifest = _read_json(manifest_path)
         if (
@@ -346,8 +326,8 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
     for name in ("structure.data", selected_name):
         record = generated.get(name)
         path = prepared_dir / name
-        if record is None or not _ordinary_project_file(path, root, MAX_INPUT_BYTES):
-            diagnostics.append(_diagnostic("error", f"lammps.prepared_{name}", f"prepared file is missing or unsafe: {name}"))
+        if record is None or not _ordinary_project_file(path, root):
+            diagnostics.append(_diagnostic("error", f"lammps.prepared_{name}", f"prepared file is missing: {name}"))
             continue
         staged_inputs.append((name, path))
     if diagnostics:
@@ -375,17 +355,17 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
         _staged(cluster, "lammps_cluster.py"),
     ]
     fetch_outputs = [
-        {"remote_name": "lammps-execution-result.json", "remote_path": "output/lammps-execution-result.json", "local_name": "lammps-execution-result.json", "required": True, "max_bytes": MAX_JSON_BYTES, "role": "lammps-execution-result"},
-        {"remote_name": "trajectory.lammpstrj", "remote_path": "output/trajectory.lammpstrj", "local_name": "trajectory.lammpstrj", "required": True, "max_bytes": MAX_TRAJECTORY_BYTES, "role": "trajectory"},
-        {"remote_name": "final.data", "remote_path": "output/final.data", "local_name": "final.data", "required": True, "max_bytes": MAX_FINAL_DATA_BYTES, "role": "final-structure"},
-        {"remote_name": "final.restart", "remote_path": "output/final.restart", "local_name": "final.restart", "required": True, "max_bytes": MAX_RESTART_BYTES, "role": "lammps-restart"},
-        {"remote_name": "lammps.log", "remote_path": "output/lammps.log", "local_name": "lammps.log", "required": True, "max_bytes": MAX_LOG_BYTES, "role": "lammps-log"},
-        {"remote_name": "lammps.screen.log", "remote_path": "output/lammps.screen.log", "local_name": "lammps.screen.log", "required": True, "max_bytes": MAX_LOG_BYTES, "role": "lammps-log"},
-        {"remote_name": "cluster-run-report.json", "remote_path": "output/cluster-run-report.json", "local_name": "cluster-run-report.json", "required": True, "max_bytes": MAX_JSON_BYTES, "role": "cluster-run-report"},
-        {"remote_name": "lammps.stdout.log", "remote_path": "output/lammps.stdout.log", "local_name": "lammps.stdout.log", "required": False, "max_bytes": MAX_LOG_BYTES, "role": "lammps-log"},
-        {"remote_name": "lammps.stderr.log", "remote_path": "output/lammps.stderr.log", "local_name": "lammps.stderr.log", "required": False, "max_bytes": MAX_LOG_BYTES, "role": "lammps-log"},
-        {"remote_name": "runner.stdout.log", "remote_path": "logs/lammps-runner.stdout.log", "local_name": "runner.stdout.log", "required": False, "max_bytes": MAX_LOG_BYTES, "role": "runner-log"},
-        {"remote_name": "runner.stderr.log", "remote_path": "logs/lammps-runner.stderr.log", "local_name": "runner.stderr.log", "required": False, "max_bytes": MAX_LOG_BYTES, "role": "runner-log"},
+        {"remote_name": "lammps-execution-result.json", "remote_path": "output/lammps-execution-result.json", "local_name": "lammps-execution-result.json", "required": True, "role": "lammps-execution-result"},
+        {"remote_name": "trajectory.lammpstrj", "remote_path": "output/trajectory.lammpstrj", "local_name": "trajectory.lammpstrj", "required": True, "role": "trajectory"},
+        {"remote_name": "final.data", "remote_path": "output/final.data", "local_name": "final.data", "required": True, "role": "final-structure"},
+        {"remote_name": "final.restart", "remote_path": "output/final.restart", "local_name": "final.restart", "required": True, "role": "lammps-restart"},
+        {"remote_name": "lammps.log", "remote_path": "output/lammps.log", "local_name": "lammps.log", "required": True, "role": "lammps-log"},
+        {"remote_name": "lammps.screen.log", "remote_path": "output/lammps.screen.log", "local_name": "lammps.screen.log", "required": True, "role": "lammps-log"},
+        {"remote_name": "cluster-run-report.json", "remote_path": "output/cluster-run-report.json", "local_name": "cluster-run-report.json", "required": True, "role": "cluster-run-report"},
+        {"remote_name": "lammps.stdout.log", "remote_path": "output/lammps.stdout.log", "local_name": "lammps.stdout.log", "required": False, "role": "lammps-log"},
+        {"remote_name": "lammps.stderr.log", "remote_path": "output/lammps.stderr.log", "local_name": "lammps.stderr.log", "required": False, "role": "lammps-log"},
+        {"remote_name": "runner.stdout.log", "remote_path": "logs/lammps-runner.stdout.log", "local_name": "runner.stdout.log", "required": False, "role": "runner-log"},
+        {"remote_name": "runner.stderr.log", "remote_path": "logs/lammps-runner.stderr.log", "local_name": "runner.stderr.log", "required": False, "role": "runner-log"},
     ]
     calculation = {
         "framework": framework,
@@ -498,16 +478,16 @@ def _artifact_records(raw: Any) -> dict[str, dict[str, Any]]:
     return records
 
 
-def _check_artifact(path: Path, record: dict[str, Any], limit: int) -> str | None:
-    if not _ordinary_file(path, limit):
-        return f"artifact is missing, unsafe or oversized: {path.name}"
+def _check_artifact(path: Path, record: dict[str, Any]) -> str | None:
+    if not _ordinary_file(path):
+        return f"artifact is missing or empty: {path.name}"
     if record.get("path") != path.name:
         return f"artifact record differs for {path.name}"
     return None
 
 
 def _log_has_marker(path: Path, marker: str) -> bool:
-    if not _ordinary_file(path, MAX_LOG_BYTES):
+    if not _ordinary_file(path):
         return False
     needle = marker.encode("utf-8")
     with path.open("rb") as stream:
@@ -565,18 +545,18 @@ def _check_execute(context: dict[str, Any]) -> tuple[list[dict[str, str]], dict[
         diagnostics.append(_diagnostic("error", "lammps.artifacts", str(exc)))
         artifacts = {}
     required = {
-        "trajectory.lammpstrj": MAX_TRAJECTORY_BYTES,
-        "final.data": MAX_FINAL_DATA_BYTES,
-        "final.restart": MAX_RESTART_BYTES,
-        "lammps.log": MAX_LOG_BYTES,
-        "lammps.screen.log": MAX_LOG_BYTES,
+        "trajectory.lammpstrj",
+        "final.data",
+        "final.restart",
+        "lammps.log",
+        "lammps.screen.log",
     }
-    optional = {"lammps.stdout.log": MAX_LOG_BYTES, "lammps.stderr.log": MAX_LOG_BYTES}
+    optional = {"lammps.stdout.log", "lammps.stderr.log"}
     if not set(required).issubset(artifacts) or not set(artifacts).issubset(set(required) | set(optional)):
         diagnostics.append(_diagnostic("error", "lammps.artifact_set", "execution result artifact set differs from contract"))
-    for name, limit in {**required, **optional}.items():
+    for name in required | optional:
         if name in artifacts:
-            error = _check_artifact(attempt / name, artifacts[name], limit)
+            error = _check_artifact(attempt / name, artifacts[name])
             if error:
                 diagnostics.append(_diagnostic("error", f"lammps.artifact_{name}", error))
     marker = str(calculation.get("completion_marker", ""))

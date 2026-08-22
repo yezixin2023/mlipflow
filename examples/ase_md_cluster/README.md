@@ -1,13 +1,13 @@
 # Scheduled ASE MD
 
-`ase-md@0` is the cluster-first ASE molecular-dynamics plugin. Version 0.3 runs a single-temperature NVT Langevin or isotropic MTK NPT trajectory with an explicit DeepMD, M3GNet/MatGL, CHGNet, or MACE model, and can continue that same trajectory across fresh scheduler attempts from an approved checkpoint.
+`ase-md` is the built-in cluster-first ASE molecular-dynamics capability. It runs a single-temperature NVT Langevin or isotropic MTK NPT trajectory with an explicit DeepMD, M3GNet/MatGL, CHGNet, or MACE model, and can continue that same trajectory across fresh scheduler attempts from an approved checkpoint.
 
 Supported ensembles:
 
 - `nvt-langevin`: fixed-cell Langevin NVT.
 - `npt-isotropic-mtk`: isotropic Martyna-Tobias-Klein NPT using ASE `IsotropicMTKNPT`.
 
-Version 0.3 still does not run NVE, anisotropic/full-cell NPT, replica exchange, fit diffusion, orchestrate a temperature series, or automatically concatenate trajectory segments.
+The current implementation does not run NVE, anisotropic/full-cell NPT, replica exchange, fit diffusion, orchestrate a temperature series, or automatically concatenate trajectory segments.
 
 ## Site templates
 
@@ -18,7 +18,7 @@ Copy `run.sh.example` into each calculator environment that you want to expose:
 - `<remote_template_root>/ase-md-chgnet/run.sh`
 - `<remote_template_root>/ase-md-mace/run.sh`
 
-Each family may activate a different module/conda environment. The site template owns the Python executable and `MODEL_ROOT`; the portable workflow never contains an SSH host, partition, module name, absolute model path, template root, or work root.
+Each family may activate a different module/conda environment. The site template owns the Python executable and `MODEL_ROOT`; the project never contains an SSH host, partition, module name, absolute model path, template root, or work root.
 
 ASE MD declares `execution_model: single-python`; install `slurm/single-python/cpu.sbatch` and/or `slurm/single-python/gpu.sbatch`. The CPU template must use `--ntasks=1` and `--cpus-per-task={{CPUS}}`, because `resources.cpus` is the thread budget of one Python process.
 
@@ -30,7 +30,7 @@ The project stores a small `model-reference.json` rather than uploading the mode
 
 ```yaml
 - id: md-900k-nvt
-  uses: ase-md@0
+  uses: ase-md
   mode: execute
   backend: ssh-slurm
   backend_profile: cluster-a
@@ -68,7 +68,7 @@ NVT checkpoints restore the atomic state plus the NumPy `PCG64` bit-generator st
 
 ```yaml
 - id: md-900k-npt
-  uses: ase-md@0
+  uses: ase-md
   mode: execute
   backend: ssh-slurm
   backend_profile: cluster-a
@@ -100,7 +100,7 @@ NVT checkpoints restore the atomic state plus the NumPy `PCG64` bit-generator st
     walltime: "24:00:00"
 ```
 
-NPT intentionally has no `friction_per_fs`. The target pressure and both damping times are explicit workflow inputs rather than inferred defaults. Version 0.3 pins the MTK thermostat/barostat chain lengths to 3/3 and chain integration substeps to 1/1; these values appear in approval/provenance.
+NPT intentionally has no `friction_per_fs`. The target pressure and both damping times are explicit workflow inputs rather than inferred defaults. The MTK thermostat/barostat chain lengths are 3/3 and chain integration substeps are 1/1; these values appear in the dry-run and scientific result.
 
 The initial structure must have a full-rank 3D periodic cell and no ASE constraints. The concrete loaded model must provide finite ASE stress. The compute-node runner performs a stress probe before fresh or restarted NPT dynamics and fails closed if the model cannot supply a finite 3x3 stress tensor.
 
@@ -112,7 +112,7 @@ When `checkpoint_interval` is set, the runner atomically replaces `output/md-che
 
 The checkpoint binds:
 
-- plugin/checkpoint schema and exact ASE version;
+- checkpoint format and exact ASE version;
 - calculator, ensemble, model ID/path and original structure path;
 - total requested steps, completed global step, timestep, temperature and seed;
 - device/dtype and ensemble-specific friction or NPT pressure/damping/chain settings;
@@ -151,6 +151,6 @@ The producer does not concatenate segments into a replacement file. Keep all att
 
 The submission approval summary exposes total simulated time, current segment start/remaining steps, exact output schedules, checkpoint path, structure/model paths, device, abstract resources, and ensemble-specific settings. NPT additionally exposes target pressure, thermostat/barostat damping, stress requirement, isotropic cell mode, no-constraints requirement, and fixed chain configuration.
 
-After Slurm reports `COMPLETED`, use the normal second `advance` approval so MLIPFlow inventories and fetches only bounded declared outputs and runs the scientific checker.
+After Slurm reports `COMPLETED`, run `advance` so MLIPFlow inventories and fetches the declared outputs and runs the scientific checker.
 
 A successful checkpoint-enabled attempt fetches `trajectory.traj`, `trajectory-index.json`, `thermo.csv`, `md-checkpoint.json`, `final.extxyz`, `md-result.json`, and `cluster-run-report.json`. The checker verifies completed total steps, segment frame/thermo schedules, finite thermodynamic values, the recorded model/structure paths, and checkpoint scientific parameters. NPT thermo additionally checks `pressure_GPa`, positive volume, and positive cell lengths. Scheduler exit code alone is never accepted as scientific success.

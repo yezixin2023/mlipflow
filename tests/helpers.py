@@ -14,24 +14,6 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def plugin_manifest(plugin_id: str = "demo") -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "id": plugin_id,
-        "version": "1.0.0",
-        "api_version": 1,
-        "description": "Test-only replay plugin",
-        "implementation": {"kind": "replay-only", "entrypoint": "adapter.py:Adapter"},
-        "input_schema": {"type": "object"},
-        "parameter_schema": {"type": "object"},
-        "output_schema": {"type": "object"},
-        "metrics_schema": {"type": "object"},
-        "dependencies": {"python": [], "executables": []},
-        "execution": {"backends": ["local"], "cost_class": "low"},
-        "completion": {"requires_scheduler_success": False},
-    }
-
-
 def project_config(nodes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {
         "schema_version": 1,
