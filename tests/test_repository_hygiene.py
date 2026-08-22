@@ -100,7 +100,7 @@ class RepositoryHygieneTests(unittest.TestCase):
                 ROOT / "examples" / "high_entropy_sulfide_reproduction",
                 {".py", ".md", ".yaml", ".json", ".csv"},
             ),
-            (ROOT / "reports", {".md", ".json"}),
+            (ROOT / "examples" / "site_templates", {".md", ".example"}),
         ):
             publishable.update(
                 path.relative_to(ROOT).as_posix()

@@ -58,7 +58,7 @@ ASE is mandatory when parsing `trajectory.traj`, `production.traj`, or running `
 
 Collected restart attempts from one MD node form one logical trajectory. Order segments by their global MD step, verify compatible temperature/timestep/species/model/structure identities, and remove a repeated restart-boundary frame. Do not ask the user to concatenate attempts. Multiple completed ASE and LAMMPS nodes, including an explicit mixture, may feed one multi-temperature Arrhenius analysis.
 
-Always require an explicit mobile `specie`, positive temperature, reviewed analysis window, smoothing mode, `min_obs`, `avg_nsteps`, `step_skip`, and physical timestep source. Never infer scientific parameters from typical values.
+Always require an explicit mobile `specie`, at least one non-mobile framework atom for trajectory-based `DiffusionAnalyzer`, positive temperature, reviewed analysis window, smoothing mode, `min_obs`, `avg_nsteps`, `step_skip`, and physical timestep source. All-mobile elemental trajectories must fail explicitly; do not invent a self-diffusion or drift-correction fallback. Never infer scientific parameters from typical values.
 
 For MSD-only inputs, require explicit time/MSD units. A real supplied Structure enables `get_conversion_factor`; without one, report D normally and conductivity as unavailable. Do not substitute literal carrier count/volume inputs or a private NE formula. Strict temperature directory names such as `T800`, `800K`, or `temp_800K` are declarations; mixed-token and bare-number directory guesses are not accepted.
 

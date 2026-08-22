@@ -423,6 +423,11 @@ def diffusion_analyzer_from_structures(
         continuous_frac = np.asarray(continuous_frac, dtype=float)[::step_skip]
     if len(structures) < 2:
         raise ValueError("DiffusionAnalyzer needs at least two structures after step skipping")
+    if not any(site.specie.symbol != specie for site in structures[0]):
+        raise ValueError(
+            "pymatgen DiffusionAnalyzer trajectory analysis requires at least one "
+            f"non-{specie} framework atom"
+        )
 
     smoothed = diffusion_analyzer_smoothed_arg(args)
     analyzer_kwargs = {

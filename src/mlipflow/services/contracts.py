@@ -39,7 +39,10 @@ def _safe_remote_relative(value: Any) -> bool:
     if not isinstance(value, str) or not value or value.endswith("/"):
         return False
     segments = value.split("/")
-    return all(_SAFE_REMOTE_NAME.fullmatch(segment) for segment in segments)
+    return all(
+        segment == ".mlipflow" or _SAFE_REMOTE_NAME.fullmatch(segment)
+        for segment in segments
+    )
 
 
 def _portable_roots(

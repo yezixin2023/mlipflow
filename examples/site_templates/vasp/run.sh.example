@@ -1,0 +1,72 @@
+#!/bin/bash
+# Install as <remote_template_root>/vasp/run.sh.
+# Add site module/environment setup here.
+set -u
+
+run_dir="{{RUN_DIR}}"
+input_dir="{{INPUT_DIR}}"
+output_dir="{{OUTPUT_DIR}}"
+log_dir="{{LOG_DIR}}"
+project_id="{{PROJECT_ID}}"
+node_id="{{NODE_ID}}"
+attempt=$((10#{{ATTEMPT}}))
+
+VASP_BIN="/ABS/PATH/TO/vasp_std"
+MPI_LAUNCHER=(mpirun -np)
+ranks="${SLURM_NTASKS:-{{CPUS}}}"
+
+manifest="${input_dir}/dft-input-manifest.json"
+count=$(sed -n 's/.*"structure_count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "${manifest}" | head -1)
+if [ -z "${count}" ]; then
+    echo "cannot read structure_count from ${manifest}" >&2
+    count=0
+fi
+
+overall=0
+records=""
+index=1
+while [ "${index}" -le "${count}" ]; do
+    calc_id=$(printf 'calc-%04d' "${index}")
+    calc_in="${input_dir}/${calc_id}"
+    calc_out="${output_dir}/${calc_id}"
+    work="${run_dir}/work/${calc_id}"
+    mkdir -p "${calc_out}" "${work}"
+
+    rc=1
+    if cp "${calc_in}/POSCAR" "${calc_in}/INCAR" "${calc_in}/KPOINTS" "${calc_in}/POTCAR" "${work}/" 2>/dev/null; then
+        (
+            cd "${work}" || exit 1
+            "${MPI_LAUNCHER[@]}" "${ranks}" "${VASP_BIN}"
+        ) > "${log_dir}/${calc_id}.stdout" 2> "${log_dir}/${calc_id}.stderr"
+        rc=$?
+        for name in OUTCAR OSZICAR vasprun.xml CONTCAR XDATCAR; do
+            if [ -f "${work}/${name}" ]; then
+                cp "${work}/${name}" "${calc_out}/"
+            fi
+        done
+    else
+        echo "${calc_id}: could not stage the four VASP inputs" >&2
+    fi
+
+    if [ "${rc}" -ne 0 ]; then overall=1; fi
+    if [ -n "${records}" ]; then records="${records},"; fi
+    records="${records}"$'\n'"    {\"id\": \"${calc_id}\", \"exit_code\": ${rc}}"
+    index=$((index + 1))
+done
+
+if [ "${count}" -eq 0 ]; then overall=1; fi
+status="FAILED"
+if [ "${overall}" -eq 0 ]; then status="COMPLETED"; fi
+cat > "${run_dir}/completion.json" <<COMPLETION
+{
+  "schema_version": 1,
+  "status": "${status}",
+  "exit_code": ${overall},
+  "project_id": "${project_id}",
+  "node_id": "${node_id}",
+  "attempt": ${attempt},
+  "calculations": [${records}
+  ]
+}
+COMPLETION
+exit ${overall}

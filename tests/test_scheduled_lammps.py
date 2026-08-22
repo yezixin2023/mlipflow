@@ -186,6 +186,41 @@ def test_cpu_rejects_gpu_allocation(tmp_path: Path) -> None:
     assert any(item["code"] == "lammps.cpu_gpus" for item in plan["diagnostics"])
 
 
+def test_execute_accepts_resolved_project_scoped_manifest(tmp_path: Path) -> None:
+    module = _load("lammps_resolved_manifest", PLUGIN / "adapter_execute.py")
+    context = _context(tmp_path, "deepmd", "cpu")
+    context["inputs"]["lammps_input_manifest"] = str(
+        (tmp_path / "prepared" / "lammps-input-manifest.json").resolve()
+    )
+    plan = module.Adapter().plan(context)
+    assert plan["status"] == "READY", plan.get("diagnostics")
+    assert plan["lammps_calculation"]["input_manifest_path"] == (
+        "lammps-input-manifest.json"
+    )
+
+
+def test_execute_rejects_resolved_manifest_outside_project(tmp_path: Path) -> None:
+    module = _load("lammps_external_manifest", PLUGIN / "adapter_execute.py")
+    context = _context(tmp_path, "deepmd", "cpu")
+    outside = tmp_path.parent / "outside-lammps-input-manifest.json"
+    outside.write_text("{}\n", encoding="utf-8")
+    context["inputs"]["lammps_input_manifest"] = str(outside.resolve())
+    plan = module.Adapter().plan(context)
+    assert plan["status"] == "BLOCKED"
+    assert any(item["code"] == "lammps.project_inputs" for item in plan["diagnostics"])
+
+
+def test_remote_runner_accepts_collected_artifact_binding() -> None:
+    cluster = _load("lammps_cluster_binding", PLUGIN / "lammps_cluster.py")
+    binding = {
+        "from_node": "prepare-lammps",
+        "role": "lammps-input-manifest",
+    }
+    assert cluster._input_manifest_record(
+        {"lammps_input_manifest": binding}
+    ) == "lammps-input-manifest.json"
+
+
 @pytest.mark.parametrize("framework", ["mace", "m3gnet"])
 def test_single_gpu_frameworks_reject_two_gpus(tmp_path: Path, framework: str) -> None:
     module = _load(f"lammps_gpu_bound_{framework}", PLUGIN / "adapter_execute.py")

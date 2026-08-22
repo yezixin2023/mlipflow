@@ -114,14 +114,14 @@ def _pseudopotential_record(input_dir: Path) -> dict[str, Any]:
         raise ValueError("staged runtime-only POTCAR record is invalid")
     return {
         "reference_id": potcar.get("reference_id"),
-        "reference_path": reference_path,
+        "reference_path": Path(reference_path).name,
         "functional": potcar.get("functional"),
         "elements": elements,
         "symbols": symbols,
         "components": components,
         "configuration_source": potcar.get("configuration_source"),
-        "manifest_path": str(manifest_path),
-        "potcar_path": str(potcar_path),
+        "manifest_path": manifest_path.name,
+        "potcar_path": potcar_path.name,
         "portable_or_collectable": False,
     }
 

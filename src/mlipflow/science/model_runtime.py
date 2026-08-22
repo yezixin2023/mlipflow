@@ -21,6 +21,13 @@ MODEL_FAMILIES = (
     "chgnet",
 )
 
+# Keep MODEL_FAMILIES as the stable historical replay catalog.  Fresh
+# inference additionally supports MACE without changing historical artifacts.
+FRESH_MODEL_FAMILIES = (
+    *MODEL_FAMILIES,
+    "mace",
+)
+
 MODEL_FAMILY_FRAMEWORKS = {
     "deepmd-se_e2_a": "deepmd",
     "deepmd-se_e2_r": "deepmd",
@@ -28,6 +35,7 @@ MODEL_FAMILY_FRAMEWORKS = {
     "deepmd-dpa2": "deepmd",
     "m3gnet": "m3gnet",
     "chgnet": "chgnet",
+    "mace": "mace",
 }
 
 MODEL_FAMILY_ALIASES = {
@@ -60,6 +68,7 @@ MODEL_FAMILY_ALIASES = {
         "deepmd-dpa2": ("deepmd-dpa2", "deepmd-dpa-2", "deepmd_dpa2", "dpa2", "dpa-2"),
         "m3gnet": ("m3gnet", "m3g-net"),
         "chgnet": ("chgnet", "chg-net"),
+        "mace": ("mace", "mace-torch"),
     }.items()
     for alias in aliases
 }
@@ -78,7 +87,7 @@ def canonical_model_family(value: Any) -> str:
     try:
         return MODEL_FAMILY_ALIASES[token]
     except KeyError as exc:
-        supported = ", ".join(MODEL_FAMILIES)
+        supported = ", ".join(FRESH_MODEL_FAMILIES)
         raise RuntimeCompatibilityError(
             f"unsupported or under-specified model {value!r}; supported exact names: {supported}"
         ) from exc
@@ -237,6 +246,27 @@ def load_inference_predictor(model: Path, family: str, device: str):
                 "framework": framework,
                 "framework_version": framework_version(framework),
                 "backend": "matgl.ext.ase.PESCalculator",
+                "device": device,
+                "exact_model_family": family,
+                "energy_convention": "total",
+                "stress_convention": "ase-voigt-xx-yy-zz-yz-xz-xy",
+            },
+        )
+    if framework == "mace":
+        try:
+            from mace.calculators import MACECalculator
+
+            calculator = MACECalculator(model_paths=str(model), device=device)
+        except ImportError as exc:
+            raise RuntimeCompatibilityError("MACE runtime is not installed") from exc
+        except Exception as exc:
+            raise RuntimeCompatibilityError(f"failed to load MACE model: {exc}") from exc
+        return ASECalculatorPredictor(
+            calculator,
+            {
+                "framework": framework,
+                "framework_version": framework_version(framework),
+                "backend": "mace.calculators.MACECalculator",
                 "device": device,
                 "exact_model_family": family,
                 "energy_convention": "total",

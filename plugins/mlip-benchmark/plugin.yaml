@@ -22,7 +22,7 @@
       "inventory://remote/MLP/M3Gnet/cal_test/cal.py"
     ],
     "limitations": [
-      "evaluate-fresh invokes bundled first-party DeepMD, MatGL/M3GNet, or CHGNet inference through explicit argv with shell=false; four DeepMD families share one runtime implementation.",
+      "evaluate-fresh invokes bundled first-party DeepMD, MatGL/M3GNet, CHGNet, or MACE inference through explicit argv with shell=false; four DeepMD families share one runtime implementation.",
       "evaluate-static and collect-existing retain the reviewed external-command/result-manifest contract; normalize-replay and normalize-execute invoke benchmark_wrapper.py through explicit argv with shell=false.",
       "Normalize execute mode recomputes MAE, RMSE, Pearson correlation, and—only for explicit N×3 force evidence—the maximum atomic L2 force error from supplied reference/prediction pairs; it is never labeled fresh.",
       "Replay imports historical metrics and never labels them as fresh numerical calculations.",
@@ -99,7 +99,7 @@
     "upstream_plugins": ["dft-labeling", "mlip-training"],
     "python_packages": [],
     "external_programs": [
-      {"name": "deepmd-kit, matgl, or chgnet runtime", "required": false, "bundled": false, "purpose": "Only the selected evaluate-fresh model family needs its lazily imported framework runtime."},
+      {"name": "deepmd-kit, matgl, chgnet, or mace-torch runtime", "required": false, "bundled": false, "purpose": "Only the selected evaluate-fresh model family needs its lazily imported framework runtime."},
       {"name": "user-configured model prediction wrapper", "required": false, "bundled": false, "purpose": "Used only by optional legacy evaluate-static."}
     ]
   },

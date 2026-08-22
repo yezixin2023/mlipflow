@@ -282,6 +282,11 @@ def _runtime_environment(torch, mace_source_version):
         values = [line.strip() for line in probe.stdout.splitlines() if line.strip()]
         if probe.returncode == 0 and values:
             driver_version = values[0]
+    gpu_model = (
+        torch.cuda.get_device_name(torch.cuda.current_device())
+        if torch.cuda.is_available()
+        else "unavailable"
+    )
     return {
         "compute_node": socket.gethostname(),
         "python_version": platform.python_version(),
@@ -290,7 +295,7 @@ def _runtime_environment(torch, mace_source_version):
         "torch_version": str(torch.__version__),
         "torch_cuda_version": str(torch.version.cuda),
         "cuda_driver_version": driver_version,
-        "gpu_model": torch.cuda.get_device_name(torch.cuda.current_device()),
+        "gpu_model": gpu_model,
     }
 
 

@@ -34,6 +34,7 @@ RESTART_STEP = re.compile(
     r"Current\s+(?:time\s*)?step(?:\s+number)?\s*(?:=|:)\s*([0-9]+)",
     re.IGNORECASE,
 )
+RESTART_STEP_MARKER = re.compile(r"MLIPFLOW_RESTART_STEP=([0-9]+)")
 
 
 def _attempt(value: str | None, output_dir: Path) -> int:
@@ -176,12 +177,36 @@ def _restart_step(executable: Path, options: list[str], candidate: Path) -> int 
         check=False,
         timeout=120,
     )
+    text = (completed.stdout + b"\n" + completed.stderr).decode(
+        "utf-8", errors="replace"
+    )
+    step = _parse_restart_step(text)
+    if completed.returncode == 0 and step is not None:
+        return step
+
+    # LAMMPS versions before -restart2info can still load their own binary
+    # restart and expose the saved global step through an equal-style variable.
+    probe = (
+        f'read_restart "{candidate}"\n'
+        "variable mlipflow_restart_step equal step\n"
+        'print "MLIPFLOW_RESTART_STEP=${mlipflow_restart_step}"\n'
+    ).encode("utf-8")
+    completed = subprocess.run(
+        [str(executable), *options, "-log", "none"],
+        input=probe,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+        check=False,
+        timeout=120,
+    )
     if completed.returncode != 0:
         return None
     text = (completed.stdout + b"\n" + completed.stderr).decode(
         "utf-8", errors="replace"
     )
-    return _parse_restart_step(text)
+    match = RESTART_STEP_MARKER.search(text)
+    return int(match.group(1)) if match is not None else None
 
 
 def _select_restart(
@@ -301,12 +326,7 @@ def run(args: argparse.Namespace) -> int:
 
         manifest_path = input_dir / "lammps-input-manifest.json"
         manifest = base._read_mapping(manifest_path)
-        node_inputs = node.get("inputs")
-        if not isinstance(node_inputs, dict) or not isinstance(
-            node_inputs.get("lammps_input_manifest"), str
-        ):
-            raise ValueError("scheduled LAMMPS node must record its input manifest path")
-        input_manifest_path = str(node_inputs["lammps_input_manifest"])
+        input_manifest_path = base._input_manifest_record(node.get("inputs"))
         if (
             manifest.get("schema_version") != 1
             or manifest.get("plugin_id") != "lammps-md"

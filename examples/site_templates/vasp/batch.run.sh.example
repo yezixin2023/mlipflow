@@ -1,0 +1,91 @@
+#!/bin/bash
+# Install as <remote_template_root>/vasp-batch/run.sh.
+# Add site module/environment setup here.
+set -u
+
+run_dir="{{RUN_DIR}}"
+input_dir="{{INPUT_DIR}}"
+output_dir="{{OUTPUT_DIR}}"
+log_dir="{{LOG_DIR}}"
+project_id="{{PROJECT_ID}}"
+node_id="{{NODE_ID}}"
+attempt=$((10#{{ATTEMPT}}))
+calculation_ids="{{PLUGIN_CALCULATION_IDS}}"
+concurrency=$((10#{{PLUGIN_CALCULATION_CONCURRENCY}}))
+ranks_per_calculation=$((10#{{PLUGIN_MPI_RANKS_PER_CALCULATION}}))
+
+VASP_BIN="/ABS/PATH/TO/vasp_std"
+MPI_LAUNCHER=(mpirun -np)
+export OMP_NUM_THREADS=1
+
+IFS=',' read -r -a ids <<< "${calculation_ids}"
+count=${#ids[@]}
+overall=0
+records=""
+
+if [ "${count}" -eq 0 ] || [ "${concurrency}" -lt 1 ] || [ "${ranks_per_calculation}" -lt 1 ]; then
+    echo "invalid concurrent VASP batch dimensions" >&2
+    overall=1
+fi
+
+start=0
+while [ "${start}" -lt "${count}" ]; do
+    end=$((start + concurrency))
+    if [ "${end}" -gt "${count}" ]; then end=${count}; fi
+    pids=()
+    work_dirs=()
+    index=${start}
+    while [ "${index}" -lt "${end}" ]; do
+        calc_id="${ids[${index}]}"
+        calc_in="${input_dir}/${calc_id}"
+        calc_out="${output_dir}/${calc_id}"
+        work="${run_dir}/work/${calc_id}"
+        mkdir -p "${calc_out}" "${work}"
+        work_dirs+=("${work}")
+        if cp "${calc_in}/POSCAR" "${calc_in}/INCAR" "${calc_in}/KPOINTS" "${calc_in}/POTCAR" "${work}/" 2> "${log_dir}/${calc_id}.stderr"; then
+            (
+                cd "${work}" || exit 1
+                "${MPI_LAUNCHER[@]}" "${ranks_per_calculation}" "${VASP_BIN}"
+            ) > "${log_dir}/${calc_id}.stdout" 2>> "${log_dir}/${calc_id}.stderr" &
+            pids+=("$!")
+        else
+            echo "${calc_id}: could not stage the four VASP inputs" >> "${log_dir}/${calc_id}.stderr"
+            pids+=("")
+        fi
+        index=$((index + 1))
+    done
+
+    offset=0
+    index=${start}
+    while [ "${index}" -lt "${end}" ]; do
+        calc_id="${ids[${index}]}"
+        work="${work_dirs[${offset}]}"
+        rc=1
+        if [ -n "${pids[${offset}]}" ]; then wait "${pids[${offset}]}"; rc=$?; fi
+        for name in OUTCAR OSZICAR vasprun.xml CONTCAR XDATCAR; do
+            if [ -f "${work}/${name}" ]; then cp "${work}/${name}" "${output_dir}/${calc_id}/"; fi
+        done
+        if [ "${rc}" -ne 0 ]; then overall=1; fi
+        if [ -n "${records}" ]; then records="${records},"; fi
+        records="${records}"$'\n'"    {\"id\": \"${calc_id}\", \"exit_code\": ${rc}}"
+        offset=$((offset + 1))
+        index=$((index + 1))
+    done
+    start=${end}
+done
+
+status="FAILED"
+if [ "${overall}" -eq 0 ]; then status="COMPLETED"; fi
+cat > "${run_dir}/completion.json" <<COMPLETION
+{
+  "schema_version": 1,
+  "status": "${status}",
+  "exit_code": ${overall},
+  "project_id": "${project_id}",
+  "node_id": "${node_id}",
+  "attempt": ${attempt},
+  "calculations": [${records}
+  ]
+}
+COMPLETION
+exit ${overall}

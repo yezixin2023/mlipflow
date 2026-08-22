@@ -470,6 +470,30 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
         self.assertEqual(time_ps.tolist(), (analyzer.dt / 1000.0).tolist())
         self.assertEqual([0.0, 0.008, 0.016, 0.024, 0.032], time_ps.tolist())
 
+    def test_all_mobile_trajectory_requires_framework_atom(self) -> None:
+        from pymatgen.core import Lattice, Structure
+
+        runner = load_runner()
+        structures = [
+            Structure(
+                Lattice.cubic(10),
+                ["Li", "Li"],
+                [[0, 0, 0], [0.5 + frame * 0.01, 0.5, 0.5]],
+            )
+            for frame in range(2)
+        ]
+        args = SimpleNamespace(
+            diffusion_analyzer_step_skip=1,
+            diffusion_analyzer_smoothed="none",
+            diffusion_analyzer_min_obs=1,
+            diffusion_analyzer_avg_nsteps=1,
+        )
+
+        with self.assertRaisesRegex(ValueError, "non-Li framework atom"):
+            runner.diffusion_analyzer_from_structures(
+                structures, "Li", 600.0, 1.0, args
+            )
+
 
 class IonicTransportMsdOnlyRegressionTests(unittest.TestCase):
     def setUp(self) -> None:

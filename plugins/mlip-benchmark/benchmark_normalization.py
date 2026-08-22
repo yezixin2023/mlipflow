@@ -35,6 +35,7 @@ from typing import Any, Iterable, Sequence
 from xml.etree import ElementTree
 
 from mlipflow.science.model_runtime import (
+    FRESH_MODEL_FAMILIES,
     MODEL_FAMILIES,
     RuntimeCompatibilityError,
     canonical_model_family,
@@ -53,6 +54,7 @@ OUTPUT_NAMES = (
 )
 
 MODEL_NAMES = MODEL_FAMILIES
+FRESH_MODEL_NAMES = FRESH_MODEL_FAMILIES
 
 _XML_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -1281,6 +1283,11 @@ def normalize_benchmark(
         ),
     )
 
+    supported_models = (
+        FRESH_MODEL_NAMES
+        if any(record["model"] not in MODEL_NAMES for record in records)
+        else MODEL_NAMES
+    )
     metrics_payload = {
         "schema_version": 1,
         "plugin_id": PLUGIN_ID,
@@ -1290,7 +1297,7 @@ def normalize_benchmark(
             if mode == "replay"
             else "metrics-recomputed-from-supplied-reference-prediction-pairs"
         ),
-        "supported_models": list(MODEL_NAMES),
+        "supported_models": list(supported_models),
         "record_count": len(records),
         "records": records,
     }
@@ -1353,7 +1360,7 @@ def _cli_parser() -> argparse.ArgumentParser:
         action="append",
         help="portable locator paired by order with each --input",
     )
-    parser.add_argument("--model", choices=MODEL_NAMES)
+    parser.add_argument("--model", choices=FRESH_MODEL_NAMES)
     parser.add_argument("--task")
     parser.add_argument("--scenario")
     parser.add_argument("--split")

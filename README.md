@@ -34,7 +34,7 @@ python -m pip install ".[local]"
 mlipflow --version
 ```
 
-`.[local]` includes the workflow core, scientific helpers, VASP input preparation, dataset conversion, and formal transport analysis. It requires Python 3.10 or newer because `pymatgen-analysis-diffusion` does. Python 3.9 remains supported for the core and selected extras.Selective dependency extras (`science`, `dft`, `transport`) are available for lightweight or specialized installations.
+`.[local]` includes the workflow core, scientific helpers, VASP input preparation, dataset conversion, and formal transport analysis. It requires Python 3.10 or newer because `pymatgen-analysis-diffusion` does. Python 3.9 remains supported for the core and selected extras. Selective dependency extras (`science`, `dft`, `transport`) are available for lightweight or specialized installations.
 
 DeepMD-kit, MACE, CHGNet, and MatGL/M3GNet are not installed automatically. Install only the frameworks you execute, preferably in isolated local or site-owned cluster environments.
 
@@ -193,17 +193,15 @@ Scheduler completion is not scientific success. A node reaches `OK` only after i
 
 ## Validation and documentation
 
-Software implementation, workflow completion, numerical agreement, and real-cluster validation are different claims. Before relying on a capability, review:
-
-- [`docs/HPC_VALIDATION.md`](docs/HPC_VALIDATION.md) — scheduler and real-cluster evidence.
+Software implementation, workflow completion, numerical agreement, and real-cluster validation are different claims. Keep site-specific execution evidence outside the public repository, and do not reinterpret an integration smoke as production or independent scientific validation.
 
 Researchers remain responsible for validating DFT settings, models, datasets, simulation parameters, convergence, and uncertainty for their system.
 
-The [`documentation index`](docs/README.md) organizes user guidance, HPC setup, extension references, validation evidence, and manuscript-specific reproduction material. Core references include [`ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`AGENT_SKILLS.md`](docs/AGENT_SKILLS.md), [`CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md), and [`PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md).
+The [`documentation index`](docs/README.md) organizes user guidance, HPC setup, extension references, and manuscript-specific reproduction material. Core references include [`ARCHITECTURE.md`](docs/ARCHITECTURE.md), the bundled [Agent Skills](.agents/skills/), [`CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md), and [`PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md).
 
 ## Contributing, security, and citation
 
-Contributions are welcome across the core, plugins, schemas, tests, examples, Agent Skills, site templates, and validation evidence. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Contributions are welcome across the core, plugins, schemas, tests, examples, Agent Skills, and site templates. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Report security issues according to [`SECURITY.md`](SECURITY.md). Do not commit credentials, private cluster details, licensed pseudopotentials, model weights, large trajectories, or unpublished data.
 

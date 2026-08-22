@@ -481,18 +481,6 @@ class ManuscriptReproductionTests(unittest.TestCase):
         size = sum(path.stat().st_size for path in EXAMPLE.rglob("*") if path.is_file())
         self.assertLess(size, 500_000)
 
-    def test_top_level_acceptance_report_points_to_the_canonical_report(self) -> None:
-        index = json.loads(
-            (ROOT / "reports" / "manuscript_reproduction_summary.json").read_text(encoding="utf-8")
-        )
-        canonical = ROOT / index["canonical_report"]["path"]
-        self.assertTrue(canonical.is_file())
-        self.assertEqual("REPLAY_VERIFIED", index["status"])
-        self.assertEqual("deepmd-dpa2", index["selected_models"]["static-pes"])
-        self.assertEqual("deepmd-se_atten_v2", index["selected_models"]["ionic-transport"])
-        self.assertEqual("chgnet", index["selected_models"]["electrochemical-voltage"])
-        self.assertFalse(index["claim_boundary"]["model_execution"])
-
 
 if __name__ == "__main__":
     unittest.main()

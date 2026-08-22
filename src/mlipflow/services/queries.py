@@ -27,6 +27,12 @@ from ..state import RunState, StateStore
 from .paths import attempt_directory, state_path
 
 
+def _python_import_name(distribution: str) -> str:
+    if distribution == "pymatgen-analysis-diffusion":
+        return "pymatgen.analysis.diffusion"
+    return distribution.replace("-", "_").split(".", 1)[0]
+
+
 def query_workflow(project: Project, node_id: str | None = None) -> dict[str, Any]:
     database = state_path(project)
     if database.is_file():
@@ -159,9 +165,7 @@ def query_doctor(
             for dependency in dependencies.get("python_packages", []):
                 if not dependency.get("required"):
                     continue
-                package = (
-                    str(dependency.get("name", "")).replace("-", "_").split(".", 1)[0]
-                )
+                package = _python_import_name(str(dependency.get("name", "")))
                 available = bool(package) and importlib.util.find_spec(package) is not None
                 diagnostics.append(
                     {

@@ -28,6 +28,7 @@
       "Native ASE-MD and LAMMPS-MD handoff reads timing, temperature, species/type mapping, ensemble, and model/structure paths from upstream artifacts; preserved restart attempts are ordered by global step and duplicate boundary frames are removed.",
       "LAMMPS ingestion accepts xu/yu/zu, xsu/ysu/zsu, wrapped x/y/z, and wrapped xs/ys/zs; image flags are preferred and otherwise fractional minimum-image continuity restores the unwrapped trajectory.",
       "Formal analysis requires pymatgen-analysis-diffusion. The packaged runner converts reliable ASE/LAMMPS/VASP trajectories to ordered pymatgen Structures and uses DiffusionAnalyzer without a NumPy/MLIPFlow fallback.",
+      "DiffusionAnalyzer trajectory analysis requires at least one atom outside the declared mobile specie to define the pymatgen framework drift reference; all-mobile elemental trajectories fail explicitly instead of using a custom self-diffusion fallback.",
       "MLIPFlow core remains Python >=3.9; the formal transport extra and execution path require Python >=3.10.",
       "Formal dependency validation and execution use the same local Python interpreter as MLIPFlow; this plugin does not select or configure a cluster interpreter.",
       "Formal MSD-only analysis calls get_diffusivity_from_msd. Conductivity is available only when a real Structure is supplied and get_conversion_factor succeeds; n_mobile_ions/volume literals are not a formal fallback.",

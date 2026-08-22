@@ -91,7 +91,7 @@ Agent Skills live under:
   agents/openai.yaml
 ```
 
-See [`docs/AGENT_SKILLS.md`](docs/AGENT_SKILLS.md).
+Read the selected Skill's [`SKILL.md`](.agents/skills/) and any references it links.
 
 Skills describe how an agent should supervise a capability: what evidence to request, which MLIPFlow operation to call, when approval is required, and how to interpret results. They should not duplicate scientific computation that belongs in plugins or external tools.
 
@@ -132,8 +132,8 @@ When behavior changes, update the closest source of truth as needed:
 
 - schemas for configuration contracts;
 - plugin manifests for plugin interfaces;
-- `docs/AGENT_SKILLS.md` for Agent Skill contracts;
-- `docs/IMPLEMENTATION_STATUS.md` for implementation/validation state;
+- `.agents/skills/<skill-name>/SKILL.md` for Agent Skill contracts;
+- the closest plugin manifest and deterministic tests for implementation state;
 - `CHANGELOG.md` for notable user-facing changes.
 
 ## License

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import importlib.util
-import json
 import sys
 import tempfile
 import types
@@ -152,42 +151,6 @@ class DirectRunnerTests(unittest.TestCase):
         self.assertEqual("00001_Li2S.vasp", row["output_file"])
         self.assertFalse(Path(row["output_file"]).is_absolute())
         self.assertEqual("POSCAR\n", (output / row["output_file"]).read_text())
-
-
-class DirectSmokeReportTests(unittest.TestCase):
-    def test_committed_real_runtime_smoke_is_bounded_and_nonsecret(self) -> None:
-        report_path = ROOT / "reports" / "direct_local_integration_smoke.json"
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-        runner = ROOT / report["implementation"]["runner_locator"]
-
-        self.assertEqual("LOCAL_INTEGRATION_SMOKE_PASS", report["status"])
-        self.assertTrue(runner.is_file())
-        self.assertTrue(report["scientific_claim"]["real_maml_direct_executed"])
-        self.assertTrue(report["scientific_claim"]["adapter_checker_ok"])
-        self.assertTrue(report["scientific_claim"]["adapter_collect_ok"])
-        self.assertFalse(
-            report["scientific_claim"]["mlipflow_core_run_lifecycle_executed"]
-        )
-        self.assertFalse(
-            report["scientific_claim"]["historical_selection_parity_established"]
-        )
-        self.assertFalse(report["scientific_claim"]["production_sampling_executed"])
-        self.assertEqual(4, report["input"]["loaded_structure_count"])
-        self.assertEqual(2, report["result"]["selected_structure_count"])
-        self.assertEqual(
-            [2, 3],
-            [item["input_index"] for item in report["result"]["selected_structures"]],
-        )
-        self.assertEqual("OK", report["result"]["checker_status"])
-        self.assertEqual("OK", report["result"]["collect_status"])
-        self.assertIsNone(report["bounded_parameters"]["declared_seed"])
-        self.assertFalse(
-            report["bounded_parameters"]["acknowledgement_contract_exercised"]
-        )
-        serialized = json.dumps(report, sort_keys=True)
-        self.assertNotIn("/Users/", serialized)
-        self.assertNotIn("/public/home/", serialized)
-        self.assertNotIn("hfe" + "shell", serialized.lower())
 
 
 if __name__ == "__main__":

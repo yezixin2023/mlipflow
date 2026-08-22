@@ -38,6 +38,53 @@ def test_deepmd_plan():
     assert "--finetune" in mlip_deepmd.plan(ns("deepmd", "finetune"), cfg)["train_args"]
 
 
+def test_deepmd_run_expands_portable_system_patterns(tmp_path, monkeypatch):
+    data = tmp_path / "dataset"
+    for split in ("train", "valid"):
+        system = data / split / "system-000001"
+        system.mkdir(parents=True)
+        (system / "type.raw").write_text("0\n", encoding="utf-8")
+    result = tmp_path / "attempt" / "training-result.json"
+    output = result.parent / "model.pb"
+    args = ns("deepmd")
+    args.data = str(data)
+    args.output = str(output)
+    args.result_manifest = str(result)
+    config = {
+        "_mlipflow": {"backend": "tf", "link_data_as": "data"},
+        "training": {
+            "seed": 23,
+            "training_data": {"systems": ["data/train/system-*"]},
+            "validation_data": {"systems": ["data/valid/system-*"]},
+        },
+    }
+    observed = {}
+
+    class FakeEntrypoint:
+        @staticmethod
+        def main(argv):
+            observed.update(json.loads(Path(argv[1]).read_text(encoding="utf-8")))
+
+    def freeze(argv, *, cwd, check):
+        assert argv[:4] == [sys.executable, "-m", "deepmd", "freeze"]
+        assert cwd == result.parent / "deepmd-work"
+        assert check is True
+        Path(argv[argv.index("-o") + 1]).write_bytes(b"model")
+
+    monkeypatch.setattr(mlip_deepmd.importlib, "import_module", lambda _: FakeEntrypoint)
+    monkeypatch.setattr(mlip_deepmd.subprocess, "run", freeze)
+    mlip_deepmd.run(args, config, tmp_path / "config.json", data)
+
+    training = observed["training"]
+    assert training["training_data"]["systems"] == [
+        str((result.parent / "deepmd-work/data/train/system-000001").absolute())
+    ]
+    assert training["validation_data"]["systems"] == [
+        str((result.parent / "deepmd-work/data/valid/system-000001").absolute())
+    ]
+    assert output.read_bytes() == b"model"
+
+
 def test_chgnet_guard(tmp_path):
     with pytest.raises(Exception):
         mlip_chgnet.plan(
@@ -368,6 +415,30 @@ def test_mace_prepares_all_explicit_output_directories(tmp_path):
         "results",
     }
     assert all(path.is_dir() for path in work.iterdir())
+
+
+def test_mace_runtime_environment_accepts_cpu_only_torch(monkeypatch):
+    class CPUOnlyCUDA:
+        @staticmethod
+        def is_available():
+            return False
+
+        @staticmethod
+        def current_device():
+            raise AssertionError("CPU runtime must not query a CUDA device")
+
+    torch = SimpleNamespace(
+        __version__="test-torch",
+        version=SimpleNamespace(cuda=None),
+        cuda=CPUOnlyCUDA(),
+    )
+    monkeypatch.setattr(mlip_mace.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(mlip_mace, "version", lambda *_names: "test-mace")
+
+    environment = mlip_mace._runtime_environment(torch, "test-source")
+
+    assert environment["gpu_model"] == "unavailable"
+    assert environment["torch_cuda_version"] == "None"
 
 
 def test_mace_select_model_prefers_native_over_compiled(tmp_path):

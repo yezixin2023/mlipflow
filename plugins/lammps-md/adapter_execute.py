@@ -99,9 +99,15 @@ def _safe_relative(value: Any) -> bool:
 
 
 def _project_file(root: Path, value: Any) -> Path:
-    if not _safe_relative(value):
+    if not _plain(value) or "\\" in str(value):
+        raise ValueError("project file reference must be a path string")
+    raw = Path(str(value)).expanduser()
+    if raw.is_absolute():
+        candidate = raw.absolute()
+    elif _safe_relative(value):
+        candidate = (root / raw).absolute()
+    else:
         raise ValueError("project file reference must be a safe relative path")
-    candidate = (root / str(value)).absolute()
     try:
         candidate.resolve().relative_to(root.resolve())
     except (OSError, ValueError) as exc:
@@ -384,7 +390,7 @@ def _execute_plan(context: dict[str, Any]) -> dict[str, Any]:
     calculation = {
         "framework": framework,
         "target": target,
-        "input_manifest_path": str(inputs["lammps_input_manifest"]),
+        "input_manifest_path": "lammps-input-manifest.json",
         "model_id": model["model_id"],
         "model_path": model["relative_path"],
         "model_kind": model["kind"],

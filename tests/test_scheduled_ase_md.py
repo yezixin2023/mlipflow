@@ -144,6 +144,79 @@ def test_upstream_model_reference_path_is_authoritative(tmp_path: Path) -> None:
     assert plan["scheduled_execution"]["template_family"] == "ase-md-m3gnet-canonical"
 
 
+def test_cluster_report_uses_stable_model_path_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = _load("ase_md_cluster_model_record", PLUGIN / "ase_md_cluster.py")
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    model_root = tmp_path / "models"
+    (input_dir / "structure").mkdir(parents=True)
+    output_dir.mkdir()
+    model_root.mkdir()
+    (input_dir / "structure" / "start.extxyz").write_text("structure\n", encoding="utf-8")
+    (model_root / "mace.model").write_bytes(b"model")
+    _write_json(
+        input_dir / "model-reference.json",
+        {
+            "schema_version": 1,
+            "model_id": "mace-v1",
+            "relative_path": "mace.model",
+            "kind": "file",
+        },
+    )
+    _write_json(
+        tmp_path / "project.yaml",
+        {
+            "schema_version": 1,
+            "project": {"id": "ase-md-cluster-report"},
+            "workflow": {
+                "nodes": [
+                    {
+                        "id": "md",
+                        "uses": "ase-md@0",
+                        "backend": "ssh-slurm",
+                        "inputs": {"structure": "inputs/start.extxyz"},
+                        "parameters": {
+                            "calculator": "mace",
+                            "ensemble": "nvt-langevin",
+                        },
+                    }
+                ]
+            },
+        },
+    )
+
+    class FakeRunner:
+        @staticmethod
+        def run_md(**kwargs):
+            return {
+                "schema_version": 1,
+                "status": "OK",
+                "model": {
+                    "id": kwargs["model_id"],
+                    "path": kwargs["model_record_path"],
+                },
+                "artifacts": [],
+                "steps_completed": 0,
+            }
+
+    monkeypatch.setattr(module, "_load_runner", lambda _: FakeRunner)
+    code = module.run(
+        types.SimpleNamespace(
+            input_dir=str(input_dir),
+            output_dir=str(output_dir),
+            project=str(tmp_path / "project.yaml"),
+            node_id="md",
+            model_root=str(model_root),
+        )
+    )
+
+    assert code == 0
+    report = json.loads((output_dir / "cluster-run-report.json").read_text())
+    assert report["model"] == {"id": "mace-v1", "path": "mace.model"}
+
+
 def test_runner_accepts_scheduler_precreated_empty_output_root(tmp_path: Path) -> None:
     runner = _load("ase_md_runner_output_contract", PLUGIN / "ase_md.py")
     output = tmp_path / "attempt-0001" / "output"

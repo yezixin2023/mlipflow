@@ -23,10 +23,13 @@ but prefer the three explicit modes above for new benchmark supervision.
 
 Read the current exact-family catalog, aliases, and framework mapping from
 `src/mlipflow/science/model_runtime.py` (or its installed package equivalent)
-and confirm the plugin manifest. The current catalog contains six exact
-families, including four DeepMD family IDs that share one DeepMD inference
-implementation plus M3GNet/MatGL and CHGNet. Do not copy that catalog into the
-Skill, accept an ambiguous family, or hard-code a preferred model.
+and confirm the plugin manifest. The fresh executable catalog contains seven
+exact families: four DeepMD family IDs that share one DeepMD inference
+implementation, M3GNet/MatGL, CHGNet, and MACE. The separate six-family
+historical replay catalog deliberately remains stable so existing manuscript
+artifacts do not change when fresh runtimes are added. Do not copy either
+catalog into the Skill, accept an ambiguous family, or hard-code a preferred
+model.
 
 Only rank records that are comparable in task, scenario, split, metric, unit,
 direction, and scientific dimensions. Lower is better for MAE and RMSE; higher
@@ -169,6 +172,6 @@ Use these checks when mode selection is ambiguous:
 | “I have reference/prediction JSON; calculate RMSE and Pearson, then rank.” | Metric-only; do not run a model |
 | “Reproduce this DeepMD historical workbook.” | Replay; require `model_execution=false` |
 | “What is the historical CHGNet stress unit?” | Report unknown when evidence cannot prove it; do not guess |
-| “Which of the six models is best?” | Require comparable metric records and direction; no brand preference |
+| “Which of the available exact models is best?” | Require comparable metric records and direction; no brand preference |
 | “Use this old workbook for a fresh benchmark.” | Correct the mode to replay unless a model and labeled dataset are supplied |
 | Changed input paths or existing output | Stop on Adapter validation failure; do not bypass or overwrite |

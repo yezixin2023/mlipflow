@@ -8,7 +8,11 @@ from pathlib import Path
 
 import yaml
 
-from mlipflow.science.model_runtime import MODEL_FAMILIES, MODEL_FAMILY_FRAMEWORKS
+from mlipflow.science.model_runtime import (
+    FRESH_MODEL_FAMILIES,
+    MODEL_FAMILIES,
+    MODEL_FAMILY_FRAMEWORKS,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,10 +31,11 @@ def test_skill_files_metadata_and_catalog_source_are_bounded() -> None:
     assert metadata["interface"]["display_name"] == "MLIP Benchmark"
     assert metadata["interface"]["default_prompt"].startswith("$mlip-benchmark ")
     assert "src/mlipflow/science/model_runtime.py" in skill
-    assert "Do not copy that catalog into the" in reference
+    assert "Do not copy either" in reference
     assert len(MODEL_FAMILIES) == 6
+    assert len(FRESH_MODEL_FAMILIES) == 7
     assert sum(family.startswith("deepmd-") for family in MODEL_FAMILIES) == 4
-    assert set(MODEL_FAMILIES) == set(MODEL_FAMILY_FRAMEWORKS)
+    assert set(FRESH_MODEL_FAMILIES) == set(MODEL_FAMILY_FRAMEWORKS)
     assert not (SKILL_ROOT / "scripts").exists()
 
 
@@ -49,7 +54,7 @@ def test_natural_language_intents_preserve_execution_and_claim_boundaries() -> N
     assert "`model_execution=false`" in skill
     assert "historical CHGNet stress unit" in reference
     assert "Report unknown" in reference
-    assert "Which of the six models is best?" in reference
+    assert "Which of the available exact models is best?" in reference
     assert "no brand preference" in reference
     assert "Use this old workbook for a fresh benchmark" in reference
     assert "Correct the mode to replay" in reference

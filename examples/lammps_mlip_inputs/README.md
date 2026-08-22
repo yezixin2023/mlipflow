@@ -174,30 +174,6 @@ Install `run.sh.example` under every framework/target family you expose:
 
 The v0.3 example invokes the staged `lammps_cluster_restart.py` and passes the MLIPFlow attempt number. Each site template still owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, optional Python-bridge `INTERFACE_PATH`, modules/conda setup, and `LAMMPS_LAUNCHER_JSON`; none belong in the portable project.
 
-## Real CPU functional validation
-
-On 2026-08-16, two five-step NVT jobs completed the full MLIPFlow path on the
-`cluster-a` SSH-SLURM profile:
-
-| Interface | Slurm job | LAMMPS | Model | Prepared manifest | Result |
-|---|---:|---|---|---|---|
-| DeepMD `pair_style deepmd` | `redacted` | 2 Aug 2023 | `deepmd-lammps-model`; `graph.pb` | `lammps-input-manifest.json` | 5/5 steps, exit 0, checker/collect `OK` |
-| MatGL/M3GNet `pair_style gnnp ${INTERFACE_PATH}` | `redacted` | 2 Aug 2023 | `matgl-model-directory`; `finetune/finetuned_model` | `lammps-input-manifest.json` | 5/5 steps, exit 0, checker/collect `OK` |
-
-Both runs used one CPU rank, no GPU, 400 K NVT, a 1 fs timestep, and the same
-explicit `Li P S Mn Fe Ni Cu Zn` type map. The generated decks kept site paths out
-of the portable project, wrote `final.data` and `final.restart` before the exact
-completion marker, and returned only the bounded approved output set. The GNNP
-run preserved a failed first attempt caused by missing site Python initialization;
-after the canonical site family was corrected, retry created a fresh attempt.
-
-The machine-readable paths, parameters, versions, and output names are in
-[`reports/lammps_cluster_cpu_functional_smokes.json`](../../reports/lammps_cluster_cpu_functional_smokes.json).
-This is execution validation only. It does not validate force-field accuracy,
-equilibration, transport, GPU execution, NPT, or binary restart. The tested GNNP
-model does not supply virial pressure, so its pressure output is not a scientific
-result.
-
 ## Completion and scope
 
 Normal success still requires process exit zero, the exact approved completion marker, recorded LAMMPS version, matching input/model paths and parameters, bounded output files, and consistent execution/result manifests.

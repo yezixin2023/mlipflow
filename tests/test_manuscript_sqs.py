@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,25 +22,6 @@ def _module(filename: str):
 
 
 class ManuscriptSQSTests(unittest.TestCase):
-    def test_committed_local_integration_smoke_is_code_bound_and_bounded(self) -> None:
-        report_path = ROOT / "reports" / "sqs_local_integration_smoke.json"
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-        entrypoint = ROOT / report["implementation"]["entrypoint_locator"]
-
-        self.assertEqual("LOCAL_INTEGRATION_SMOKE_PASS", report["status"])
-        self.assertTrue(entrypoint.is_file())
-        self.assertEqual(2, report["result"]["run_count"])
-        self.assertTrue(report["result"]["byte_identical_between_runs"])
-        self.assertEqual(57, sum(report["result"]["output_species_counts"].values()))
-        self.assertEqual(7, sum(report["bounded_parameters"]["metal_counts"].values()))
-        self.assertLessEqual(report["bounded_parameters"]["n_steps"], 100)
-        self.assertFalse(report["scientific_claim"]["production_sqs_executed"])
-        self.assertFalse(report["scientific_claim"]["historical_structure_parity_established"])
-        self.assertFalse(report["scientific_claim"]["global_optimality_established"])
-        serialized = json.dumps(report, sort_keys=True)
-        self.assertNotIn("/Users/", serialized)
-        self.assertNotIn("/public/home/", serialized)
-
     def test_li10_manifest_matches_228_atom_historical_setup(self) -> None:
         sqs = _module("sqs.py")
         manifest = {

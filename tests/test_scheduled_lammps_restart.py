@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -179,7 +180,7 @@ def _previous_runtime(context: dict, scheduler_state: str = "TIMEOUT", checkpoin
             "attempt": 1,
             "framework": "mace",
             "target": "gpu",
-            "input_manifest_path": "prepared/lammps-input-manifest.json",
+            "input_manifest_path": "lammps-input-manifest.json",
             "model_path": prepared["model"]["relative_path"],
             "model_kind": prepared["model"]["kind"],
             "lammps_interface": None,
@@ -298,3 +299,57 @@ def test_restart_deck_preserves_fix_and_does_not_reinitialize_velocity() -> None
     assert "fix             mlipflow all nvt temp 900 900 0.1" in resume
     assert "velocity" not in resume
     assert "run             1000 upto" in resume
+
+
+def test_restart_step_uses_restart2info_when_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(PLUGIN))
+    module = _load("lammps_restart_probe_current", PLUGIN / "lammps_cluster_restart.py")
+    executable = tmp_path / "lmp"
+    executable.write_text("binary", encoding="utf-8")
+    candidate = tmp_path / "checkpoint.1.restart"
+    candidate.write_bytes(b"restart")
+
+    def run(argv, **kwargs):
+        assert argv[-2:] == ["-restart2info", str(candidate)]
+        assert "input" not in kwargs
+        return SimpleNamespace(
+            returncode=0,
+            stdout=b"Current timestep number = 900\n",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    assert module._restart_step(executable, [], candidate) == 900
+
+
+def test_restart_step_falls_back_to_read_restart_for_older_lammps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.syspath_prepend(str(PLUGIN))
+    module = _load("lammps_restart_probe_legacy", PLUGIN / "lammps_cluster_restart.py")
+    executable = tmp_path / "lmp"
+    executable.write_text("binary", encoding="utf-8")
+    candidate = tmp_path / "checkpoint.2.restart"
+    candidate.write_bytes(b"restart")
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        if len(calls) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout=b"",
+                stderr=b"Invalid command-line argument: -restart2info\n",
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=b"MLIPFLOW_RESTART_STEP=800\n",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    assert module._restart_step(executable, ["-sf", "kk"], candidate) == 800
+    assert calls[1][0] == [str(executable), "-sf", "kk", "-log", "none"]
+    assert f'read_restart "{candidate}"' in calls[1][1]["input"].decode("utf-8")

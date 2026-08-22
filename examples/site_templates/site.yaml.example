@@ -1,0 +1,10 @@
+schema_version: 1
+clusters:
+  cluster-a:
+    backend: ssh-slurm
+    ssh_profile: cluster-a
+    remote_template_root: /ABS/PATH/TO/MLIPFLOW/templates
+    work_root: /ABS/PATH/TO/MLIPFLOW/work
+    scheduler:
+      partition_candidates: [cpu]
+      memory_constraint: reported

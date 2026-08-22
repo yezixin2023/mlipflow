@@ -11,6 +11,7 @@ from .transport import (
     nernst_einstein_conductivity,
 )
 from .model_runtime import (
+    FRESH_MODEL_FAMILIES,
     MODEL_FAMILIES,
     MODEL_FAMILY_ALIASES,
     MODEL_FAMILY_FRAMEWORKS,
@@ -22,6 +23,7 @@ from .model_runtime import (
 from .voltage import average_intercalation_voltage
 
 __all__ = [
+    "FRESH_MODEL_FAMILIES",
     "MODEL_FAMILIES",
     "MODEL_FAMILY_ALIASES",
     "MODEL_FAMILY_FRAMEWORKS",

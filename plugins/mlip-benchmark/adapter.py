@@ -1,6 +1,6 @@
 """MLIPFlow lifecycle and strict result validation for benchmark artifacts.
 
-The adapter deliberately does not import any of the six reviewed model
+The adapter deliberately does not import any reviewed model
 configurations and never executes a program itself.  A user-owned prediction
 CLI is required to accept the argv contract emitted by :meth:`Adapter.plan`
 and to write the versioned result manifest consumed by :meth:`Adapter.check`
@@ -27,6 +27,7 @@ from mlipflow.science import model_runtime
 
 PLUGIN_ID = "mlip-benchmark"
 MODEL_FAMILIES = frozenset(model_runtime.MODEL_FAMILIES)
+FRESH_MODEL_FAMILIES = frozenset(model_runtime.FRESH_MODEL_FAMILIES)
 LEGACY_OPERATIONS = frozenset({"evaluate-static", "collect-existing"})
 NORMALIZE_OPERATIONS = frozenset({"normalize-replay", "normalize-execute"})
 FRESH_OPERATION = "evaluate-fresh"
@@ -484,7 +485,7 @@ def _expected_values(
             raise ValueError(f"parameters.{plural} entries must be non-empty strings")
         token = str(value)
         if models:
-            if token not in MODEL_FAMILIES:
+            if token not in FRESH_MODEL_FAMILIES:
                 raise ValueError(f"unsupported exact model family: {token}")
         elif not _IDENTIFIER.fullmatch(token):
             raise ValueError(f"parameters.{plural} entries must be normalized identifiers")
@@ -595,8 +596,8 @@ def _load_result(
     if raw.get("status") not in {"OK", "FAIL"}:
         diagnostics.append(_diagnostic("error", "benchmark.result_status", "status must be OK or FAIL"))
     parameters = _mapping(context.get("parameters"))
-    if raw.get("model_family") not in MODEL_FAMILIES:
-        supported = ", ".join(sorted(MODEL_FAMILIES))
+    if raw.get("model_family") not in FRESH_MODEL_FAMILIES:
+        supported = ", ".join(sorted(FRESH_MODEL_FAMILIES))
         diagnostics.append(
             _diagnostic(
                 "error",
@@ -788,8 +789,7 @@ def _load_normalized_outputs(
     if metrics.get("record_count") != len(records):
         raise ValueError("metrics.json record_count does not match records")
     supported = metrics.get("supported_models")
-    if not isinstance(supported, list) or set(supported) != set(MODEL_FAMILIES):
-        raise ValueError("metrics.json supported_models does not name the six exact models")
+    supported_catalog = frozenset(supported) if isinstance(supported, list) else frozenset()
 
     observed_identities = {name: set() for name in expected_identities}
     record_values: dict[str, float] = {}
@@ -813,7 +813,7 @@ def _load_normalized_outputs(
             if not _plain_string(value):
                 raise ValueError(f"metrics.json records[{index}] requires {identity}")
             observed_identities[identity].add(str(value))
-        if record.get("model") not in MODEL_FAMILIES:
+        if record.get("model") not in FRESH_MODEL_FAMILIES:
             raise ValueError(f"metrics.json records[{index}] uses an unsupported model")
         value = record.get("value")
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
@@ -835,6 +835,13 @@ def _load_normalized_outputs(
         if key in record_values:
             raise ValueError(f"metrics.json contains duplicate metric identity: {key}")
         record_values[key] = float(value)
+    expected_catalog = (
+        FRESH_MODEL_FAMILIES
+        if any(record["model"] not in MODEL_FAMILIES for record in records)
+        else MODEL_FAMILIES
+    )
+    if supported_catalog != expected_catalog:
+        raise ValueError("metrics.json supported_models does not name the exact model catalog")
     for identity, expected in expected_identities.items():
         if observed_identities[identity] != expected:
             raise ValueError(
@@ -1197,7 +1204,7 @@ def _load_fresh_outputs(
     if not isinstance(records, list) or not records or metrics.get("record_count") != len(records):
         raise ValueError("fresh metrics records are missing or partial")
     supported = metrics.get("supported_models")
-    if not isinstance(supported, list) or set(supported) != set(MODEL_FAMILIES):
+    if not isinstance(supported, list) or set(supported) != set(FRESH_MODEL_FAMILIES):
         raise ValueError("fresh metrics exact model-family set drift")
     metric_values: dict[str, float] = {}
     metric_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -1424,7 +1431,7 @@ class Adapter:
 
         if operation == FRESH_OPERATION:
             try:
-                if parameters.get("model_family") not in MODEL_FAMILIES:
+                if parameters.get("model_family") not in FRESH_MODEL_FAMILIES:
                     raise ValueError("parameters.model_family must name one exact supported family")
                 for key in ("task", "scenario", "split"):
                     if not _plain_string(parameters.get(key)) or not _IDENTIFIER.fullmatch(
@@ -1507,8 +1514,8 @@ class Adapter:
             diagnostics.append(
                 _diagnostic("error", "context.backend", "legacy benchmark operations require local")
             )
-        if parameters.get("model_family") not in MODEL_FAMILIES:
-            supported = ", ".join(sorted(MODEL_FAMILIES))
+        if parameters.get("model_family") not in FRESH_MODEL_FAMILIES:
+            supported = ", ".join(sorted(FRESH_MODEL_FAMILIES))
             diagnostics.append(
                 _diagnostic(
                     "error",

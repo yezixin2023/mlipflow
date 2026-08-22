@@ -208,7 +208,10 @@ def run(args: argparse.Namespace) -> int:
                 "status": "OK",
                 "calculator": calculator,
                 "ensemble": ensemble,
-                "model": model_ref,
+                "model": {
+                    "id": model_ref["id"],
+                    "path": model_ref["relative_path"],
+                },
                 "structure_path": f"structure/{structure_name}",
                 "supercell_repeat": result.get("supercell_repeat"),
                 "source_atom_count": result.get("source_atom_count"),

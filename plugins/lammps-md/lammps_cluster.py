@@ -63,6 +63,25 @@ def _read_mapping(path: Path, max_bytes: int = MAX_JSON_BYTES) -> dict[str, Any]
     return value
 
 
+def _input_manifest_record(node_inputs: Any) -> str:
+    if not isinstance(node_inputs, dict):
+        raise ValueError("scheduled LAMMPS node inputs must be a mapping")
+    value = node_inputs.get("lammps_input_manifest")
+    if isinstance(value, str) and value:
+        return "lammps-input-manifest.json"
+    if (
+        isinstance(value, dict)
+        and set(value) <= {"from_node", "role", "resolve"}
+        and isinstance(value.get("from_node"), str)
+        and value.get("from_node")
+        and isinstance(value.get("role"), str)
+        and value.get("role")
+        and value.get("resolve", "artifact") == "artifact"
+    ):
+        return "lammps-input-manifest.json"
+    raise ValueError("scheduled LAMMPS node must record its input manifest")
+
+
 def _write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -275,12 +294,7 @@ def run(args: argparse.Namespace) -> int:
 
         manifest_path = input_dir / "lammps-input-manifest.json"
         manifest = _read_mapping(manifest_path)
-        node_inputs = node.get("inputs")
-        if not isinstance(node_inputs, dict) or not isinstance(
-            node_inputs.get("lammps_input_manifest"), str
-        ):
-            raise ValueError("scheduled LAMMPS node must record its input manifest path")
-        input_manifest_path = str(node_inputs["lammps_input_manifest"])
+        input_manifest_path = _input_manifest_record(node.get("inputs"))
         if (
             manifest.get("schema_version") != 1
             or manifest.get("plugin_id") != "lammps-md"

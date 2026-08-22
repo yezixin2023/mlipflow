@@ -1,9 +1,12 @@
 """DeepMD runner using DeePMD-kit's Python entry points, never a shell."""
 
 import importlib
+import glob
 import json
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from mlip_common import TrainingError, mapping, work_dir
 
@@ -64,6 +67,23 @@ def run(args, config, config_path, data_path):
     target = work / link
     target.parent.mkdir(parents=True, exist_ok=True)
     target.symlink_to(data_path.absolute(), target_is_directory=True)
+    training = mapping(raw.get("training"), "training")
+    for name in ("training_data", "validation_data"):
+        block = mapping(training.get(name), f"training.{name}")
+        systems = block.get("systems")
+        if not isinstance(systems, list):
+            continue
+        expanded = []
+        for pattern in systems:
+            path = Path(str(pattern))
+            search = path if path.is_absolute() else work / path
+            matches = sorted(glob.glob(str(search)))
+            if not matches:
+                raise TrainingError(f"DeepMD data system pattern has no matches: {pattern}")
+            expanded.extend(str(Path(match).absolute()) for match in matches)
+        block["systems"] = expanded
+        training[name] = block
+    raw["training"] = training
     input_file = work / "input.json"
     input_file.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
     module = importlib.import_module(BACKENDS[backend])
@@ -89,7 +109,14 @@ def run(args, config, config_path, data_path):
             "pt-expt": "",
         }[backend]
         native = work / ("model" + suffix)
-        module.main(["freeze", "-o", str(native)])
+        if backend in {"tf", "tf2"}:
+            subprocess.run(
+                [sys.executable, "-m", "deepmd", "freeze", "-o", str(native)],
+                cwd=work,
+                check=True,
+            )
+        else:
+            module.main(["freeze", "-o", str(native)])
     finally:
         os.chdir(previous)
     output = Path(args.output).absolute()

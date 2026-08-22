@@ -6,7 +6,9 @@ import importlib.util
 import json
 import math
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -314,7 +316,7 @@ class FreshBenchmarkTests(unittest.TestCase):
         with self.assertRaisesRegex(self.fresh.FreshBenchmarkError, "must not already contain"):
             self.evaluate()
 
-    def test_all_six_exact_families_plan_and_four_deepmd_families_share_loader(self):
+    def test_all_exact_families_plan_and_four_deepmd_families_share_loader(self):
         context = self.context()
         for family in self.fresh.MODEL_FRAMEWORKS:
             with self.subTest(family=family):
@@ -334,6 +336,32 @@ class FreshBenchmarkTests(unittest.TestCase):
             ):
                 self.assertIs(sentinel, runtime.load_inference_predictor(self.model, family, "cpu"))
         self.assertEqual(4, loader.call_count)
+
+    def test_mace_family_uses_explicit_local_model(self):
+        runtime = self.fresh._shared_runtime_module()
+        calls = []
+
+        class FakeMACECalculator:
+            def __init__(self, **kwargs):
+                calls.append(kwargs)
+
+        package = types.ModuleType("mace")
+        package.__path__ = []
+        calculators = types.ModuleType("mace.calculators")
+        calculators.MACECalculator = FakeMACECalculator
+        package.calculators = calculators
+        with mock.patch.dict(
+            sys.modules,
+            {"mace": package, "mace.calculators": calculators},
+        ), mock.patch.object(runtime, "framework_version", return_value="test-mace"):
+            predictor = runtime.load_inference_predictor(self.model, "mace", "cpu")
+
+        self.assertEqual(
+            [{"model_paths": str(self.model), "device": "cpu"}],
+            calls,
+        )
+        self.assertEqual("mace", predictor.runtime_details["framework"])
+        self.assertEqual("mace.calculators.MACECalculator", predictor.runtime_details["backend"])
 
     def test_changed_prediction_evidence_fails_collection(self):
         self.evaluate()
@@ -382,10 +410,10 @@ class FreshBenchmarkTests(unittest.TestCase):
         second.parent.mkdir()
         payload = json.loads((self.output / "prediction_evidence.json").read_text())
         first.write_text(json.dumps(payload), encoding="utf-8")
-        payload["model"]["family"] = "chgnet"
-        payload["model"]["framework"] = "chgnet"
+        payload["model"]["family"] = "mace"
+        payload["model"]["framework"] = "mace"
         for record in payload["records"]:
-            record["model"] = "chgnet"
+            record["model"] = "mace"
         payload["records"] = [
             record for record in payload["records"] if record["target"] != "stress"
         ]
@@ -401,14 +429,14 @@ class FreshBenchmarkTests(unittest.TestCase):
                     },
                     {
                         "path": "model-b/prediction_evidence.json",
-                        "evidence_locator": "fresh/chgnet/prediction_evidence.json",
+                        "evidence_locator": "fresh/mace/prediction_evidence.json",
                     },
                 ],
                 "output_dir": "joint",
             },
             "parameters": {
                 "operation": "normalize-execute",
-                "expected_models": ["deepmd-dpa2", "chgnet"],
+                "expected_models": ["deepmd-dpa2", "mace"],
                 "task": "static-pes",
                 "scenario": "fresh-contract-v1",
                 "split": "test",
@@ -428,6 +456,10 @@ class FreshBenchmarkTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         checked = self.adapter.check(context)
         self.assertEqual("OK", checked["status"], checked["diagnostics"])
+        metrics = json.loads(
+            (Path(context["attempt_dir"]) / "joint" / "metrics.json").read_text()
+        )
+        self.assertEqual(set(self.fresh.MODEL_FRAMEWORKS), set(metrics["supported_models"]))
         ranking = json.loads(
             (Path(context["attempt_dir"]) / "joint" / "model_ranking.json").read_text()
         )

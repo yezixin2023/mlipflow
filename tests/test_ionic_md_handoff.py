@@ -147,38 +147,6 @@ class IonicMDHandoffTests(unittest.TestCase):
             "resources": {"python_executable": sys.executable},
         }
 
-    def test_committed_real_mace_smoke_is_code_bound_and_non_scientific(self) -> None:
-        report_path = ROOT / "reports" / "ionic_md_local_integration_smoke.json"
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-        for name in ("adapter", "handoff"):
-            record = report["implementation"][name]
-            self.assertTrue((ROOT / record["locator"]).is_file())
-
-        self.assertEqual("LOCAL_INTEGRATION_SMOKE_PASS", report["status"])
-        self.assertTrue(report["scientific_claim"]["real_mlip_model_loaded"])
-        self.assertTrue(report["scientific_claim"]["integration_handoff_completed"])
-        self.assertFalse(report["scientific_claim"]["production_md_executed"])
-        self.assertFalse(report["scientific_claim"]["scientific_parity_established"])
-        self.assertFalse(report["scientific_claim"]["manuscript_result_recomputed"])
-        self.assertFalse(report["external_inputs"]["model"]["included_in_repository"])
-        self.assertEqual(3, report["result"]["run_count"])
-        self.assertEqual(0, report["result"]["failed_run_count"])
-        self.assertEqual("OK", report["result"]["adapter_check_status"])
-        self.assertEqual("OK", report["result"]["adapter_collect_status"])
-        self.assertLessEqual(report["bounded_parameters"]["production_steps_per_temperature"], 10)
-        self.assertLessEqual(report["bounded_parameters"]["production_time_ps"], 0.01)
-        self.assertEqual(
-            {
-                "diffusion_results_by_temperature.csv",
-                "arrhenius_summary.json",
-                "postprocess_failures.json",
-            },
-            set(report["result"]["required_analysis_artifacts"]),
-        )
-        serialized = json.dumps(report, sort_keys=True)
-        self.assertNotIn("/Users/", serialized)
-        self.assertNotIn("/public/home/", serialized)
-
     def test_fake_historical_sources_complete_the_confined_handoff(self) -> None:
         context = self.smoke_context()
         immutable = [self.md_script, self.structure]

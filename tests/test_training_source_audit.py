@@ -11,7 +11,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDITOR = ROOT / "plugins" / "mlip-training" / "audit_sources.py"
-REPORT = ROOT / "reports" / "training_source_audit_summary.json"
 
 
 def _module():
@@ -23,19 +22,6 @@ def _module():
 
 
 class TrainingSourceAuditTests(unittest.TestCase):
-    def test_committed_real_source_audit_is_redacted_and_records_sources(self) -> None:
-        report = json.loads(REPORT.read_text(encoding="utf-8"))
-        self.assertEqual("read-only-source-audit", report["mode"])
-        self.assertEqual("EXTERNAL_VALIDATION_PENDING", report["scientific_execution_status"])
-        self.assertFalse(report["claims"]["training_executed"])
-        self.assertFalse(report["claims"]["numerical_parity_established"])
-        self.assertEqual(5, report["summary"]["source_count"])
-        self.assertNotIn("/public/home/", json.dumps(report))
-        self.assertEqual(
-            "plugins/mlip-training/audit_sources.py", report["auditor"]["locator"]
-        )
-        self.assertTrue(all(source["source_name"] for source in report["sources"]))
-
     def test_detects_real_mace_missing_continuation_pattern(self) -> None:
         auditor = _module()
         with tempfile.TemporaryDirectory() as directory:
@@ -92,7 +78,7 @@ parts = split_dataset(dataset, frac_list=[0.8, 0.05, 0.15], shuffle=False, rando
                 [0.8, 0.05, 0.15], m3_record["split_settings"][0]["keywords"]["frac_list"]
             )
 
-    def test_deepmd_config_summary_and_public_report_are_path_redacted(self) -> None:
+    def test_deepmd_config_summary_is_path_redacted(self) -> None:
         auditor = _module()
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "input.json"

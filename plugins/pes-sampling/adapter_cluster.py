@@ -504,6 +504,32 @@ def _json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _pseudopotential_settings(record: Any) -> dict[str, Any]:
+    if not isinstance(record, Mapping):
+        raise ValueError("LASP pseudopotential record must be a mapping")
+    path_names = {
+        "reference_path": Path(str(record.get("reference_path", ""))).name,
+        "manifest_path": Path(str(record.get("manifest_path", ""))).name,
+        "potcar_path": Path(str(record.get("potcar_path", ""))).name,
+    }
+    if (
+        not path_names["reference_path"]
+        or path_names["manifest_path"] != "lasp-input-manifest.json"
+        or path_names["potcar_path"] != "POTCAR"
+    ):
+        raise ValueError("LASP pseudopotential path record is invalid")
+    return {
+        "reference_id": record.get("reference_id"),
+        "reference_name": path_names["reference_path"],
+        "functional": record.get("functional"),
+        "elements": record.get("elements"),
+        "symbols": record.get("symbols"),
+        "components": record.get("components"),
+        "configuration_source": record.get("configuration_source"),
+        "portable_or_collectable": record.get("portable_or_collectable"),
+    }
+
+
 def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
     diagnostics: list[dict[str, str]] = []
     execution = context.get("execution", {})
@@ -529,7 +555,9 @@ def _scheduled_check(context: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("LASP version differs from approved plan")
         if report.get("potential") != calculation.get("potential"):
             raise ValueError("LASP potential differs from approved plan")
-        if report.get("pseudopotential") != calculation.get("pseudopotential"):
+        if _pseudopotential_settings(report.get("pseudopotential")) != (
+            _pseudopotential_settings(calculation.get("pseudopotential"))
+        ):
             raise ValueError("LASP pseudopotential settings differ from approved plan")
         input_structure = report.get("input_structure", {})
         if (

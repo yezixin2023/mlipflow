@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mlipflow.services import initialize
+from mlipflow.services.queries import _python_import_name
 
 from .helpers import plugin_manifest, project_config, run_cli, snapshot, write_json
 
@@ -59,6 +60,12 @@ class ReadOnlyCliTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_doctor_uses_the_transport_package_import_path(self) -> None:
+        self.assertEqual(
+            "pymatgen.analysis.diffusion",
+            _python_import_name("pymatgen-analysis-diffusion"),
+        )
 
     def test_uninitialized_queries_create_nothing(self) -> None:
         before = snapshot(self.root)

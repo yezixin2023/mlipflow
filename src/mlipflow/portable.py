@@ -74,6 +74,17 @@ def _spellings(root: Path | None) -> list[str]:
         text = str(candidate).rstrip("/")
         if text and text != "/" and text not in found:
             found.append(text)
+    # macOS exposes the same temporary tree through both /var and
+    # /private/var.  ``Path.resolve()`` may select the latter after an adapter
+    # received the former, so retain both spellings for portable replacement.
+    for text in list(found):
+        alias = None
+        if text.startswith("/private/var/"):
+            alias = text.removeprefix("/private")
+        elif text.startswith("/var/"):
+            alias = "/private" + text
+        if alias is not None and alias not in found:
+            found.append(alias)
     return found
 
 

@@ -142,6 +142,15 @@ def load_remote_runner():
     return module
 
 
+def load_cluster_adapter():
+    path = PES / "adapter_cluster.py"
+    spec = importlib.util.spec_from_file_location("scheduled_lasp_adapter_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class ScheduledLaspPlanTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -190,6 +199,24 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         names = {item["remote_name"] for item in contract["fetch_outputs"]}
         self.assertIn("completion.json", names)
         self.assertIn("selected-structures.tar.gz", names)
+
+    def test_pseudopotential_check_ignores_site_local_path_prefixes(self) -> None:
+        plan = make_run_plan(self.project, "lasp-walk", PLUGINS, self.site, library())
+        approved = plan["adapter_plan"]["lasp_calculation"]["pseudopotential"]
+        reported = json.loads(json.dumps(approved))
+        reported["reference_path"] = "/remote/input/pseudopotentials.json"
+        reported["manifest_path"] = "/remote/input/lasp-input-manifest.json"
+        reported["potcar_path"] = "/remote/input/POTCAR"
+        adapter = load_cluster_adapter()
+        self.assertEqual(
+            adapter._pseudopotential_settings(approved),
+            adapter._pseudopotential_settings(reported),
+        )
+        reported["functional"] = "PBE"
+        self.assertNotEqual(
+            adapter._pseudopotential_settings(approved),
+            adapter._pseudopotential_settings(reported),
+        )
 
     def test_scheduled_plan_rejects_local_lasp_executable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -255,6 +282,11 @@ class LaspRemoteRunnerTests(unittest.TestCase):
         self.assertEqual("OK", report["status"])
         self.assertEqual("vasp", report["potential"])
         self.assertEqual("fixture-pbe54-plain-v1", report["pseudopotential"]["reference_id"])
+        self.assertEqual("pseudopotentials.json", report["pseudopotential"]["reference_path"])
+        self.assertEqual(
+            "lasp-input-manifest.json", report["pseudopotential"]["manifest_path"]
+        )
+        self.assertEqual("POTCAR", report["pseudopotential"]["potcar_path"])
         self.assertEqual(2, report["counts"]["selected_structure_count"])
         canonical = self.output_dir / "lasp-ssw" / "raw-run" / "allstr.arc"
         self.assertEqual(

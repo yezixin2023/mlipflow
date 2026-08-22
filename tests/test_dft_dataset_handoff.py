@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from mlipflow.hpc import resolve_hpc_execution_plan
+from mlipflow.services.contracts import _safe_remote_relative
 from mlipflow.site import ClusterProfile
 from tests.helpers import write_json
 from tests.test_scheduled_multi_calculation import ScheduledLifecycle
@@ -302,15 +303,15 @@ def test_dataset_adapter_stages_and_converter_resolves_canonical_merge_manifest(
 ) -> None:
     old = _canonical(3, project_id="old-labels")
     query = _canonical(3, project_id="round-001", start=10)
-    source_dir = tmp_path / "canonical-sources"
+    source_dir = tmp_path / ".mlipflow" / "runs" / "labels" / "attempt-1"
     write_json(source_dir / "old.json", old)
     write_json(source_dir / "query.json", query)
     merge_manifest = {
         "schema_version": 1,
         "contract": "mlipflow/canonical-dataset-merge",
         "sources": [
-            {"path": "canonical-sources/old.json"},
-            {"path": "canonical-sources/query.json"},
+            {"path": ".mlipflow/runs/labels/attempt-1/old.json"},
+            {"path": ".mlipflow/runs/labels/attempt-1/query.json"},
         ],
     }
     merge_path = tmp_path / "merge.json"
@@ -346,13 +347,18 @@ def test_dataset_adapter_stages_and_converter_resolves_canonical_merge_manifest(
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["approval_summary"]["dataset_id"] == merged["dataset_id"]
     assert plan["approval_summary"]["canonical_source_count"] == 2
-    assert {item["remote_name"] for item in plan["scheduled_execution"]["staged_files"]} == {
+    staged_names = {
+        item["remote_name"] for item in plan["scheduled_execution"]["staged_files"]
+    }
+    assert staged_names == {
         "canonical.json",
-        "canonical-sources/old.json",
-        "canonical-sources/query.json",
+        ".mlipflow/runs/labels/attempt-1/old.json",
+        ".mlipflow/runs/labels/attempt-1/query.json",
         "dataset_convert.py",
         "dataset_contract.py",
     }
+    assert all(_safe_remote_relative(name) for name in staged_names)
+    assert not _safe_remote_relative(".ssh/id_ed25519")
 
 
 def test_dataset_adapter_accepts_absolute_project_scoped_canonical_path(tmp_path: Path) -> None:
