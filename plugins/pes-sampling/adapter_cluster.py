@@ -719,13 +719,6 @@ class Adapter:
             return _plan_scheduled(context)
         return self._local.plan(context)
 
-    def prepare(self, context: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
-        if _scheduled(context):
-            diagnostics = _validate_scheduled(context)
-            if _errors(diagnostics) or not isinstance(plan, Mapping) or plan.get("status") != "READY":
-                return _blocked(diagnostics + ([] if isinstance(plan, Mapping) and plan.get("status") == "READY" else [_diag("ERROR", "plan.ready_required", "prepare requires READY plan")]))
-            return {"plugin_id": "pes-sampling", "status": "READY", "executable": True, "prepared": False, "writes_files": False, "plan": dict(plan), "diagnostics": diagnostics}
-        return self._local.prepare(context, plan)
 
     def check(self, context: dict[str, Any]) -> dict[str, Any]:
         execution = context.get("execution", {}) if isinstance(context, Mapping) else {}
@@ -740,6 +733,3 @@ class Adapter:
         if isinstance(plan, Mapping) and isinstance(plan.get("scheduled_execution"), Mapping) and plan.get("operation") == "lasp-ssw-execute":
             return _scheduled_collect(context)
         return self._local.collect(context)
-
-    def replay(self, context: dict[str, Any]) -> dict[str, Any]:
-        return self._local.replay(context)

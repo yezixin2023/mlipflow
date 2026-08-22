@@ -545,17 +545,6 @@ class Adapter:
             "diagnostics": [],
         }
 
-    def prepare(self, context: Any, plan: Any) -> dict[str, Any]:
-        if not isinstance(plan, Mapping) or plan.get("status") != "READY":
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "BLOCKED",
-                "executable": False,
-                "diagnostics": [
-                    _diagnostic("error", "plan.not_ready", "prepare requires a READY plan")
-                ],
-            }
-        return dict(plan)
 
     def check(self, context: Any) -> dict[str, Any]:
         if not isinstance(context, Mapping):
@@ -688,8 +677,3 @@ class Adapter:
             "metrics": metrics,
             "validation_claim": result.get("validation_claim"),
         }
-
-    def replay(self, context: Any) -> dict[str, Any]:
-        collected = self.collect(context)
-        collected["executable"] = False
-        return collected

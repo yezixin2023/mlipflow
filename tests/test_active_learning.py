@@ -252,7 +252,7 @@ def prediction_bundle(strategy="dual"):
     return {
         "schema_version": 1,
         "contract": al.PREDICTION_CONTRACT,
-        "evidence_mode": "oracle-replay",
+        "validation_claim": "ORACLE_REPLAY_VALIDATION",
         "strategy": selected_policy["strategy"],
         "units": {"energy": "eV", "force": "eV/angstrom"},
         "dataset_split": {
@@ -871,7 +871,7 @@ def test_assessment_binds_campaign_to_policy_and_current_cumulative_split():
         run_assessment(retry_as_round)
 
 
-def test_adapter_executes_checks_collects_and_replays_oracle_evidence():
+def test_adapter_executes_checks_and_collects_oracle_evidence():
     with tempfile.TemporaryDirectory() as directory:
         project = Path(directory)
         attempt = project / "attempt"
@@ -902,9 +902,6 @@ def test_adapter_executes_checks_collects_and_replays_oracle_evidence():
         collected = adapter.collect(context)
         assert collected["status"] == "OK"
         assert collected["metrics"]["model_count"] == 2
-        replayed = adapter.replay(context)
-        assert replayed["status"] == "OK"
-        assert replayed["executable"] is False
 
         result_path = attempt / "committee-evaluation.json"
         result = json.loads(result_path.read_text(encoding="utf-8"))

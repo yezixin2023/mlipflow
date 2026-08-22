@@ -1930,30 +1930,6 @@ class Adapter:
             "diagnostics": diagnostics,
         }
 
-    def prepare(self, context: Any, plan: Any) -> Dict[str, Any]:
-        """Return a preparation description; no staging or filesystem write occurs."""
-        diagnostics = self.validate(context)
-        if (
-            _has_errors(diagnostics)
-            or not isinstance(plan, Mapping)
-            or plan.get("status") != "READY"
-        ):
-            if not isinstance(plan, Mapping) or plan.get("status") != "READY":
-                diagnostics.append(
-                    _diagnostic(
-                        "ERROR", "plan.ready_required", "prepare requires a READY execution plan"
-                    )
-                )
-            return _blocked(diagnostics)
-        return {
-            "plugin_id": PLUGIN_ID,
-            "status": "READY",
-            "executable": True,
-            "prepared": False,
-            "writes_files": False,
-            "plan": dict(plan),
-            "diagnostics": diagnostics,
-        }
 
     def _manifest_path(self, context: Any) -> Optional[Path]:
         if not isinstance(context, Mapping):
@@ -3514,31 +3490,4 @@ class Adapter:
                 "lasp_replay": operation == "lasp-ssw-normalize-replay",
             },
             "diagnostics": diagnostics,
-        }
-
-    def replay(self, context: Any) -> Dict[str, Any]:
-        if not isinstance(context, Mapping) or not isinstance(
-            context.get("result_manifest"), Mapping
-        ):
-            return {
-                "plugin_id": PLUGIN_ID,
-                "operation": "replay",
-                "status": "BLOCKED",
-                "executable": False,
-                "code": "replay.result_manifest_required",
-                "diagnostics": [
-                    _diagnostic(
-                        "ERROR",
-                        "replay.result_manifest_required",
-                        "replay requires an in-memory result manifest",
-                    )
-                ],
-            }
-        return {
-            "plugin_id": PLUGIN_ID,
-            "operation": "replay",
-            "status": "OK",
-            "executable": False,
-            "code": "replay.reference_only",
-            "result_manifest": context["result_manifest"],
         }

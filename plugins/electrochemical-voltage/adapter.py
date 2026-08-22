@@ -105,7 +105,7 @@ def _replay_input_artifacts(
     try:
         module = _manuscript_replay_module()
         if len(module.CSV_FIELDS) != 14:
-            raise RuntimeError("bundled replay contract must contain exactly 14 CSV fields")
+            raise RuntimeError("bundled manuscript table parser must contain exactly 14 CSV fields")
         artifacts = module.build_artifacts(raw)
     except (OSError, RuntimeError, ValueError) as exc:
         return None, [
@@ -132,14 +132,6 @@ def _replay_input_artifacts(
                 )
             )
             continue
-        if artifact.get("evidence_mode") != "manuscript-table-replay":
-            diagnostics.append(
-                _diagnostic(
-                    "error",
-                    "manuscript_replay.mode",
-                    f"{name} 必须声明 evidence_mode=manuscript-table-replay。",
-                )
-            )
         if artifact.get("voltage_unit") != "V":
             diagnostics.append(
                 _diagnostic(
@@ -511,17 +503,6 @@ class Adapter:
             "units": {"energy": "eV", "voltage": "V"},
         }
 
-    def prepare(self, context: Any, plan: Any) -> dict[str, Any]:
-        if not isinstance(plan, dict) or plan.get("status") != "READY":
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "BLOCKED",
-                "executable": False,
-                "diagnostics": [
-                    _diagnostic("error", "plan.not_ready", "prepare 需要 READY 计划。")
-                ],
-            }
-        return dict(plan)
 
     def _paths(self, context: dict[str, Any]) -> tuple[Path, Path]:
         return (
@@ -588,12 +569,6 @@ class Adapter:
                     )
                 )
         provenance = observed["provenance.json"]
-        if provenance.get("evidence_mode") != "manuscript-table-replay":
-            diagnostics.append(
-                _diagnostic(
-                    "error", "manuscript_replay.mode", "provenance 必须声明 replay mode。"
-                )
-            )
         if provenance.get("model_execution") is not False:
             diagnostics.append(
                 _diagnostic(
@@ -802,102 +777,6 @@ class Adapter:
             "metrics": dict(result["metrics"]),
         }
 
-    def replay(self, context: Any) -> dict[str, Any]:
-        """Recompute in memory or verify an existing result; never write a file."""
-
-        diagnostics = self.validate(context)
-        if _errors(diagnostics):
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "FAIL",
-                "executable": False,
-                "diagnostics": diagnostics,
-            }
-        assert isinstance(context, dict)
-        if _operation(context) == REPLAY_OPERATION:
-            expected, replay_diagnostics = _replay_input_artifacts(context)
-            diagnostics.extend(replay_diagnostics)
-            if expected is None or _errors(diagnostics):
-                return {
-                    "plugin_id": PLUGIN_ID,
-                    "status": "FAIL",
-                    "executable": False,
-                    "operation": REPLAY_OPERATION,
-                    "mode": "replay",
-                    "model_execution": False,
-                    "diagnostics": diagnostics,
-                }
-            _, output_paths = self._replay_paths(context)
-            existing = [path.is_file() for path in output_paths.values()]
-            if any(existing) and not all(existing):
-                diagnostics.append(
-                    _diagnostic(
-                        "error",
-                        "manuscript_replay.partial_outputs",
-                        "发现部分 SI replay 产物；无写 replay 拒绝混合部分结果。",
-                    )
-                )
-            elif all(existing):
-                observed, verify_diagnostics, _ = self._verify_replay_outputs(context)
-                diagnostics.extend(verify_diagnostics)
-                if observed is not None:
-                    expected = observed
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "FAIL" if _errors(diagnostics) else "OK",
-                "executable": False,
-                "operation": REPLAY_OPERATION,
-                "mode": "replay",
-                "model_execution": False,
-                "dft_execution": False,
-                "recomputed_from_total_energies": False,
-                "diagnostics": diagnostics,
-                "result_manifest": {
-                    "schema_version": 1,
-                    "mode": "replay",
-                    "artifacts": expected,
-                },
-            }
-        energy_path, result_path = self._paths(context)
-        series, read_diagnostic = _read_json(energy_path)
-        if series is None:
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "WAIT" if read_diagnostic and read_diagnostic["level"] == "warning" else "FAIL",
-                "executable": False,
-                "diagnostics": [read_diagnostic] if read_diagnostic else [],
-            }
-        diagnostics.extend(_series_diagnostics(series))
-        if _errors(diagnostics):
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "FAIL",
-                "executable": False,
-                "diagnostics": diagnostics,
-            }
-        if result_path.is_file():
-            result, result_diagnostic = _read_json(result_path)
-            if result is None:
-                return {
-                    "plugin_id": PLUGIN_ID,
-                    "status": "FAIL",
-                    "executable": False,
-                    "diagnostics": [result_diagnostic] if result_diagnostic else [],
-                }
-            diagnostics.extend(self._verify_result(context, series, result))
-        else:
-            result = _compute_manifest(
-                series,
-                float(context["parameters"]["lithium_reference_ev"]),
-                float(context["parameters"].get("electrons_per_li", 1.0)),
-            )
-        return {
-            "plugin_id": PLUGIN_ID,
-            "status": "FAIL" if _errors(diagnostics) else "OK",
-            "executable": False,
-            "diagnostics": diagnostics,
-            "result_manifest": result,
-        }
 
 
 def _main(argv: list[str] | None = None) -> int:

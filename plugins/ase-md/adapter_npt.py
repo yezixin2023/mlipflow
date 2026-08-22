@@ -419,8 +419,6 @@ class Adapter:
             return _plan_npt(context)
         return _pin_legacy_helper(legacy.Adapter().plan(context))
 
-    def prepare(self, context: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
-        return legacy.Adapter().prepare(context, plan)
 
     def check(self, context: dict[str, Any]) -> dict[str, Any]:
         if _check_ensemble(context) != NPT:
@@ -471,6 +469,3 @@ class Adapter:
             "metrics": checked.get("metrics", {}),
             "artifacts": artifacts,
         }
-
-    def replay(self, context: dict[str, Any]) -> dict[str, Any]:
-        return self.collect(context)

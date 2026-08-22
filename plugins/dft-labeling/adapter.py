@@ -2855,13 +2855,6 @@ class Adapter:
             return _plan_dataset_assemble(context)
         return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": self.validate(context)}
 
-    def prepare(self, context: Any, plan: Any) -> dict[str, Any]:
-        if not isinstance(plan, Mapping) or plan.get("status") != "READY":
-            return {
-                "plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False,
-                "diagnostics": [_diagnostic("error", "plan.not_ready", "prepare 需要 READY 计划。")],
-            }
-        return dict(plan)
 
     def _result_path(self, context: Mapping[str, Any]) -> Path:
         parameters = _mapping(context["parameters"])
@@ -2984,24 +2977,3 @@ class Adapter:
                 "ionic_converged": manifest["completion"].get("ionic_converged"),
             },
         }
-
-    def replay(self, context: Any) -> dict[str, Any]:
-        """Verify a provided standardized result without launching any executable."""
-
-        if isinstance(context, Mapping) and isinstance(context.get("result_manifest"), Mapping):
-            diagnostics = (
-                _validate_prepare(context, require_fresh_outputs=False)
-                if _operation(context) == PREPARE_OPERATION
-                else self.validate(context)
-            )
-            diagnostics.extend(self._verify_result(context, context["result_manifest"], False))
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "FAIL" if _errors(diagnostics) else "OK",
-                "executable": False,
-                "diagnostics": diagnostics,
-                "result_manifest": context["result_manifest"],
-            }
-        collected = self.collect(context)
-        collected["executable"] = False
-        return collected

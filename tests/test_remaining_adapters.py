@@ -325,7 +325,7 @@ class HighEntropyAdapterTests(unittest.TestCase):
                 {item["code"] for item in checked["diagnostics"]},
             )
 
-    def test_replay_only_reads_and_never_executes_generator(self) -> None:
+    def test_collect_reads_existing_result_without_executing_generator(self) -> None:
         module = load_adapter("high-entropy-structure")
         adapter = module.Adapter()
         with tempfile.TemporaryDirectory() as directory:
@@ -338,9 +338,8 @@ class HighEntropyAdapterTests(unittest.TestCase):
             script.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
             write_json(attempt / "generation-result.json", valid)
 
-            replayed = adapter.replay(ctx)
-            self.assertEqual("OK", replayed["status"])
-            self.assertFalse(replayed["executable"])
+            collected = adapter.collect(ctx)
+            self.assertEqual("OK", collected["status"])
             self.assertFalse(marker.exists())
 
 
@@ -483,7 +482,7 @@ class CandidateRankingAdapterTests(unittest.TestCase):
 
 
 class VoltageAdapterTests(unittest.TestCase):
-    def test_cli_formula_and_read_only_replay(self) -> None:
+    def test_cli_formula_check_and_collection(self) -> None:
         module = load_adapter("electrochemical-voltage")
         adapter = module.Adapter()
         with tempfile.TemporaryDirectory() as directory:
@@ -542,13 +541,6 @@ class VoltageAdapterTests(unittest.TestCase):
             }
             self.assertEqual("READY", adapter.plan(explicit_ctx)["status"])
             self.assertIsInstance(plan["argv"], list)
-            replayed = adapter.replay(ctx)
-            self.assertEqual("OK", replayed["status"])
-            self.assertFalse((attempt / "voltage-result.json").exists(), "replay must not write")
-            self.assertEqual(
-                [2.0, 1.0],
-                [step["average_voltage_v"] for step in replayed["result_manifest"]["steps"]],
-            )
 
             exit_code = module._main(
                 [

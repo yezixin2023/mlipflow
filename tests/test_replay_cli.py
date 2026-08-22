@@ -14,6 +14,10 @@ class ReplayCliTests(unittest.TestCase):
             root = Path(temporary)
             plugins = root / "plugins"
             write_json(plugins / "demo" / "plugin.yaml", plugin_manifest())
+            (plugins / "demo" / "adapter.py").write_text(
+                "raise AssertionError('generic replay imported the Adapter')\n",
+                encoding="utf-8",
+            )
             artifact = root / "evidence.csv"
             artifact.write_text("metric,value\nforce_rmse,0.1\n", encoding="utf-8")
             write_json(
@@ -72,6 +76,10 @@ class ReplayCliTests(unittest.TestCase):
             root = Path(temporary)
             plugins = root / "plugins"
             write_json(plugins / "demo" / "plugin.yaml", plugin_manifest())
+            (plugins / "demo" / "adapter.py").write_text(
+                "raise AssertionError('generic replay imported the Adapter')\n",
+                encoding="utf-8",
+            )
             write_json(
                 root / "result.json",
                 {"schema_version": 1, "status": "FAIL", "metrics": {}, "artifacts": []},

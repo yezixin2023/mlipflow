@@ -77,7 +77,7 @@ plugins/<plugin-id>/
 
 Start with [`docs/PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md) and [`schemas/plugin.schema.json`](schemas/plugin.schema.json).
 
-A plugin should expose explicit inputs, parameters, outputs, dependencies, backend capabilities, completion criteria, retry behavior, safety properties, and replay behavior. Prefer wrapping an existing scientific implementation behind a deterministic contract rather than reimplementing a numerical method without a strong reason.
+A plugin should expose explicit inputs, parameters, outputs, dependencies, backend capabilities, completion criteria, and safety properties. Core owns generic replay and fresh-attempt retry behavior. Prefer wrapping an existing scientific implementation behind a deterministic contract rather than reimplementing a numerical method without a strong reason.
 
 Adapter execution should use explicit argv lists and controlled working directories/environment. When an external program is involved, a zero process exit code is not by itself a scientific completion criterion.
 

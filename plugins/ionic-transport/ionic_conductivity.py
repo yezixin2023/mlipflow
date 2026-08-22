@@ -2313,7 +2313,6 @@ def build_aimd_mlip_comparison(
     payload = {
         "schema_version": 1,
         "plugin_id": "ionic-transport",
-        "evidence_mode": "metrics-recomputed-from-supplied-reference-prediction-pairs",
         "model_execution": False,
         "model": args.comparison_model,
         "scenario": args.comparison_scenario,

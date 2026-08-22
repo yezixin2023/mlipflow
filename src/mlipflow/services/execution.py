@@ -81,7 +81,7 @@ def _execute_ready(
                 resources=node.get("resources", {}),
                 state=RunState.OK.value,
                 state_reason="replay collected",
-                **_manifest_context(project, node, plugin, store, run_id, finished=True),
+                **_manifest_context(project, node, store, run_id, finished=True),
             )
             write_json_atomic(manifest_path, manifest)
             for artifact in artifacts:
@@ -182,7 +182,7 @@ def _execute_ready(
                 resources=node.get("resources", {}),
                 state=final.value,
                 state_reason=reason,
-                **_manifest_context(project, node, plugin, store, run_id, finished=True),
+                **_manifest_context(project, node, store, run_id, finished=True),
             )
             write_json_atomic(manifest_path, manifest)
             for artifact in artifacts:
@@ -289,9 +289,7 @@ def _execute_ready(
                     "independent-jobs",
                 ],
                 resources=node.get("resources", {}),
-                **_manifest_context(
-                    project, node, plugin, store, run_id, finished=False
-                ),
+                **_manifest_context(project, node, store, run_id, finished=False),
             )
             write_json_atomic(manifest_path, manifest)
             for artifact in control_artifacts:
@@ -357,7 +355,7 @@ def _execute_ready(
             command=command,
             resources=node.get("resources", {}),
             execution_provenance=result.submission_provenance,
-            **_manifest_context(project, node, plugin, store, run_id, finished=False),
+            **_manifest_context(project, node, store, run_id, finished=False),
         )
         write_json_atomic(manifest_path, manifest)
         for artifact in control_artifacts:

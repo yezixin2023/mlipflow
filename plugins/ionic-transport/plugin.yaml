@@ -8,21 +8,10 @@
   "api_version": 1,
   "description": "Local-only formal ionic transport through pymatgen-analysis-diffusion, with separate unchanged historical reproduction and a tightly bounded MD integration smoke.",
   "category": "transport-analysis",
-  "contract": {
-    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
-  },
   "implementation": {
     "kind": "python-adapter",
     "entrypoint": "adapter.py:Adapter",
     "status": "adapter-ready",
-    "source_classification": ["C", "D"],
-    "source_references": [
-      "inventory://workspace/claw/MD/ase_MD/ase_md_only_multi_calc.py",
-      "repository://plugins/ionic-transport/ionic_conductivity.py",
-      "inventory://local-manuscript-evidence/MACE/MD/train/Li10/get_MSD_from_*_11221.py",
-      "inventory://local-manuscript-evidence/MACE/MD/train/Li10/Li10_MACE.out",
-      "inventory://local-manuscript-evidence/supply/Li10/Li10_test.out"
-    ],
     "limitations": [
       "operation=analyze-existing post-processes collected MLIPFlow ASE-MD/LAMMPS-MD artifacts or explicit historical ASE/LAMMPS/VASP trajectories/MSD tables and does not launch MD or submit jobs.",
       "Native ASE-MD and LAMMPS-MD handoff reads timing, temperature, species/type mapping, ensemble, and model/structure paths from upstream artifacts; preserved restart attempts are ordered by global step and duplicate boundary frames are removed.",
@@ -52,18 +41,7 @@
   "execution": {
     "mode": "external-command",
     "backends": ["local"],
-    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
-    "operations": ["analyze-existing", "md-smoke-and-analyze"],
-    "shell": false,
-    "executes_external_programs": true,
-    "writes_files": true,
-    "submits_jobs": false
-  },
-  "replay": {
-    "supported": true,
-    "behavior": "reference-only",
-    "accepted_media_types": ["application/json"],
-    "reason": "Replay returns an in-memory result-manifest reference without parsing trajectories/MSD, running analysis, or starting MD."
+    "operations": ["analyze-existing", "md-smoke-and-analyze"]
   },
   "inputs": [
     {"name": "input_paths", "kind": "artifact-reference", "required": false, "description": "Optional explicit historical trajectory/MSD files or directories. analyze-existing can instead consume collected ase-md/lammps-md dependency artifacts automatically."},
@@ -179,7 +157,6 @@
     ]
   },
   "completion": {
-    "status": "implemented",
     "checks": [
       {"id": "fixed-results-readable", "implemented": true, "description": "Require the explicit CSV, Arrhenius JSON, and failure-list JSON outputs."},
       {"id": "pymatgen-formal-parity", "implemented": true, "description": "Rerun DiffusionAnalyzer/get_diffusivity_from_msd/get_conversion_factor/fit_arrhenius from original inputs and compare saved values; allow explicit null conductivity only for MSD without Structure."},
@@ -188,18 +165,6 @@
       {"id": "md-smoke-handoff-integrity", "implemented": true, "description": "Require fresh confined MD/analysis outputs, shell=false analysis execution, exact temperature coverage, completed Arrhenius fit, explicit integration-smoke-only boundaries, and verified source/input/trajectory/result paths."},
       {"id": "historical-li10-parity", "implemented": true, "description": "Read-only target.msd/Li10 stdout normalization reproduces both historical diffusivity methods, tags sampling/fit/units/provenance, and separates legacy N=7 from explicit or POSCAR-derived corrected carrier counts."}
       ,{"id": "aimd-mlip-rdf-comparison", "implemented": true, "description": "Rebuild one explicit pair RDF from the original common-window AIMD and MLIP trajectories, verify both curves and difference metrics, and emit task-separated benchmark pairs."}
-    ],
-    "success_state": "OK",
-    "failure_state": "FAIL"
-  },
-  "retry": {
-    "status": "delegated-to-core",
-    "allowed_from": ["FAIL", "STOPPED"],
-    "creates_new_attempt": true,
-    "reuses_previous_run_directory": false,
-    "requires_approval": false,
-    "max_attempts": null,
-    "limit_enforced": false,
-    "notes": ["Every retry preserves prior artifacts and requires a fresh attempt directory. The bounded MD handoff never resumes or overwrites a trajectory; a retry starts a new smoke attempt after approval."]
+    ]
   }
 }

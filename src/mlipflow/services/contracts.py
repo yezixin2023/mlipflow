@@ -566,7 +566,6 @@ def _normalize_adapter_artifacts(
 def _manifest_context(
     project: Project,
     node: dict[str, Any],
-    plugin: PluginSpec,
     store: StateStore,
     run_id: str,
     *,
@@ -583,8 +582,6 @@ def _manifest_context(
                 "required_states": [RunState.OK.value],
             }
         )
-    max_attempts = plugin.raw.get("retry", {}).get("max_attempts")
-    max_retries = max(0, int(max_attempts) - 1) if isinstance(max_attempts, int) else None
     previous = store.previous_step(project.project_id, str(node["id"]), step.attempt)
     return {
         "backend_profile": node.get("backend_profile"),
@@ -596,7 +593,7 @@ def _manifest_context(
             "finished_at": utc_now() if finished else None,
         },
         "retry_count": step.retry_count,
-        "max_retries": max_retries,
+        "max_retries": None,
         "previous_run_id": previous.run_id if previous is not None else None,
         "dependencies": dependencies,
     }

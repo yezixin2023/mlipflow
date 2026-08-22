@@ -23,7 +23,6 @@ REQUIRED_FIELDS = {
     "description",
     "implementation",
     "execution",
-    "replay",
 }
 
 
@@ -46,13 +45,9 @@ class Adapter(Protocol):
 
     def plan(self, context: dict[str, Any]) -> dict[str, Any]: ...
 
-    def prepare(self, context: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]: ...
-
     def check(self, context: dict[str, Any]) -> dict[str, Any]: ...
 
     def collect(self, context: dict[str, Any]) -> dict[str, Any]: ...
-
-    def replay(self, context: dict[str, Any]) -> dict[str, Any]: ...
 
 
 def discover_plugins(root: Path) -> dict[str, PluginSpec]:
@@ -91,9 +86,6 @@ def validate_plugin(raw: dict[str, Any], source: Path | str = "plugin") -> None:
     invalid_backends = set(execution["backends"]) - {"local", "slurm", "ssh-slurm"}
     if invalid_backends:
         raise PluginError(f"{source}: invalid backends {sorted(invalid_backends)}")
-    replay = raw.get("replay")
-    if not isinstance(replay, dict) or not isinstance(replay.get("supported"), bool):
-        raise PluginError(f"{source}: replay.supported must be boolean")
 
 
 def select_plugin(plugins: dict[str, PluginSpec], uses: str) -> PluginSpec:

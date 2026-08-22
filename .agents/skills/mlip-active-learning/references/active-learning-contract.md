@@ -30,8 +30,8 @@ committee training -> exploration MD -> committee evaluation
 -> immutable audit benchmark -> round assessment
 ```
 
-Skip an upstream numerical stage only when a checker/replay contract accepts matching existing
-evidence. Do not repeat expensive work ceremonially.
+Skip an upstream numerical stage only when its existing result passes the applicable scientific
+checks or generic core replay validation. Do not repeat expensive work ceremonially.
 
 ## Required policy evidence
 

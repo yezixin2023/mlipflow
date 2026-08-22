@@ -1134,24 +1134,6 @@ class Adapter:
             "diagnostics": [],
         }
 
-    def prepare(self, context: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(plan, dict) or plan.get("status") != "READY":
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "BLOCKED",
-                "executable": False,
-                "diagnostics": [_diagnostic("error", "training.plan_required", "a READY plan is required")],
-            }
-        return {
-            "plugin_id": PLUGIN_ID,
-            "status": "READY",
-            "executable": False,
-            "prepared": False,
-            "message": (
-                "No files were written; the scheduler stages the reviewed config and the "
-                "external wrapper consumes existing inputs."
-            ),
-        }
 
     def check(self, context: dict[str, Any]) -> dict[str, Any]:
         if context.get("backend") == SCHEDULED_BACKEND:
@@ -1200,8 +1182,3 @@ class Adapter:
             "metrics": checked["metrics"],
             "diagnostics": [],
         }
-
-    def replay(self, context: dict[str, Any]) -> dict[str, Any]:
-        """Replay only parses an already existing manifest and model reference."""
-
-        return self.collect(context)

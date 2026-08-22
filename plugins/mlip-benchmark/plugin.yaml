@@ -8,19 +8,10 @@
   "api_version": 1,
   "description": "Local or reviewed SSH-SLURM fresh first-party MLIP inference plus strict multi-model metric normalization for static-PES and AIMD-reference structural/transport evidence with task-separated ranking.",
   "category": "benchmarking",
-  "contract": {
-    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
-  },
   "implementation": {
     "kind": "python-adapter",
     "entrypoint": "adapter.py:Adapter",
     "status": "implemented",
-    "source_classification": ["C", "new"],
-    "source_references": [
-      "inventory://remote/MLP/DeepMD/dpdata/mlp_train/{se_e2_a,se_e2_r,se_atten_v2}/data/cal_all.py",
-      "inventory://remote/MLP/CHGnet/cal_rmse/cal_new.py",
-      "inventory://remote/MLP/M3Gnet/cal_test/cal.py"
-    ],
     "limitations": [
       "evaluate-fresh invokes bundled first-party DeepMD, MatGL/M3GNet, CHGNet, or MACE inference through explicit argv with shell=false; four DeepMD families share one runtime implementation.",
       "evaluate-static and collect-existing retain the reviewed external-command/result-manifest contract; normalize-replay and normalize-execute invoke benchmark_wrapper.py through explicit argv with shell=false.",
@@ -43,18 +34,7 @@
   "execution": {
     "mode": "external-command",
     "backends": ["local", "ssh-slurm"],
-    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
-    "operations": ["evaluate-fresh", "evaluate-static", "normalize-replay", "normalize-execute"],
-    "shell": false,
-    "executes_external_programs": true,
-    "writes_files": true,
-    "submits_jobs": true
-  },
-  "replay": {
-    "supported": true,
-    "behavior": "parse-existing-artifacts",
-    "accepted_media_types": ["application/json", "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
-    "reason": "Adapter replay reads explicit result artifacts; the plugin-local wrapper imports prepared JSON/CSV/XLSX and the real CHGNet/M3GNet summary workbook layouts without invoking a model."
+    "operations": ["evaluate-fresh", "evaluate-static", "normalize-replay", "normalize-execute"]
   },
   "inputs": [
     {"name": "executable", "kind": "file", "required": false, "description": "Explicit non-shell executable required only by legacy evaluate-static."},
@@ -115,7 +95,6 @@
     ]
   },
   "completion": {
-    "status": "implemented",
     "checks": [
       {"id": "metric-schema-and-finiteness", "implemented": true, "description": "Validate metric names, finite available values, units, directions, scalar or atom sample counts, explicit unavailable-Pearson reasons, and maximum atomic force-vector error dimensions."},
       {"id": "benchmark-evidence", "implemented": true, "description": "Require model/dataset paths and a versioned metrics artifact before routing can consume results."},
@@ -125,18 +104,6 @@
       ,{"id": "scheduled-fresh-report", "implemented": true, "description": "Require the cluster report to record the approved family, model/dataset paths, and all five fetched output paths."}
       ,{"id": "same-test-multi-model-ranking", "implemented": true, "description": "Normalize multiple fresh prediction-evidence files with explicit per-input locators and require the approved exact model set in every comparable ranking."}
       ,{"id": "aimd-reference-task-ranking", "implemented": true, "description": "Normalize explicit AIMD reference/MLIP RDF and transport pairs for any approved model count, preserve missing evidence, and rank static-PES, structural-dynamics, and ionic-transport groups independently."}
-    ],
-    "success_state": "OK",
-    "failure_state": "FAIL"
-  },
-  "retry": {
-    "status": "delegated-to-core",
-    "allowed_from": ["FAIL", "STOPPED"],
-    "creates_new_attempt": true,
-    "reuses_previous_run_directory": false,
-    "requires_approval": false,
-    "max_attempts": null,
-    "limit_enforced": false,
-    "notes": ["A retry creates new benchmark evidence and never overwrites the prior metrics artifact."]
+    ]
   }
 }

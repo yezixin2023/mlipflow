@@ -329,7 +329,6 @@ def run(args: argparse.Namespace) -> int:
         predictions = {
             "schema_version": 1,
             "contract": PREDICTION_CONTRACT,
-            "evidence_mode": "fresh",
             "strategy": policy["strategy"],
             "units": {"energy": "eV", "force": "eV/angstrom"},
             "dataset_split": dataset["dataset_split"],

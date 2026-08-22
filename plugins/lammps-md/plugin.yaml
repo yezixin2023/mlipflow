@@ -8,24 +8,10 @@
   "api_version": 1,
   "description": "Prepare deterministic CPU/GPU LAMMPS decks, execute reviewed DeepMD, MACE, or MatGL/M3GNet bundles through ssh-slurm, and resume scheduler-interrupted runs from approved periodic binary restarts.",
   "category": "sampling",
-  "contract": {"methods": ["validate", "plan", "prepare", "check", "collect", "replay"]},
   "implementation": {
     "kind": "python-adapter",
     "entrypoint": "adapter_restart.py:Adapter",
     "status": "implemented",
-    "source_classification": ["D", "new"],
-    "source_references": [
-      "https://docs.lammps.org/restart.html",
-      "https://docs.lammps.org/read_restart.html",
-      "https://docs.lammps.org/Howto_restart.html",
-      "https://docs.lammps.org/run.html",
-      "https://docs.lammps.org/fix_nh.html",
-      "https://docs.lammps.org/Run_options.html",
-      "https://docs.deepmodeling.com/projects/deepmd/en/stable/third-party/lammps-command.html",
-      "https://mace-docs.readthedocs.io/en/latest/guide/lammps.html",
-      "https://github.com/materialyzeai/matgl/tree/main/lammps",
-      "https://github.com/CederGroupHub/chgnet/issues/57"
-    ],
     "limitations": [
       "Version 0.3 keeps lammps-prepare local; operation=execute is separately approved ssh-slurm work. Preparation success is never execution success.",
       "Periodic restart is opt-in through checkpoint_interval. The execution runner adds LAMMPS restart N checkpoint.1.restart checkpoint.2.restart to the reviewed generated deck; two fixed files alternate so a hard interruption can leave a previous complete checkpoint.",
@@ -45,18 +31,7 @@
   "execution": {
     "mode": "python-library",
     "backends": ["local", "ssh-slurm"],
-    "entrypoint": {"path": "adapter_restart.py", "object": "Adapter"},
-    "operations": ["lammps-prepare", "execute"],
-    "shell": false,
-    "executes_external_programs": true,
-    "writes_files": true,
-    "submits_jobs": true
-  },
-  "replay": {
-    "supported": true,
-    "behavior": "parse-existing-artifacts",
-    "accepted_media_types": ["application/json", "text/plain", "application/octet-stream"],
-    "reason": "Replay revalidates prepared bundles or already fetched completed execution artifacts and never launches LAMMPS. Periodic failure checkpoints remain retry inputs rather than successful replay results."
+    "operations": ["lammps-prepare", "execute"]
   },
   "inputs": [
     {"name": "structure", "kind": "file", "required": false, "description": "Required by lammps-prepare: one project-scoped ASE-readable full-rank 3D periodic structure."},
@@ -106,7 +81,6 @@
     ]
   },
   "completion": {
-    "status": "implemented",
     "checks": [
       {"id": "input-paths", "implemented": true, "description": "Preparation records source paths; execute checks the prepared manifest plus selected structure.data/deck paths before staging and on the compute node."},
       {"id": "portable-model-path", "implemented": true, "description": "Generated decks use ${MODEL_FILE}; execute resolves the recorded relative model path only below site MODEL_ROOT."},
@@ -114,19 +88,7 @@
       {"id": "execution-artifacts", "implemented": true, "description": "Require trajectory, final.data, final.restart, LAMMPS log/screen log, result manifest and cluster report within approved size bounds at their declared paths."},
       {"id": "restart-runtime", "implemented": true, "description": "Before binary resume, require previous/current executable path, platform, launcher arguments, resources, prepared bundle, model path, target and checkpoint cadence to match."},
       {"id": "restart-state", "implemented": true, "description": "Require the selected resume checkpoint name to be one of the staged salvaged candidates, its LAMMPS timestep to be a valid periodic checkpoint below total steps, and successful run completion to reach the original total step."}
-    ],
-    "success_state": "OK",
-    "failure_state": "FAIL"
-  },
-  "retry": {
-    "status": "delegated-to-core",
-    "allowed_from": ["FAIL", "STOPPED"],
-    "creates_new_attempt": true,
-    "reuses_previous_run_directory": false,
-    "requires_approval": false,
-    "max_attempts": null,
-    "limit_enforced": false,
-    "notes": ["restart_policy=auto-from-previous-attempt consumes only the immediately previous approved failure-salvage checkpoint/runtime pair. Without a valid checkpoint, retry is blocked instead of silently starting fresh."]
+    ]
   },
   "computational_backends": [
     {"id": "deepmd", "family": "DeePMD-kit LAMMPS pair_style deepmd", "status": "implemented", "operations": ["lammps-prepare", "execute"], "external_programs": ["LAMMPS"], "limitations": ["CPU and GPU use the same pair style; site runtime owns MPI/GPU mapping and must respect at most one GPU per MPI rank."]},

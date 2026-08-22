@@ -32,7 +32,7 @@ A minimal plugin looks like this:
 
 ```text
 plugins/my-plugin/
-  plugin.yaml      # Plugin metadata and execution contract
+  plugin.yaml      # Scientific capability and execution metadata
   adapter.py       # Imported only on explicit execution paths
 ```
 
@@ -48,13 +48,11 @@ The adapter implements the plugin lifecycle:
 class Adapter:
     def validate(self, context): ...
     def plan(self, context): ...
-    def prepare(self, context, plan): ...
     def check(self, context): ...
     def collect(self, context): ...
-    def replay(self, context): ...
 ```
 
-The lifecycle is intentionally separated into stages so that planning, execution, scientific validation, result collection, and replay remain auditable.
+The lifecycle separates planning from scientific validation and collection. MLIPFlow core owns process execution, scheduler execution, generic replay of existing result manifests, and retry attempts.
 
 For most new plugins, development should follow this order:
 
@@ -115,10 +113,7 @@ At minimum, the manifest must declare:
 - external program dependencies;
 - supported execution backends;
 - scientific completion criteria;
-- scientific failure states;
-- retry behavior;
 - approval requirements;
-- replay capabilities.
 
 Third-party scientific programs must not be bundled unless their licensing and redistribution terms explicitly permit it.
 
@@ -157,10 +152,8 @@ The adapter interface is:
 class Adapter:
     def validate(self, context): ...
     def plan(self, context): ...
-    def prepare(self, context, plan): ...
     def check(self, context): ...
     def collect(self, context): ...
-    def replay(self, context): ...
 ```
 
 Each method has a distinct responsibility.
@@ -189,11 +182,7 @@ It must not:
 
 A dry run depends on this property.
 
-## `prepare()`
-
-Prepare execution inputs only after validation and planning have succeeded.
-
-This may include creating the fresh attempt workspace and writing validated input files.
+MLIPFlow core creates the fresh attempt workspace and executes the reviewed plan. Scientific preparation that is itself a user-visible capability remains an ordinary operation, such as `vasp-prepare`, `lammps-prepare`, or `lasp-input-prepare`; it is not an Adapter lifecycle method.
 
 ## `check()`
 
@@ -220,12 +209,6 @@ The plugin must evaluate its own completion criteria.
 Parse validated scientific outputs and produce structured results.
 
 The Agent should consume structured JSON, CSV, manifests, or other explicitly defined result formats rather than arbitrary stdout.
-
-## `replay()`
-
-Read and normalize existing results without rerunning the scientific calculation.
-
-Replay must never become an implicit execution path.
 
 ---
 
@@ -270,9 +253,9 @@ If a trusted scientific program or workflow already exists, prefer wrapping it w
 
 When wrapping external scientific software:
 
-1. Record its provenance.
+1. Record the source information needed to reproduce and interpret the result.
 
-   Document, in `plugin.yaml`, related documentation, or the pull request:
+   Document, in dependency declarations, related documentation, or the pull request:
 
    - source;
    - software version;
@@ -714,37 +697,13 @@ It must not be generated from:
 
 ---
 
-# 14. Replay Mode
+# 14. Core Replay Mode
 
-Replay exists to reuse and normalize existing scientific results.
+Node-level `mode: replay` is a generic MLIPFlow core feature. It reads the explicit `inputs.result_manifest`, validates its successful state and confined artifact paths, and records the reused result without importing the selected Adapter.
 
-It is not a hidden execution mode.
+Plugins do not declare replay support and do not implement a replay lifecycle method. An operation whose name contains `replay`, such as `normalize-replay`, remains an ordinary executable operation selected through `parameters.operation`; it follows the normal `validate → plan → process → check → collect` path.
 
-Replay may:
-
-- read small existing result manifests;
-- validate files explicitly referenced by those manifests;
-- record source paths;
-- record parameters;
-- record software versions;
-- record existing outputs;
-- write a new run manifest for the current project when invoked through an explicitly approved `run`.
-
-Replay must not:
-
-- start numerical programs;
-- submit scheduler jobs;
-- copy large datasets;
-- copy model weights;
-- modify source artifacts;
-- describe existing results as newly computed.
-
-Replay outputs must be clearly identified as structured collection or normalization of existing results.
-
-They must not be described as:
-
-- recomputation;
-- independent scientific validation.
+Core replay must not start numerical programs, submit scheduler jobs, copy large data or model weights, modify source artifacts, or describe existing results as newly computed. Its result is a structured collection of existing results, not recomputation or independent scientific validation.
 
 ---
 
@@ -798,9 +757,9 @@ before the result can be considered scientifically valid.
 
 # 16. Retry Semantics
 
-A retry must always create a fresh attempt.
+Retry is a generic MLIPFlow core feature. `mlipflow retry NODE` is allowed from `FAIL` or `STOPPED` and always creates a fresh attempt.
 
-Previous attempts and their results must remain available for inspection and provenance.
+Previous attempts and their results must remain available for inspection.
 
 Do not implement retry by deleting or overwriting the previous run.
 
@@ -812,13 +771,7 @@ rm
 
 as a substitute for retry semantics.
 
-Retry behavior should define:
-
-- which source states are retryable;
-- how the new attempt is created;
-- which inputs are reused;
-- what changes are allowed;
-- the maximum retry count, if bounded.
+Plugins do not declare retry policy or limits. Restart-aware scientific planning may consume approved artifacts from the immediately previous attempt, but attempt creation and state transitions remain core-owned.
 
 ---
 
@@ -896,12 +849,11 @@ Before considering a plugin ready, verify the following.
 - [ ] Dependencies are declared.
 - [ ] Backend claims match implemented capabilities.
 - [ ] Approval requirements are correct.
-- [ ] Replay behavior is declared.
-- [ ] Retry behavior is declared.
 
 ### Adapter
 
 - [ ] Importing the adapter has no side effects.
+- [ ] The Adapter provides `validate()`, `plan()`, `check()`, and `collect()`.
 - [ ] `validate()` performs no execution.
 - [ ] `plan()` is side-effect free.
 - [ ] Dry-run performs zero writes.
@@ -921,7 +873,7 @@ Before considering a plugin ready, verify the following.
 - [ ] Incomplete fixtures exist.
 - [ ] Small trusted parity examples pass.
 
-### Retry and Replay
+### Core Retry and Replay
 
 - [ ] Retry creates a fresh attempt.
 - [ ] Previous attempts remain intact.
@@ -952,7 +904,7 @@ Run:
 python -m pytest tests/test_plugin_manifests.py
 ```
 
-Additional plugin-specific tests should be added for adapter behavior, completion criteria, replay behavior, scheduler contracts, and scientific parity as appropriate.
+Additional plugin-specific tests should be added for adapter behavior, completion criteria, executable normalization operations, scheduler contracts, and scientific parity as appropriate. Generic replay and retry behavior belong in core tests.
 
 ---
 
@@ -968,6 +920,8 @@ When designing a plugin, keep ownership boundaries explicit:
 | Scientific completion criteria | Plugin |
 | Result parsing and normalization | Plugin |
 | Model routing metrics | MLIPFlow routing logic |
+| Replay of an existing result manifest | MLIPFlow core |
+| Retry policy and fresh attempt creation | MLIPFlow core |
 | Persistent attempt state | MLIPFlow core |
 | Fresh attempt workspace | MLIPFlow core |
 | Scheduler submission | MLIPFlow core |

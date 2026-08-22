@@ -8,19 +8,10 @@
   "api_version": 1,
   "description": "Executable deterministic top-k ranking of existing candidates by an existing finite numeric metric, with explicit direction, missing policy, provenance, and independent result verification.",
   "category": "screening",
-  "contract": {
-    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
-  },
   "implementation": {
     "kind": "python-adapter",
     "entrypoint": "adapter.py:Adapter",
     "status": "implemented",
-    "source_classification": ["C", "D"],
-    "source_references": [
-      "inventory://remote/MLP/Li10M7P8S32/SQS/supercell/replace_sqs.py",
-      "inventory://remote/MLP/supply",
-      "inventory://local-readonly/MLP/supply/code/Li10"
-    ],
     "limitations": [
       "The bundled implementation ranks existing finite metrics only; candidate generation and property calculation remain upstream responsibilities.",
       "Multi-objective Pareto ranking, uncertainty calibration, imputation, model choice, and high-fidelity validation are deliberately outside this adapter.",
@@ -31,18 +22,7 @@
   "execution": {
     "mode": "external-command",
     "backends": ["local"],
-    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
-    "operations": ["rank-candidates"],
-    "shell": false,
-    "executes_external_programs": true,
-    "writes_files": true,
-    "submits_jobs": false
-  },
-  "replay": {
-    "supported": true,
-    "behavior": "parse-existing-artifacts",
-    "accepted_media_types": ["application/json"],
-    "reason": "Replay reads candidate, metric-results, and ranking manifests and verifies the declared rule without calculating a property or invoking the ranking script."
+    "operations": ["rank-candidates"]
   },
   "inputs": [
     {"name": "candidate-manifest", "kind": "manifest", "required": true, "media_type": "application/json"},
@@ -74,23 +54,10 @@
     "notes": ["The operation ranks existing values only and never generates candidates or computes properties."]
   },
   "completion": {
-    "status": "implemented",
     "checks": [
       {"id": "legacy-element-order", "implemented": true, "description": "The optional legacy normalizer maps labelled candidate and metric IDs without positional ambiguity."},
       {"id": "candidate-ids-and-count", "implemented": true, "description": "Require unique candidate IDs and reject metric records for unknown candidates."},
       {"id": "ranking-evidence", "implemented": true, "description": "Recompute deterministic single-metric ordering, missing decisions, tie breaks, and top-k count from explicit manifests."}
-    ],
-    "success_state": "OK",
-    "failure_state": "FAIL"
-  },
-  "retry": {
-    "status": "delegated-to-core",
-    "allowed_from": ["FAIL", "STOPPED"],
-    "creates_new_attempt": true,
-    "reuses_previous_run_directory": false,
-    "requires_approval": false,
-    "max_attempts": null,
-    "limit_enforced": false,
-    "notes": ["Retry preserves the candidate manifest, metric results, and ranking rule unless a new plan is explicitly approved."]
+    ]
   }
 }

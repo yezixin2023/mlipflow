@@ -314,11 +314,6 @@ class ManuscriptBenchmarkTests(unittest.TestCase):
         self.assertNotIn("--overwrite", plan["argv"])
         self.assertEqual(4, len(plan["expected_outputs"]))
         self.assertEqual(before, set(self.root.rglob("*")))
-        prepared = adapter.prepare(context, plan)
-        self.assertEqual("READY", prepared["status"])
-        self.assertFalse(prepared["prepared"])
-        self.assertEqual(before, set(self.root.rglob("*")))
-
         completed = subprocess.run(
             plan["argv"],
             cwd=plan["cwd"],

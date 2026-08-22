@@ -30,7 +30,7 @@ Do not pass raw MACE checkpoints or a MatGL directory to the native TorchScript 
 
 ## Preparation contract
 
-The local Python runtime for `lammps-prepare` must import ASE; preparation uses real ASE structure I/O to create `structure.data` and has no fallback. This requirement does not extend to `execute` or replay, which consume an already prepared manifest and must not import ASE merely as a formality.
+The local Python runtime for `lammps-prepare` must import ASE; preparation uses real ASE structure I/O to create `structure.data` and has no fallback. This requirement does not extend to `execute` or generic core replay of an existing result, neither of which should import ASE merely as a formality.
 
 Require explicit NVT or isotropic NPT configuration, target list, type map, temperature, timestep, total global steps, thermo/dump intervals, positive velocity seed, thermostat damping, and NPT pressure/barostat damping when applicable.
 

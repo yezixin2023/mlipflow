@@ -1213,18 +1213,6 @@ class Adapter:
             return self.legacy.plan(context)
         return _plan_generic(context)
 
-    def prepare(self, context: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
-        if plan.get("scheduler_contract") != GENERIC_CONTRACT:
-            return self.legacy.prepare(context, plan)
-        if plan.get("status") != "READY":
-            return _blocked([_diag("error", "training.plan_required", "a READY plan is required")])
-        return {
-            "plugin_id": PLUGIN_ID,
-            "status": "READY",
-            "executable": False,
-            "prepared": False,
-            "message": "Core scheduler staging owns all writes; the adapter only declares the approved files and bounded outputs.",
-        }
 
     def check(self, context: dict[str, Any]) -> dict[str, Any]:
         if not _generic_plan(context):
@@ -1244,8 +1232,3 @@ class Adapter:
         if not _generic_plan(context):
             return self.legacy.collect(context)
         return _collect_generic(context)
-
-    def replay(self, context: dict[str, Any]) -> dict[str, Any]:
-        if _generic_plan(context):
-            return _collect_generic(context)
-        return self.legacy.replay(context)

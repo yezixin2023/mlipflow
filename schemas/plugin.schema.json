@@ -12,17 +12,14 @@
     "api_version",
     "description",
     "category",
-    "contract",
     "implementation",
     "execution",
-    "replay",
     "inputs",
     "parameters",
     "outputs",
     "dependencies",
     "safety",
-    "completion",
-    "retry"
+    "completion"
   ],
   "properties": {
     "$schema": {
@@ -66,46 +63,12 @@
         "electrochemical-analysis"
       ]
     },
-    "contract": {
-      "type": "object",
-      "required": [
-        "methods"
-      ],
-      "properties": {
-        "methods": {
-          "type": "array",
-          "items": {
-            "enum": [
-              "validate",
-              "plan",
-              "prepare",
-              "check",
-              "collect",
-              "replay"
-            ]
-          },
-          "minItems": 6,
-          "maxItems": 6,
-          "uniqueItems": true,
-          "allOf": [
-            {"contains": {"const": "validate"}},
-            {"contains": {"const": "plan"}},
-            {"contains": {"const": "prepare"}},
-            {"contains": {"const": "check"}},
-            {"contains": {"const": "collect"}},
-            {"contains": {"const": "replay"}}
-          ]
-        }
-      },
-      "additionalProperties": false
-    },
     "implementation": {
       "type": "object",
       "required": [
         "kind",
         "entrypoint",
         "status",
-        "source_classification",
         "limitations"
       ],
       "properties": {
@@ -128,29 +91,6 @@
             "implemented"
           ]
         },
-        "source_classification": {
-          "type": "array",
-          "items": {
-            "enum": [
-              "A",
-              "B",
-              "C",
-              "D",
-              "E",
-              "new"
-            ]
-          },
-          "minItems": 1,
-          "uniqueItems": true
-        },
-        "source_references": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/non_empty_string"
-          },
-          "uniqueItems": true,
-          "default": []
-        },
         "limitations": {
           "type": "array",
           "items": {
@@ -166,12 +106,7 @@
       "required": [
         "mode",
         "backends",
-        "entrypoint",
-        "operations",
-        "shell",
-        "executes_external_programs",
-        "writes_files",
-        "submits_jobs"
+        "operations"
       ],
       "properties": {
         "mode": {
@@ -192,73 +127,12 @@
           },
           "uniqueItems": true
         },
-        "entrypoint": {
-          "type": "object",
-          "required": [
-            "path",
-            "object"
-          ],
-          "properties": {
-            "path": {
-              "type": "string",
-              "pattern": "^[^/]+\\.py$"
-            },
-            "object": {
-              "type": "string",
-              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-            }
-          },
-          "additionalProperties": false
-        },
         "operations": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/identifier"
           },
           "uniqueItems": true
-        },
-        "shell": {
-          "const": false
-        },
-        "executes_external_programs": {
-          "type": "boolean"
-        },
-        "writes_files": {
-          "type": "boolean"
-        },
-        "submits_jobs": {
-          "type": "boolean"
-        }
-      },
-      "additionalProperties": false
-    },
-    "replay": {
-      "type": "object",
-      "required": [
-        "supported",
-        "behavior"
-      ],
-      "properties": {
-        "supported": {
-          "type": "boolean"
-        },
-        "behavior": {
-          "enum": [
-            "disabled",
-            "reference-only",
-            "parse-existing-artifacts"
-          ]
-        },
-        "accepted_media_types": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/non_empty_string"
-          },
-          "uniqueItems": true,
-          "default": []
-        },
-        "reason": {
-          "type": "string"
         }
       },
       "additionalProperties": false
@@ -344,87 +218,13 @@
     "completion": {
       "type": "object",
       "required": [
-        "status",
-        "checks",
-        "success_state",
-        "failure_state"
+        "checks"
       ],
       "properties": {
-        "status": {
-          "enum": [
-            "checker-pending",
-            "implemented"
-          ]
-        },
         "checks": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/completion_check"
-          },
-          "minItems": 1
-        },
-        "success_state": {
-          "const": "OK"
-        },
-        "failure_state": {
-          "const": "FAIL"
-        }
-      },
-      "additionalProperties": false
-    },
-    "retry": {
-      "type": "object",
-      "required": [
-        "status",
-        "allowed_from",
-        "creates_new_attempt",
-        "reuses_previous_run_directory",
-        "requires_approval",
-        "max_attempts",
-        "limit_enforced",
-        "notes"
-      ],
-      "properties": {
-        "status": {
-          "enum": [
-            "delegated-to-core",
-            "plugin-managed"
-          ]
-        },
-        "allowed_from": {
-          "type": "array",
-          "items": {
-            "enum": [
-              "FAIL",
-              "STOPPED"
-            ]
-          },
-          "minItems": 1,
-          "uniqueItems": true
-        },
-        "creates_new_attempt": {
-          "const": true
-        },
-        "reuses_previous_run_directory": {
-          "const": false
-        },
-        "requires_approval": {
-          "const": false
-        },
-        "max_attempts": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "minimum": 1
-        },
-        "limit_enforced": {
-          "type": "boolean"
-        },
-        "notes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/non_empty_string"
           },
           "minItems": 1
         }
@@ -440,59 +240,6 @@
     }
   },
   "additionalProperties": false,
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "execution": {
-            "properties": {
-              "mode": {
-                "const": "placeholder"
-              }
-            }
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "execution": {
-            "properties": {
-              "executes_external_programs": {"const": false},
-              "writes_files": {"const": false},
-              "submits_jobs": {"const": false}
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "replay": {
-            "properties": {
-              "supported": {
-                "const": false
-              }
-            }
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "replay": {
-            "properties": {
-              "behavior": {
-                "const": "disabled"
-              }
-            },
-            "required": [
-              "reason"
-            ]
-          }
-        }
-      }
-    }
-  ],
   "$defs": {
     "non_empty_string": {
       "type": "string",

@@ -8,15 +8,10 @@
   "api_version": 1,
   "description": "Deterministic committee disagreement, per-model uncertainty calibration, risk-union candidate selection, and explicit round assessment for finite offline MLIP active-learning campaigns.",
   "category": "active-learning",
-  "contract": {
-    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
-  },
   "implementation": {
     "kind": "python-adapter",
     "entrypoint": "adapter.py:Adapter",
     "status": "implemented",
-    "source_classification": ["new"],
-    "source_references": [],
     "limitations": [
       "The first version is finite, offline, and round based; it does not interrupt MD on the fly, submit DFT, train a model, mutate a canonical dataset, or create a dynamic DAG.",
       "Local committee-evaluate consumes explicit member predictions and calibration DFT labels. Reviewed SSH-SLURM committee-evaluate resolves immutable member models below the canonical site model root, runs fresh inference on a staged bounded evaluation dataset, and then applies the same deterministic calibration contract.",
@@ -29,18 +24,7 @@
   "execution": {
     "mode": "external-command",
     "backends": ["local", "ssh-slurm"],
-    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
-    "operations": ["committee-evaluate", "select-candidates", "assess-round"],
-    "shell": false,
-    "executes_external_programs": true,
-    "writes_files": true,
-    "submits_jobs": true
-  },
-  "replay": {
-    "supported": true,
-    "behavior": "parse-existing-artifacts",
-    "accepted_media_types": ["application/json", "application/yaml", "text/csv"],
-    "reason": "Replay deterministically re-evaluates supplied prediction, DFT, DIRECT, benchmark, split, campaign, and history evidence without model inference, MD, DFT, training, or dataset mutation."
+    "operations": ["committee-evaluate", "select-candidates", "assess-round"]
   },
   "inputs": [
     {"name": "policy", "kind": "manifest", "required": true, "media_type": "application/json"},
@@ -86,7 +70,6 @@
     ]
   },
   "completion": {
-    "status": "implemented",
     "checks": [
       {"id": "committee-mathematics", "implemented": true, "description": "Recompute population force-vector disagreement, per-atom energy disagreement, committee-mean DFT error, and per-model calibration."},
       {"id": "risk-union", "implemented": true, "description": "Verify calibrated SAFE/QUERY/UNSAFE classes and max-risk union without using cross-architecture disagreement as uncertainty."},
@@ -95,18 +78,6 @@
       {"id": "round-decision", "implemented": true, "description": "Recompute calibration, exact immutable-audit sample binding and metrics, cumulative QUERY-record membership, per-condition/replica coverage, false-negative, uncertainty-distribution change, marginal-gain, budget, lineage, and consecutive-round gates."},
       {"id": "result-recomputation", "implemented": true, "description": "Checker reproduces the complete result and rejects input or output drift."},
       {"id": "scheduled-committee-inference", "implemented": true, "description": "Resolve every declared member below the canonical model root, infer calibration/candidate structures, fetch bounded evidence, and reproduce calibration locally."}
-    ],
-    "success_state": "OK",
-    "failure_state": "FAIL"
-  },
-  "retry": {
-    "status": "delegated-to-core",
-    "allowed_from": ["FAIL", "STOPPED"],
-    "creates_new_attempt": true,
-    "reuses_previous_run_directory": false,
-    "requires_approval": false,
-    "max_attempts": null,
-    "limit_enforced": false,
-    "notes": ["Retry creates a fresh attempt and preserves every prior round artifact; a new active-learning round is never represented as retry."]
+    ]
   }
 }

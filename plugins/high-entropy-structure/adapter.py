@@ -422,19 +422,6 @@ class Adapter:
             },
         }
 
-    def prepare(self, context: Any, plan: Any) -> dict[str, Any]:
-        """Return the already-materialized plan; never create input files here."""
-
-        if not isinstance(plan, dict) or plan.get("status") != "READY":
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "BLOCKED",
-                "executable": False,
-                "diagnostics": [
-                    _diagnostic("error", "plan.not_ready", "prepare 需要 READY 计划。")
-                ],
-            }
-        return dict(plan)
 
     def _result_path(self, context: dict[str, Any]) -> Path:
         parameters = context["parameters"]
@@ -716,36 +703,3 @@ class Adapter:
             "artifacts": artifacts,
             "metrics": {"structure_count": len(manifest["structures"]), "seed": manifest["seed"]},
         }
-
-    def replay(self, context: Any) -> dict[str, Any]:
-        """Verify existing artifacts only; never invoke the user generator."""
-
-        if not isinstance(context, dict):
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "FAIL",
-                "executable": False,
-                "diagnostics": [_diagnostic("error", "context.type", "context 必须是对象。")],
-            }
-        inline = context.get("result_manifest")
-        if isinstance(inline, dict):
-            diagnostics = self.validate(context)
-            if _error_diagnostics(diagnostics):
-                return {
-                    "plugin_id": PLUGIN_ID,
-                    "status": "FAIL",
-                    "executable": False,
-                    "diagnostics": diagnostics,
-                    "result_manifest": inline,
-                }
-            diagnostics.extend(self._verify_result(context, inline))
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "FAIL" if _error_diagnostics(diagnostics) else "OK",
-                "executable": False,
-                "diagnostics": diagnostics,
-                "result_manifest": inline,
-            }
-        collected = self.collect(context)
-        collected["executable"] = False
-        return collected

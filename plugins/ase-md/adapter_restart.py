@@ -454,8 +454,6 @@ class Adapter:
     def plan(self, context: dict[str, Any]) -> dict[str, Any]:
         return _plan_restart(context)
 
-    def prepare(self, context: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
-        return base.Adapter().prepare(context, plan)
 
     def check(self, context: dict[str, Any]) -> dict[str, Any]:
         checked = base.Adapter().check(context)
@@ -485,6 +483,3 @@ class Adapter:
                     }
                 )
         return collected
-
-    def replay(self, context: dict[str, Any]) -> dict[str, Any]:
-        return self.collect(context)

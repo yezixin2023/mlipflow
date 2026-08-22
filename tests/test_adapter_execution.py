@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from mlipflow.backends import ExecutionResult
 from mlipflow.config import load_project
-from mlipflow.errors import PluginError, StateError
+from mlipflow.errors import PluginError
 from mlipflow.portable import ATTEMPT_DIR_TOKEN, PROJECT_ROOT_TOKEN
 from mlipflow.services import (
     initialize,
@@ -40,9 +40,6 @@ class Adapter:
             "expected_outputs": ["result.json"],
         }
 
-    def prepare(self, context, plan):
-        return {"status": "READY"}
-
     def check(self, context):
         path = Path(context["attempt_dir"]) / "result.json"
         return {"status": "OK" if path.is_file() else "FAIL"}
@@ -56,8 +53,6 @@ class Adapter:
             "metrics": value["metrics"],
         }
 
-    def replay(self, context):
-        return {"status": "OK", "executable": False, "result_manifest": context.get("result_manifest")}
 '''
 
 
@@ -133,7 +128,7 @@ class Adapter:
             self.assertEqual(f"{PROJECT_ROOT_TOKEN}/worker.py", recorded_worker)
             self.assertEqual(ATTEMPT_DIR_TOKEN, third["adapter_plan"]["cwd"])
 
-    def test_retry_limit_and_manifest_lineage_are_enforced(self) -> None:
+    def test_retry_creates_fresh_attempts_and_preserves_manifest_lineage(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             plugins = root / "plugins"
@@ -141,7 +136,6 @@ class Adapter:
             manifest["implementation"]["kind"] = "external-command"
             manifest["implementation"]["status"] = "adapter-ready"
             manifest["execution"]["backends"] = ["local"]
-            manifest["retry"]["max_attempts"] = 2
             write_json(plugins / "demo" / "plugin.yaml", manifest)
             (plugins / "demo" / "adapter.py").write_text(
                 """\
@@ -164,17 +158,81 @@ class Adapter:
             project = load_project(root)
             first = run_node(project, "fails", plugins)
             first_run_id = first["step"]["run_id"]
-            retry_plan = make_retry_plan(project, "fails", plugins)
+            retry_plan = make_retry_plan(project, "fails")
             self.assertEqual(1, retry_plan["details"]["previous_attempt"])
-            retry(project, "fails", plugins)
+            self.assertNotIn("max_attempts", retry_plan["details"])
+            retry(project, "fails")
             second = run_node(project, "fails", plugins)
             self.assertEqual(2, second["step"]["attempt"])
             second_manifest = json.loads(
                 Path(second["step"]["manifest_path"]).read_text(encoding="utf-8")
             )
             self.assertEqual(second_manifest["retry"]["previous_run_id"], first_run_id)
-            with self.assertRaisesRegex(StateError, "retry limit"):
-                make_retry_plan(project, "fails", plugins)
+            retry(project, "fails")
+            third = run_node(project, "fails", plugins)
+            self.assertEqual(3, third["step"]["attempt"])
+            self.assertTrue((root / ".mlipflow/runs/fails/attempt-1").is_dir())
+            self.assertTrue((root / ".mlipflow/runs/fails/attempt-2").is_dir())
+            self.assertTrue((root / ".mlipflow/runs/fails/attempt-3").is_dir())
+
+    def test_local_execution_uses_the_four_method_lifecycle_in_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plugins = root / "plugins"
+            manifest = plugin_manifest()
+            manifest["implementation"].update(
+                {"kind": "external-command", "status": "adapter-ready"}
+            )
+            write_json(plugins / "demo" / "plugin.yaml", manifest)
+            write_json(
+                root / "project.yaml",
+                project_config([{"id": "ordered", "uses": "demo@1"}]),
+            )
+            initialize(root)
+            project = load_project(root)
+            calls: list[str] = []
+
+            class OrderedAdapter:
+                def validate(self, context):
+                    calls.append("validate")
+                    return []
+
+                def plan(self, context):
+                    calls.append("plan")
+                    return {
+                        "status": "READY",
+                        "executable": True,
+                        "argv": ["fixture-tool"],
+                        "cwd": context["attempt_dir"],
+                    }
+
+                def check(self, context):
+                    calls.append("check")
+                    return {"status": "OK"}
+
+                def collect(self, context):
+                    calls.append("collect")
+                    return {"status": "OK", "artifacts": [], "metrics": {}}
+
+            adapter = OrderedAdapter()
+
+            def execute(_argv, _cwd, _environment=None):
+                calls.append("process")
+                return ExecutionResult(0, "", "")
+
+            with patch(
+                "mlipflow.services.commands.load_adapter", return_value=adapter
+            ), patch(
+                "mlipflow.services.execution.load_adapter", return_value=adapter
+            ), patch(
+                "mlipflow.services.LocalBackend.run", side_effect=execute
+            ):
+                result = run_node(project, "ordered", plugins)
+
+            self.assertEqual("OK", result["step"]["state"])
+            self.assertEqual(
+                ["validate", "plan", "process", "check", "collect"], calls
+            )
 
     def test_adapter_plan_is_zero_write_and_approved_execution_collects(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

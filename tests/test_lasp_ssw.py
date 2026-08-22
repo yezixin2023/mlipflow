@@ -282,12 +282,11 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         context["execution"] = {"returncode": completed.returncode, "plan": plan}
         return plan, Path(plan["output_dir"])
 
-    def test_normalize_plan_and_prepare_are_zero_write_shell_false(self) -> None:
+    def test_normalize_plan_is_zero_write_and_shell_false(self) -> None:
         context = self.normalize_context()
         before = file_snapshot(self.root)
         diagnostics = self.adapter.validate(context)
         plan = self.adapter.plan(context)
-        prepared = self.adapter.prepare(context, plan)
         after = file_snapshot(self.root)
 
         self.assertEqual(before, after)
@@ -304,8 +303,6 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         self.assertIn("sampling-result.json", Path(plan["expected_outputs"][0]).name)
         self.assertEqual(PYTHON_EXECUTABLE, plan["argv"][0])
         self.assertEqual(PYTHON_EXECUTABLE, plan["input_paths"]["python_executable"])
-        self.assertFalse(prepared["writes_files"])
-        self.assertFalse(prepared["prepared"])
 
     def test_python_executable_must_be_explicit_absolute_nonsymlink_executable_file(
         self,

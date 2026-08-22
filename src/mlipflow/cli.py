@@ -216,8 +216,8 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
         return advance(project, args.plugins)
     if command == "retry":
         if args.dry_run:
-            return make_retry_plan(project, args.node, args.plugins)
-        return retry(project, args.node, args.plugins)
+            return make_retry_plan(project, args.node)
+        return retry(project, args.node)
     if command == "stop":
         return stop(project, args.node, args.site)
     raise MLIPFlowError(f"unsupported command: {command}")

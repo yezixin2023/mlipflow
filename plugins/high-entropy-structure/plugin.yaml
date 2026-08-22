@@ -6,20 +6,12 @@
   "display_name": "High-entropy structure generation",
   "version": "0.4.0",
   "api_version": 1,
-    "description": "Executable, seeded icet SQS generation from explicit sublattice/count/cutoff/supercell manifests, plus independently checked composition, seed, structure, provenance, and replay contracts.",
+  "description": "Executable, seeded icet SQS generation from explicit sublattice/count/cutoff/supercell manifests, plus independently checked composition, seed, structure, scientific metadata, and completion criteria.",
   "category": "structure-generation",
-  "contract": {
-    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
-  },
   "implementation": {
     "kind": "python-adapter",
     "entrypoint": "adapter.py:Adapter",
     "status": "implemented",
-    "source_classification": ["C", "D"],
-    "source_references": [
-      "inventory://remote/MLP/3-Element/Li8/replace_sqs_6.5-4.5.py",
-      "inventory://remote/MLP/Li10M7P8S32/SQS"
-    ],
     "limitations": [
       "The bundled generator implements the manuscript workflow through icet; sublattice mappings, exact counts, cluster cutoffs and supercells remain explicit inputs.",
       "MLIPFlow re-reads the approved composition manifest and actual structures, but does not recompute the icet objective or prove SQS global optimality.",
@@ -30,18 +22,7 @@
   "execution": {
     "mode": "external-command",
     "backends": ["local"],
-    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
-    "operations": ["generate-sqs"],
-    "shell": false,
-    "executes_external_programs": true,
-    "writes_files": true,
-    "submits_jobs": false
-  },
-  "replay": {
-    "supported": true,
-    "behavior": "parse-existing-artifacts",
-    "accepted_media_types": ["application/json"],
-    "reason": "Replay only validates a standardized generation manifest, approved inputs, and explicitly referenced structure artifacts; it never imports or executes a generator and never regenerates structures."
+    "operations": ["generate-sqs"]
   },
   "inputs": [
     {"name": "prototype-structure", "kind": "artifact-reference", "required": true, "description": "Project-relative prototype structure supplied to the user generator."},
@@ -76,25 +57,12 @@
     "notes": ["Large composition enumerations require a dry-run size estimate and explicit approval."]
   },
   "completion": {
-    "status": "implemented",
     "checks": [
       {"id": "sqs-input-contract", "implemented": true, "description": "Require exact alloy species/counts, cluster cutoffs, repeat vector, Monte Carlo steps and a deterministic seed policy."},
       {"id": "result-manifest-schema", "implemented": true, "description": "Require schema version, plugin name, approved base seed, deterministic per-candidate seed policy, method and generator names, candidate count, and status OK."},
       {"id": "candidate-coverage-and-composition", "implemented": true, "description": "Re-read the approved composition manifest and require exact ordered candidate coverage, unique IDs, exact alloy species/counts, and alloy site totals."},
       {"id": "structure-count-and-composition", "implemented": true, "description": "Parse each actual structure, compare its full composition with prototype plus approved alloy counts, and require non-empty files."},
       {"id": "optional-cluster-vector", "implemented": true, "description": "If declared, require a non-empty finite numeric cluster_vector without claiming objective recomputation or global optimality."}
-    ],
-    "success_state": "OK",
-    "failure_state": "FAIL"
-  },
-  "retry": {
-    "status": "delegated-to-core",
-    "allowed_from": ["FAIL", "STOPPED"],
-    "creates_new_attempt": true,
-    "reuses_previous_run_directory": false,
-    "requires_approval": false,
-    "max_attempts": null,
-    "limit_enforced": false,
-    "notes": ["The core creates a clean attempt; a project retry limit must be enforced before numerical execution is enabled."]
+    ]
   }
 }

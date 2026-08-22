@@ -242,17 +242,6 @@ class Adapter:
             },
         }
 
-    def prepare(self, context: Any, plan: Any) -> dict[str, Any]:
-        if not isinstance(plan, dict) or plan.get("status") != "READY":
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "BLOCKED",
-                "executable": False,
-                "diagnostics": [
-                    _diagnostic("error", "plan.not_ready", "prepare 需要 READY 计划。")
-                ],
-            }
-        return dict(plan)
 
     def _paths(self, context: dict[str, Any]) -> tuple[Path, Path, Path]:
         return (
@@ -470,10 +459,3 @@ class Adapter:
                 "missing_metric_count": len(result["excluded_missing"]),
             },
         }
-
-    def replay(self, context: Any) -> dict[str, Any]:
-        """Re-verify explicit manifests without executing the ranking script."""
-
-        collected = self.collect(context)
-        collected["executable"] = False
-        return collected

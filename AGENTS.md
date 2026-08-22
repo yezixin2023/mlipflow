@@ -189,8 +189,9 @@ They must not be described as:
 - `plugins/` defines deterministic computational units, including:
   - dependencies;
   - execution backends;
-  - completion criteria;
-  - retry contracts;
-  - replay contracts.
+  - executable operations;
+  - completion criteria.
+
+  Core owns generic result-manifest replay and fresh retry attempts.
 
 Do not elevate DeepMD, CHGNet, an individual MSD fitting procedure, SLURM, or OUTCAR parsing into separate top-level Agent Skills.

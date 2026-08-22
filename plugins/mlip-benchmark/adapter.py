@@ -1708,25 +1708,6 @@ class Adapter:
             "diagnostics": [],
         }
 
-    def prepare(self, context: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(plan, dict) or plan.get("status") != "READY":
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "BLOCKED",
-                "executable": False,
-                "diagnostics": [_diagnostic("error", "benchmark.plan_required", "a READY plan is required")],
-            }
-        return {
-            "plugin_id": PLUGIN_ID,
-            "status": "READY",
-            "executable": False,
-            "prepared": False,
-            "message": (
-                "No files were written; the bundled fresh runner consumes pinned model/dataset inputs."
-                if _operation(context) == FRESH_OPERATION
-                else "No files were written; the wrapper consumes existing inputs."
-            ),
-        }
 
     def check(self, context: dict[str, Any]) -> dict[str, Any]:
         if _operation(context) in NORMALIZE_OPERATIONS or _operation(context) == FRESH_OPERATION:
@@ -1875,8 +1856,3 @@ class Adapter:
             result["mode"] = checked["mode"]
             result["records"] = checked["records"]
         return result
-
-    def replay(self, context: dict[str, Any]) -> dict[str, Any]:
-        """Replay is collection only and therefore cannot execute numerical code."""
-
-        return self.collect(context)

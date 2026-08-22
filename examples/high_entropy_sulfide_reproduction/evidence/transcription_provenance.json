@@ -1,6 +1,5 @@
 {
   "schema_version": 1,
-  "evidence_mode": "read-only-manuscript-transcription",
   "scientific_status": "REPLAY_VERIFIED",
   "not_a_fresh_calculation": true,
   "transcription_method": [

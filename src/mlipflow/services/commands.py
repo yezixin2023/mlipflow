@@ -471,9 +471,7 @@ def advance(
     return {"changed": changed}
 
 
-def make_retry_plan(
-    project: Project, node_id: str, plugin_root: Path | None = None
-) -> dict[str, Any]:
+def make_retry_plan(project: Project, node_id: str) -> dict[str, Any]:
     database = state_path(project)
     if not database.is_file():
         raise StateError("project has not been initialized")
@@ -482,16 +480,6 @@ def make_retry_plan(
         step = store.latest_step(project.project_id, node_id)
     if step.state not in {RunState.FAIL.value, RunState.STOPPED.value}:
         raise StateError(f"retry requires FAIL or STOPPED, got {step.state}")
-    max_attempts: int | None = None
-    if plugin_root is not None:
-        plugin = select_plugin(discover_plugins(plugin_root), str(project.node(node_id)["uses"]))
-        configured = plugin.raw.get("retry", {}).get("max_attempts")
-        if isinstance(configured, int) and not isinstance(configured, bool):
-            max_attempts = configured
-            if step.attempt >= max_attempts:
-                raise StateError(
-                    f"node {node_id} reached plugin retry limit of {max_attempts} attempts"
-                )
     return action_plan(
         "retry",
         project,
@@ -500,17 +488,12 @@ def make_retry_plan(
             "previous_run_id": step.run_id,
             "previous_attempt": step.attempt,
             "state": step.state,
-            "max_attempts": max_attempts,
         },
     )
 
 
-def retry(
-    project: Project,
-    node_id: str,
-    plugin_root: Path | None = None,
-) -> dict[str, Any]:
-    make_retry_plan(project, node_id, plugin_root)
+def retry(project: Project, node_id: str) -> dict[str, Any]:
+    make_retry_plan(project, node_id)
     with StateStore(state_path(project), readonly=False) as store:
         store.assert_project_topology(project.project_id, project.nodes)
         retried = store.create_retry(project.project_id, node_id)

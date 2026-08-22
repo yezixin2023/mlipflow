@@ -41,10 +41,10 @@ class CandidateRankingTests(unittest.TestCase):
             candidates.write_text(
                 "\n".join(
                     [
-                        "7,3,4,8,6 -> inventory://POSCAR_Li10_Zn7Fe3Cu4Ni8Mn6",
-                        "6,2,9,9,2 -> inventory://POSCAR_Li10_Zn6Fe2Cu9Ni9Mn2",
-                        "3,8,6,7,4 -> inventory://POSCAR_Li10_Zn3Fe8Cu6Ni7Mn4",
-                        "2,5,8,6,7 -> inventory://POSCAR_Li10_Zn2Fe5Cu8Ni6Mn7",
+                        "7,3,4,8,6 -> structures/POSCAR_Li10_Zn7Fe3Cu4Ni8Mn6",
+                        "6,2,9,9,2 -> structures/POSCAR_Li10_Zn6Fe2Cu9Ni9Mn2",
+                        "3,8,6,7,4 -> structures/POSCAR_Li10_Zn3Fe8Cu6Ni7Mn4",
+                        "2,5,8,6,7 -> structures/POSCAR_Li10_Zn2Fe5Cu8Ni6Mn7",
                     ]
                 )
                 + "\n",

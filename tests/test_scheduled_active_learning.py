@@ -257,7 +257,6 @@ def load_inference_predictor(path, family, device):
             cluster_report = json.loads(report.read_text())
             self.assertEqual("READY", evaluation["evaluation_status"])
             self.assertEqual("FRESH_ACTIVE_LEARNING_ROUND", evaluation["validation_claim"])
-            self.assertEqual("fresh", predictions["evidence_mode"])
             self.assertEqual([11, 29], [item["seed"] for item in predictions["models"][0]["members"]])
             self.assertEqual(2, len(evaluation["candidates"]))
             self.assertEqual("OK", cluster_report["status"])

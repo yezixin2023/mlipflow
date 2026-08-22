@@ -7,6 +7,8 @@ import json
 import unittest
 from pathlib import Path
 
+from mlipflow.plugins import discover_plugins, load_adapter
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_ROOT = ROOT / "schemas"
@@ -24,7 +26,7 @@ EXPECTED_PLUGINS = {
     "candidate-ranking",
     "electrochemical-voltage",
 }
-CONTRACT_METHODS = {"validate", "plan", "prepare", "check", "collect", "replay"}
+ADAPTER_METHODS = {"validate", "plan", "check", "collect"}
 EXACT_EXECUTION_OPERATIONS = {
     "active-learning": ["committee-evaluate", "select-candidates", "assess-round"],
     "ase-md": ["run"],
@@ -62,17 +64,6 @@ EXPECTED_EXECUTION_BACKENDS = {
     "mlip-training": ["local", "ssh-slurm"],
     "pes-sampling": ["local", "ssh-slurm"],
 }
-JOB_SUBMITTING_PLUGINS = {
-    "active-learning",
-    "ase-md",
-    "dft-labeling",
-    "lammps-md",
-    "mlip-benchmark",
-    "mlip-training",
-    "pes-sampling",
-}
-
-
 def load_json(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as stream:
         value = json.load(stream)
@@ -119,7 +110,7 @@ class PluginManifestTests(unittest.TestCase):
         self.assertEqual(EXPECTED_PLUGINS, set(EXACT_EXECUTION_OPERATIONS))
         self.assertEqual(EXPECTED_PLUGINS, set(EXPECTED_EXECUTION_BACKENDS))
 
-    def test_manifests_obey_static_contract(self) -> None:
+    def test_manifests_use_the_reduced_capability_contract(self) -> None:
         required = {
             "schema_version",
             "id",
@@ -128,68 +119,79 @@ class PluginManifestTests(unittest.TestCase):
             "api_version",
             "description",
             "category",
-            "contract",
             "implementation",
             "execution",
-            "replay",
             "inputs",
             "parameters",
             "outputs",
             "dependencies",
             "safety",
             "completion",
-            "retry",
         }
+        removed = {"contract", "replay", "retry"}
         for path, manifest in self.manifests():
             with self.subTest(plugin=path.parent.name):
                 self.assertFalse(required - set(manifest))
+                self.assertFalse(removed & set(manifest))
                 self.assertEqual(path.parent.name, manifest["id"])
                 self.assertEqual(1, manifest["schema_version"])
                 self.assertEqual(1, manifest["api_version"])
-                self.assertEqual(CONTRACT_METHODS, set(manifest["contract"]["methods"]))
 
                 implementation = manifest["implementation"]
+                self.assertEqual(
+                    {"kind", "entrypoint", "status", "limitations"},
+                    set(implementation),
+                )
                 self.assertIn(implementation["status"], {"adapter-ready", "implemented"})
                 self.assertEqual("python-adapter", implementation["kind"])
                 self.assertTrue(implementation["limitations"])
 
                 execution = manifest["execution"]
+                self.assertEqual({"mode", "backends", "operations"}, set(execution))
                 self.assertIn(execution["mode"], {"external-command", "python-library"})
                 self.assertEqual(
                     EXPECTED_EXECUTION_BACKENDS[manifest["id"]], execution["backends"]
                 )
-                self.assertFalse(execution["shell"])
-                self.assertEqual(
-                    manifest["id"] in JOB_SUBMITTING_PLUGINS,
-                    execution["submits_jobs"],
-                )
                 self.assertTrue(execution["operations"])
-
-                replay = manifest["replay"]
-                self.assertTrue(replay["supported"])
-                self.assertIn(
-                    replay["behavior"], {"reference-only", "parse-existing-artifacts"}
-                )
-                self.assertIn("application/json", replay["accepted_media_types"])
 
                 self.assertTrue(manifest["parameters"])
                 completion = manifest["completion"]
-                self.assertEqual("implemented", completion["status"])
+                self.assertEqual({"checks"}, set(completion))
                 self.assertTrue(completion["checks"])
                 self.assertTrue(all(check["implemented"] for check in completion["checks"]))
-                retry = manifest["retry"]
-                self.assertEqual("delegated-to-core", retry["status"])
-                self.assertEqual({"FAIL", "STOPPED"}, set(retry["allowed_from"]))
-                self.assertTrue(retry["creates_new_attempt"])
-                self.assertFalse(retry["reuses_previous_run_directory"])
-                self.assertFalse(retry["requires_approval"])
-                self.assertFalse(retry["limit_enforced"])
 
                 adapter_file, separator, object_name = implementation["entrypoint"].partition(":")
                 self.assertEqual(":", separator)
                 self.assertEqual("Adapter", object_name)
-                self.assertEqual(adapter_file, execution["entrypoint"]["path"])
                 self.assertTrue((path.parent / adapter_file).is_file())
+
+    def test_all_builtin_adapter_classes_use_the_four_method_contract(self) -> None:
+        removed = {"prepare", "replay"}
+        for adapter_path in sorted(PLUGIN_ROOT.glob("*/adapter*.py")):
+            tree = ast.parse(adapter_path.read_text(encoding="utf-8"), filename=str(adapter_path))
+            classes = [
+                node
+                for node in tree.body
+                if isinstance(node, ast.ClassDef) and node.name == "Adapter"
+            ]
+            self.assertEqual(1, len(classes), adapter_path)
+            methods = {
+                item.name
+                for item in classes[0].body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            self.assertTrue(ADAPTER_METHODS <= methods, adapter_path)
+            self.assertFalse(removed & methods, adapter_path)
+
+    def test_loaded_adapters_expose_only_the_required_lifecycle_methods(self) -> None:
+        for plugin_id, spec in discover_plugins(PLUGIN_ROOT).items():
+            with self.subTest(plugin=plugin_id):
+                adapter = load_adapter(spec)
+                self.assertTrue(
+                    all(callable(getattr(adapter, method, None)) for method in ADAPTER_METHODS)
+                )
+                self.assertFalse(hasattr(adapter, "prepare"))
+                self.assertFalse(hasattr(adapter, "replay"))
 
     def test_manifests_validate_when_jsonschema_is_installed(self) -> None:
         try:
@@ -222,8 +224,10 @@ class PluginManifestTests(unittest.TestCase):
             "move",
         }
 
+        specs = discover_plugins(PLUGIN_ROOT)
         for path, manifest in self.manifests():
-            adapter_path = path.parent / manifest["execution"]["entrypoint"]["path"]
+            adapter_file = manifest["implementation"]["entrypoint"].partition(":")[0]
+            adapter_path = path.parent / adapter_file
             source = adapter_path.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(adapter_path))
             for node in ast.walk(tree):
@@ -237,12 +241,7 @@ class PluginManifestTests(unittest.TestCase):
                         called = node.func.id
                     self.assertNotIn(called, forbidden_calls)
 
-            namespace: dict = {
-                "__file__": str(adapter_path),
-                "__name__": f"manifest_contract_{path.parent.name.replace('-', '_')}",
-            }
-            exec(compile(source, str(adapter_path), "exec"), namespace)
-            adapter = namespace["Adapter"]()
+            adapter = load_adapter(specs[manifest["id"]])
             blocked = adapter.plan({})
             self.assertEqual("BLOCKED", blocked["status"])
             self.assertFalse(blocked["executable"])

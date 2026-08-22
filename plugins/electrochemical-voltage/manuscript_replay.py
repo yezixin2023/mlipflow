@@ -217,7 +217,6 @@ def build_artifacts(raw: bytes) -> dict[str, dict[str, Any]]:
     ]
     common = {
         "schema_version": 1,
-        "evidence_mode": "manuscript-table-replay",
         "source_table": source["source_table"],
         "voltage_unit": "V",
         "disclaimer": DISCLAIMER,

@@ -70,14 +70,11 @@ def validation_claim(values: Mapping[str, Any]) -> str:
     modes = []
     for value in values.values():
         if isinstance(value, Mapping):
-            modes.extend(
-                str(value.get(key, ""))
-                for key in ("evidence_mode", "validation_claim")
-                if value.get(key)
-            )
-    if any(mode == "ORACLE_REPLAY_VALIDATION" or mode == "oracle-replay" for mode in modes):
+            if value.get("validation_claim"):
+                modes.append(str(value["validation_claim"]))
+    if "ORACLE_REPLAY_VALIDATION" in modes:
         return "ORACLE_REPLAY_VALIDATION"
-    if any(mode == "FRESH_ACTIVE_LEARNING_ROUND" or mode == "fresh" for mode in modes):
+    if "FRESH_ACTIVE_LEARNING_ROUND" in modes:
         return "FRESH_ACTIVE_LEARNING_ROUND"
     return "CONTRACT_VALIDATION"
 

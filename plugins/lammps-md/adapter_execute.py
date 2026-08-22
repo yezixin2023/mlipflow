@@ -618,12 +618,6 @@ class Adapter:
             return legacy.Adapter().plan(context)
         return _prepare_plan(context)
 
-    def prepare(self, context: Any, plan: Any) -> dict[str, Any]:
-        if _operation(context) == EXECUTE:
-            if not isinstance(plan, dict) or plan.get("status") != "READY":
-                return {"plugin_id": PLUGIN_ID, "status": "BLOCKED", "executable": False, "diagnostics": [_diagnostic("error", "plan.not_ready", "scheduled execute requires a READY plan")]}
-            return dict(plan)
-        return legacy.Adapter().prepare(context, plan)
 
     def check(self, context: Any) -> dict[str, Any]:
         if _operation(context) != EXECUTE:
@@ -670,8 +664,3 @@ class Adapter:
             if _ordinary_file(attempt / name):
                 artifacts.append({"path": str(attempt / name), "role": "execution-log", "media_type": "text/plain"})
         return {"plugin_id": PLUGIN_ID, "status": "OK", "diagnostics": [], "metrics": checked.get("metrics", {}), "artifacts": artifacts}
-
-    def replay(self, context: Any) -> dict[str, Any]:
-        if _operation(context) != EXECUTE:
-            return legacy.Adapter().replay(context)
-        return self.collect(context)

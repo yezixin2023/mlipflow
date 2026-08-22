@@ -18,8 +18,6 @@ def node_plan(
 ) -> dict[str, Any]:
     mode = node.get("mode", "execute")
     backend = node.get("backend", "local")
-    if mode == "replay" and not plugin.raw.get("replay", {}).get("supported", False):
-        raise PluginError(f"plugin {plugin.plugin_id} does not declare replay support")
     if mode == "execute" and backend not in plugin.raw.get("execution", {}).get("backends", []):
         raise PluginError(
             f"plugin {plugin.plugin_id} does not declare execute support on backend {backend}"
@@ -63,15 +61,13 @@ def _approval_required(node: dict[str, Any], plugin: PluginSpec) -> bool:
         return False
     safety = plugin.raw.get("safety", {})
     explicit = safety.get("requires_approval_before_execution")
-    if type(explicit) is bool:
-        return explicit
     execution = plugin.raw.get("execution", {})
     cost_class = execution.get("cost_class")
     return bool(
-        safety.get("expensive")
+        explicit is True
+        or safety.get("expensive")
         or safety.get("destructive")
         or safety.get("network_access")
-        or execution.get("submits_jobs")
         or cost_class in {"expensive", "very-expensive"}
         or node.get("backend", "local") in {"slurm", "ssh-slurm"}
     )

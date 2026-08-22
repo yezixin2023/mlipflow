@@ -87,25 +87,19 @@ This is a map, not a template:
 Find the earliest missing **necessary** stage for the stated objective after these
 conditions are applied.
 
-## Replay versus fresh execution
+## Reusing results versus fresh execution
 
-Prefer replay/check when the user supplies historical evidence or an existing standard
-result manifest. Replay reads and validates evidence under the relevant plugin contract;
-it does not run the original numerical program, regenerate structures, train a model,
-run DFT/MD, or establish independent scientific validation.
+Use generic core replay when the user supplies an existing standard result manifest. If raw
+historical files require a plugin operation such as `normalize-replay`, run that named operation
+through the normal Adapter execution lifecycle. Neither path runs the original numerical program,
+regenerates structures, trains a model, runs DFT/MD, or establishes independent scientific
+validation.
 
-For manuscript reproduction, inventory evidence per stage and preserve one of these
-labels:
-
-- `REPLAY_VERIFIED`: existing evidence was normalized/checked under a replay contract;
-- fresh execution: the numerical implementation ran in this workflow attempt;
-- local integration smoke: a bounded integration/determinism exercise only;
-- numerical parity: an explicitly defined result comparison supported by source data;
-- `MISSING_SOURCE`: required historical evidence is absent.
-
-Never replace `MISSING_SOURCE` with synthesized data. Never launch a fresh expensive
-rerun merely because replay cannot establish a stronger claim. Ask whether the user
-wants a separately scoped fresh execution.
+For manuscript reproduction, inventory the available files per stage and report plainly whether
+the original numerical program ran, whether only bounded integration was tested, and whether an
+explicit numerical comparison was performed. Missing historical source data must remain missing;
+never synthesize it or launch a fresh expensive rerun merely to strengthen a claim. Ask whether the
+user wants a separately scoped fresh execution.
 
 ## Approval and compute boundaries
 
@@ -169,9 +163,9 @@ There is intentionally no standalone electrochemical-voltage Skill. Invoke the e
 `electrochemical-voltage` plugin directly:
 
 - `compute-from-energies` for an explicit, valid Li-content total-energy sequence;
-- `replay-si-table-s11` for the supported historical evidence contract.
+- `replay-si-table-s11` for the supported historical table operation.
 
-Preserve its formula, units, provenance, replay, and claim boundaries. Do not implement
+Preserve its formula, units, source paths, and execution boundaries. Do not implement
 the voltage equation in the orchestrator, infer missing energies, run implicit DFT/MLIP,
 or recreate a standalone voltage Skill.
 

@@ -33,7 +33,7 @@ Initial packaged release.
 - Read-only inspection commands for workflow state, logs, diagnostics, and evidence-driven model routing.
 - Dry-run planning and plan-bound approval for approval-gated execution.
 - Local and controlled SSH + Slurm backend contracts with site-local cluster profiles and site-owned templates.
-- Structured artifact identity, provenance, replay, scientific checks, and collection contracts.
+- Structured artifact records, generic result replay, scientific checks, and collection contracts.
 
 ### Scientific plugins
 
@@ -45,7 +45,7 @@ Initial packaged release.
 - MLIP benchmarking and evidence normalization.
 - Ionic-transport analysis.
 - Deterministic candidate ranking.
-- Electrochemical-voltage analysis and evidence replay.
+- Electrochemical-voltage analysis and manuscript-table normalization.
 
 ### Agent supervision
 

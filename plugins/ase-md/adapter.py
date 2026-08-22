@@ -726,16 +726,6 @@ class Adapter:
     def plan(self, context: dict[str, Any]) -> dict[str, Any]:
         return _plan(context)
 
-    def prepare(self, context: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(plan, dict) or plan.get("status") != "READY":
-            return _blocked([_diagnostic("error", "ase_md.plan_required", "a READY plan is required")])
-        return {
-            "plugin_id": PLUGIN_ID,
-            "status": "READY",
-            "executable": False,
-            "prepared": False,
-            "message": "No project files were mutated; the scheduler stages the pinned structure, model reference, and bundled ASE MD runners.",
-        }
 
     def check(self, context: dict[str, Any]) -> dict[str, Any]:
         diagnostics, analysis = _check(context)
@@ -779,6 +769,3 @@ class Adapter:
             "metrics": checked.get("metrics", {}),
             "artifacts": artifacts,
         }
-
-    def replay(self, context: dict[str, Any]) -> dict[str, Any]:
-        return self.collect(context)

@@ -8,6 +8,8 @@ Plugins encapsulate deterministic scientific capabilities. Cluster profiles and 
 
 The Agent must not guess hosts, partitions, modules, executables, templates, or remote work roots.
 
+Ownership is singular: Agent Skills select and orchestrate scientific stages; plugin Adapters validate inputs, plan execution, check completion, and collect results; core owns execution state, generic replay, retries, approval, and local/SSH-Slurm execution; scientific programs and helper modules own numerical algorithms.
+
 ## Command / Query Separation
 
 ```text
@@ -56,7 +58,7 @@ Default JSON output uses the same compact projection and does not include comple
 
 ## Approval: Explicit Boolean Confirmation
 
-Plan `schema_version` is `3`.
+Plan `schema_version` is `4`.
 
 Computations that require approval are first reviewed with:
 
@@ -76,7 +78,7 @@ At execution time, the current plan is written into the attempt directory as ord
 
 ### Portability of Adapter-Authored Fields
 
-Adapters naturally reason in absolute local paths. All eight plugins emit `cwd`; some also emit absolute argv entries, staged `source` paths, and diagnostics containing referenced filenames.
+Adapters naturally reason in absolute local paths. Built-in plugins emit `cwd`; some also emit absolute argv entries, staged `source` paths, and diagnostics containing referenced filenames.
 
 These values remain in the audit plan. Before persistence, the core rewrites paths that fall under known roots into portable forms, and restores them immediately before execution:
 
@@ -328,7 +330,9 @@ The query path discovers plugins only by reading sorted static manifests:
 plugins/*/plugin.yaml
 ```
 
-It validates plugin ID, API version, supported backends, and replay declarations without importing Python.
+It validates plugin ID, API version, and supported backends without importing Python.
+
+`implementation.entrypoint` is the sole Adapter entrypoint declaration. The manifest does not repeat the Python lifecycle, core replay/retry policy, shell behavior, or fixed success/failure states.
 
 Only explicit execution paths may load an adapter.
 
@@ -359,6 +363,8 @@ Adapter-produced artifacts must be ordinary files located inside the fresh attem
 Replay accepts only ordinary result manifests located under the project root.
 
 A replay manifest must explicitly declare `OK` and may reference only explicitly listed ordinary files within its own directory.
+
+Replay is handled entirely by core. Planning and execution do not import the selected Adapter, call a plugin replay method, or consult a plugin-specific replay declaration.
 
 Replay rejects:
 

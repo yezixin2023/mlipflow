@@ -43,6 +43,6 @@ Keep reproduction artifacts separate from general user guidance so that project-
 
 - Treat the current plugin manifest, schema, and CLI help as authoritative when prose becomes stale.
 - Distinguish scheduler completion from plugin-verified scientific `OK`.
-- State whether evidence was freshly computed, normalized, replayed, or imported.
+- Record whether the original numerical program ran when that distinction affects scientific interpretation.
 - Do not publish private paths, credentials, licensed pseudopotentials, model weights, raw large datasets, trajectories, or unpublished results.
 - Link detailed contracts instead of repeating them across several top-level documents.

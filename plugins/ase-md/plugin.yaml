@@ -8,22 +8,10 @@
   "api_version": 1,
   "description": "Scheduled single-temperature ASE NVT Langevin or isotropic MTK NPT molecular dynamics with explicit supercell sizing, finite stability summaries, and exact checkpoint/restart across fresh ssh-slurm attempts using DeepMD, M3GNet/MatGL, CHGNet, or MACE models.",
   "category": "sampling",
-  "contract": {
-    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
-  },
   "implementation": {
     "kind": "python-adapter",
     "entrypoint": "adapter_restart.py:Adapter",
     "status": "implemented",
-    "source_classification": ["D", "new"],
-    "source_references": [
-      "https://docs.ase-lib.org/_modules/ase/md/langevin.html",
-      "https://docs.ase-lib.org/_modules/ase/md/nose_hoover_chain.html",
-      "https://docs.deepmodeling.com/projects/deepmd/en/stable/third-party/ase.html",
-      "https://chgnet.lbl.gov/api",
-      "https://mace-docs.readthedocs.io/en/latest/guide/ase.html",
-      "https://matgl.ai/tutorials/Relaxations%20and%20Simulations%20using%20the%20M3GNet%20Universal%20Potential.html"
-    ],
     "limitations": [
       "Version 0.3 implements one single-temperature NVT Langevin or isotropic Martyna-Tobias-Klein NPT trajectory per workflow node and can resume that trajectory across fresh scheduler attempts from an explicitly salvaged checkpoint. NVE, anisotropic/full-cell NPT, replica exchange, multi-temperature orchestration, automatic segment stitching, and transport analysis remain separate contracts.",
       "restart_policy=auto-from-previous-attempt resumes only from the immediately previous FAIL/STOPPED scheduler attempt when its checkpoint was fetched through the approved terminal-failure salvage boundary. MLIPFlow never reads another remote attempt directory directly and never silently resumes an unrelated scientific failure.",
@@ -44,18 +32,7 @@
   "execution": {
     "mode": "python-library",
     "backends": ["ssh-slurm"],
-    "entrypoint": {"path": "adapter_restart.py", "object": "Adapter"},
-    "operations": ["run"],
-    "shell": false,
-    "executes_external_programs": false,
-    "writes_files": true,
-    "submits_jobs": true
-  },
-  "replay": {
-    "supported": true,
-    "behavior": "parse-existing-artifacts",
-    "accepted_media_types": ["application/json", "text/csv", "application/octet-stream"],
-    "reason": "Replay re-runs only bounded result, thermodynamics, path, and checkpoint checks on already fetched artifacts and never starts ASE dynamics."
+    "operations": ["run"]
   },
   "inputs": [
     {"name": "structure", "kind": "file", "required": true, "description": "Project-scoped structure readable by ASE; the original basename/extension is preserved when staged."},
@@ -116,7 +93,6 @@
     ]
   },
   "completion": {
-    "status": "implemented",
     "checks": [
       {"id": "md-parameters", "implemented": true, "description": "Require calculator, ensemble, model and structure paths, seed, integrator settings, device, dtype request, total requested/completed steps, and segment start to match the plan."},
       {"id": "md-artifacts", "implemented": true, "description": "Require trajectory segment, trajectory index, thermodynamics, final structure, and cluster report on successful completion."},
@@ -125,22 +101,6 @@
       {"id": "npt-stress-capability", "implemented": true, "description": "Before fresh or restarted NPT integration, require the concrete loaded calculator/model to advertise stress and return a finite 3x3 ASE stress tensor."},
       {"id": "md-checkpoint", "implemented": true, "description": "When checkpointing is enabled, check its completed step and model, structure, and integrator parameters; retries require an immediately previous salvaged checkpoint and an exact ASE-version match for NPT extended-state restoration."}
       ,{"id": "md-supercell-and-stability", "implemented": true, "description": "Record any explicit repeat and strict initial-cell lower bound in plan, result, and checkpoint; verify expanded atom count and cell lengths, and require finite stored-frame pair-distance plus thermodynamic summaries."}
-    ],
-    "success_state": "OK",
-    "failure_state": "FAIL"
-  },
-  "retry": {
-    "status": "delegated-to-core",
-    "allowed_from": ["FAIL", "STOPPED"],
-    "creates_new_attempt": true,
-    "reuses_previous_run_directory": false,
-    "requires_approval": false,
-    "max_attempts": null,
-    "limit_enforced": false,
-    "notes": [
-      "restart_policy=disabled preserves fresh-attempt behavior.",
-      "restart_policy=auto-from-previous-attempt resumes only when the immediately previous terminal scheduler attempt has an approved locally salvaged md-checkpoint.json; otherwise the retry plan is BLOCKED.",
-      "A resumed attempt continues from checkpoint.completed_steps to the original parameters.steps target rather than running another full parameters.steps segment."
     ]
   },
   "computational_backends": [

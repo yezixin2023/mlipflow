@@ -449,8 +449,6 @@ class Adapter:
             return _pin_facade_helpers(base.Adapter().plan(context))
         return _plan_execute(context)
 
-    def prepare(self, context: Any, plan: Any) -> dict[str, Any]:
-        return base.Adapter().prepare(_proxy(context) if isinstance(context, dict) else context, plan)
 
     def check(self, context: Any) -> dict[str, Any]:
         if not isinstance(context, dict) or base._operation(context) != EXECUTE:
@@ -479,8 +477,3 @@ class Adapter:
         if collected.get("status") == "OK":
             collected["metrics"] = checked.get("metrics", {})
         return collected
-
-    def replay(self, context: Any) -> dict[str, Any]:
-        if not isinstance(context, dict) or base._operation(context) != EXECUTE:
-            return base.Adapter().replay(context)
-        return self.collect(context)

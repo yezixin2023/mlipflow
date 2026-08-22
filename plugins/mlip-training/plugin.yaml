@@ -8,19 +8,10 @@
   "api_version": 1,
   "description": "Unified local and ssh-slurm workflow adapter for training or fine-tuning DeepMD, M3GNet/MatGL, CHGNet, and MACE with bundled Python runners, logical cluster data/foundation/model paths, optional no-overwrite model publication, and bounded artifact fetch.",
   "category": "training",
-  "contract": {
-    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
-  },
   "implementation": {
     "kind": "python-adapter",
     "entrypoint": "adapter_cluster.py:Adapter",
     "status": "implemented",
-    "source_classification": ["B", "D", "new"],
-    "source_references": [
-      "inventory://remote/MLP/MACE/finetune/para-0/run.slurm",
-      "inventory://remote/MLP/CHGnet/code/train_model_Li8.py",
-      "inventory://remote/MLP/M3Gnet/all_train/train.py"
-    ],
     "limitations": [
       "MLIPFlow orchestrates framework APIs but does not bundle framework packages, cluster modules, datasets, or foundation models; those remain site-owned resources.",
       "The generic scheduler contract records explicit config, dataset, foundation-model, and output paths but does not claim numerical parity across framework versions or hardware.",
@@ -36,18 +27,7 @@
   "execution": {
     "mode": "external-command",
     "backends": ["local", "ssh-slurm"],
-    "entrypoint": {"path": "adapter_cluster.py", "object": "Adapter"},
-    "operations": ["train", "finetune"],
-    "shell": false,
-    "executes_external_programs": true,
-    "writes_files": true,
-    "submits_jobs": true
-  },
-  "replay": {
-    "supported": true,
-    "behavior": "parse-existing-artifacts",
-    "accepted_media_types": ["application/json"],
-    "reason": "Replay validates an existing pinned training result and its model reference; it never starts a trainer."
+    "operations": ["train", "finetune"]
   },
   "inputs": [
     {"name": "executable", "kind": "file", "required": false, "description": "Local compatibility path: explicit Python executable or wrapper executable."},
@@ -103,7 +83,6 @@
     ]
   },
   "completion": {
-    "status": "implemented",
     "checks": [
       {"id": "scheduled-settings", "implemented": true, "description": "Require framework, operation, seed, device, precision, config, dataset, and foundation-model paths to match the requested calculation."},
       {"id": "cluster-path-report", "implemented": true, "description": "Require the cluster runner to report resolved dataset/foundation paths and successful completion."},
@@ -111,19 +90,7 @@
       {"id": "finite-training-metrics", "implemented": true, "description": "Reject non-finite numeric metrics in the framework result manifest."},
       {"id": "canonical-model-publication", "implemented": true, "description": "When requested, publish the model to one fresh canonical destination and require the fetched model-reference path to match that destination."},
       {"id": "legacy-deepmd-completion", "implemented": true, "description": "Preserve the earlier learning-curve/checkpoint completion checks for legacy DeepMD fresh-training references."}
-    ],
-    "success_state": "OK",
-    "failure_state": "FAIL"
-  },
-  "retry": {
-    "status": "delegated-to-core",
-    "allowed_from": ["FAIL", "STOPPED"],
-    "creates_new_attempt": true,
-    "reuses_previous_run_directory": false,
-    "requires_approval": false,
-    "max_attempts": null,
-    "limit_enforced": false,
-    "notes": ["Every retry receives a fresh attempt workspace; checkpoint/resume behavior is never inferred implicitly."]
+    ]
   },
   "computational_backends": [
     {"id": "deepmd", "family": "DeepMD", "status": "implemented", "operations": ["train", "finetune"], "external_programs": ["site-owned mlip-deepmd Python environment"], "limitations": ["Fine-tuning support follows the verified DeePMD backend-specific --finetune entry points in the bundled runner."]},

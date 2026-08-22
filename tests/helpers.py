@@ -29,8 +29,6 @@ def plugin_manifest(plugin_id: str = "demo") -> dict[str, Any]:
         "dependencies": {"python": [], "executables": []},
         "execution": {"backends": ["local"], "cost_class": "low"},
         "completion": {"requires_scheduler_success": False},
-        "retry": {"strategy": "new-attempt", "max_attempts": 2, "retryable": []},
-        "replay": {"supported": True, "handler": "adapter.py:Adapter.replay"},
     }
 
 

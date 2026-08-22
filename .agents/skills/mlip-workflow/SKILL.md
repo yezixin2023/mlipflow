@@ -91,7 +91,6 @@ For the first response, report only:
 - current next stage and why;
 - whether that stage is expensive or needs approval.
 
-After each stage, report its status, collected artifacts/provenance, next eligible
-stage, and any new approval. Preserve claim labels such as replay, fresh execution,
-integration smoke, numerical parity, and `MISSING_SOURCE`; never strengthen the claim
-language defined by a specialist Skill.
+After each stage, report its status, collected artifacts and scientific metadata, next eligible
+stage, and any new approval. State whether the original numerical program ran when relevant, and
+never strengthen the scientific claim language defined by a specialist Skill.

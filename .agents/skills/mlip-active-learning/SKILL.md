@@ -58,7 +58,8 @@ process exit zero is insufficient.
 ## Preserve execution and round boundaries
 
 Training, scheduled inference, exploratory MD, DFT, and other expensive fresh stages retain their
-own dry-run, boolean approval, checker, collection, and retry contracts. A user asking for automatic or
+own dry-run, boolean approval, checker, and collection boundaries. Core fresh-attempt retry semantics
+also remain in force. A user asking for automatic or
 end-to-end execution does not waive them. Local decision execution is bounded, but follow the plugin
 plan's approval requirement because the same plugin also exposes scheduled inference.
 

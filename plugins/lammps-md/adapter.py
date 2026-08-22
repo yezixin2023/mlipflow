@@ -301,15 +301,6 @@ class Adapter:
             },
         }
 
-    def prepare(self, context: Any, plan: Any) -> dict[str, Any]:
-        if not isinstance(plan, dict) or plan.get("status") != "READY":
-            return {
-                "plugin_id": PLUGIN_ID,
-                "status": "BLOCKED",
-                "executable": False,
-                "diagnostics": [_diagnostic("error", "plan.not_ready", "prepare requires a READY plan")],
-            }
-        return dict(plan)
 
     def _output_dir(self, context: dict[str, Any]) -> Path:
         return Path(str(context["attempt_dir"])).expanduser().absolute() / str(
@@ -483,8 +474,3 @@ class Adapter:
                 / 1000.0,
             },
         }
-
-    def replay(self, context: Any) -> dict[str, Any]:
-        collected = self.collect(context)
-        collected["executable"] = False
-        return collected

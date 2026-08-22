@@ -333,21 +333,11 @@ class ManuscriptVoltageAdapterIntegrationTests(unittest.TestCase):
             manifest["execution"]["operations"],
         )
 
-    def test_standard_adapter_plan_execute_check_collect_and_no_write_replay(self) -> None:
+    def test_standard_adapter_plan_execute_check_and_collect(self) -> None:
         context = self.context()
         output = self.attempt / "manuscript-voltage-replay"
         evidence_before = self.evidence.read_bytes()
 
-        replayed = self.adapter.replay(context)
-        self.assertEqual("OK", replayed["status"])
-        self.assertFalse(replayed["executable"])
-        self.assertEqual("replay", replayed["mode"])
-        self.assertFalse(replayed["model_execution"])
-        self.assertFalse(replayed["recomputed_from_total_energies"])
-        self.assertFalse(output.exists(), "Adapter.replay must not create the output directory")
-        in_memory = replayed["result_manifest"]["artifacts"]
-        self.assertEqual(set(self.replay.OUTPUT_NAMES), set(in_memory))
-        self.assertEqual("chgnet", in_memory["model_ranking.json"]["winner"])
         self.assertEqual("WAIT", self.adapter.check(context)["status"])
 
         plan = self.adapter.plan(context)
@@ -387,7 +377,6 @@ class ManuscriptVoltageAdapterIntegrationTests(unittest.TestCase):
             {item["role"] for item in collected["artifacts"]},
         )
         provenance = json.loads((output / "provenance.json").read_text(encoding="utf-8"))
-        self.assertEqual("manuscript-table-replay", provenance["evidence_mode"])
         self.assertEqual("V", provenance["voltage_unit"])
         self.assertFalse(provenance["model_execution"])
         self.assertFalse(provenance["recomputed_from_total_energies"])

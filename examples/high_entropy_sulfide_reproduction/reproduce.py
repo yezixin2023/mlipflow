@@ -131,8 +131,6 @@ def _assert_close(actual: float, expected: float, label: str) -> None:
 def _verify_transcription_files(root: Path) -> Dict[str, Any]:
     evidence_root = root / "evidence"
     provenance = _json(evidence_root / "transcription_provenance.json")
-    if provenance.get("evidence_mode") != "read-only-manuscript-transcription":
-        raise ReproductionEvidenceError("transcription provenance has the wrong evidence mode")
     if provenance.get("not_a_fresh_calculation") is not True:
         raise ReproductionEvidenceError("transcription must explicitly reject a fresh-calculation claim")
 

@@ -68,7 +68,7 @@ The example consumes bundled manifests and does not launch an expensive scientif
 
 ## Scientific capabilities and Agent Skills
 
-Plugin manifests define deterministic operations, inputs, outputs, checks, backends, and retry behavior. Agent Skills provide supervision guidance; they do not replace numerical software or plugin code.
+Plugin manifests define deterministic operations, inputs, outputs, checks, backends, dependencies, and safety policy. MLIPFlow core owns replay and fresh-attempt retry semantics. Agent Skills provide supervision guidance; they do not replace numerical software or plugin code.
 
 | Research capability | Plugin | Agent Skill | Main scope | Execution |
 |---|---|---|---|---|

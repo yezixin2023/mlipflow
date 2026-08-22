@@ -757,9 +757,9 @@ class ScheduledDftTests(unittest.TestCase):
             with StateStore(root / ".mlipflow/state.sqlite3", readonly=False) as store:
                 submitted = store.latest_step(project.project_id, "label-li")
                 store.transition(submitted.run_id, RunState.FAIL, diagnostic="synthetic failure")
-            retry_plan = make_retry_plan(project, "label-li", PLUGINS)
+            retry_plan = make_retry_plan(project, "label-li")
             self.assertEqual("retry", retry_plan["action"])
-            retried = retry(project, "label-li", PLUGINS)
+            retried = retry(project, "label-li")
             self.assertEqual(2, retried["step"]["attempt"])
             second = make_run_plan(project, "label-li", PLUGINS, site, library)
             self.assertEqual(

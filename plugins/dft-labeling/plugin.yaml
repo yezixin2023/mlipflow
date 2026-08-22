@@ -8,22 +8,10 @@
   "api_version": 1,
   "description": "Deterministic VASP preparation and failure-isolating labeling, canonical label provenance, and reviewed SSH-SLURM conversion to shared-split training datasets plus a canonical held-out benchmark JSON.",
   "category": "labeling",
-  "contract": {
-    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
-  },
   "implementation": {
     "kind": "python-adapter",
     "entrypoint": "adapter.py:Adapter",
     "status": "implemented",
-    "source_classification": ["C", "D", "new"],
-    "source_references": [
-      "manuscript-supplement://SI_0510zdl.docx#page=2&figure=S3",
-      "remote-mlp://4-Element/Li8/scf/single/INCAR",
-      "remote-mlp://4-Element/Li8/scf/single/KPOINTS",
-      "inventory://remote/MLP/DeepMD/sub_AIMD_Li8_4ele.py",
-      "inventory://remote/MLP/3-Element/sub_AIMD_Li8_3ele.py",
-      "inventory://workspace/claw/MD/AIMD/generate_input.py"
-    ],
     "limitations": [
       "vasp-prepare generates POSCAR, INCAR, KPOINTS, and runtime-only POTCAR files in a fresh local attempt but never launches VASP or submits a scheduler job.",
       "POTCAR is assembled only from the user's licensed PMG_VASP_PSP_DIR and is explicitly excluded from portable collection, reports, packages, and repository content.",
@@ -43,18 +31,7 @@
   "execution": {
     "mode": "external-command",
     "backends": ["local", "ssh-slurm"],
-    "entrypoint": {"path": "adapter.py", "object": "Adapter"},
-    "operations": ["vasp-prepare", "label", "dataset-assemble"],
-    "shell": false,
-    "executes_external_programs": true,
-    "writes_files": true,
-    "submits_jobs": true
-  },
-  "replay": {
-    "supported": true,
-    "behavior": "parse-existing-artifacts",
-    "accepted_media_types": ["application/json"],
-    "reason": "Replay verifies an existing dft-input-manifest or standardized labeling result; it never prepares inputs, launches VASP, or parses OUTCAR heuristically."
+    "operations": ["vasp-prepare", "label", "dataset-assemble"]
   },
   "inputs": [
     {"name": "structures-manifest", "kind": "manifest", "required": true, "media_type": "application/json"},
@@ -117,7 +94,6 @@
     ]
   },
   "completion": {
-    "status": "implemented",
     "checks": [
       {"id": "vasp-input-integrity", "implemented": true, "description": "Verify calculation type, INCAR semantics, KPOINTS rule, POTCAR functional/symbols, and fresh per-structure files."},
       {"id": "potcar-non-portability", "implemented": true, "description": "Require POTCAR collectable=false and omit every POTCAR from collect output while retaining functional and symbols in dft-input-manifest.json."},
@@ -129,18 +105,6 @@
       ,{"id": "held-out-benchmark-export", "implemented": true, "description": "Regenerate benchmark/test.json from the exact split test IDs and verify its site path, total-energy convention, force units, and stress sign/unit conversion."}
       ,{"id": "independent-calculation-jobs", "implemented": true, "description": "Submit a reviewed multi-calculation label as independently tracked Slurm jobs with full resources per calculation, aggregate terminal state and completions, and fetch each workspace through its own allowlist."}
       ,{"id": "dataset-recollection", "implemented": true, "description": "On a fresh dataset-assemble retry, compare and recollect an existing publication without rewriting it; tolerate only insignificant cross-platform floating differences in regenerated derived coordinates."}
-    ],
-    "success_state": "OK",
-    "failure_state": "FAIL"
-  },
-  "retry": {
-    "status": "delegated-to-core",
-    "allowed_from": ["FAIL", "STOPPED"],
-    "creates_new_attempt": true,
-    "reuses_previous_run_directory": false,
-    "requires_approval": false,
-    "max_attempts": null,
-    "limit_enforced": false,
-    "notes": ["vasp-prepare requires a fresh output directory; label retry always creates a fresh attempt without overwriting prior work; dataset-assemble retry may recollect only a strictly reverified immutable publication and never rewrites it."]
+    ]
   }
 }

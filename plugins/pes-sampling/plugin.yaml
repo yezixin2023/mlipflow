@@ -8,18 +8,10 @@
   "api_version": 1,
   "description": "Safe local DIRECT/LASP sampling, deterministic ASE-to-LASP input and runtime-only licensed POTCAR preparation, DIRECT+LASP structure-set merge, and scheduler-backed LASP stochastic-surface-walking execution through MLIPFlow's ssh-slurm lifecycle; LASP remains user/site supplied and is never bundled.",
   "category": "sampling",
-  "contract": {
-    "methods": ["validate", "plan", "prepare", "check", "collect", "replay"]
-  },
   "implementation": {
     "kind": "python-adapter",
     "entrypoint": "adapter_cluster.py:Adapter",
     "status": "adapter-ready",
-    "source_classification": ["B", "D", "new"],
-    "source_references": [
-      "inventory://workspace/claw/direct_sampling/direct.py",
-      "inventory://remote-mlp/Li10M7P8S32/lasp-ssw"
-    ],
     "limitations": [
       "LASP/SSW is wrapped rather than reimplemented. Local execution accepts an explicit licensed LASP executable; ssh-slurm execution obtains the LASP executable, modules, MPI launcher, and other site-specific setup from the pinned site-owned lasp-ssw/run.sh template.",
       "The historical normalizer reproduces the reviewed Energy-frame split, energy filter, accepted-order stride, structure ordering, and provenance contract. This is post-processing parity, not LASP numerical parity.",
@@ -36,24 +28,13 @@
   "execution": {
     "mode": "external-command",
     "backends": ["local", "ssh-slurm"],
-    "entrypoint": {"path": "adapter_cluster.py", "object": "Adapter"},
     "operations": [
       "direct-select",
       "lasp-input-prepare",
       "merge-structures",
       "lasp-ssw-execute",
       "lasp-ssw-normalize-replay"
-    ],
-    "shell": false,
-    "executes_external_programs": true,
-    "writes_files": true,
-    "submits_jobs": true
-  },
-  "replay": {
-    "supported": true,
-    "behavior": "parse-existing-artifacts",
-    "accepted_media_types": ["application/json"],
-    "reason": "The approved normalize operation converts existing LASP/SSW ARC outputs into a portable sampling-result contract; generic MLIPFlow replay then references the normalized artifacts without loading or running LASP."
+    ]
   },
   "inputs": [
     {"name": "input-dirs", "kind": "directory", "required": false, "description": "DIRECT only: one or more existing local structure directories; runtime key input_dirs."},
@@ -143,7 +124,6 @@
     ]
   },
   "completion": {
-    "status": "implemented",
     "checks": [
       {"id": "direct-manifest-and-structures", "implemented": true, "description": "DIRECT requires a readable manifest.csv and non-empty confined selected structures."},
       {"id": "lasp-input-record", "implemented": true, "description": "lasp-input-prepare records the ASE source path and frame selection, enforces a full-rank periodic cell and any explicit strict length bound, verifies input.arc, and records runtime-only POTCAR functional/element/symbol settings while omitting POTCAR from collect."},
@@ -151,19 +131,7 @@
       {"id": "lasp-file-contract", "implemented": true, "description": "LASP requires a valid sampling-result schema, parsed allstr.arc evidence, complete counts, and portable ordinary artifacts; stdout wording is never success evidence."},
       {"id": "lasp-structure-lineage", "implemented": true, "description": "LASP structure IDs, finite energies, historical ordering, selection rules, selected files, and optional best/md manifest counts are cross-checked."},
       {"id": "lasp-scheduled-finalization", "implemented": true, "description": "ssh-slurm LASP requires scheduler completion, bounded approved fetch, a valid cluster report, reparsed allstr.arc, recomputed energy/stride selection, and selected-structure tar contents matching their source frames before scientific OK."}
-    ],
-    "success_state": "OK",
-    "failure_state": "FAIL"
-  },
-  "retry": {
-    "status": "delegated-to-core",
-    "allowed_from": ["FAIL", "STOPPED"],
-    "creates_new_attempt": true,
-    "reuses_previous_run_directory": false,
-    "requires_approval": false,
-    "max_attempts": null,
-    "limit_enforced": false,
-    "notes": ["A retry always uses a fresh local attempt and, for ssh-slurm, a fresh remote attempt workspace."]
+    ]
   },
   "computational_backends": [
     {
