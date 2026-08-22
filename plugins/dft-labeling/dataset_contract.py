@@ -72,7 +72,10 @@ def _sources(manifest: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         path = item.get("path", item.get("output_file"))
         if (
             not isinstance(structure_id, str) or not SAFE_ID.fullmatch(structure_id)
-            or structure_id in result or not safe_relative(path)
+            or structure_id in result
+            or not isinstance(path, str)
+            or not path.strip()
+            or any(character in path for character in "\x00\r\n")
         ):
             raise DatasetContractError(f"structures[{index}] has an invalid id or path")
         source = {"structure_id": structure_id, "path": str(path)}

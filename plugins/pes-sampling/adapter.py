@@ -807,19 +807,43 @@ class Adapter:
                     )
                 )
 
-        source = _resolve_nonsymlink(inputs.get("input_structure"), project_root)
-        if (
-            not _ordinary_file(source)
-            or source is None
-            or not _is_within(source, project_root)
-        ):
+        source = _resolve(inputs.get("input_structure"), project_root)
+        if source is None:
             diagnostics.append(
                 _diagnostic(
                     "ERROR",
                     "path.input_structure",
-                    "input_structure must be an ordinary file inside project_root",
+                    "input_structure must be a non-empty path",
                 )
             )
+        elif not source.exists():
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "path.input_structure",
+                    f"input_structure file does not exist: {source}",
+                )
+            )
+        elif not _ordinary_file(source):
+            diagnostics.append(
+                _diagnostic(
+                    "ERROR",
+                    "path.input_structure",
+                    f"input_structure must be an ordinary file: {source}",
+                )
+            )
+        else:
+            try:
+                with source.open("rb") as stream:
+                    stream.read(1)
+            except OSError:
+                diagnostics.append(
+                    _diagnostic(
+                        "ERROR",
+                        "path.input_structure",
+                        f"input_structure must be readable: {source}",
+                    )
+                )
         pseudopotential = inputs.get("pseudopotential_reference")
         if pseudopotential is not None:
             reference_path = _resolve_nonsymlink(pseudopotential, project_root)
@@ -910,7 +934,7 @@ class Adapter:
         parameters = _mapping(context["parameters"])
         resources = _mapping(context["resources"])
         assert project_root is not None and attempt_dir is not None
-        source = _resolve_nonsymlink(inputs["input_structure"], project_root)
+        source = _resolve(inputs["input_structure"], project_root)
         python_executable = _explicit_executable(
             resources["python_executable"], project_root
         )

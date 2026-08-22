@@ -74,16 +74,16 @@ Plugin manifests define deterministic operations, inputs, outputs, checks, backe
 |---|---|---|---|---|
 | End-to-end workflow design | MLIPFlow core | `$mlip-workflow` | DAG construction, evidence handoff, approval boundaries, and supervision | Supervision |
 | High-entropy and SQS structures | `high-entropy-structure` | `$high-entropy-structure` | Seeded `icet` SQS generation with explicit composition and supercell contracts | Local |
-| PES sampling | `pes-sampling` | `$pes-sampling` | DIRECT selection, LASP preparation, LASP/SSW execution or replay, and structure-set merging | Local; SSH-Slurm for scheduled LASP |
-| DFT labeling and datasets | `dft-labeling` | `$dft-labeling` | VASP preparation; bounded static, relax, and AIMD labeling; canonical labels; shared-split framework datasets | Local preparation; local or SSH-Slurm labeling; SSH-Slurm assembly |
+| PES sampling | `pes-sampling` | `$pes-sampling` | DIRECT-based structure selection, LASP/SSW sampling, replay of existing sampling runs, and structure-set merging | Local; SSH-Slurm for scheduled LASP |
+| DFT labeling and datasets | `dft-labeling` | `$dft-labeling` | VASP preparation and static, relaxation, or AIMD labeling, followed by standardized labeled-dataset assembly | Local preparation; local or SSH-Slurm labeling; SSH-Slurm assembly |
 | MLIP training and fine-tuning | `mlip-training` | `$mlip-training` | DeepMD, M3GNet/MatGL, CHGNet, and MACE training or fine-tuning with explicit references | Local; SSH-Slurm |
 | ASE molecular dynamics | `ase-md` | `$ase-md` | NVT Langevin or isotropic MTK NPT, supercells, checkpoints, and fresh-attempt restart | SSH-Slurm |
 | LAMMPS molecular dynamics | `lammps-md` | `$lammps-md` | Deterministic input preparation, DeepMD/MACE/MatGL execution, collection, and binary restart | Local preparation; SSH-Slurm execution |
 | MLIP benchmarking | `mlip-benchmark` | `$mlip-benchmark` | Fresh or normalized static-PES evidence plus task-separated AIMD-reference RDF and transport metrics | Local; SSH-Slurm for fresh inference |
-| Offline active learning | `active-learning` | `$mlip-active-learning` | Calibrated one- or two-model committees, risk-union selection, and immutable round assessment | Local decisions; SSH-Slurm inference |
+| Offline active learning | `active-learning` | `$mlip-active-learning` | Uncertainty/risk-based screening of candidate structures, selection for new labeling, and round-wise assessment of model improvement | Local selection and assessment; SSH-Slurm for large-scale inference |
 | Ionic transport and dynamics | `ionic-transport` | `$ionic-transport` | Trajectory/MSD analysis, diffusion, conductivity, Haven ratio, Arrhenius fitting, and bounded partial-RDF comparison | Local |
-| Candidate ranking | `candidate-ranking` | `$candidate-ranking` | Deterministic top-k selection from an existing finite numeric metric | Local |
-| Electrochemical voltage | `electrochemical-voltage` | — | Adjacent average Li intercalation voltages and deterministic evidence replay | Local |
+| Candidate ranking | `candidate-ranking` | `$candidate-ranking` | Ranking and top-k selection of candidates according to user-defined quantitative metrics | Local |
+| Electrochemical voltage | `electrochemical-voltage` | — | Average Li intercalation voltage calculations between adjacent compositions, with support for replaying existing results | Local |
 
 The voltage plugin is orchestrated directly or through `$mlip-workflow`; it does not currently have a dedicated Agent Skill. Exact operations and limitations are defined by manifests under [`plugins/`](plugins/) and files under [`.agents/skills/`](.agents/skills/).
 

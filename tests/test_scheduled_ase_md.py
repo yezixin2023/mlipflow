@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import importlib.util
 import json
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -110,6 +111,147 @@ def test_scheduler_matrix_is_ready(tmp_path: Path, calculator: str) -> None:
     outputs = {item["remote_name"]: item for item in scheduled["fetch_outputs"]}
     for name in ("md-result.json", "trajectory.traj", "trajectory-index.json", "thermo.csv", "final.extxyz", "cluster-run-report.json"):
         assert outputs[name]["required"] is True
+
+
+@pytest.mark.parametrize("path_kind", ["project-relative", "parent-relative", "absolute"])
+def test_structure_path_runs_adapter_staging_and_cluster_chain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, path_kind: str
+) -> None:
+    from mlipflow import backends as backend_module
+    from mlipflow.backends import SshSlurmBackend
+    from mlipflow.config import load_project
+    from mlipflow.errors import PluginError
+    from mlipflow.plugins import discover_plugins
+    from mlipflow.services.contracts import _scheduled_contract
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    context = _context(project_root, "mace")
+    local_source = project_root / "inputs" / "start.extxyz"
+    if path_kind == "project-relative":
+        source = local_source
+        value = "inputs/start.extxyz"
+    else:
+        source = tmp_path / ("shared" if path_kind == "parent-relative" else "external") / "A.extxyz"
+        source.parent.mkdir()
+        source.write_text(local_source.read_text(encoding="utf-8"), encoding="utf-8")
+        value = "../shared/A.extxyz" if path_kind == "parent-relative" else str(source)
+    context["inputs"]["structure"] = value
+    project_data = json.loads((project_root / "project.yaml").read_text(encoding="utf-8"))
+    project_data["workflow"]["nodes"][0]["inputs"]["structure"] = value
+    _write_json(project_root / "project.yaml", project_data)
+
+    adapter = _load(f"ase_md_adapter_structure_{path_kind}", PLUGIN / "adapter.py").Adapter()
+    plan = adapter.plan(context)
+
+    assert plan["status"] == "READY", plan.get("diagnostics")
+    assert plan["input_paths"]["structure"] == str(source.resolve())
+    project = load_project(project_root)
+    plugin = discover_plugins(ROOT / "plugins")["ase-md"]
+    contract = _scheduled_contract(project, plugin, {"adapter_plan": plan})
+    staged_structure = next(
+        item for item in contract["staged_files"] if item["remote_name"].startswith("structure/")
+    )
+    assert staged_structure == {
+        "source": str(source.resolve()),
+        "remote_name": f"structure/{source.name}",
+        "read_only_source": True,
+    }
+    if path_kind != "project-relative":
+        unmarked = json.loads(json.dumps(plan))
+        staged = unmarked["scheduled_execution"]["staged_files"]
+        next(item for item in staged if item["remote_name"].startswith("structure/")).pop(
+            "read_only_source"
+        )
+        with pytest.raises(PluginError, match="outside the project/plugin roots"):
+            _scheduled_contract(project, plugin, {"adapter_plan": unmarked})
+
+    remote_run_dir = "/work/test/ase-md/attempt-0001"
+    remote_workspace = tmp_path / "remote" / "attempt-0001"
+
+    def fake_transfer(argv, **_kwargs):
+        if argv[0] == "ssh":
+            for name in ("input", "output", "logs"):
+                (remote_workspace / name).mkdir(parents=True, exist_ok=True)
+        elif argv[0] == "scp":
+            remote_path = argv[-1].split(":", 1)[1]
+            relative = remote_path.removeprefix(remote_run_dir + "/")
+            destination = remote_workspace / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(argv[-2], destination)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(backend_module.subprocess, "run", fake_transfer)
+    files = [
+        (Path(item["source"]), f"input/{item['remote_name']}")
+        for item in contract["staged_files"]
+    ]
+    SshSlurmBackend("cluster-a").stage_workspace(remote_run_dir, files)
+
+    cluster = _load(f"ase_md_cluster_structure_{path_kind}", PLUGIN / "ase_md_cluster.py")
+    model_root = tmp_path / "models"
+    model = model_root / "mace" / "model-v1.model"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"model")
+    observed: dict[str, object] = {}
+
+    class FakeRunner:
+        @staticmethod
+        def run_md(**kwargs):
+            atoms = read(kwargs["structure"], format="extxyz")
+            observed["structure"] = Path(kwargs["structure"])
+            observed["symbols"] = atoms.get_chemical_symbols()
+            return {
+                "schema_version": 1,
+                "status": "OK",
+                "model": {
+                    "id": kwargs["model_id"],
+                    "path": kwargs["model_record_path"],
+                },
+                "artifacts": [],
+                "steps_completed": 0,
+            }
+
+    monkeypatch.setattr(cluster, "_load_runner", lambda _: FakeRunner)
+    code = cluster.run(
+        types.SimpleNamespace(
+            input_dir=str(remote_workspace / "input"),
+            output_dir=str(remote_workspace / "output"),
+            project=str(remote_workspace / "input" / "project.yaml"),
+            node_id="md",
+            model_root=str(model_root),
+        )
+    )
+
+    assert code == 0
+    assert observed == {
+        "structure": remote_workspace / "input" / "structure" / source.name,
+        "symbols": ["Li"],
+    }
+    report = json.loads(
+        (remote_workspace / "output" / "cluster-run-report.json").read_text(encoding="utf-8")
+    )
+    assert report["status"] == "OK"
+    assert report["structure_path"] == f"structure/{source.name}"
+
+
+@pytest.mark.parametrize("path_kind", ["parent-relative", "absolute"])
+def test_missing_structure_path_is_blocked(tmp_path: Path, path_kind: str) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    context = _context(project_root, "mace")
+    missing = tmp_path / "shared" / "missing.extxyz"
+    context["inputs"]["structure"] = (
+        "../shared/missing.extxyz" if path_kind == "parent-relative" else str(missing)
+    )
+    adapter = _load(f"ase_md_adapter_missing_{path_kind}", PLUGIN / "adapter.py").Adapter()
+
+    plan = adapter.plan(context)
+
+    assert plan["status"] == "BLOCKED"
+    messages = [item["message"] for item in plan["diagnostics"]]
+    assert any("structure file does not exist" in message for message in messages)
+    assert str(missing.resolve()) in "\n".join(messages)
 
 
 def test_cuda_requires_scheduled_gpu(tmp_path: Path) -> None:

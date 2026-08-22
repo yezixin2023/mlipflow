@@ -74,6 +74,25 @@ def _project_file(root: Path, value: Any) -> Path:
     return candidate
 
 
+def _structure_input(root: Path, value: Any) -> Path:
+    reference = _reference(value)
+    if reference is None or not _plain_string(reference):
+        raise ValueError("structure input must contain a non-empty path")
+    raw = Path(reference).expanduser()
+    return (raw if raw.is_absolute() else root / raw).resolve()
+
+
+def _readable_file(path: Path, max_bytes: int) -> bool:
+    if not _ordinary_file(path, max_bytes):
+        return False
+    try:
+        with path.open("rb") as stream:
+            stream.read(1)
+    except OSError:
+        return False
+    return True
+
+
 def _ordinary_project_file(path: Path, root: Path, max_bytes: int) -> bool:
     try:
         if path.is_symlink() or not path.is_file():
@@ -284,13 +303,28 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
     parameters = _mapping(context["parameters"])
     try:
         project = _project_config(root)
-        structure = _project_file(root, inputs["structure"])
+        structure = _structure_input(root, inputs["structure"])
         model_reference = _project_file(root, inputs["model_reference"])
     except ValueError as exc:
         return _blocked([_diagnostic("error", "ase_md.project_inputs", str(exc))])
+    if not structure.exists():
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "ase_md.structure_file",
+                f"structure file does not exist: {structure}",
+            )
+        )
+    elif not _readable_file(structure, MAX_STRUCTURE_BYTES):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "ase_md.structure_file",
+                f"structure must be a readable bounded ordinary file: {structure}",
+            )
+        )
     for name, path, limit in (
         ("project", project, MAX_JSON_BYTES),
-        ("structure", structure, MAX_STRUCTURE_BYTES),
         ("model_reference", model_reference, MAX_JSON_BYTES),
     ):
         if not _ordinary_project_file(path, root, limit):
@@ -311,7 +345,7 @@ def _plan(context: dict[str, Any]) -> dict[str, Any]:
     structure_remote = f"structure/{structure.name}"
     staged = [
         _staged_record(project, "project.yaml"),
-        _staged_record(structure, structure_remote),
+        {**_staged_record(structure, structure_remote), "read_only_source": True},
         _staged_record(model_reference, "model-reference.json"),
         _staged_record(runner, "ase_md.py"),
         _staged_record(cluster, "ase_md_cluster.py"),

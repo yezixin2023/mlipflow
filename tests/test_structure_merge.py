@@ -12,6 +12,7 @@ import tarfile
 from pathlib import Path
 from typing import Any
 
+import pytest
 from ase import Atoms
 from ase.io import write
 from ase.io.dmol import write_dmol_arc
@@ -267,6 +268,90 @@ def test_lasp_input_prepare_converts_selected_ase_frame(tmp_path: Path) -> None:
     input_arc = Path(checked["result_file"]).parent / "input.arc"
     assert input_arc.read_bytes().startswith(b"!BIOSYM archive 2\nPBC=ON\nEnergy 1 ")
     assert manifest["arc_contract"]["energy_semantics"] == "input-format-placeholder-not-a-label"
+
+
+@pytest.mark.parametrize("path_kind", ["project-relative", "parent-relative", "absolute"])
+def test_lasp_input_structure_path_runs_full_conversion_chain(
+    tmp_path: Path, path_kind: str
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    if path_kind == "project-relative":
+        source = project / "inputs" / "A.extxyz"
+        value = "inputs/A.extxyz"
+    else:
+        source = tmp_path / ("shared" if path_kind == "parent-relative" else "external") / "A.extxyz"
+        value = "../shared/A.extxyz" if path_kind == "parent-relative" else str(source)
+    source.parent.mkdir()
+    write(
+        source,
+        Atoms(
+            symbols=["Li", "P"],
+            scaled_positions=[[0.2, 0.2, 0.2], [0.7, 0.7, 0.7]],
+            cell=[12.5, 13.5, 14.5],
+            pbc=True,
+        ),
+        format="extxyz",
+    )
+    attempt = project / ".mlipflow" / "runs" / "lasp-input" / "attempt-1"
+    context = {
+        "project_root": str(project),
+        "attempt_dir": str(attempt),
+        "inputs": {"input_structure": value},
+        "parameters": {
+            "operation": "lasp-input-prepare",
+            "output_subdir": "prepared",
+            "input_format": "extxyz",
+            "input_index": "-1",
+        },
+        "backend": "local",
+        "resources": {"python_executable": str(Path(sys.executable).resolve())},
+    }
+    adapter = load_module(f"test_structure_to_lasp_path_{path_kind}", ADAPTER_PATH).Adapter()
+
+    plan = adapter.plan(context)
+
+    assert plan["status"] == "READY", plan.get("diagnostics")
+    assert plan["input_paths"]["source_structure"] == str(source.resolve())
+    attempt.mkdir(parents=True)
+    completed = subprocess.run(
+        plan["argv"], cwd=plan["cwd"], check=False, capture_output=True, text=True
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    context["execution"] = {"returncode": completed.returncode, "plan": plan}
+    checked = adapter.check(context)
+    collected = adapter.collect(context)
+    assert checked["status"] == "OK", checked
+    assert collected["status"] == "OK", collected
+    manifest = json.loads(Path(checked["result_file"]).read_text(encoding="utf-8"))
+    assert manifest["source"]["path"] == str(source.resolve())
+    assert (Path(checked["result_file"]).parent / "input.arc").is_file()
+
+
+@pytest.mark.parametrize("path_kind", ["parent-relative", "absolute"])
+def test_lasp_input_missing_structure_path_is_blocked(
+    tmp_path: Path, path_kind: str
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    missing = tmp_path / "shared" / "missing.extxyz"
+    value = "../shared/missing.extxyz" if path_kind == "parent-relative" else str(missing)
+    context = {
+        "project_root": str(project),
+        "attempt_dir": str(project / ".mlipflow" / "runs" / "lasp-input" / "attempt-1"),
+        "inputs": {"input_structure": value},
+        "parameters": {"operation": "lasp-input-prepare"},
+        "backend": "local",
+        "resources": {"python_executable": str(Path(sys.executable).resolve())},
+    }
+    adapter = load_module(f"test_structure_to_lasp_missing_{path_kind}", ADAPTER_PATH).Adapter()
+
+    plan = adapter.plan(context)
+
+    assert plan["status"] == "BLOCKED"
+    messages = [item["message"] for item in plan["diagnostics"]]
+    assert any("input_structure file does not exist" in message for message in messages)
+    assert str(missing.resolve()) in "\n".join(messages)
 
 
 def test_lasp_input_prepare_materializes_noncollectable_potcar(

@@ -58,6 +58,24 @@ def _path(root: Any, relative: Any) -> Path:
     return Path(str(root)).expanduser().absolute() / str(relative)
 
 
+def _structure_input(root: Path, value: Any) -> Path:
+    if not isinstance(value, str) or not value.strip() or any(c in value for c in "\x00\r\n"):
+        raise ValueError("structure must be a non-empty path")
+    raw = Path(value).expanduser()
+    return (raw if raw.is_absolute() else root / raw).resolve()
+
+
+def _readable_file(path: Path, max_bytes: int) -> bool:
+    try:
+        if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= max_bytes:
+            return False
+        with path.open("rb") as stream:
+            stream.read(1)
+        return True
+    except OSError:
+        return False
+
+
 def _ordinary_project_file(path: Path, root: Path, max_bytes: int) -> bool:
     base = root.expanduser().absolute()
     candidate = path.expanduser().absolute()
@@ -89,7 +107,7 @@ def _project_inputs(context: dict[str, Any]) -> tuple[Path, Path, Path]:
     root = Path(str(context["project_root"])).expanduser().absolute()
     inputs = _mapping(context["inputs"])
     return (
-        _path(root, inputs["structure"]),
+        _structure_input(root, inputs["structure"]),
         _path(root, inputs["model_reference"]),
         _path(root, inputs["lammps_config"]),
     )
@@ -140,7 +158,16 @@ def _validate(context: Any, *, require_fresh_output: bool) -> list[dict[str, str
                 "unsupported inputs: " + ", ".join(sorted(str(item) for item in unknown_inputs)),
             )
         )
-    for name in ("structure", "model_reference", "lammps_config"):
+    structure_value = inputs.get("structure")
+    if (
+        not isinstance(structure_value, str)
+        or not structure_value.strip()
+        or any(c in structure_value for c in "\x00\r\n")
+    ):
+        diagnostics.append(
+            _diagnostic("error", "inputs.structure", "structure must be a non-empty path")
+        )
+    for name in ("model_reference", "lammps_config"):
         if not _safe_relative(inputs.get(name)):
             diagnostics.append(
                 _diagnostic("error", f"inputs.{name}", f"{name} must be a safe project-relative path")
@@ -159,10 +186,25 @@ def _validate(context: Any, *, require_fresh_output: bool) -> list[dict[str, str
         return diagnostics
     try:
         structure, model_ref, config = _project_inputs(context)
-    except KeyError:
+    except (KeyError, ValueError):
         return diagnostics
+    if not structure.exists():
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "inputs.structure_file",
+                f"structure file does not exist: {structure}",
+            )
+        )
+    elif not _readable_file(structure, MAX_STRUCTURE_BYTES):
+        diagnostics.append(
+            _diagnostic(
+                "error",
+                "inputs.structure_file",
+                f"structure must be a readable bounded ordinary file: {structure}",
+            )
+        )
     for name, path, limit in (
-        ("structure", structure, MAX_STRUCTURE_BYTES),
         ("model_reference", model_ref, MAX_JSON_BYTES),
         ("lammps_config", config, MAX_JSON_BYTES),
     ):

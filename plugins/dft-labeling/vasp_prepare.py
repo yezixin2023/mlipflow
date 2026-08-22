@@ -352,7 +352,7 @@ def _pseudopotential_reference(value: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _structure_records(
-    manifest: Mapping[str, Any], manifest_path: Path, project_root: Path, max_structures: int
+    manifest: Mapping[str, Any], manifest_path: Path, _project_root: Path, max_structures: int
 ) -> list[dict[str, Any]]:
     raw = manifest.get("structures")
     if manifest.get("schema_version") != 1 or not isinstance(raw, list):
@@ -369,16 +369,23 @@ def _structure_records(
         if structure_id in seen:
             raise ContractError(f"duplicate structure id: {structure_id}")
         seen.add(structure_id)
-        relative_value = item.get("path", item.get("output_file"))
-        relative = _safe_relative(relative_value, f"structure {structure_id} path")
-        source = (manifest_path.parent / relative).absolute()
-        if _has_symlink_below(source, project_root) or not _within(source.resolve(), project_root):
-            raise ContractError(f"structure {structure_id} must remain inside project_root")
+        value = item.get("path", item.get("output_file"))
+        if not isinstance(value, str) or not value.strip() or any(
+            character in value for character in "\x00\r\n"
+        ):
+            raise ContractError(f"structure {structure_id} path must be a non-empty path")
+        raw = Path(value).expanduser()
+        source = raw if raw.is_absolute() else manifest_path.parent / raw
+        source = source.resolve()
+        if not source.exists():
+            raise ContractError(f"structure {structure_id} file does not exist: {source}")
         source = _ordinary_file(source, f"structure {structure_id}", MAX_STRUCTURE_BYTES)
+        if not os.access(source, os.R_OK):
+            raise ContractError(f"structure {structure_id} must be readable")
         records.append(
             {
                 "id": structure_id,
-                "relative_path": relative.as_posix(),
+                "manifest_path": value,
                 "source_path": source,
             }
         )
@@ -577,7 +584,7 @@ def prepare_inputs(args: argparse.Namespace, api: PymatgenApi | None = None) -> 
             {
                 "order": order,
                 "structure_id": structure_id,
-                "source": {"path": record["relative_path"]},
+                "source": {"path": record["manifest_path"]},
                 "directory": relative_directory,
                 "formula": str(structure.composition.reduced_formula),
                 "atom_count": len(structure),

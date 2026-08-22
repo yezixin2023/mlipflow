@@ -229,6 +229,97 @@ class VaspPrepareTests(unittest.TestCase):
             None,
         )
 
+    def _assert_structure_path_accepted(
+        self, root: Path, manifest_value: str, source: Path
+    ) -> None:
+        context, fixture = self.fixture(root)
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("structure input\n", encoding="utf-8")
+        write_json(
+            Path(fixture.args.structures_manifest),
+            {
+                "schema_version": 1,
+                "structures": [{"id": "A", "path": manifest_value}],
+            },
+        )
+        adapter = self.adapter_module.Adapter()
+        self.assertEqual([], adapter.validate(context))
+        self.assertEqual("READY", adapter.plan(context)["status"])
+        with patch.dict(os.environ, {"PMG_VASP_PSP_DIR": str(fixture.psp_dir)}):
+            result = self.wrapper.prepare_inputs(fixture.args, self.fake_api())
+        self.assertEqual(manifest_value, result["calculations"][0]["source"]["path"])
+        self.assertEqual("OK", adapter.check(context)["status"])
+
+    def _assert_missing_structure_path_rejected(
+        self, root: Path, manifest_value: str
+    ) -> None:
+        context, fixture = self.fixture(root)
+        write_json(
+            Path(fixture.args.structures_manifest),
+            {
+                "schema_version": 1,
+                "structures": [{"id": "A", "path": manifest_value}],
+            },
+        )
+        adapter = self.adapter_module.Adapter()
+        diagnostics = adapter.validate(context)
+        self.assertTrue(
+            any(
+                item["code"].endswith(".path.missing")
+                and "结构输入文件不存在" in item["message"]
+                for item in diagnostics
+            ),
+            diagnostics,
+        )
+        self.assertEqual("BLOCKED", adapter.plan(context)["status"])
+        with patch.dict(os.environ, {"PMG_VASP_PSP_DIR": str(fixture.psp_dir)}):
+            with self.assertRaisesRegex(self.wrapper.ContractError, "file does not exist"):
+                self.wrapper.prepare_inputs(fixture.args, self.fake_api())
+
+    def test_structure_path_in_manifest_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory) / "project"
+            self._assert_structure_path_accepted(
+                project, "A.vasp", project / "input" / "A.vasp"
+            )
+
+    def test_structure_path_relative_to_manifest_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory) / "project"
+            self._assert_structure_path_accepted(
+                project, "../structures/A.vasp", project / "structures" / "A.vasp"
+            )
+
+    def test_nested_relative_structure_path_outside_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._assert_structure_path_accepted(
+                root / "project",
+                "../../shared_dataset/A.vasp",
+                root / "shared_dataset" / "A.vasp",
+            )
+
+    def test_absolute_structure_path_outside_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = (root / "shared_dataset" / "A.vasp").resolve()
+            self._assert_structure_path_accepted(
+                root / "project", str(source), source
+            )
+
+    def test_missing_relative_structure_path_is_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self._assert_missing_structure_path_rejected(
+                Path(directory) / "project", "../structures/missing.vasp"
+            )
+
+    def test_missing_absolute_structure_path_is_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._assert_missing_structure_path_rejected(
+                root / "project", str((root / "shared" / "missing.vasp").resolve())
+            )
+
     def test_prepare_accepts_absolute_project_scoped_artifact_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             context, _ = self.fixture(Path(directory))

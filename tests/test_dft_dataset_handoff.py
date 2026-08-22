@@ -84,6 +84,19 @@ def _canonical(
     )
 
 
+def test_canonical_source_accepts_external_structure_input_paths(tmp_path: Path) -> None:
+    contract = _contract()
+    absolute = str((tmp_path / "shared" / "A.vasp").resolve())
+    for source_path in ("../../shared/A.vasp", absolute):
+        sources = contract._sources(
+            {
+                "schema_version": 1,
+                "structures": [{"id": "A", "path": source_path}],
+            }
+        )
+        assert sources["A"]["path"] == source_path
+
+
 def _convert(tmp_path: Path, canonical: dict, frameworks: str = "deepmd,m3gnet,chgnet,mace"):
     sys.path.insert(0, str(DFT_PLUGIN))
     try:

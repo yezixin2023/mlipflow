@@ -37,6 +37,7 @@ SHELL_EXECUTABLES = frozenset(
 SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SAFE_POTCAR_SYMBOL = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 MAX_INPUT_BYTES = 16 * 1024 * 1024
+MAX_STRUCTURE_BYTES = 64 * 1024 * 1024
 MAX_DATASET_INPUT_BYTES = 512 * 1024 * 1024
 MAX_STRUCTURES = 10000
 DATASET_FRAMEWORKS = ("deepmd", "m3gnet", "chgnet", "mace")
@@ -157,6 +158,25 @@ def _project_input_path(project_root: Any, value: Any) -> Path | None:
     if not _safe_relative(value):
         return None
     return _path(project_root, value)
+
+
+def _structure_input_path(manifest_path: Path, value: Any) -> Path | None:
+    if not _plain_string(value):
+        return None
+    raw = Path(str(value)).expanduser()
+    source = raw if raw.is_absolute() else manifest_path.parent / raw
+    return source.resolve()
+
+
+def _readable_structure_file(path: Path) -> bool:
+    if not _ordinary_file(path, MAX_STRUCTURE_BYTES):
+        return False
+    try:
+        with path.open("rb") as handle:
+            handle.read(1)
+    except OSError:
+        return False
+    return True
 
 
 def _explicit_executable(value: Any) -> Path | None:
@@ -396,6 +416,37 @@ def _validate_prepare(
             project_root = Path(str(context.get("project_root"))).expanduser().absolute()
             if not _ordinary_project_file(path, project_root, MAX_INPUT_BYTES):
                 diagnostics.append(_diagnostic("error", f"inputs.{key}.missing", f"{key} 必须是现有普通文件。"))
+    structures_path = _project_input_path(
+        context.get("project_root"), inputs.get("structures_manifest")
+    )
+    if structures_path is not None:
+        structures_manifest, _ = _read_json(structures_path)
+        structures = (
+            structures_manifest.get("structures")
+            if isinstance(structures_manifest, Mapping)
+            else None
+        )
+        if isinstance(structures, list):
+            for index, structure in enumerate(structures):
+                if not isinstance(structure, Mapping):
+                    continue
+                source = _structure_input_path(
+                    structures_path,
+                    structure.get("path", structure.get("output_file")),
+                )
+                code = f"inputs.structures_manifest.structures[{index}].path"
+                if source is None:
+                    diagnostics.append(
+                        _diagnostic("error", code, "结构输入路径必须是非空字符串。")
+                    )
+                elif not source.exists():
+                    diagnostics.append(
+                        _diagnostic("error", f"{code}.missing", f"结构输入文件不存在：{source}")
+                    )
+                elif not _readable_structure_file(source):
+                    diagnostics.append(
+                        _diagnostic("error", code, f"结构输入必须是非空可读普通文件：{source}")
+                    )
     allowed_parameters = {"operation", "interpreter_argv", "engine", "result_manifest", "output_subdir", "max_structures"}
     unknown = sorted(set(parameters) - allowed_parameters)
     if "extra_args" in parameters:
@@ -1466,8 +1517,11 @@ def _verify_prepare_result(
         if not isinstance(structure_id, str) or not SAFE_ID.fullmatch(structure_id):
             diagnostics.append(_diagnostic("error", f"{prefix}.structure_id", "源结构 ID 无效。"))
             continue
-        if not _safe_relative(source_path):
-            diagnostics.append(_diagnostic("error", f"{prefix}.source", "源结构必须有安全相对路径。"))
+        actual_source = _structure_input_path(
+            input_paths["structures_manifest"], source_path
+        )
+        if actual_source is None:
+            diagnostics.append(_diagnostic("error", f"{prefix}.source", "源结构必须有非空输入路径。"))
             continue
         expected_dir = f"{output_subdir}/{index:06d}-{structure_id}"
         if calculation.get("order") != index or calculation.get("structure_id") != structure_id or calculation.get("directory") != expected_dir:
@@ -1475,10 +1529,9 @@ def _verify_prepare_result(
         result_source = calculation.get("source")
         if not isinstance(result_source, Mapping) or result_source.get("path") != source_path:
             diagnostics.append(_diagnostic("error", f"{prefix}.source", "结构来源路径不一致。"))
-        if verify_files and _safe_relative(source_path):
-            actual_source = input_paths["structures_manifest"].parent / str(source_path)
-            if not _ordinary_project_file(actual_source, project_root):
-                diagnostics.append(_diagnostic("error", f"{prefix}.source", "源结构缺失。"))
+        if verify_files:
+            if not _readable_structure_file(actual_source):
+                diagnostics.append(_diagnostic("error", f"{prefix}.source", "源结构缺失或不可读。"))
         files = calculation.get("files")
         if not isinstance(files, Mapping) or set(files) != EXPECTED_FILE_NAMES:
             diagnostics.append(_diagnostic("error", f"{prefix}.files", "必须且只能声明 POSCAR/INCAR/KPOINTS/POTCAR。"))

@@ -264,13 +264,19 @@ def _scheduled_contract(
             raise PluginError(f"unsafe or duplicate remote staging name: {remote_name!r}")
         names.add(remote_name)
         source = Path(source_value).expanduser().absolute()
+        read_only_source = item.get("read_only_source") is True
         if verify_staged_sources:
             if source.is_symlink() or not source.is_file():
                 raise PluginError(f"staging source must be an ordinary file: {source}")
             resolved = source.resolve()
-            if not any(_is_within(resolved, root) for root in allowed_roots):
+            if not read_only_source and not any(
+                _is_within(resolved, root) for root in allowed_roots
+            ):
                 raise PluginError(f"staging source is outside the project/plugin roots: {source}")
-        normalized_stage.append({"source": str(source), "remote_name": remote_name})
+        normalized = {"source": str(source), "remote_name": remote_name}
+        if read_only_source:
+            normalized["read_only_source"] = True
+        normalized_stage.append(normalized)
     outputs = scheduled.get("fetch_outputs")
     if not isinstance(outputs, list) or not outputs:
         raise PluginError("scheduled_execution.fetch_outputs must be a non-empty list")

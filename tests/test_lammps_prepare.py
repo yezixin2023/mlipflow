@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -233,6 +234,67 @@ def test_prepare_plan_binds_explicit_structure_format(tmp_path: Path) -> None:
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["approval_summary"]["structure_format"] == "lammps-data"
     assert plan["argv"][-2:] == ["--structure-format", "lammps-data"]
+
+
+@pytest.mark.parametrize("path_kind", ["project-relative", "parent-relative", "absolute"])
+def test_structure_path_contract_runs_full_prepare_chain(
+    tmp_path: Path, path_kind: str
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    context = _context(project, "mace")
+    local_source = project / "inputs" / "start.extxyz"
+    if path_kind == "project-relative":
+        source = local_source
+        value = "inputs/start.extxyz"
+    else:
+        source = tmp_path / ("shared" if path_kind == "parent-relative" else "external") / "A.extxyz"
+        source.parent.mkdir()
+        source.write_text(local_source.read_text(encoding="utf-8"), encoding="utf-8")
+        value = "../shared/A.extxyz" if path_kind == "parent-relative" else str(source)
+    context["inputs"]["structure"] = value
+    adapter = _load(f"lammps_adapter_structure_{path_kind}", PLUGIN / "adapter.py").Adapter()
+
+    plan = adapter.plan(context)
+
+    assert plan["status"] == "READY", plan.get("diagnostics")
+    assert plan["input_paths"]["structure"] == str(source.resolve())
+    attempt = Path(context["attempt_dir"])
+    attempt.mkdir(parents=True)
+    completed = subprocess.run(
+        plan["argv"], cwd=plan["cwd"], check=False, capture_output=True, text=True
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    context["execution"] = {"returncode": completed.returncode, "plan": plan}
+    checked = adapter.check(context)
+    collected = adapter.collect(context)
+    assert checked["status"] == "OK", checked
+    assert collected["status"] == "OK", collected
+    generated = read(
+        attempt / "lammps-inputs" / "structure.data",
+        format="lammps-data",
+        atom_style="atomic",
+    )
+    assert generated.get_chemical_symbols() == ["Li", "P", "S"]
+
+
+@pytest.mark.parametrize("path_kind", ["parent-relative", "absolute"])
+def test_missing_structure_path_is_blocked(tmp_path: Path, path_kind: str) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    context = _context(project, "mace")
+    missing = tmp_path / "shared" / "missing.extxyz"
+    context["inputs"]["structure"] = (
+        "../shared/missing.extxyz" if path_kind == "parent-relative" else str(missing)
+    )
+    adapter = _load(f"lammps_adapter_missing_{path_kind}", PLUGIN / "adapter.py").Adapter()
+
+    plan = adapter.plan(context)
+
+    assert plan["status"] == "BLOCKED"
+    messages = [item["message"] for item in plan["diagnostics"]]
+    assert any("structure file does not exist" in message for message in messages)
+    assert str(missing.resolve()) in "\n".join(messages)
 
 
 def test_prepare_explicit_lammps_data_format_without_filename_inference(tmp_path: Path) -> None:
