@@ -1,211 +1,452 @@
-# 架构
+# Architecture
 
-## 一句话边界
+## One-Sentence Boundary
 
-Agent 解释科研意图并产生科学任务和抽象资源需求；MLIPFlow 持久化并执行显式计划；
-插件封装确定性科学能力；cluster profile 与远端模板提供 site-specific execution
-knowledge；backend 负责组合、执行和状态协调。Agent 不猜 host、partition、module、
-executable、模板或远端 work root。
+The Agent interprets scientific intent and produces scientific tasks together with abstract resource requirements; MLIPFlow persists and executes explicit plans.
 
-## 命令/查询分离
+Plugins encapsulate deterministic scientific capabilities. Cluster profiles and remote templates provide site-specific execution knowledge. Backends are responsible for composing execution, running workloads, and coordinating execution state.
+
+The Agent must not guess hosts, partitions, modules, executables, templates, or remote work roots.
+
+## Command / Query Separation
 
 ```text
-查询：list status json inspect logs route doctor
-  └─ 只加载 project/plugin/registry manifest
+Queries: list status json inspect logs route doctor
+  └─ load only project/plugin/registry manifests
   └─ SQLite mode=ro + query_only
-  └─ 不导入 adapter，不调用 backend，不写 event
+  └─ do not import adapters
+  └─ do not call backends
+  └─ do not write events
 
-命令：init run advance retry stop
-  └─ 明确写入入口
-  └─ expensive/external run 需要 execution approval
-  └─ advance/retry/stop 以命令本身表达继续或停止意图
-  └─ 外部程序始终 argv + shell=False
+Commands: init run advance retry stop
+  └─ explicit write-capable entry points
+  └─ expensive/external runs require execution approval
+  └─ advance/retry/stop express continuation or termination intent directly
+  └─ external programs always run as argv + shell=False
 ```
 
-`--dry-run` 不建库、不建 attempt 目录、不 staging、不提交。local 计划不联网；
-`ssh-slurm` 计划会按显式 local site profile 通过 SSH **只读** 获取所需远端模板并展示
-渲染脚本。执行模式的计划会加载所选 Python adapter，因此
-插件与构建脚本一样属于受信代码；查询命令除 `doctor` 的本地 site 校验外不 import
-adapter 或访问 backend。批准摘要展示实际执行实现、输入路径、执行参数、资源、backend、
-staged 文件以及最终执行的脚本。
+`--dry-run` does not create the state database, attempt directories, staging areas, or scheduler submissions.
 
-## Agent-facing 输出
+Local planning performs no network access.
 
-query/planning service 始终返回一个详细内部对象，执行、审计和展示共用这一个 source of
-truth。CLI 默认只做只读投影：`status` 显示 node/state/attempt/output roles，`inspect`
-显示节点语义与 plugin 摘要，`route` 显示选择、评分、指标和简短淘汰原因，dry-run 显示
-将运行什么、inputs/resources 和是否需要审批。默认 text 使用命令专用的行式渲染；默认
-JSON 使用同一紧凑投影，不包含完整 manifests、raw configs 或内部 plan。
+For `ssh-slurm`, planning may use the explicitly selected local site profile to retrieve the required remote templates over SSH in **read-only** mode and display the rendered scripts.
 
-`--audit` 不重新规划，也不维护第二份 plan model；它只显示同一详细对象，包括 artifact
-provenance、完整 plugin manifest、routing contributions/evidence verification 和 adapter/HPC
-plan。
+Execution-mode planning loads the selected Python adapter. Plugins therefore belong to the trusted-code boundary in the same sense as build scripts.
 
-## 审批：显式布尔确认
+Query commands do not import adapters or access backends, except that `doctor` may validate the local site configuration.
 
-plan `schema_version` 为 3。需要审批的计算先用 `run NODE --dry-run --audit` 展示计划；
-用户确认后以 `run NODE --approve` 执行。MLIPFlow 不为 plan、approval、输入、脚本或模板
-生成摘要或内容编号。执行时把当次计划写入 attempt 目录，后续 scheduler observation、
-bounded fetch 与科学 `check/collect` 继续读取这份普通 JSON 记录。
+The approval summary shows the actual execution implementation, input paths, execution parameters, resources, backend, staged files, and the final scripts that will be executed.
 
-### Adapter-authored 字段的可移植化
+## Agent-Facing Output
 
-adapter 天然以绝对路径思考：八个插件全部输出 `cwd`，部分还输出绝对 argv、staged
-`source` 与引用文件名的诊断信息。这些保留在 audit plan 中；核心在记录前按已知根
-改写路径，在执行前还原：
+The query/planning service always returns one detailed internal object. Execution, auditing, and presentation all use this object as a single source of truth.
 
-```text
-<project>/.mlipflow/runs/n/attempt-1/out  ->  {ATTEMPT_DIR}/out
-<project>/prepared/POSCAR                 ->  {PROJECT_ROOT}/prepared/POSCAR
-<plugins>/dft-labeling/helper.py           ->  {PLUGIN_DIR}/helper.py
+The CLI exposes only read-only projections by default:
+
+- `status` shows node, state, attempt, and output roles;
+- `inspect` shows node semantics and a plugin summary;
+- `route` shows the selected model, scores, metrics, and concise elimination reasons;
+- dry-run shows what will run, its inputs and resources, and whether approval is required.
+
+Default text output uses command-specific line-oriented rendering.
+
+Default JSON output uses the same compact projection and does not include complete manifests, raw configuration, or the full internal plan.
+
+`--audit` does not re-plan and does not maintain a second plan model. It only exposes more of the same detailed object, including artifact provenance, the complete plugin manifest, routing contributions and evidence verification, and adapter/HPC plans.
+
+## Approval: Explicit Boolean Confirmation
+
+Plan `schema_version` is `3`.
+
+Computations that require approval are first reviewed with:
+
+```bash
+mlipflow run NODE --dry-run --audit
 ```
 
-`portable.to_portable()` 在 `make_run_plan` 中改写，`portable.to_runtime()` 在
-`_execute_ready`、`_scheduled_contract` 与科学 checker 上下文中还原，因此 adapter
-始终收到本机绝对路径，argv 与工作目录完全不变——科学行为不受影响。审批看到的是可移植
-描述，执行看到的是本机实现。
+After confirmation, execution is started with:
 
-不在任何已知根内的路径保持原样：例如 `resources.python_executable` 属于项目显式声明的
-站点配置，在任何使用同一份 `project.yaml` 的机器上都相同，改写它反而会隐藏审批内容。
-
-测试覆盖 BLOCKED、local READY 与 ssh-slurm READY 等 plan 形态，并确认仓库内路径可在
-运行前正确还原。
-
-## 持久状态
-
-状态库为项目目录下 `.mlipflow/state.sqlite3`。主要实体：
-
-- `step_runs`：每个节点每个 attempt 的不可覆盖记录；
-- `dependencies`：DAG 边；
-- `artifacts`：URI 与角色；
-- `events`：状态转换审计；
-- `submission_intents`：获批计划及消费时间；
-- `metadata`：state schema 版本。状态库归属直接由 attempt rows 的 project id 判定。
-
-READY attempt 在真正执行前绑定当时的完整 node snapshot；提交后的观察、fetch、checker 和
-stop 都使用该 snapshot。历史 attempt 因此保持不可变，而当前 `project.yaml` 中无关节点或
-未来 attempt 的修改不会使整个状态库失效。
-
-```text
-WAIT ──依赖完成──> READY ──本地──> RUNNING ──检查──> OK
- │                         └───────────────> FAIL
- ├─上游失败──> BLOCKED
- └────────────────────────────────────────> STOPPED
-
-READY ──提交──> SUBMITTED ──队列──> PENDING ──调度──> RUNNING
-FAIL/STOPPED ──retry──> 新 attempt 的 READY（旧 attempt 保留）
+```bash
+mlipflow run NODE --approve
 ```
 
-SLURM `COMPLETED` 只是调度事实。远端 `completion.json` 必须至少记录
-project/node/attempt 和成功退出状态；fetch 仅允许计划声明的路径并执行大小上限检查，之后仍须由固定
-adapter 执行科学 `check/collect`。`dft-labeling.label` 的 static VASP 合同是首个接入该
-通用 lifecycle 的科学插件；其余内置 adapter 仍只支持 local。
+MLIPFlow does not generate digests, hashes, fingerprints, or content identifiers for plans, approvals, inputs, scripts, or templates.
 
-## HPC 三层配置
+At execution time, the current plan is written into the attempt directory as ordinary JSON. Subsequent scheduler observation, bounded fetch, and scientific `check/collect` operations continue to use this recorded plan.
+
+### Portability of Adapter-Authored Fields
+
+Adapters naturally reason in absolute local paths. All eight plugins emit `cwd`; some also emit absolute argv entries, staged `source` paths, and diagnostics containing referenced filenames.
+
+These values remain in the audit plan. Before persistence, the core rewrites paths that fall under known roots into portable forms, and restores them immediately before execution:
 
 ```text
-本地 ~/.mlipflow/site.yaml
-  = named cluster selection/control plane
+<project>/.mlipflow/runs/n/attempt-1/out
+  -> {ATTEMPT_DIR}/out
+
+<project>/prepared/POSCAR
+  -> {PROJECT_ROOT}/prepared/POSCAR
+
+<plugins>/dft-labeling/helper.py
+  -> {PLUGIN_DIR}/helper.py
+```
+
+`portable.to_portable()` performs this rewrite inside `make_run_plan`.
+
+`portable.to_runtime()` restores runtime paths inside `_execute_ready`, `_scheduled_contract`, and scientific checker contexts.
+
+Adapters therefore always receive local absolute paths. Their argv and working directories remain unchanged, so scientific behavior is unaffected.
+
+Approval displays the portable description, while execution sees the local runtime implementation.
+
+Paths outside all known roots are preserved unchanged. For example, `resources.python_executable` is an explicitly declared site-level configuration value. On machines using the same `project.yaml`, rewriting such a path would hide information that should remain visible during approval.
+
+Tests cover `BLOCKED`, local `READY`, and `ssh-slurm READY` plan forms and verify that repository-local paths are correctly restored before execution.
+
+## Persistent State
+
+The project state database is stored at:
+
+```text
+.mlipflow/state.sqlite3
+```
+
+The main entities are:
+
+- `step_runs`: immutable records for every node attempt;
+- `dependencies`: DAG edges;
+- `artifacts`: artifact URIs and roles;
+- `events`: state-transition audit records;
+- `submission_intents`: approved plans and their consumption time;
+- `metadata`: state schema version.
+
+State-database ownership is determined directly from the project ID stored in attempt rows.
+
+Before a `READY` attempt begins execution, it is bound to a complete snapshot of the node at that time.
+
+Post-submission scheduler observation, fetch, scientific checking, and `stop` all use this snapshot.
+
+Historical attempts therefore remain immutable, while unrelated changes to the current `project.yaml` or future attempts do not invalidate the entire state database.
+
+```text
+WAIT ──dependencies completed──> READY ──local──> RUNNING ──check──> OK
+ │                                      └───────────────────> FAIL
+ ├─upstream failure──> BLOCKED
+ └──────────────────────────────────────────────────────────> STOPPED
+
+READY ──submit──> SUBMITTED ──queue──> PENDING ──schedule──> RUNNING
+
+FAIL / STOPPED ──retry──> new READY attempt
+                         old attempt is preserved
+```
+
+A SLURM `COMPLETED` state is only a scheduler fact.
+
+Remote `completion.json` must record at least:
+
+- project;
+- node;
+- attempt;
+- successful process exit status.
+
+Fetch is restricted to paths declared by the execution plan and is subject to size-limit checks.
+
+After transport completes, the fixed adapter must still run scientific `check/collect` before the attempt can become `OK`.
+
+`dft-labeling.label` with the static VASP contract is the first scientific plugin integrated with this generic scheduled lifecycle.
+
+The remaining built-in adapters currently support local execution only.
+
+## Three-Layer HPC Configuration
+
+```text
+Local ~/.mlipflow/site.yaml
+  = named cluster selection / control plane
   = backend + SSH config alias + template root + work root
 
-远端 <remote_template_root>/
+Remote <remote_template_root>/
   = persistent site-specific template library
   = Slurm skeleton + module/environment + launcher/executable knowledge
 
-远端 <work_root>/<project>/<node>/attempt-XXXX/
+Remote <work_root>/<project>/<node>/attempt-XXXX/
   = ephemeral per-run workspace
   = rendered scripts + input/output/logs/completion
 ```
 
-`site.yaml` 不属于 project 或仓库。一个 project node 只写 `backend: ssh-slurm`、
-可选的 `backend_profile: <name>` 和 `cpus/gpus/memory/walltime`；省略 profile 时，core
-按各 profile 当前满足资源请求的空闲节点数选择集群，显式 profile 始终优先。项目级 `backend_profiles`、
-`parameters.submit_script` 与 `parameters.remote_cwd` 已被拒绝。真实 cluster bootstrap、
-模板安装和凭据配置是独立站点过程，不属于通用 workflow。
+`site.yaml` does not belong to the project or repository.
 
-## 模板解析与远端 workspace
+A project node declares only:
 
-新 `scheduled_execution schema_version=3` 同时提供安全 `template_family` 和
-`execution_model`。核心先选择 `slurm/<execution-model>/cpu.sbatch` 或
-`slurm/<execution-model>/gpu.sbatch`，再由 `template_family` 选择例如 `vasp/run.sh`。
-模板只能使用固定占位符：
+```yaml
+backend: ssh-slurm
+backend_profile: <name>   # optional
+cpus: ...
+gpus: ...
+memory: ...
+walltime: ...
+```
+
+If `backend_profile` is omitted, the core selects among site profiles according to the number of currently available nodes that satisfy the requested resources.
+
+An explicitly selected profile always takes precedence.
+
+Project-level `backend_profiles`, `parameters.submit_script`, and `parameters.remote_cwd` are rejected.
+
+Real cluster bootstrap, template installation, credentials, and authentication are independent site-administration procedures and are not part of the portable workflow definition.
+
+## Template Resolution and Remote Workspace
+
+The new `scheduled_execution schema_version=3` provides both a safe `template_family` and an `execution_model`.
+
+The core first selects:
+
+```text
+slurm/<execution-model>/cpu.sbatch
+```
+
+or:
+
+```text
+slurm/<execution-model>/gpu.sbatch
+```
+
+It then uses `template_family` to select an application-specific execution template such as:
+
+```text
+vasp/run.sh
+```
+
+Templates may use only the following fixed placeholders:
 
 ```text
 PROJECT_ID NODE_ID ATTEMPT RUN_DIR INPUT_DIR OUTPUT_DIR LOG_DIR
 CPUS GPUS MEMORY WALLTIME
 ```
 
-渲染器只做精确 `{{NAME}}` 替换和换行规范化，不支持表达式、include、
-循环或 arbitrary code templating。模板缺失、变量未知/不完整、资源缺失或 profile 不存在
-都会在 staging 前明确失败。
+The renderer performs only exact `{{NAME}}` substitution and newline normalization.
 
-execution model 固定 `CPUS` 语义：
+It does not support expressions, includes, loops, or arbitrary code templating.
 
-- `single-python`：`CPUS` 是一个 Python 进程的线程预算；模板必须含
-  `--ntasks=1` 与 `--cpus-per-task={{CPUS}}`。
-- `mpi`：`CPUS` 是 MPI task/rank 数；模板必须含 `--ntasks={{CPUS}}`，且不得同时
-  把 `CPUS` 用作 `cpus-per-task`。
+Missing templates, unknown or incomplete variables, missing resources, or nonexistent profiles all fail explicitly before staging.
 
-MLIP training 与 ASE MD 使用前者；VASP、scheduled LAMMPS 与 LASP 使用后者。核心会在
-staging 前拒绝映射错误的 site template，因此修复单进程 Python 不会改变真正的 MPI 布局。
+### Execution Models
 
-attempt number 只来自 SQLite 中现有 attempt state。workspace 固定为
-`<work_root>/<project-id>/<node-id>/attempt-XXXX/`，包含 `submit.sbatch`、`run.sh`、
-`input/`、`output/`、`logs/stdout.log`、`logs/stderr.log` 与 `completion.json`。目录必须
-fresh；retry 递增 attempt，永不覆盖旧目录。template root 与 work root 必须互不嵌套。
+The meaning of `CPUS` is fixed by the execution model.
 
-## SSH-SLURM 执行状态机
+#### `single-python`
+
+`CPUS` is the thread budget for one Python process.
+
+The Slurm template must contain:
+
+```text
+--ntasks=1
+--cpus-per-task={{CPUS}}
+```
+
+#### `mpi`
+
+`CPUS` is the number of MPI tasks/ranks.
+
+The Slurm template must contain:
+
+```text
+--ntasks={{CPUS}}
+```
+
+and must not simultaneously use `CPUS` as `cpus-per-task`.
+
+MLIP training and ASE MD use `single-python`.
+
+VASP, scheduled LAMMPS, and LASP use `mpi`.
+
+The core validates this mapping before staging. Therefore, fixing CPU allocation for a single Python process cannot accidentally change the MPI layout of VASP, LAMMPS, or LASP.
+
+Attempt numbers come only from existing attempt state in SQLite.
+
+The workspace is fixed as:
+
+```text
+<work_root>/<project-id>/<node-id>/attempt-XXXX/
+```
+
+Each workspace contains:
+
+```text
+submit.sbatch
+run.sh
+input/
+output/
+logs/stdout.log
+logs/stderr.log
+completion.json
+```
+
+The directory must be fresh.
+
+`retry` increments the attempt number and never overwrites an older workspace.
+
+The template root and work root must not be nested inside one another.
+
+## SSH-SLURM Execution State Machine
 
 ```text
 resolve local profile
+
 -> resolve remote templates
+
 -> render deterministic execution plan/scripts
+
 -> create fresh attempt workspace
+
 -> stage reviewed inputs/scripts
+
 -> submit and persist job ID
+
 -> monitor scheduler
--> inventory/fetch outputs, logs and completion
+
+-> inventory/fetch outputs, logs, and completion
+
 -> plugin scientific check
+
 -> plugin collect
+
 -> OK
 ```
 
-`run` 审批覆盖 resolution、render、stage 与 submit。scheduler terminal 后，普通
-`advance` 按该 run 的 output allowlist 读取 inventory，执行 bounded fetch，再进入科学
-检查；不产生第二次审批。
+Approval for `run` covers profile resolution, template resolution, rendering, staging, and submission.
 
-## 插件发现
+After the scheduler reaches a terminal state, a normal `advance` reads the remote inventory using the output allowlist already bound to that run, performs bounded fetch, and then enters scientific validation.
 
-查询侧只按排序后的 `plugins/*/plugin.yaml` 读取静态清单，校验 ID/API/后端/回放声明，不 import Python。只有显式执行路径才允许加载 adapter。科学插件不得硬编码主机、私钥、绝对个人路径或调度资源。
+No second approval is required.
 
-## 产物与回放
+## Plugin Discovery
 
-每个 attempt 写独立 `run-manifest.json`，记录路径、角色、参数、软件版本、seed、命令和
-输出。大型外部 dataset/model 使用站点根目录下的安全相对路径；Adapter 产物必须是 fresh
-attempt 内的普通文件。
+The query path discovers plugins only by reading sorted static manifests:
 
-回放只接受项目根内的普通 result manifest，要求显式 `OK`，并只引用其目录内明确列出的
-普通文件；拒绝绝对路径、`..` 与符号链接，不复制数据或运行数值程序。
+```text
+plugins/*/plugin.yaml
+```
 
-## 模型路由
+It validates plugin ID, API version, supported backends, and replay declarations without importing Python.
 
-核心不含“最佳模型”常量。路由过程：
+Only explicit execution paths may load an adapter.
 
-1. 按元素、任务和 benchmark 场景过滤；
-2. 缺少必需指标的模型被淘汰并给出原因；
-3. 按项目 policy 的方向和权重归一评分；
-4. 平局按元素覆盖、验证样本数、model id 稳定排序；
-5. 默认输出 selected model、ranking/metrics 和简短淘汰原因；`--audit` 额外显示每项贡献与 evidence verification。
+Scientific plugins must not hard-code hosts, private keys, personal absolute paths, or scheduler-specific resource values.
 
-本地 benchmark evidence 记录普通文件路径；外部 URI 明确标为 external。路由只使用声明
-的 task/scenario/metrics/policy，不把文件工程属性当成科学指标。
+## Artifacts and Replay
 
-示例中的 DeepMD/CHGNet 选择来自示例 registry 的合成 benchmark fixture，不是核心偏好。
+Each attempt writes an independent:
 
-## 后端边界
+```text
+run-manifest.json
+```
 
-- local：同步运行显式 argv、`shell=False`、白名单环境，并在固定 adapter check/collect 后判定科学状态；LASP/SSW 可直接运行；MPI 只接受显式且 basename 为 `mpirun`/`mpiexec` 的普通可执行文件路径与 `-np N`，这仍是 local execution，不是 scheduler backend；
-- SLURM：保留 scheduler command abstraction，但 scientific node 不再以用户自备完整 sbatch 作为主执行合同；
-- SSH+SLURM：只使用 site config 指向的 SSH alias、remote template library 和 work root；创建全新 attempt workspace、持久化 job ID、终态只读 inventory、bounded local fetch 和科学 checker。POTCAR 永不回收。
+The manifest records:
 
-远端 staging/submit 只能由获批 run 触发；后续 fetch 只能读取该 run 已绑定的 allowlist 并进行 transport 校验。显式 `stop NODE` 表达 cancel 意图。查询若以后支持 live overlay，也只能驻留内存，不修改状态。
+- paths;
+- artifact roles;
+- parameters;
+- software versions;
+- seeds;
+- commands;
+- outputs.
+
+Large external datasets and models are referenced through safe relative paths under site-defined roots.
+
+Adapter-produced artifacts must be ordinary files located inside the fresh attempt directory.
+
+Replay accepts only ordinary result manifests located under the project root.
+
+A replay manifest must explicitly declare `OK` and may reference only explicitly listed ordinary files within its own directory.
+
+Replay rejects:
+
+- absolute paths;
+- `..`;
+- symbolic links.
+
+Replay does not copy datasets and does not run numerical programs.
+
+## Model Routing
+
+The core contains no hard-coded "best model" constant.
+
+Routing proceeds as follows:
+
+1. Filter models by elements, task, and benchmark scenario.
+2. Eliminate models missing required metrics and report the reason.
+3. Normalize and score the remaining models according to project policy directions and weights.
+4. Resolve ties using, in order:
+   - element coverage;
+   - validation sample count;
+   - stable model ID ordering.
+5. By default, return:
+   - selected model;
+   - ranking and metrics;
+   - concise elimination reasons.
+
+With `--audit`, routing additionally exposes per-metric score contributions and evidence verification.
+
+Local benchmark evidence records ordinary file paths.
+
+External URIs are explicitly marked as external.
+
+Routing uses only declared task, scenario, metrics, and policy information. File-engineering properties are never treated as scientific metrics.
+
+The DeepMD/CHGNet selections shown in examples come from synthetic benchmark fixtures in the example registry. They are not core preferences.
+
+## Backend Boundaries
+
+### Local
+
+The local backend:
+
+- synchronously executes explicit argv;
+- always uses `shell=False`;
+- uses a restricted environment;
+- determines scientific success only after the fixed adapter runs `check/collect`.
+
+LASP/SSW may execute directly through the local backend.
+
+Local MPI is supported only when the launcher is an explicitly provided ordinary executable whose basename is `mpirun` or `mpiexec`, with the process count expressed as:
+
+```text
+-np N
+```
+
+This remains local execution and is not a scheduler backend.
+
+### SLURM
+
+The SLURM backend retains the scheduler-command abstraction.
+
+Scientific nodes no longer use a user-supplied complete `sbatch` script as their primary execution contract.
+
+### SSH + SLURM
+
+The SSH+SLURM backend uses only the SSH alias declared by site configuration, the remote template library, and the configured remote work root.
+
+It:
+
+- creates a fresh attempt workspace;
+- persists the scheduler job ID;
+- reads terminal-state inventory without mutation;
+- performs bounded local fetch;
+- invokes the scientific checker after transport.
+
+`POTCAR` is never fetched back from the remote system.
+
+Remote staging and submission may only be triggered by an approved `run`.
+
+Subsequent fetch operations may read only the output allowlist already bound to that run and must perform transport validation.
+
+An explicit:
+
+```bash
+mlipflow stop NODE
+```
+
+expresses cancellation intent.
+
+If query commands gain live scheduler overlays in the future, such information may exist only in memory and must not modify persistent state.
