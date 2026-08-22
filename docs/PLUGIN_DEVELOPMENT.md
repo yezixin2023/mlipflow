@@ -400,7 +400,7 @@ backend: ssh-slurm
 
 to a manifest is not sufficient.
 
-Local `slurm` adapters are not currently supported.
+The supported execution backends are `local` and `ssh-slurm`.
 
 ---
 

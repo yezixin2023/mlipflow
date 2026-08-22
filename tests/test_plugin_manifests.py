@@ -97,6 +97,23 @@ class SchemaTests(unittest.TestCase):
         for schema_path in sorted(SCHEMA_ROOT.glob("*.json")):
             Draft202012Validator.check_schema(load_json(schema_path))
 
+    def test_public_contract_exposes_only_supported_backends_and_states(self) -> None:
+        project = load_json(SCHEMA_ROOT / "project.schema.json")
+        self.assertTrue(
+            {"plugin_paths", "locations", "safety"}.isdisjoint(project["properties"])
+        )
+        self.assertEqual(
+            ["local", "ssh-slurm"],
+            project["$defs"]["workflow_node"]["properties"]["backend"]["enum"],
+        )
+        plugin = load_json(SCHEMA_ROOT / "plugin.schema.json")
+        self.assertEqual(
+            ["local", "ssh-slurm"],
+            plugin["properties"]["execution"]["properties"]["backends"]["items"]["enum"],
+        )
+        run_manifest = load_json(SCHEMA_ROOT / "run-manifest.schema.json")
+        self.assertNotIn("PREP", run_manifest["$defs"]["state"]["enum"])
+
 
 class PluginManifestTests(unittest.TestCase):
     def manifests(self) -> list[tuple[Path, dict]]:

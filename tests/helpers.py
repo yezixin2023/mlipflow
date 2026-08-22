@@ -36,7 +36,6 @@ def project_config(nodes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "project": {"id": "test-project", "name": "Test", "description": "fixture"},
-        "locations": {},
         "model_registry": "model_registry.yaml",
         "workflow": {"nodes": nodes or []},
         "routing": {
@@ -48,7 +47,6 @@ def project_config(nodes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
                 }
             }
         },
-        "safety": {"auto_submit": False},
     }
 
 

@@ -121,7 +121,6 @@
           "items": {
             "enum": [
               "local",
-              "slurm",
               "ssh-slurm"
             ]
           },

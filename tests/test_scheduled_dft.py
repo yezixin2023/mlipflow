@@ -500,6 +500,37 @@ class ScheduledDftTests(unittest.TestCase):
             "cluster-b", plan["hpc_execution"]["cluster_profile"]["name"]
         )
 
+    def test_explicit_cluster_profile_overrides_automatic_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, site = prepared_fixture(root)
+            site_value = json.loads(site.read_text(encoding="utf-8"))
+            site_value["clusters"]["cluster-b"] = {
+                "backend": "ssh-slurm",
+                "ssh_profile": "cluster-b",
+                "remote_template_root": "/templates/cluster-b",
+                "work_root": "/work/cluster-b",
+            }
+            write_json(site, site_value)
+
+            with patch(
+                "mlipflow.services.commands._automatic_cluster",
+                side_effect=AssertionError("automatic selection must not run"),
+            ):
+                plan = make_run_plan(
+                    load_project(root),
+                    "label-li",
+                    PLUGINS,
+                    site,
+                    FakeTemplateLibrary(),
+                )
+
+        self.assertEqual("cluster-a", plan["backend_profile"])
+        self.assertNotIn("cluster_selection", plan)
+        self.assertEqual(
+            "cluster-a", plan["hpc_execution"]["cluster_profile"]["name"]
+        )
+
     def _submit(self, root: Path) -> tuple[Any, dict[str, Any], Path, FakeTemplateLibrary]:
         _, site = prepared_fixture(root)
         initialize(root)

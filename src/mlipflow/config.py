@@ -97,6 +97,10 @@ def validate_project(raw: dict[str, Any], source: Path | str = "project") -> Non
             )
         ids.add(node_id)
         backend = node.get("backend", "local")
+        if backend not in {"local", "ssh-slurm"}:
+            raise ConfigError(
+                f"{source}: node {node_id} backend must be local or ssh-slurm"
+            )
         if backend == "ssh-slurm":
             embedded_scheduler = sorted(
                 {"partition", "partition_candidates", "scheduler", "ssh_profile"}
@@ -116,7 +120,7 @@ def validate_project(raw: dict[str, Any], source: Path | str = "project") -> Non
                 )
             validate_hpc_resources(node.get("resources"))
         parameters = node.get("parameters", {})
-        if backend in {"slurm", "ssh-slurm"} and isinstance(parameters, dict):
+        if backend == "ssh-slurm" and isinstance(parameters, dict):
             forbidden = sorted({"submit_script", "remote_cwd"} & set(parameters))
             if forbidden:
                 raise ConfigError(

@@ -6,11 +6,6 @@
     "name": "High-entropy sulfide manuscript evidence reproduction",
     "description": "Read-only normalization and task-aware routing from compact evidence transcribed from the supplied manuscript revision. Numerical models are not executed."
   },
-  "locations": {
-    "evidence": "evidence",
-    "normalized_benchmark": "benchmark",
-    "reports": "reports"
-  },
   "model_registry": "model_registry.yaml",
   "workflow": {"nodes": []},
   "routing": {
@@ -32,11 +27,5 @@
         ]
       }
     }
-  },
-  "safety": {
-    "auto_submit": false,
-    "auto_advance": false,
-    "require_approval_for_expensive": true,
-    "require_approval_for_destructive": true
   }
 }

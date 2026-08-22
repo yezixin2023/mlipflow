@@ -56,11 +56,9 @@ class ExecutionResult:
 class SchedulerBackend(Protocol):
     """The asynchronous half of the execution contract.
 
-    ``SlurmBackend`` and ``SshSlurmBackend`` satisfy this structurally.  The
-    submit signature intentionally stays loose: a local scheduler takes a script
-    path plus a working directory, a remote one takes two remote strings.  What
-    every scheduler must share is a persistable job id, a cancellation path and a
-    state query, because those three are what the lifecycle state machine drives.
+    ``SshSlurmBackend`` satisfies this structurally. What every scheduler must
+    share is a persistable job id, a cancellation path and a state query, because
+    those three are what the lifecycle state machine drives.
 
     ``LocalBackend`` deliberately does *not* implement this: it is synchronous and
     has no job id, so it belongs to a different lifecycle shape.
@@ -112,86 +110,6 @@ class LocalBackend:
             raise BackendError("tail must be positive")
         with path.open("r", encoding="utf-8", errors="replace") as stream:
             return stream.readlines()[-tail:]
-
-
-class SlurmBackend:
-    name = "slurm"
-
-    def submit(self, script: Path, cwd: Path) -> ExecutionResult:
-        if not script.is_file():
-            raise BackendError(f"SLURM script not found: {script}")
-        completed = subprocess.run(
-            ["sbatch", str(script)],
-            cwd=str(cwd),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            check=False,
-        )
-        match = JOB_ID.search(completed.stdout)
-        if completed.returncode == 0 and match is None:
-            raise BackendError(f"sbatch returned no job id: {completed.stdout.strip()}")
-        return ExecutionResult(
-            completed.returncode,
-            completed.stdout,
-            completed.stderr,
-            match.group(1) if match else None,
-        )
-
-    def cancel(self, job_id: str) -> ExecutionResult:
-        if not job_id.isdigit():
-            raise BackendError(f"invalid SLURM job id: {job_id!r}")
-        completed = subprocess.run(
-            ["scancel", job_id],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            check=False,
-        )
-        return ExecutionResult(completed.returncode, completed.stdout, completed.stderr, job_id)
-
-    def status(self, job_id: str) -> dict[str, str | None]:
-        if not job_id.isdigit():
-            raise BackendError(f"invalid SLURM job id: {job_id!r}")
-        active = subprocess.run(
-            ["squeue", "-h", "-j", job_id, "-o", "%T|%R"],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            check=False,
-        )
-        if active.returncode != 0:
-            raise BackendError(active.stderr or active.stdout or "squeue failed")
-        line = active.stdout.strip().splitlines()
-        if line:
-            state, _, detail = line[0].partition("|")
-            return {"state": state.upper(), "detail": detail or None, "source": "squeue"}
-        history = subprocess.run(
-            ["sacct", "-n", "-X", "-j", job_id, "-o", "State,Reason", "-P"],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            check=False,
-        )
-        if history.returncode != 0:
-            raise BackendError(history.stderr or history.stdout or "sacct failed")
-        entries = [item for item in history.stdout.strip().splitlines() if item]
-        if not entries:
-            return {"state": "UNKNOWN", "detail": None, "source": "sacct"}
-        state, _, detail = entries[0].partition("|")
-        return {"state": state.split("+")[0].upper(), "detail": detail or None, "source": "sacct"}
-
-    def fetch(self, source: Path, destination: Path) -> Path:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        return destination
-
-    def logs(self, path: Path, tail: int = 80) -> list[str]:
-        return LocalBackend().logs(path, tail)
 
 
 class SshSlurmBackend:

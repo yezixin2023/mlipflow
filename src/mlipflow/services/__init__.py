@@ -34,7 +34,6 @@ from __future__ import annotations
 from ..backends import (  # noqa: F401
     LocalBackend,
     SchedulerBackend,
-    SlurmBackend,
     SshSlurmBackend,
 )
 
@@ -121,7 +120,6 @@ __all__ = [
     "LocalBackend",
     "SchedulerBackend",
     "SchedulerFactory",
-    "SlurmBackend",
     "SshSlurmBackend",
     "default_scheduler_factory",
     "scheduler_for_node",

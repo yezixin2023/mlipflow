@@ -83,7 +83,7 @@ def validate_plugin(raw: dict[str, Any], source: Path | str = "plugin") -> None:
     execution = raw.get("execution")
     if not isinstance(execution, dict) or not isinstance(execution.get("backends"), list):
         raise PluginError(f"{source}: execution.backends must be a list")
-    invalid_backends = set(execution["backends"]) - {"local", "slurm", "ssh-slurm"}
+    invalid_backends = set(execution["backends"]) - {"local", "ssh-slurm"}
     if invalid_backends:
         raise PluginError(f"{source}: invalid backends {sorted(invalid_backends)}")
 

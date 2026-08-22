@@ -238,8 +238,6 @@ def query_doctor(
                 {"check": "site-config", "ok": False, "detail": str(exc)}
             )
     required = set()
-    if "slurm" in backends:
-        required.update({"sbatch", "scancel"})
     if "ssh-slurm" in backends:
         required.add("ssh")
     for executable in sorted(required):

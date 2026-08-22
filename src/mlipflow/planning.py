@@ -33,7 +33,7 @@ def node_plan(
         warnings.append("The plugin declares destructive behavior; inspect overwrite/delete targets.")
     if safety.get("network_access"):
         warnings.append("The plugin declares network access.")
-    if backend in {"slurm", "ssh-slurm"}:
+    if backend == "ssh-slurm":
         warnings.append("Approval will submit a scheduler job.")
     if mode == "replay":
         warnings.append("Replay only parses and references existing artifacts; it must not run numerics.")
@@ -69,7 +69,7 @@ def _approval_required(node: dict[str, Any], plugin: PluginSpec) -> bool:
         or safety.get("destructive")
         or safety.get("network_access")
         or cost_class in {"expensive", "very-expensive"}
-        or node.get("backend", "local") in {"slurm", "ssh-slurm"}
+        or node.get("backend", "local") == "ssh-slurm"
     )
 
 

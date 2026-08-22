@@ -18,7 +18,6 @@ from ..portable import to_runtime
 from ..state import RunState, StateStore, StepRun, utc_now
 from .backend_factory import (
     SchedulerFactory,
-    default_scheduler_factory,
     scheduler_from_cluster_record,
 )
 from .contracts import (
@@ -484,10 +483,7 @@ def _observe_scheduled_step(
                 "reason": str(exc),
             }
     try:
-        if step.backend == "slurm":
-            build = factory or default_scheduler_factory
-            scheduler = build("slurm", None).status(str(step.job_id))
-        elif step.backend == "ssh-slurm":
+        if step.backend == "ssh-slurm":
             if plugin_root is None:
                 raise ConfigError(
                     "plugin root is required to verify the pinned HPC execution plan"

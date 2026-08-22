@@ -44,11 +44,9 @@ DEFAULT_PROJECT = {
         "name": "My MLIP project",
         "description": "Edit this deterministic workflow before running it.",
     },
-    "locations": {},
     "model_registry": "model_registry.yaml",
     "workflow": {"nodes": []},
     "routing": {"policies": {}},
-    "safety": {"auto_submit": False},
 }
 
 
@@ -267,11 +265,6 @@ def run_node(
         if backend == "local" and not has_adapter:
             raise PluginError(
                 "local execution requires an adapter-ready plugin with scientific check/collect"
-            )
-        if backend == "slurm" and has_adapter:
-            raise BackendError(
-                "local SLURM adapter execution is disabled; only the controlled ssh-slurm "
-                "staging/fetch/check contract is currently implemented"
             )
         if backend == "ssh-slurm" and has_adapter:
             scheduled = adapter_plan.get("scheduled_execution")

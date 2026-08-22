@@ -248,7 +248,7 @@
       "additionalProperties": false
     },
     "state": {
-      "enum": ["PREP", "READY", "SUBMITTED", "PENDING", "RUNNING", "OK", "FAIL", "WAIT", "BLOCKED", "STOPPED"]
+      "enum": ["READY", "SUBMITTED", "PENDING", "RUNNING", "OK", "FAIL", "WAIT", "BLOCKED", "STOPPED"]
     },
     "timestamp": {"type": "string", "format": "date-time"},
     "nullable_timestamp": {"type": ["string", "null"], "format": "date-time"},

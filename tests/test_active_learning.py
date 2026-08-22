@@ -1079,12 +1079,6 @@ def test_oracle_full_chain_runs_through_core_and_preserves_prior_round(strategy)
                     },
                 ]
             },
-            "safety": {
-                "auto_submit": False,
-                "auto_advance": False,
-                "require_approval_for_expensive": True,
-                "require_approval_for_destructive": True,
-            },
         }
         (current_round / "project.yaml").write_text(
             json.dumps(project_data), encoding="utf-8"

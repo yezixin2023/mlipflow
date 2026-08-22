@@ -112,7 +112,7 @@ class BackendConstructionTests(unittest.TestCase):
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
                     continue
-                if node.func.id in {"SlurmBackend", "SshSlurmBackend"}:
+                if node.func.id == "SshSlurmBackend":
                     found.add((path.name, node.func.id))
         self.assertEqual(allowed, found)
 

@@ -4,7 +4,6 @@ import copy
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from mlipflow.config import load_project
 from mlipflow.errors import ConfigError, StateError
@@ -362,14 +361,9 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(second, third)
             self.assertEqual("result.json", third["inputs"]["result_manifest"])
 
-    def test_slurm_dry_plan_never_calls_scheduler(self) -> None:
+    def test_standalone_slurm_backend_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            plugins = root / "plugins"
-            manifest = plugin_manifest()
-            manifest["implementation"]["kind"] = "external-command"
-            manifest["execution"]["backends"] = ["slurm"]
-            write_json(plugins / "demo" / "plugin.yaml", manifest)
             write_json(
                 root / "project.yaml",
                 project_config(
@@ -378,15 +372,12 @@ class PlanTests(unittest.TestCase):
                             "id": "hpc",
                             "uses": "demo@1",
                             "backend": "slurm",
-                            "parameters": {},
                         }
                     ]
                 ),
             )
-            with patch("mlipflow.backends.subprocess.run", side_effect=AssertionError("submitted")):
-                plan = make_run_plan(load_project(root), "hpc", plugins)
-            self.assertEqual(plan["backend"], "slurm")
-            self.assertIn("submit", " ".join(plan["warnings"]).lower())
+            with self.assertRaisesRegex(ConfigError, "local or ssh-slurm"):
+                load_project(root)
 
 
 if __name__ == "__main__":

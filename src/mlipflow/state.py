@@ -15,7 +15,6 @@ from .errors import StateError
 
 
 class RunState(str, Enum):
-    PREP = "PREP"
     READY = "READY"
     SUBMITTED = "SUBMITTED"
     PENDING = "PENDING"
@@ -28,7 +27,6 @@ class RunState(str, Enum):
 
 
 ALLOWED_TRANSITIONS: dict[RunState, frozenset[RunState]] = {
-    RunState.PREP: frozenset({RunState.READY, RunState.FAIL, RunState.STOPPED}),
     RunState.READY: frozenset(
         {RunState.SUBMITTED, RunState.RUNNING, RunState.OK, RunState.FAIL, RunState.STOPPED}
     ),

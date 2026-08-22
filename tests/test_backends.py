@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mlipflow.backends import LocalBackend, SlurmBackend, SshSlurmBackend
+from mlipflow.backends import LocalBackend, SshSlurmBackend
 from mlipflow.errors import BackendError
 
 
@@ -60,17 +60,6 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(mocked.call_args.args[0], ["tool", "a;touch bad"])
         self.assertFalse(mocked.call_args.kwargs["shell"])
         self.assertEqual(mocked.call_args.kwargs["env"], {"PATH": "/usr/bin"})
-
-    def test_slurm_requires_parsed_job_id(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            script = Path(temporary) / "run.slurm"
-            script.write_text("#!/bin/sh\n", encoding="utf-8")
-            completed = subprocess.CompletedProcess(
-                ["sbatch", str(script)], 0, "Submitted batch job 12345\n", ""
-            )
-            with patch("mlipflow.backends.subprocess.run", return_value=completed):
-                result = SlurmBackend().submit(script, Path(temporary))
-            self.assertEqual(result.job_id, "12345")
 
     def test_ssh_profile_and_fetch_path_reject_injection(self) -> None:
         with self.assertRaises(BackendError):
