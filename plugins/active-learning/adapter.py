@@ -639,6 +639,11 @@ class Adapter:
         else:
             metrics = {
                 "decision": result["decision"],
+                "coverage_passed": result["coverage_passed"],
+                "accuracy_passed": result["accuracy_passed"],
+                "pes_gates_passed_this_round": result[
+                    "pes_gates_passed_this_round"
+                ],
                 "new_dft_labels": result["dft_labels"]["new_this_round"],
                 "cumulative_dft_labels": result["dft_labels"]["cumulative"],
                 "passed_consecutive_rounds": result["passed_consecutive_rounds"],

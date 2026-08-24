@@ -1593,22 +1593,6 @@ def _assessment_policy(policy: Mapping[str, Any], models: Sequence[str]) -> dict
                 f"condition_gates.{condition}.maximum_unsafe_fraction",
             ),
         }
-    marginal = _mapping(assessment.get("marginal_gain"), "assessment.marginal_gain")
-    marginal_models = [
-        _plain(value, "assessment.marginal_gain.models")
-        for value in _sequence(marginal.get("models"), "assessment.marginal_gain.models")
-    ]
-    if len(marginal_models) != len(set(marginal_models)) or set(
-        marginal_models
-    ) != set(models):
-        raise ActiveLearningError(
-            "marginal_gain.models must contain every strategy model exactly once"
-        )
-    zero_label_saturation = marginal.get("zero_label_satisfies_saturation")
-    if not isinstance(zero_label_saturation, bool):
-        raise ActiveLearningError(
-            "marginal_gain.zero_label_satisfies_saturation must be boolean"
-        )
     return {
         "audit_thresholds": thresholds,
         "condition_gates": condition_gates,
@@ -1620,16 +1604,6 @@ def _assessment_policy(policy: Mapping[str, Any], models: Sequence[str]) -> dict
             assessment.get("required_consecutive_rounds"),
             "assessment.required_consecutive_rounds",
         ),
-        "marginal_gain": {
-            "metric": _plain(marginal.get("metric"), "marginal_gain.metric"),
-            "models": marginal_models,
-            "unit": _plain(marginal.get("unit"), "marginal_gain.unit"),
-            "maximum_improvement_per_label": _number(
-                marginal.get("maximum_improvement_per_label"),
-                "marginal_gain.maximum_improvement_per_label",
-            ),
-            "zero_label_satisfies_saturation": zero_label_saturation,
-        },
     }
 
 
@@ -1861,7 +1835,7 @@ def assess_round(
     policy: Mapping[str, Any],
     transport_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Apply all declared round gates and emit one machine-readable decision."""
+    """Assess coverage, independent accuracy, and consecutive stability."""
 
     policy_info = validate_policy(policy)
     assessment_policy = _assessment_policy(policy, policy_info["models"])
@@ -1954,15 +1928,20 @@ def assess_round(
             )
 
     calibration_failed = []
+    calibration_passed = evaluation.get("evaluation_status") == "READY"
     for model_id in policy_info["models"]:
         report = _mapping(
             _mapping(evaluation.get("calibration"), "evaluation.calibration").get(model_id),
             f"evaluation.calibration.{model_id}",
         )
         if report.get("status") != "PASS":
+            calibration_passed = False
+            reasons = list(report.get("failed_gates", []))
             calibration_failed.extend(
-                f"{model_id}: {reason}" for reason in report.get("failed_gates", [])
+                f"{model_id}: {reason}" for reason in reasons
             )
+            if not reasons:
+                calibration_failed.append(f"{model_id}: calibration did not pass")
 
     condition_records = {
         str(item.get("condition_id")): item
@@ -2184,84 +2163,39 @@ def assess_round(
     )
     new_labels = len(successful_query) + len(successful_spot)
 
-    marginal_policy = assessment_policy["marginal_gain"]
-    marginal_models = marginal_policy["models"]
-    marginal_metric = marginal_policy["metric"]
-    current_values = [
-        current_audit_values.get(f"{model}:{marginal_metric}") for model in marginal_models
-    ]
-    if any(value is None for value in current_values):
-        raise ActiveLearningError("marginal gain metric must be one of the audited metrics")
-    current_metric = _mean([float(value) for value in current_values])
-    marginal_failed = []
-    if previous_rounds:
-        prior_values_raw = _mapping(
-            previous_rounds[-1].get("audit_metrics"), "previous audit_metrics"
-        )
-        prior_values = [
-            prior_values_raw.get(f"{model}:{marginal_metric}") for model in marginal_models
-        ]
-        if any(value is None for value in prior_values):
-            raise ActiveLearningError("previous round lacks the declared marginal metric")
-        previous_metric = _mean(
-            [_number(value, "previous marginal metric") for value in prior_values]
-        )
-        if new_labels:
-            improvement_per_label = (previous_metric - current_metric) / new_labels
-            marginal_passed = (
-                improvement_per_label
-                <= marginal_policy["maximum_improvement_per_label"]
-            )
-        else:
-            improvement_per_label = None
-            marginal_passed = bool(
-                marginal_policy["zero_label_satisfies_saturation"]
-            )
-    else:
-        previous_metric = None
-        improvement_per_label = None
-        marginal_passed = False
-    if not marginal_passed:
-        marginal_failed.append("new-label marginal-benefit stopping gate is not satisfied")
-    marginal_report = {
-        "metric": marginal_metric,
-        "models": marginal_models,
-        "unit": marginal_policy["unit"],
-        "previous_value": previous_metric,
-        "current_value": current_metric,
-        "new_dft_labels": new_labels,
-        "improvement_per_label": improvement_per_label,
-        "maximum_improvement_per_label": marginal_policy[
-            "maximum_improvement_per_label"
-        ],
-        "passed": marginal_passed,
-    }
-
-    failed_gates = (
-        audit_failed
-        + calibration_failed
+    coverage_failed = (
+        calibration_failed
         + condition_failed
         + spot_report["failed_gates"]
-        + marginal_failed
-        + labeling_failed
-        + trigger_coverage_failed
+        + sampling_blocked
     )
-    current_pes_gates_passed = not failed_gates and not sampling_blocked
+    coverage_passed = (
+        calibration_passed
+        and not condition_failed
+        and spot_report["status"] == "PASS"
+        and not sampling_blocked
+    )
+    accuracy_passed = not audit_failed
+    round_integrity_failed = labeling_failed + trigger_coverage_failed
+    current_pes_gates_passed = (
+        coverage_passed and accuracy_passed and not round_integrity_failed
+    )
     consecutive = 1 if current_pes_gates_passed else 0
     if current_pes_gates_passed:
         for previous in reversed(previous_rounds):
-            if previous.get("pes_gates_passed") is True:
+            if previous.get("pes_gates_passed_this_round") is True:
                 consecutive += 1
             else:
                 break
     required_consecutive = assessment_policy["required_consecutive_rounds"]
+    stability_failed = []
     if current_pes_gates_passed and consecutive < required_consecutive:
-        failed_gates.append(
+        stability_failed.append(
             f"passed consecutive rounds {consecutive} is below {required_consecutive}"
         )
 
     maximum_total = selection_policy["maximum_total_labels"]
-    if calibration_failed or evaluation.get("evaluation_status") == "BLOCKED_CALIBRATION":
+    if not calibration_passed or evaluation.get("evaluation_status") == "BLOCKED_CALIBRATION":
         decision = "BLOCKED_CALIBRATION"
     elif sampling_blocked:
         decision = "BLOCKED_SAMPLING"
@@ -2305,12 +2239,7 @@ def assess_round(
             if not report["passed"]
         }
     )
-    if calibration_failed:
-        calibration_status = "BLOCKED_CALIBRATION"
-    elif spot_report["status"] != "PASS":
-        calibration_status = "FAIL_SAFE_SPOT_CHECK"
-    else:
-        calibration_status = "PASS"
+    calibration_status = "PASS" if calibration_passed else "BLOCKED_CALIBRATION"
     return {
         "schema_version": 1,
         "contract": ASSESSMENT_CONTRACT,
@@ -2328,19 +2257,43 @@ def assess_round(
         ),
         "transport_status": transport_status,
         "transport_evidence": transport_report,
+        "coverage_passed": coverage_passed,
+        "accuracy_passed": accuracy_passed,
         "pes_gates_passed_this_round": current_pes_gates_passed,
         "passed_consecutive_rounds": consecutive,
         "required_consecutive_rounds": required_consecutive,
-        "failed_gates": failed_gates + sampling_blocked,
         "recommended_focus": recommended_focus,
         "maximum_new_dft_labels": selection_policy["maximum_labels_per_round"],
-        "calibration_status": calibration_status,
-        "calibration": dict(_mapping(evaluation.get("calibration"), "evaluation.calibration")),
-        "condition_coverage": condition_checks,
-        "audit_checks": audit_checks,
-        "audit_metrics": current_audit_values,
-        "safe_spot_checks": spot_report,
-        "marginal_gain": marginal_report,
+        "coverage": {
+            "passed": coverage_passed,
+            "failed_reasons": coverage_failed,
+            "calibration": {
+                "status": calibration_status,
+                "models": dict(
+                    _mapping(evaluation.get("calibration"), "evaluation.calibration")
+                ),
+            },
+            "conditions": condition_checks,
+            "safe_spot_checks": spot_report,
+        },
+        "accuracy": {
+            "passed": accuracy_passed,
+            "failed_reasons": audit_failed,
+            "audit_checks": audit_checks,
+            "audit_metrics": current_audit_values,
+        },
+        "consecutive_stability": {
+            "passed": current_pes_gates_passed and consecutive >= required_consecutive,
+            "failed_reasons": stability_failed,
+        },
+        "round_evidence": {
+            "failed_reasons": round_integrity_failed,
+            "labeling_failed_reasons": labeling_failed,
+            "strategy_selection": {
+                "failed_reasons": trigger_coverage_failed,
+                "trigger_model_coverage": selection.get("trigger_model_coverage"),
+            },
+        },
         "uncertainty_distribution": {
             "current": current_uncertainty,
             "previous": previous_uncertainty,

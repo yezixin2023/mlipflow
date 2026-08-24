@@ -13,7 +13,7 @@ campaign, connecting round artifacts, executing an operation, or interpreting a 
 
 Require an explicit target domain, Strategy A (`single-model-committee`) or Strategy B
 (`dual-model-risk-union`), committee member seeds, calibration coverage, force-error thresholds,
-target-condition gates, DFT budgets, immutable audit thresholds, marginal-gain threshold, and
+target-condition gates, SAFE spot-check policy, DFT budgets, immutable audit thresholds, and
 consecutive-round count. Do not invent any missing scientific value.
 
 Bind each committee to one seed-independent training contract: exact cumulative canonical label
@@ -69,6 +69,12 @@ new scientific round. Preserve every prior round and artifact.
 
 Read `round-assessment.json` literally:
 
+- treat `coverage_passed` as the combined result of calibrated committee uncertainty, every
+  condition's QUERY/UNSAFE limits, and SAFE spot checks;
+- treat `accuracy_passed` as the result of the immutable independent audit energy/force gates;
+- require selection, labeling, and Strategy B trigger-model coverage integrity before setting
+  `pes_gates_passed_this_round`, without folding that integrity into `coverage_passed`;
+- count a round toward consecutive stability only when its PES gates passed;
 - create exactly one new `round-(N+1)` only for `CONTINUE`;
 - stop and request the missing evidence/review for either `BLOCKED_*` state or
   `SCIENTIFIC_REVIEW_REQUIRED`;
@@ -78,4 +84,6 @@ Read `round-assessment.json` literally:
 
 Report cumulative and per-round DFT labels, condition-level QUERY/UNSAFE fractions, immutable audit
 errors, calibration coverage, SAFE spot-check false negatives, current uncertainty distribution and
-its prior-round change, marginal gain, PES status, and the independent transport status.
+its prior-round change, coverage, accuracy, consecutive stability, PES status, and the independent
+transport status. Uncertainty-distribution change is diagnostic only and does not determine
+convergence.

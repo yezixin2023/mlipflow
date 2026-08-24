@@ -47,8 +47,8 @@ The policy must declare, without Skill defaults:
 - temporal stride, per-condition/per-replica quotas, SAFE spot-check count and seed, per-round DFT
   maximum, and total DFT maximum;
 - per-model immutable audit limits for energy MAE/RMSE, force MAE/RMSE, and maximum atomic force
-  error; add stress only when all compared models share a reliable convention;
-- marginal-gain metric and stopping threshold plus required consecutive passing rounds;
+  error; stress may remain diagnostic but is not an accuracy gate;
+- required consecutive passing rounds;
 - composition, structure families, defect states, temperature and pressure ranges, ensembles,
   supercell range, LASP/SSW high-energy inclusion, phase-change/melting/decomposition permissions,
   mobile species, and intended static/MD/NPT/transport use.
@@ -109,12 +109,14 @@ exact duplicate removal, near-duplicate removal, condition grouping, existing `p
 DIRECT evidence, trigger-model coverage, quotas, and DFT budget. For Strategy B, the deterministic
 coverage pass first represents every trigger model available in the DIRECT subset, then fills the
 remaining budget by combined risk. If budget or quotas leave an available trigger model
-unrepresented, the selection reports that fact and round assessment cannot converge. Severe bad
+unrepresented, the selection reports that integrity failure and round assessment cannot converge;
+it does not redefine scientific target-domain coverage. Severe bad
 structures never go directly to DFT. SAFE
 spot-checks are a separate deterministic, condition-stratified DFT sample for detecting shared
 committee blind spots. QUERY labels and SAFE spot checks together must fit the declared per-round
 DFT-label maximum. Any SAFE false negative must make the round-level
-`calibration_status` explicitly fail even when the original fixed calibration subset passed.
+coverage assessment explicitly fail when it exceeds the configured rate, even when the original
+fixed calibration subset passed.
 Each offline UNSAFE candidate records the nearest earlier SAFE frame in the same declared condition
 and replica when one exists; a missing earlier boundary remains explicit `null`.
 
@@ -154,8 +156,8 @@ checker deterministically recomputes the complete result and rejects drift.
 
 Round assessment summarizes the calibrated candidate-risk distribution with count,
 minimum/mean/q50/q90/maximum for the combined risk and every committee, and reports mean/q90/max
-deltas when the prior round summary is present. This is bounded provenance for marginal-gain review,
-not a new uncertainty model or an independent stopping gate.
+deltas when the prior round summary is present. This is a diagnostic uncertainty trend, not a new
+uncertainty model or an independent stopping gate.
 
 For the bounded validation, run the packaged `split-seed-review` handoff before cumulative dataset
 assembly. It invokes the exact reviewed `dft-labeling/dataset_contract.py`, records the lowest
@@ -174,12 +176,38 @@ files manually.
 
 ## Decisions and claims
 
-- `CONTINUE`: gates are not yet all satisfied; create one next immutable round.
-- `CONVERGED_FOR_DECLARED_DOMAIN`: all PES gates and consecutive-round requirement passed for the
-  stated domain.
+Round assessment has three convergence concepts:
+
+1. `coverage_passed` is true only when committee uncertainty passed independent DFT calibration,
+   every declared target condition passed its configured QUERY- and UNSAFE-fraction limits, SAFE
+   spot checks passed their configured false-negative limit. Calibration and SAFE spot checks are
+   supporting coverage evidence, not separate top-level convergence concepts. A target condition
+   without usable evaluated candidates cannot pass coverage and remains `BLOCKED_SAMPLING`.
+2. `accuracy_passed` is true only when immutable independent audit/test evidence passes every
+   configured energy MAE, energy RMSE, force MAE, force RMSE, and maximum atomic force-error limit
+   for every strategy model.
+3. `pes_gates_passed_this_round` requires coverage, accuracy, and complete round-integrity evidence.
+   Selection or labeling integrity failures, including incomplete Strategy B trigger-model
+   coverage, keep this result false without changing `coverage_passed`. The decision is
+   `CONVERGED_FOR_DECLARED_DOMAIN` only after the PES gates hold for
+   `required_consecutive_rounds`. Each prior-round history summary records its
+   `pes_gates_passed_this_round` result for consecutive counting.
+
+`round-assessment.json` exposes `coverage_passed`, `accuracy_passed`,
+`pes_gates_passed_this_round`, `passed_consecutive_rounds`,
+`required_consecutive_rounds`, and `decision` at the top level. Detailed calibration,
+condition-level fractions, SAFE spot checks, and immutable audit checks remain grouped under
+`coverage` and `accuracy`; selection and labeling integrity remain under `round_evidence`.
+New-label improvement or any other saturation heuristic is not a convergence gate.
+
+- `CONTINUE`: coverage, accuracy, or consecutive stability is not yet satisfied; create one next
+  immutable round.
+- `CONVERGED_FOR_DECLARED_DOMAIN`: coverage and accuracy passed for the required consecutive rounds
+  in the stated domain.
 - `BLOCKED_CALIBRATION`: independent calibration evidence is absent or failed.
 - `BLOCKED_SAMPLING`: at least one target condition lacks usable evaluated candidates.
-- `BUDGET_EXHAUSTED`: the explicit total label maximum was reached while convergence gates failed.
+- `BUDGET_EXHAUSTED`: the explicit total label maximum was reached before convergence was
+  established.
 - `SCIENTIFIC_REVIEW_REQUIRED`: collected DFT/other evidence is incomplete or inconsistent.
 
 `BUDGET_EXHAUSTED` is never convergence. Report `PES_ACTIVE_LEARNING_CONVERGENCE` separately from

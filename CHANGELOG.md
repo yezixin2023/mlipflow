@@ -16,6 +16,8 @@ MLIPFlow follows semantic versioning for the Python package. Scientific validati
 
 ### Changed
 
+- Simplified active-learning convergence to declared-domain coverage, immutable-audit accuracy,
+  and consecutive stability; new-label marginal gain is no longer a stopping gate.
 - Reworked the top-level README around researcher tasks, a shorter quick start, direct artifact handoff, environment boundaries, and scientific validation.
 - Combined scientific plugins and their corresponding Agent Skills into one capability matrix, and shortened the detailed Agent Skills guide to supervision and maintenance rules.
 - Removed the previous maturity qualifier from user-facing documentation and package metadata without changing the package version or creating a release tag.

@@ -18,7 +18,7 @@ BUILTIN_CAPABILITIES: dict[str, dict[str, Any]] = {
         "backends": ("local", "ssh-slurm"),
         "operations": ("committee-evaluate", "select-candidates", "assess-round"),
         "approval_required": True,
-        "description": "Finite offline active-learning rounds and committee selection.",
+        "description": "Finite offline active-learning selection and convergence assessment.",
     },
     "ase-md": {
         "adapter": "adapter_restart.py",

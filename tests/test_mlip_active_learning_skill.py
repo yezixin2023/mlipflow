@@ -66,6 +66,10 @@ def test_skill_preserves_strategy_math_decision_and_approval_boundaries():
         "BLOCKED_CALIBRATION",
         "BLOCKED_SAMPLING",
         "SCIENTIFIC_REVIEW_REQUIRED",
+        "coverage_passed",
+        "accuracy_passed",
+        "pes_gates_passed_this_round",
+        "required_consecutive_rounds",
         "dry-run",
         "boolean approval",
         "scheduler `COMPLETED`",
@@ -75,6 +79,8 @@ def test_skill_preserves_strategy_math_decision_and_approval_boundaries():
     assert "`BUDGET_EXHAUSTED` is never convergence" in text
     assert "PES_ACTIVE_LEARNING_CONVERGENCE" in text
     assert "TRANSPORT_CONVERGENCE" in text
+    assert "marginal-gain" not in text
+    assert "marginal gain" not in text
 
 
 def test_all_skill_files_are_declared_for_wheel_packaging():

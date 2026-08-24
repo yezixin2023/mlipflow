@@ -27,6 +27,14 @@ claim of production convergence.
   0.15/0.20 eV/A for force MAE/RMSE, and 0.50 eV/A for maximum atomic force
   error. A failure produces `CONTINUE`, not a relaxed threshold or a convergence
   claim.
+- Coverage passes only when independent DFT calibration succeeds, every target
+  condition passes its configured QUERY/UNSAFE fractions, and the deterministic
+  SAFE spot checks stay within their false-negative limit. Accuracy is the
+  separate immutable-audit result for the five energy/force metrics above.
+- PES convergence requires coverage and accuracy together for the configured
+  number of consecutive rounds. Improvement per new label is not a stopping
+  gate, and PES convergence does not establish diffusion or conductivity
+  convergence.
 
 The bounded fresh static labels use the repository's reviewed manuscript preset
 (`ENCUT=450 eV`, `EDIFF=5e-6 eV`, spin polarization, D3(BJ), and gamma-only
@@ -105,6 +113,10 @@ returns `SCIENTIFIC_REVIEW_REQUIRED` rather than silently dropping the failure.
 The reported cumulative DFT-label count includes SAFE spot checks even when the
 policy keeps them out of the cumulative training dataset; the canonical training
 record count is therefore reported separately in the final validation summary.
+The resulting `round-assessment.json` exposes `coverage_passed`,
+`accuracy_passed`, `pes_gates_passed_this_round`, consecutive-round counts, and
+the decision at the top level, with calibration, condition, spot-check, and
+immutable-audit evidence grouped below them.
 
 For reviewed scheduled committee inference, copy
 `cluster/run.sh.example` into the site's

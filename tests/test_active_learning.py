@@ -119,13 +119,6 @@ def policy(strategy="dual", consecutive=2, maximum_total=20):
             },
             "maximum_spot_check_false_negative_rate": 0.0,
             "required_consecutive_rounds": consecutive,
-            "marginal_gain": {
-                "metric": "force_rmse",
-                "models": models,
-                "unit": "eV/angstrom",
-                "maximum_improvement_per_label": 0.02,
-                "zero_label_satisfies_saturation": True,
-            },
         },
     }
 
@@ -369,11 +362,9 @@ def assessment_inputs(consecutive=2, cumulative=7):
         "dataset_id": "oracle-dataset",
         "split_id": "immutable-split-v1",
         "audit_ids": ["audit-1", "audit-2"],
-        "pes_gates_passed": True,
-        "audit_metrics": {
-            "model-a:force_rmse": 0.11,
-            "model-b:force_rmse": 0.11,
-        },
+        "coverage_passed": True,
+        "accuracy_passed": True,
+        "pes_gates_passed_this_round": True,
     }
     current_round = 1 if consecutive > 1 else 0
     previous_rounds = [prior] if current_round else []
@@ -499,7 +490,7 @@ def test_committee_records_framework_members_and_policy_seeds():
         al.evaluate_committee(bundle, policy("dual"))
 
 
-def test_strategy_b_assessment_rejects_model_only_metrics_and_marginal_gain():
+def test_assessment_requires_common_audit_metrics_but_not_marginal_gain():
     model_only_stress = assessment_inputs(consecutive=1)
     model_only_stress["policy"]["assessment"]["audit_thresholds"].append(
         {
@@ -512,12 +503,12 @@ def test_strategy_b_assessment_rejects_model_only_metrics_and_marginal_gain():
     with pytest.raises(al.ActiveLearningError, match="common energy/force metrics"):
         run_assessment(model_only_stress)
 
-    one_model_marginal = assessment_inputs(consecutive=1)
-    one_model_marginal["policy"]["assessment"]["marginal_gain"]["models"] = [
-        "model-a"
-    ]
-    with pytest.raises(al.ActiveLearningError, match="every strategy model"):
-        run_assessment(one_model_marginal)
+    no_marginal_gain = assessment_inputs(consecutive=1)
+    result = run_assessment(no_marginal_gain)
+    assert result["decision"] == "CONVERGED_FOR_DECLARED_DOMAIN"
+    assert result["coverage_passed"] is True
+    assert result["accuracy_passed"] is True
+    assert "marginal_gain" not in result
 
 
 def test_target_condition_metadata_and_replica_statistics_are_explicit():
@@ -673,7 +664,7 @@ def test_policy_controls_whether_safe_spot_labels_enter_training():
     excluded_result = run_assessment(excluded)
     assert not any(
         "cumulative dataset handoff" in reason
-        for reason in excluded_result["failed_gates"]
+        for reason in excluded_result["round_evidence"]["failed_reasons"]
     )
     assert excluded_result["dft_labels"]["safe_spot_checks_in_training"] is False
 
@@ -682,8 +673,12 @@ def test_policy_controls_whether_safe_spot_labels_enter_training():
     missing["selection"]["include_safe_spot_checks_in_training"] = True
     missing_result = run_assessment(missing)
     assert missing_result["decision"] == "SCIENTIFIC_REVIEW_REQUIRED"
+    assert missing_result["coverage_passed"] is True
+    assert missing_result["accuracy_passed"] is True
+    assert missing_result["pes_gates_passed_this_round"] is False
     assert any(
-        "cumulative dataset handoff" in reason for reason in missing_result["failed_gates"]
+        "cumulative dataset handoff" in reason
+        for reason in missing_result["round_evidence"]["failed_reasons"]
     )
 
     included = assessment_inputs(consecutive=1)
@@ -696,7 +691,7 @@ def test_policy_controls_whether_safe_spot_labels_enter_training():
     included_result = run_assessment(included)
     assert not any(
         "cumulative dataset handoff" in reason
-        for reason in included_result["failed_gates"]
+        for reason in included_result["round_evidence"]["failed_reasons"]
     )
     assert included_result["dft_labels"]["safe_spot_checks_in_training"] is True
 
@@ -707,20 +702,28 @@ def test_false_negative_consecutive_round_and_budget_decisions_are_distinct():
     assert converged["decision"] == "CONVERGED_FOR_DECLARED_DOMAIN"
     assert converged["pes_status"] == "CONVERGED"
     assert converged["transport_status"] == "NOT_ESTABLISHED"
+    assert converged["coverage_passed"] is True
+    assert converged["accuracy_passed"] is True
+    assert converged["pes_gates_passed_this_round"] is True
     assert converged["passed_consecutive_rounds"] == 2
 
     not_consecutive = assessment_inputs(consecutive=2)
-    not_consecutive["history"]["rounds"][0]["pes_gates_passed"] = False
+    not_consecutive["history"]["rounds"][0]["pes_gates_passed_this_round"] = False
     continued = run_assessment(not_consecutive)
     assert continued["decision"] == "CONTINUE"
+    assert continued["coverage_passed"] is True
+    assert continued["accuracy_passed"] is True
     assert continued["passed_consecutive_rounds"] == 1
+    assert continued["consecutive_stability"]["passed"] is False
 
     false_negative = assessment_inputs(consecutive=2)
     false_negative["spot"]["samples"][0]["actual_force_error"] = 0.4
     failed_spot = run_assessment(false_negative)
     assert failed_spot["decision"] == "CONTINUE"
-    assert failed_spot["safe_spot_checks"]["false_negative_count"] == 1
-    assert failed_spot["calibration_status"] == "FAIL_SAFE_SPOT_CHECK"
+    assert failed_spot["coverage_passed"] is False
+    assert failed_spot["accuracy_passed"] is True
+    assert failed_spot["coverage"]["safe_spot_checks"]["false_negative_count"] == 1
+    assert failed_spot["coverage"]["calibration"]["status"] == "PASS"
     assert "model-a" in failed_spot["recommended_focus"]
 
     exhausted = assessment_inputs(consecutive=2, cumulative=20)
@@ -728,6 +731,55 @@ def test_false_negative_consecutive_round_and_budget_decisions_are_distinct():
     budget = run_assessment(exhausted)
     assert budget["decision"] == "BUDGET_EXHAUSTED"
     assert budget["pes_status"] == "NOT_CONVERGED"
+    assert budget["coverage_passed"] is True
+    assert budget["accuracy_passed"] is False
+
+    stability_exhausted = assessment_inputs(consecutive=2, cumulative=20)
+    stability_exhausted["history"]["rounds"][0][
+        "pes_gates_passed_this_round"
+    ] = False
+    stability_budget = run_assessment(stability_exhausted)
+    assert stability_budget["decision"] == "BUDGET_EXHAUSTED"
+    assert stability_budget["pes_status"] == "NOT_CONVERGED"
+    assert stability_budget["coverage_passed"] is True
+    assert stability_budget["accuracy_passed"] is True
+    assert stability_budget["passed_consecutive_rounds"] == 1
+
+
+@pytest.mark.parametrize("metric", sorted(al.COMMON_AUDIT_METRICS))
+def test_accuracy_requires_every_immutable_audit_metric(metric):
+    values = assessment_inputs(consecutive=1)
+    record = next(
+        item
+        for item in values["audit"]["records"]
+        if item["model"] == "model-a" and item["metric"] == metric
+    )
+    record["value"] = 0.3
+
+    result = run_assessment(values)
+
+    assert result["decision"] == "CONTINUE"
+    assert result["coverage_passed"] is True
+    assert result["accuracy_passed"] is False
+    assert result["pes_gates_passed_this_round"] is False
+    assert any(metric in reason for reason in result["accuracy"]["failed_reasons"])
+
+
+def test_missing_target_condition_is_blocked_sampling_and_not_coverage():
+    values = assessment_inputs(consecutive=1)
+    condition = next(
+        item
+        for item in values["evaluation"]["per_condition"]
+        if item["condition_id"] == "800k"
+    )
+    condition["candidate_count"] = 0
+
+    result = run_assessment(values)
+
+    assert result["decision"] == "BLOCKED_SAMPLING"
+    assert result["coverage_passed"] is False
+    assert result["accuracy_passed"] is True
+    assert result["pes_status"] == "NOT_CONVERGED"
 
 
 def test_assessment_reports_uncertainty_distribution_change():
@@ -761,8 +813,10 @@ def test_strategy_b_condition_and_spot_check_gates_are_per_model():
     values["spot"]["samples"][0]["actual_force_error"] = 0.4
     failed_spot = run_assessment(values)
     assert failed_spot["decision"] == "CONTINUE"
-    assert failed_spot["safe_spot_checks"]["false_negative_rate"] == 0.5
-    assert failed_spot["safe_spot_checks"]["per_model"]["model-a"]["passed"] is False
+    spot_report = failed_spot["coverage"]["safe_spot_checks"]
+    assert spot_report["false_negative_rate"] == 0.5
+    assert spot_report["per_model"]["model-a"]["passed"] is False
+    assert failed_spot["coverage_passed"] is False
 
     values = assessment_inputs(consecutive=2)
     condition = next(
@@ -790,7 +844,11 @@ def test_strategy_b_condition_and_spot_check_gates_are_per_model():
     }
     failed_condition = run_assessment(values)
     assert failed_condition["decision"] == "CONTINUE"
-    assert "400k/model-a query fraction exceeds policy" in failed_condition["failed_gates"]
+    assert failed_condition["coverage_passed"] is False
+    assert (
+        "400k/model-a query fraction exceeds policy"
+        in failed_condition["coverage"]["failed_reasons"]
+    )
 
     missing_trigger = assessment_inputs(consecutive=2)
     missing_trigger["selection"]["trigger_model_coverage"] = {
@@ -801,9 +859,12 @@ def test_strategy_b_condition_and_spot_check_gates_are_per_model():
     }
     trigger_result = run_assessment(missing_trigger)
     assert trigger_result["decision"] == "CONTINUE"
+    assert trigger_result["coverage_passed"] is True
+    assert trigger_result["accuracy_passed"] is True
+    assert trigger_result["pes_gates_passed_this_round"] is False
     assert any(
         "omitted available trigger models" in reason
-        for reason in trigger_result["failed_gates"]
+        for reason in trigger_result["round_evidence"]["failed_reasons"]
     )
 
 
@@ -813,7 +874,8 @@ def test_strategy_b_rejects_model_calibration_failure_and_audit_drift():
     values["evaluation"]["calibration"]["model-b"]["failed_gates"] = ["fixture failure"]
     blocked = run_assessment(values)
     assert blocked["decision"] == "BLOCKED_CALIBRATION"
-    assert blocked["calibration_status"] == "BLOCKED_CALIBRATION"
+    assert blocked["coverage_passed"] is False
+    assert blocked["coverage"]["calibration"]["status"] == "BLOCKED_CALIBRATION"
 
     drift = assessment_inputs(consecutive=2)
     drift["split"]["audit_ids"] = ["changed-audit"]
@@ -992,10 +1054,9 @@ def test_oracle_full_chain_runs_through_core_and_preserves_prior_round(strategy)
                         "dataset_id": "oracle-dataset",
                         "split_id": "immutable-split-v1",
                         "audit_ids": ["audit-1", "audit-2"],
-                        "pes_gates_passed": True,
-                        "audit_metrics": {
-                            f"{model}:force_rmse": 0.11 for model in models
-                        },
+                        "coverage_passed": True,
+                        "accuracy_passed": True,
+                        "pes_gates_passed_this_round": True,
                     }
                 ],
             },

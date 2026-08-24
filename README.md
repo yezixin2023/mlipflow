@@ -80,7 +80,7 @@ MLIPFlow ships a fixed set of scientific capability adapters. Each adapter valid
 | ASE molecular dynamics | `ase-md` | `$ase-md` | NVT Langevin or isotropic MTK NPT, supercells, checkpoints, and fresh-attempt restart | SSH-Slurm |
 | LAMMPS molecular dynamics | `lammps-md` | `$lammps-md` | Deterministic input preparation, DeepMD/MACE/MatGL execution, collection, and binary restart | Local preparation; SSH-Slurm execution |
 | MLIP benchmarking | `mlip-benchmark` | `$mlip-benchmark` | Fresh or normalized static-PES evidence plus task-separated AIMD-reference RDF and transport metrics | Local; SSH-Slurm for fresh inference |
-| Offline active learning | `active-learning` | `$mlip-active-learning` | Uncertainty/risk-based screening of candidate structures, selection for new labeling, and round-wise assessment of model improvement | Local selection and assessment; SSH-Slurm for large-scale inference |
+| Offline active learning | `active-learning` | `$mlip-active-learning` | Uncertainty/risk-based screening, DFT-label selection, and round-wise declared-domain coverage and independent-accuracy assessment | Local selection and assessment; SSH-Slurm for large-scale inference |
 | Ionic transport and dynamics | `ionic-transport` | `$ionic-transport` | Trajectory/MSD analysis, diffusion, conductivity, Haven ratio, Arrhenius fitting, and bounded partial-RDF comparison | Local |
 | Candidate ranking | `candidate-ranking` | `$candidate-ranking` | Ranking and top-k selection of candidates according to user-defined quantitative metrics | Local |
 | Electrochemical voltage | `electrochemical-voltage` | — | Average Li intercalation voltage calculations between adjacent compositions, with support for replaying existing results | Local |
