@@ -303,6 +303,9 @@ def _compute_manifest(
 class Adapter:
     """Plan and verify deterministic average-voltage post-processing."""
 
+    def operation(self, context: Any) -> str:
+        return _operation(context)
+
     def validate(self, context: Any) -> list[dict[str, str]]:
         if not isinstance(context, dict):
             return [_diagnostic("error", "context.type", "context 必须是对象。")]

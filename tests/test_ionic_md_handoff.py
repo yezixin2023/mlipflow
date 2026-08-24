@@ -138,7 +138,7 @@ class IonicMDHandoffTests(unittest.TestCase):
                 "fit_scope": "all",
                 "target_temperature_k": 300.0,
                 "piecewise": "never",
-                "min_segment_points": 2,
+                "min_segment_points": 3,
                 "piecewise_slope_change": 0.35,
                 "piecewise_bic_delta": 2.0,
                 "allow_partial_results": False,

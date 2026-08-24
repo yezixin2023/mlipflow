@@ -18,8 +18,13 @@ from typing import Any, Iterable
 
 from ..config import Project, load_project
 from ..errors import ConfigError, StateError
-from ..planning import resolve_reference
-from ..plugins import BUILTIN_CAPABILITIES, capability
+from ..planning import approval_required, resolve_reference
+from ..plugins import (
+    BUILTIN_CAPABILITIES,
+    capability,
+    load_adapter,
+    resolve_operation,
+)
 from ..routing import load_registry, route_models
 from ..site import load_site_config
 from ..state import RunState, StateStore
@@ -89,17 +94,23 @@ def query_inspect(project: Project, node_id: str) -> dict[str, Any]:
     node = project.node(node_id)
     capability_id = str(node["uses"])
     spec = capability(capability_id)
+    operation = None
+    if node.get("mode", "execute") == "execute":
+        adapter = load_adapter(capability_id)
+        operation = resolve_operation(adapter, capability_id, node)
     workflow = query_workflow(project, node_id)
     return {
         "project_id": project.project_id,
         "node": node,
         "state": workflow["steps"][0],
+        "operation": operation,
+        "approval_required": approval_required(node, spec, operation),
         "capability": {
             "id": capability_id,
             "description": spec["description"],
             "operations": list(spec["operations"]),
             "backends": list(spec["backends"]),
-            "approval_required": spec["approval_required"],
+            "approval_operations": list(spec["approval_operations"]),
         },
     }
 

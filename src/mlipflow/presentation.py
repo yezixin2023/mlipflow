@@ -118,8 +118,9 @@ def _compact_inspect(data: dict[str, Any]) -> dict[str, Any]:
         "uses": node.get("uses"),
         "state": state.get("state"),
         "attempt": state.get("attempt"),
-        "action": _node_action(node),
+        "action": data.get("operation") or _node_action(node),
         "backend": node.get("backend", "local"),
+        "approval_required": data.get("approval_required") is True,
         "needs": node.get("needs", []),
         "inputs": node.get("inputs", {}),
         "parameters": parameters,
@@ -171,6 +172,7 @@ def _compact_run_plan(data: dict[str, Any]) -> dict[str, Any]:
         "action": "run-plan",
         "node_id": data.get("node_id"),
         "capability": data.get("capability"),
+        "operation": data.get("operation"),
         "state": status,
         "mode": data.get("mode"),
         "backend": data.get("backend"),
@@ -403,6 +405,11 @@ def _render_inspect(data: dict[str, Any]) -> str:
     lines.append(f"state: {data.get('state')} (attempt {data.get('attempt')})")
     lines.append(f"action: {data.get('action')}")
     lines.append(f"backend: {data.get('backend')}")
+    lines.append(
+        "approval: required"
+        if data.get("approval_required")
+        else "approval: not required"
+    )
     if data.get("selected_model"):
         lines.append(f"selected model: {data['selected_model']}")
     if data.get("needs"):
@@ -419,6 +426,12 @@ def _render_inspect(data: dict[str, Any]) -> str:
             lines.append("supported backends: " + ", ".join(capability["backends"]))
         if capability.get("operations"):
             lines.append("operations: " + ", ".join(capability["operations"]))
+        approval_operations = capability.get("approval_operations")
+        if isinstance(approval_operations, list):
+            lines.append(
+                "approval operations: "
+                + (", ".join(approval_operations) if approval_operations else "none")
+            )
     if data.get("reason"):
         lines.append(f"reason: {data['reason']}")
     return "\n".join(lines)
@@ -448,6 +461,8 @@ def _render_route(data: dict[str, Any]) -> str:
 def _render_run_plan(data: dict[str, Any]) -> str:
     lines = [f"run {data.get('node_id')} — {data.get('state')}"]
     lines.append(f"capability: {data.get('capability')}")
+    if data.get("operation"):
+        lines.append(f"operation: {data['operation']}")
     lines.append(f"mode/backend: {data.get('mode')} / {data.get('backend')}")
     if data.get("selected_model"):
         lines.append(f"selected model: {data['selected_model']}")

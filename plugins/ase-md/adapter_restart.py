@@ -446,6 +446,9 @@ def _normalize_result_for_base_checker(context: dict[str, Any]) -> None:
 
 
 class Adapter:
+    def operation(self, context: dict[str, Any]) -> str:
+        return "run"
+
     def validate(self, context: dict[str, Any]) -> list[dict[str, str]]:
         return _validate_restart(context)
 

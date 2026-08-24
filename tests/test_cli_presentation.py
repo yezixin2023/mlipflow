@@ -98,6 +98,9 @@ class CliPresentationTests(unittest.TestCase):
 
         inspected = self._json(["inspect", "benchmark"])["data"]
         self.assertEqual("candidate-ranking", inspected["capability"]["id"])
+        self.assertFalse(inspected["approval_required"])
+        self.assertEqual([], inspected["capability"]["approval_operations"])
+        self.assertNotIn("approval_required", inspected["capability"])
         self.assertEqual(
             {"result_manifest": "result.json"}, inspected["inputs"]
         )

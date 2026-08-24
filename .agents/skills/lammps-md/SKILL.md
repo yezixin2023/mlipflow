@@ -13,6 +13,11 @@ Use the `lammps-md` plugin as the implementation source of truth. Version 0.3 ha
 
 Never treat preparation success as evidence that LAMMPS ran. Never treat scheduler `COMPLETED` as scientific success before bounded fetch/check.
 
+Operation-level approval is explicit: local `lammps-prepare` has
+`approval_required: false`, while `execute` requires approval. Inspect preparation's
+dry-run and continue without `--approve`; missing physics, model, structure, or runtime
+inputs still block through Adapter validation.
+
 ## Model readiness
 
 Accept only an explicit, verifiable model reference with supported elements, a site-root-relative path, and a framework-specific LAMMPS export format.
@@ -76,6 +81,9 @@ For `operation: execute`, require:
 - optional `restart_policy`, either `disabled` or `auto-from-previous-attempt`.
 
 `auto-from-previous-attempt` requires a positive `checkpoint_interval` no greater than the prepared total steps.
+
+Review the execute dry-run and obtain approval before launching it. Every SSH-SLURM
+execute is also approval-gated by the scheduler rule.
 
 CPU requires `gpus: 0`. GPU requires at least one GPU; MACE/MatGL are restricted to one GPU in this contract.
 

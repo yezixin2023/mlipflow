@@ -1381,6 +1381,9 @@ def _verify_cluster_fresh_report(
 class Adapter:
     """Plan reviewed external CLIs and parse only their explicit artifacts."""
 
+    def operation(self, context: dict[str, Any]) -> str:
+        return _operation(context)
+
     def validate(self, context: dict[str, Any]) -> list[dict[str, str]]:
         diagnostics: list[dict[str, str]] = []
         if not isinstance(context, dict):

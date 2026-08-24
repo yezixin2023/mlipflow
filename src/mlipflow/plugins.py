@@ -17,56 +17,56 @@ BUILTIN_CAPABILITIES: dict[str, dict[str, Any]] = {
         "adapter": "adapter.py",
         "backends": ("local", "ssh-slurm"),
         "operations": ("committee-evaluate", "select-candidates", "assess-round"),
-        "approval_required": True,
+        "approval_operations": (),
         "description": "Finite offline active-learning selection and convergence assessment.",
     },
     "ase-md": {
         "adapter": "adapter_restart.py",
         "backends": ("ssh-slurm",),
         "operations": ("run",),
-        "approval_required": True,
+        "approval_operations": ("run",),
         "description": "ASE NVT/NPT molecular dynamics with restart support.",
     },
     "candidate-ranking": {
         "adapter": "adapter.py",
         "backends": ("local",),
         "operations": ("rank-candidates",),
-        "approval_required": False,
+        "approval_operations": (),
         "description": "Deterministic single-metric candidate ranking.",
     },
     "dft-labeling": {
         "adapter": "adapter.py",
         "backends": ("local", "ssh-slurm"),
         "operations": ("vasp-prepare", "label", "dataset-assemble"),
-        "approval_required": True,
+        "approval_operations": ("label",),
         "description": "VASP preparation, labeling, relaxation/AIMD, and dataset assembly.",
     },
     "electrochemical-voltage": {
         "adapter": "adapter.py",
         "backends": ("local",),
         "operations": ("compute-from-energies", "replay-si-table-s11"),
-        "approval_required": False,
+        "approval_operations": (),
         "description": "Electrochemical voltage analysis and manuscript replay.",
     },
     "high-entropy-structure": {
         "adapter": "adapter.py",
         "backends": ("local",),
         "operations": ("generate-sqs",),
-        "approval_required": True,
+        "approval_operations": (),
         "description": "Seeded high-entropy/SQS structure generation.",
     },
     "ionic-transport": {
         "adapter": "adapter.py",
         "backends": ("local",),
         "operations": ("analyze-existing", "md-smoke-and-analyze"),
-        "approval_required": True,
+        "approval_operations": (),
         "description": "MSD, diffusion, conductivity, RDF, and Arrhenius analysis.",
     },
     "lammps-md": {
         "adapter": "adapter_restart.py",
         "backends": ("local", "ssh-slurm"),
         "operations": ("lammps-prepare", "execute"),
-        "approval_required": True,
+        "approval_operations": ("execute",),
         "description": "LAMMPS MLIP preparation/execution with restart support.",
     },
     "mlip-benchmark": {
@@ -78,14 +78,14 @@ BUILTIN_CAPABILITIES: dict[str, dict[str, Any]] = {
             "normalize-replay",
             "normalize-execute",
         ),
-        "approval_required": True,
+        "approval_operations": ("evaluate-fresh",),
         "description": "Fresh and replayed MLIP energy/force/stress benchmarks.",
     },
     "mlip-training": {
         "adapter": "adapter_cluster.py",
         "backends": ("local", "ssh-slurm"),
         "operations": ("train", "finetune"),
-        "approval_required": True,
+        "approval_operations": ("train", "finetune"),
         "description": "DeepMD, MACE, CHGNet, and MatGL/M3GNet training.",
     },
     "pes-sampling": {
@@ -98,7 +98,7 @@ BUILTIN_CAPABILITIES: dict[str, dict[str, Any]] = {
             "lasp-ssw-execute",
             "lasp-ssw-normalize-replay",
         ),
-        "approval_required": True,
+        "approval_operations": ("lasp-ssw-execute",),
         "description": "DIRECT selection and LASP/SSW preparation, execution, and replay.",
     },
 }
@@ -131,6 +131,20 @@ def load_adapter(capability_id: str) -> Any:
     except AttributeError as exc:
         raise CapabilityError(f"built-in adapter class is missing: {path}") from exc
     return adapter()
+
+
+def resolve_operation(adapter: Any, capability_id: str, context: Any) -> str:
+    resolver = getattr(adapter, "operation", None)
+    if not callable(resolver):
+        raise CapabilityError(
+            f"built-in capability {capability_id} does not expose operation resolution"
+        )
+    operation = resolver(context)
+    if not isinstance(operation, str):
+        raise CapabilityError(
+            f"built-in capability {capability_id} resolved a non-string operation"
+        )
+    return operation
 
 
 def _load_module(path: Path, name: str) -> ModuleType:

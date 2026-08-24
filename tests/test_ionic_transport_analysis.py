@@ -19,11 +19,16 @@ RUNNER_PATH = ROOT / "plugins" / "ionic-transport" / "ionic_conductivity.py"
 
 
 def load_adapter():
+    module = load_adapter_module()
+    return module.Adapter()
+
+
+def load_adapter_module():
     spec = importlib.util.spec_from_file_location("ionic_transport_analysis_adapter", ADAPTER_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.Adapter()
+    return module
 
 
 def load_runner():
@@ -137,9 +142,18 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
                 fit_temperatures=None,
                 exclude_temperatures=None,
                 target_temperature_K=600.0,
+                piecewise="never",
+                min_segment_points=3,
+                piecewise_slope_change=0.35,
+                piecewise_bic_delta=2.0,
             ),
         )
-        self.assertEqual(1.25, summary["single"]["conductivity_600K_mS_cm"])
+        direct = summary["target_prediction"]["direct_simulation"]
+        self.assertTrue(direct["available"])
+        self.assertEqual(1.25, direct["conductivity_mS_cm"])
+        self.assertEqual("single", summary["selected_model"])
+        self.assertIsNone(summary["piecewise"])
+        self.assertIn("D_600K_cm2_s", summary["single"])
 
     def test_aimd_and_mlip_share_transport_and_rdf_comparison_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -192,7 +206,7 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
                     "fit_scope": "dataset",
                     "target_temperature_k": 600.0,
                     "piecewise": "never",
-                    "min_segment_points": 2,
+                    "min_segment_points": 3,
                     "piecewise_slope_change": 0.35,
                     "piecewise_bic_delta": 2.0,
                     "rdf_pair": ["Li", "S"],
@@ -344,7 +358,7 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
                     "fit_scope": "all",
                     "target_temperature_k": 300.0,
                     "piecewise": "never",
-                    "min_segment_points": 2,
+                    "min_segment_points": 3,
                     "piecewise_slope_change": 0.35,
                     "piecewise_bic_delta": 2.0,
                     "allow_partial_results": False,
@@ -492,6 +506,232 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-Li framework atom"):
             runner.diffusion_analyzer_from_structures(
                 structures, "Li", 600.0, 1.0, args
+            )
+
+
+class IonicTransportArrheniusBreakpointTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.runner = load_runner()
+        self.temperatures = [300.0, 350.0, 400.0, 450.0, 550.0, 650.0, 750.0, 850.0]
+
+    @staticmethod
+    def diffusivity(temperature_K: float, ea_eV: float, prefactor_cm2_s: float) -> float:
+        from scipy import constants
+
+        return prefactor_cm2_s * math.exp(
+            -ea_eV / ((constants.k / constants.e) * temperature_K)
+        )
+
+    def args(
+        self,
+        *,
+        piecewise: str = "auto",
+        target_temperature_K: float = 300.0,
+        piecewise_bic_delta: float = 2.0,
+        piecewise_slope_change: float = 0.35,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            specie="Li",
+            fit_temperatures=None,
+            exclude_temperatures=None,
+            target_temperature_K=target_temperature_K,
+            piecewise=piecewise,
+            min_segment_points=3,
+            piecewise_slope_change=piecewise_slope_change,
+            piecewise_bic_delta=piecewise_bic_delta,
+            fit_scope="all",
+        )
+
+    def summary(self, diffusivities, **argument_overrides):
+        frame = self.runner.pd.DataFrame(
+            {
+                "temperature_K": self.temperatures,
+                "diffusivity_cm2_s": diffusivities,
+                "conductivity_NE_mS_cm": [None] * len(self.temperatures),
+            }
+        )
+        return self.runner.summarize_arrhenius_one(
+            frame, self.args(**argument_overrides)
+        )
+
+    def two_regime_diffusivities(self):
+        return [
+            self.diffusivity(temperature, 0.2, 1.0e-3)
+            if temperature <= 450.0
+            else self.diffusivity(temperature, 0.6, 1.0e-2)
+            for temperature in self.temperatures
+        ]
+
+    def test_single_arrhenius_data_selects_single_baseline(self) -> None:
+        diffusivities = [
+            self.diffusivity(temperature, 0.3, 1.0e-3)
+            for temperature in self.temperatures
+        ]
+
+        summary = self.summary(diffusivities)
+
+        self.assertEqual("single", summary["selected_model"])
+        self.assertFalse(summary["regime_change_detected"])
+        self.assertIsNotNone(summary["piecewise"])
+        self.assertIn("BIC", summary["single"])
+
+    def test_clear_two_regime_data_finds_one_breakpoint_and_two_activation_energies(self) -> None:
+        summary = self.summary(self.two_regime_diffusivities())
+
+        self.assertEqual("piecewise", summary["selected_model"])
+        self.assertTrue(summary["regime_change_detected"])
+        self.assertEqual([450.0, 550.0], summary["piecewise"]["breakpoint_interval_K"])
+        self.assertAlmostEqual(
+            0.2, summary["piecewise"]["low_temperature"]["Ea_eV"], places=12
+        )
+        self.assertAlmostEqual(
+            0.6, summary["piecewise"]["high_temperature"]["Ea_eV"], places=12
+        )
+
+    def test_insufficient_temperatures_keep_single_with_explicit_status(self) -> None:
+        temperatures = self.temperatures[:5]
+        frame = self.runner.pd.DataFrame(
+            {
+                "temperature_K": temperatures,
+                "diffusivity_cm2_s": [
+                    self.diffusivity(temperature, 0.3, 1.0e-3)
+                    for temperature in temperatures
+                ],
+                "conductivity_NE_mS_cm": [None] * len(temperatures),
+            }
+        )
+
+        summary = self.runner.summarize_arrhenius_one(frame, self.args())
+
+        self.assertEqual("single", summary["selected_model"])
+        self.assertIsNone(summary["piecewise"])
+        self.assertEqual(
+            "insufficient_temperature_points", summary["piecewise_evidence_status"]
+        )
+        self.assertEqual("insufficient_breakpoint_evidence", summary["selection_reason"])
+
+    def test_weak_bic_improvement_keeps_single_selected(self) -> None:
+        summary = self.summary(
+            self.two_regime_diffusivities(), piecewise_bic_delta=1.0e6
+        )
+
+        self.assertFalse(summary["piecewise"]["BIC_threshold_met"])
+        self.assertTrue(summary["piecewise"]["slope_change_threshold_met"])
+        self.assertEqual("single", summary["selected_model"])
+
+    def test_large_bic_improvement_without_slope_change_keeps_single_selected(self) -> None:
+        diffusivities = [
+            self.diffusivity(temperature, 0.3, 1.0e-3)
+            if temperature <= 450.0
+            else self.diffusivity(temperature, 0.3, 1.0e-5)
+            for temperature in self.temperatures
+        ]
+
+        summary = self.summary(diffusivities, piecewise_slope_change=0.2)
+
+        self.assertTrue(summary["piecewise"]["BIC_threshold_met"])
+        self.assertFalse(summary["piecewise"]["slope_change_threshold_met"])
+        self.assertEqual("single", summary["selected_model"])
+
+    def test_piecewise_always_reports_forced_weak_evidence(self) -> None:
+        diffusivities = [
+            self.diffusivity(temperature, 0.3, 1.0e-3)
+            for temperature in self.temperatures
+        ]
+
+        summary = self.summary(diffusivities, piecewise="always")
+
+        self.assertEqual("piecewise", summary["selected_model"])
+        self.assertFalse(summary["regime_change_detected"])
+        self.assertEqual(
+            "piecewise_forced_without_automatic_evidence", summary["selection_reason"]
+        )
+
+    def test_target_prediction_uses_only_the_selected_piecewise_branch(self) -> None:
+        from pymatgen.analysis.diffusion.analyzer import get_extrapolated_diffusivity
+
+        diffusivities = self.two_regime_diffusivities()
+        for target, expected_regime, branch_slice in (
+            (325.0, "low_temperature", slice(None, 4)),
+            (700.0, "high_temperature", slice(4, None)),
+        ):
+            with self.subTest(target=target):
+                summary = self.summary(
+                    diffusivities, target_temperature_K=target
+                )
+                prediction = summary["target_prediction"]["arrhenius_prediction"]
+                expected = get_extrapolated_diffusivity(
+                    self.temperatures[branch_slice],
+                    diffusivities[branch_slice],
+                    target,
+                    mode="linear",
+                )
+                self.assertEqual(expected_regime, prediction["regime"])
+                self.assertTrue(
+                    math.isclose(
+                        expected,
+                        prediction["diffusivity_cm2_s"],
+                        rel_tol=1.0e-12,
+                    )
+                )
+
+    def test_target_inside_breakpoint_interval_is_ambiguous(self) -> None:
+        summary = self.summary(
+            self.two_regime_diffusivities(), target_temperature_K=500.0
+        )
+
+        prediction = summary["target_prediction"]["arrhenius_prediction"]
+        self.assertEqual("ambiguous", prediction["status"])
+        self.assertEqual("ambiguous", prediction["regime"])
+        self.assertIsNone(prediction["diffusivity_cm2_s"])
+
+    def test_regime_detection_never_claims_a_phase_transition(self) -> None:
+        summary = self.summary(self.two_regime_diffusivities())
+        serialized = json.dumps(summary, sort_keys=True)
+
+        self.assertEqual(
+            "ARRHENIUS_REGIME_CHANGE_DETECTED", summary["interpretation"]
+        )
+        self.assertNotIn("PHASE_TRANSITION_DETECTED", serialized)
+        self.assertIn(
+            "independent structural evidence", summary["phase_transition_caveat"]
+        )
+
+    def test_checker_reruns_and_rejects_changed_piecewise_evidence(self) -> None:
+        diffusivities = self.two_regime_diffusivities()
+        frame = self.runner.pd.DataFrame(
+            {
+                "dataset": ["synthetic"] * len(self.temperatures),
+                "temperature_K": self.temperatures,
+                "diffusivity_cm2_s": diffusivities,
+                "conductivity_NE_mS_cm": [None] * len(self.temperatures),
+            }
+        )
+        args = self.args()
+        summary = self.runner.build_arrhenius_summary(frame, args)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary)
+            (output_dir / "analysis_manifest.json").write_text(
+                json.dumps({"parameters": vars(args)}), encoding="utf-8"
+            )
+            adapter_module = load_adapter_module()
+            rows = frame.to_dict(orient="records")
+            self.assertEqual(
+                [],
+                adapter_module._verify_arrhenius_summary(
+                    output_dir, rows, summary
+                ),
+            )
+
+            changed = json.loads(json.dumps(summary))
+            changed["piecewise"]["low_temperature"]["Ea_eV"] += 0.1
+            diagnostics = adapter_module._verify_arrhenius_summary(
+                output_dir, rows, changed
+            )
+            self.assertEqual(
+                ["result.arrhenius_relation"],
+                [item["code"] for item in diagnostics],
             )
 
 

@@ -60,8 +60,11 @@ process exit zero is insufficient.
 Training, scheduled inference, exploratory MD, DFT, and other expensive fresh stages retain their
 own dry-run, boolean approval, checker, and collection boundaries. Core fresh-attempt retry semantics
 also remain in force. A user asking for automatic or
-end-to-end execution does not waive them. Local decision execution is bounded, but follow the plugin
-plan's approval requirement because the same plugin also exposes scheduled inference.
+end-to-end execution does not waive them. Local `committee-evaluate`, `select-candidates`, and
+`assess-round` have `approval_required: false`; inspect their dry-runs and continue without an
+approval stop. An SSH-SLURM `committee-evaluate` requires approval because it submits scheduled
+fresh inference. Scientific policy, calibration, selection, and assessment validation remain
+independent of approval and must still block on missing or inconsistent evidence.
 
 Never modify the canonical dataset directly. Bind successful collected DFT labels into the existing
 dataset assembly handoff. Retry creates a fresh attempt inside the same round; it never creates a

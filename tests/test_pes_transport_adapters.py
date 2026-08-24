@@ -315,6 +315,25 @@ class IonicTransportAdapterTests(unittest.TestCase):
         self.assertEqual("BLOCKED", plan["status"])
         self.assertIn("parameter.seed_unsupported", diagnostic_codes(plan))
 
+    def test_piecewise_auto_is_supported_by_the_existing_adapter_contract(self) -> None:
+        context = self.context()
+        context["parameters"]["piecewise"] = "auto"
+
+        plan = self.adapter.plan(context)
+
+        self.assertEqual("READY", plan["status"], plan.get("diagnostics"))
+        piecewise_index = plan["argv"].index("--piecewise")
+        self.assertEqual("auto", plan["argv"][piecewise_index + 1])
+
+    def test_min_segment_points_below_three_is_rejected(self) -> None:
+        context = self.context()
+        context["parameters"]["min_segment_points"] = 2
+
+        plan = self.adapter.plan(context)
+
+        self.assertEqual("BLOCKED", plan["status"])
+        self.assertIn("parameter.min_segment_points", diagnostic_codes(plan))
+
     def test_invalid_fit_window_and_implicit_msd_units_block(self) -> None:
         context = self.context()
         context["parameters"]["fit_start_ps"] = 10.0

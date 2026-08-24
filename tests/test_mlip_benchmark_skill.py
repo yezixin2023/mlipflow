@@ -60,6 +60,9 @@ def test_natural_language_intents_preserve_execution_and_claim_boundaries() -> N
     assert "Correct the mode to replay" in reference
     assert "Changed input paths or existing output" in reference
     assert "do not bypass or overwrite" in reference
+    assert "`evaluate-fresh` requires approval" in skill + reference
+    assert "`normalize-execute`, `normalize-replay`" in skill + reference
+    assert "Any SSH-SLURM execution requires approval" in skill + reference
 
 
 def test_all_skill_files_are_declared_for_wheel_packaging() -> None:

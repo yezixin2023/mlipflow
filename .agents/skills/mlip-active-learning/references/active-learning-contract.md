@@ -122,6 +122,12 @@ and replica when one exists; a missing earlier boundary remains explicit `null`.
 
 ## Operation handoffs
 
+Local `committee-evaluate`, `select-candidates`, and `assess-round` are deterministic
+decision operations and do not require approval. Reviewed SSH-SLURM
+`committee-evaluate` requires approval under the scheduler rule. In either case,
+missing calibration, policy, artifact, or scientific evidence remains a validation
+block rather than an approval prompt.
+
 Local `committee-evaluate` consumes policy plus a prediction manifest containing model/framework
 records, member IDs and seeds, common calibration/candidate IDs, per-member E/F predictions,
 candidate condition/replica/frame metadata, structure ID, near-duplicate group, and upstream

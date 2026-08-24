@@ -21,9 +21,9 @@ manifests, inspected plans, Adapter results, and specialist Skills remain author
 
 | Goal/stage | Owner | Current routing boundary |
 |---|---|---|
-| Seeded high-entropy/SQS candidates | `$high-entropy-structure` | Explicit prototype, one alloy sublattice, integer counts; local |
+| Seeded high-entropy/SQS candidates | `$high-entropy-structure` | Explicit prototype, one alloy sublattice, integer counts; ordinary local generation is not approval-gated |
 | PES sampling/selection | `$pes-sampling` | DIRECT local; LASP local or reviewed SSH-SLURM; verified local DIRECT+LASP merge; historical ARC replay |
-| VASP preparation, DFT labels, and framework datasets | `$dft-labeling` | Separate prepare/label; calculation-level fresh retry; canonical dataset; shared split plus framework views and benchmark test reference |
+| VASP preparation, DFT labels, and framework datasets | `$dft-labeling` | Local preparation/assembly is ungated; label and scheduled assembly require approval; calculation-level fresh retry; canonical dataset; shared split plus framework views and benchmark test reference |
 | MLIP training/fine-tuning | `$mlip-training` | DeepMD, M3GNet/MatGL, CHGNet, MACE; local or supported SSH-SLURM |
 | E/F/S benchmark or evidence replay | `$mlip-benchmark` | Fresh inference local or reviewed SSH-SLURM; metric recomputation and historical replay local |
 | Finite offline active-learning campaign | `$mlip-active-learning` | One- or two-model calibrated committees; immutable round projects; local deterministic decisions with existing training/MD/DIRECT/DFT/benchmark stages |
@@ -103,8 +103,14 @@ user wants a separately scoped fresh execution.
 
 ## Approval and compute boundaries
 
-Treat large SQS generation, DFT/AIMD, MLIP training/fine-tuning, fresh benchmark
-inference, long MD, large screening, and scheduled jobs as expensive. Before execution:
+Use each dry-run's effective `approval_required` value. Replay is never approval-gated.
+Every SSH-SLURM execution requires approval. Local DFT labeling, MLIP training/fine-tuning,
+ASE/LAMMPS MD execution, fresh benchmark inference, and LASP/SSW execution are declared
+expensive operations and require approval. Ordinary local analysis, preparation,
+selection, checking, normalization, SQS generation, active-learning decision operations,
+transport/Arrhenius post-processing, ranking, and voltage analysis do not.
+
+Before an approval-required execution:
 
 1. inspect current persistent state and the selected node;
 2. run the appropriate dry-run;
@@ -112,9 +118,18 @@ inference, long MD, large screening, and scheduled jobs as expensive. Before exe
    artifacts, freshness/overwrite semantics, and why execution is needed;
 4. use the explicit boolean approval after review.
 
+One explicitly reviewed batch of expensive nodes may be approved once and then executed
+with `--approve` internally, but only those reviewed nodes are covered. Core has no
+persistent batch approval. After an approved stage completes, continue downstream local
+deterministic check/collect, normalization, transport/Arrhenius analysis, active-learning
+assessment, and ranking without another approval. A new expensive or scheduled execution
+outside the reviewed batch requires a new approval.
+
 Do not auto-submit because the user requested an “end-to-end” or “fully automatic” run.
 Do not widen resources, candidate counts, MD duration, DFT scope, or training schedule
 without review. A smoke configuration never silently becomes a production configuration.
+Approval is not scientific validation: unresolved species, temperatures, fitting windows,
+DFT settings, units, conventions, seeds, or splits still block or fail.
 
 The orchestrator may declare supported abstract `backend`, `cpus`, `gpus`, `memory`, and
 `walltime`. Site-owned configuration/templates own SSH aliases, hosts, partitions,
@@ -250,7 +265,7 @@ otherwise validate/replay it first.
 | 8 | “Reproduce all paper results.” | Inventory historical evidence and prefer replay; do not default to fresh expensive reruns. |
 | 9 | “The Slurm job is COMPLETED, so the result is valid, right?” | Continue fetch and scientific `check/collect`; do not claim `OK` yet. |
 | 10 | “Which MLIP is best? Pick one arbitrarily.” | Refuse brand preference without comparable benchmark/routing evidence. |
-| 11 | “Run everything automatically; do not ask me.” | Preserve every expensive-operation dry-run and approval boundary. |
+| 11 | “Run everything automatically; do not ask me.” | Preserve every effective expensive/scheduled dry-run and approval boundary; continue ungated local deterministic work without extra approval. |
 | 12 | “I have a DFT dataset; recompute everything from SQS.” | Reuse verified labels and start later by default; rerun only with explicit scoped intent. |
 | 13 | “Run CHGNet in LAMMPS.” | Do not invent a native pair style; route to `$ase-md` or require explicit audited LAMMPS compatibility. |
 | 14 | “I have a total-energy sequence; compute voltage.” | Call `electrochemical-voltage` plugin directly; do not seek a voltage Skill. |

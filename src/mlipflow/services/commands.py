@@ -11,7 +11,7 @@ from ..errors import ApprovalError, BackendError, CapabilityError, StateError
 from ..hpc import TemplateLibrary, resolve_hpc_execution_plan
 from ..io import load_mapping, write_json_atomic
 from ..planning import action_plan, node_plan, resolve_reference
-from ..plugins import capability, load_adapter
+from ..plugins import capability, load_adapter, resolve_operation
 from ..site import ClusterProfile, SiteConfig, load_site_config
 from ..state import RunState, StateStore
 from .backend_factory import (
@@ -160,10 +160,21 @@ def make_run_plan(
     capability_id = str(node["uses"])
     capability(capability_id)
     attempt = _planned_attempt(project, node_id)
-    plan = node_plan(project, node, capability_id, attempt=attempt)
+    operation: str | None = None
+    context: dict[str, Any] | None = None
+    adapter: Any = None
     if node.get("mode", "execute") == "execute":
         context = _adapter_context(project, node, attempt)
         adapter = load_adapter(capability_id)
+        operation = resolve_operation(adapter, capability_id, context)
+    plan = node_plan(
+        project,
+        node,
+        capability_id,
+        attempt=attempt,
+        operation=operation,
+    )
+    if context is not None:
         diagnostics = adapter.validate(context)
         adapter_plan = adapter.plan(context)
         if not isinstance(adapter_plan, dict):
@@ -579,4 +590,7 @@ def _approved_cluster_record(
 
 def _require_approval(plan: dict[str, Any], approval: bool) -> None:
     if plan.get("approval_required") is True and approval is not True:
-        raise ApprovalError("review the dry-run, then confirm with --approve")
+        raise ApprovalError(
+            "approval is required for expensive or scheduled execution; "
+            "review --dry-run, then use --approve"
+        )

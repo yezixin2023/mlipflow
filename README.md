@@ -12,7 +12,7 @@ MLIPFlow is a **workflow layer**, not a new interatomic-potential framework. Res
 ## What MLIPFlow provides
 
 - **Explicit research workflows:** scientific stages and dependencies live in `project.yaml`, not disconnected shell scripts.
-- **Review before execution:** dry runs expose commands, backends, resources, staged inputs, templates, and expected outputs before expensive work is approved.
+- **Review before execution:** dry runs expose commands, backends, resources, staged inputs, templates, expected outputs, and the effective operation-level approval requirement.
 - **Immutable attempts:** retries create fresh attempts while prior results, logs, scheduler records, and failures remain available.
 - **Local and HPC execution:** built-in capability adapters support local and SSH-Slurm work; private cluster details stay in user-owned site profiles and templates.
 - **Verified handoff:** checked DFT labels, AIMD trajectories, model references, and restart-aware MD segments flow directly to downstream nodes.
@@ -75,7 +75,7 @@ MLIPFlow ships a fixed set of scientific capability adapters. Each adapter valid
 | End-to-end workflow design | MLIPFlow core | `$mlip-workflow` | DAG construction, evidence handoff, approval boundaries, and supervision | Supervision |
 | High-entropy and SQS structures | `high-entropy-structure` | `$high-entropy-structure` | Seeded `icet` SQS generation with explicit composition and supercell contracts | Local |
 | PES sampling | `pes-sampling` | `$pes-sampling` | DIRECT-based structure selection, LASP/SSW sampling, replay of existing sampling runs, and structure-set merging | Local; SSH-Slurm for scheduled LASP |
-| DFT labeling and datasets | `dft-labeling` | `$dft-labeling` | VASP preparation and static, relaxation, or AIMD labeling, followed by standardized labeled-dataset assembly | Local preparation; local or SSH-Slurm labeling; SSH-Slurm assembly |
+| DFT labeling and datasets | `dft-labeling` | `$dft-labeling` | VASP preparation and static, relaxation, or AIMD labeling, followed by standardized labeled-dataset assembly | Local preparation/assembly; local or SSH-Slurm labeling/assembly |
 | MLIP training and fine-tuning | `mlip-training` | `$mlip-training` | DeepMD, M3GNet/MatGL, CHGNet, and MACE training or fine-tuning with explicit references | Local; SSH-Slurm |
 | ASE molecular dynamics | `ase-md` | `$ase-md` | NVT Langevin or isotropic MTK NPT, supercells, checkpoints, and fresh-attempt restart | SSH-Slurm |
 | LAMMPS molecular dynamics | `lammps-md` | `$lammps-md` | Deterministic input preparation, DeepMD/MACE/MatGL execution, collection, and binary restart | Local preparation; SSH-Slurm execution |
@@ -85,7 +85,7 @@ MLIPFlow ships a fixed set of scientific capability adapters. Each adapter valid
 | Candidate ranking | `candidate-ranking` | `$candidate-ranking` | Ranking and top-k selection of candidates according to user-defined quantitative metrics | Local |
 | Electrochemical voltage | `electrochemical-voltage` | — | Average Li intercalation voltage calculations between adjacent compositions, with support for replaying existing results | Local |
 
-The voltage capability is orchestrated directly or through `$mlip-workflow`; it does not currently have a dedicated Agent Skill. Implementations live under [`plugins/`](plugins/), while supervision guidance lives under [`.agents/skills/`](.agents/skills/). `mlipflow inspect NODE` reports the operations supported by a node's built-in capability.
+The voltage capability is orchestrated directly or through `$mlip-workflow`; it does not currently have a dedicated Agent Skill. Implementations live under [`plugins/`](plugins/), while supervision guidance lives under [`.agents/skills/`](.agents/skills/). `mlipflow inspect NODE` reports the node's resolved operation, effective approval requirement, and the operations supported by its built-in capability.
 
 ## Environments and HPC
 
@@ -180,6 +180,13 @@ Without the `$mlip-training` prefix, a compatible agent may infer the appropriat
 | `mlipflow retry NODE`, `stop NODE` | Create a fresh attempt or explicitly stop supported running work. |
 | `mlipflow route ...` | Rank compatible models from versioned benchmark evidence and project policy. |
 
+Approval is operation-level. Replay never requires approval. Every SSH-Slurm execution
+does, as do expensive local operations such as DFT labeling, training/fine-tuning,
+MD/LASP execution, and fresh model inference. Ordinary local preparation, analysis,
+selection, normalization, checking, transport/Arrhenius post-processing, ranking,
+voltage analysis, and SQS generation run without `--approve` after their inputs pass
+scientific validation.
+
 A typical external or expensive node is operated as follows:
 
 ```bash
@@ -190,6 +197,11 @@ mlipflow --project . status train-model
 ```
 
 Scheduler completion is not scientific success. A node reaches `OK` only after its capability adapter verifies declared outputs and completion criteria.
+
+One explicitly reviewed batch of expensive nodes may be approved once, after which an
+agent may execute only those reviewed nodes with `--approve`. This is a supervision UX,
+not persistent core state. Downstream local deterministic work continues without a new
+approval; a newly introduced expensive or scheduled execution needs a new review.
 
 ## Validation and documentation
 

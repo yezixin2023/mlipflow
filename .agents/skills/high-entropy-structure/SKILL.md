@@ -6,7 +6,7 @@ description: Supervise reproducible, auditable high-entropy or SQS disordered-st
 # High-entropy structure
 
 Use `plugins/high-entropy-structure` as the deterministic implementation. Supervise
-inputs, approval, execution, checking, and interpretation; never implement or imitate
+inputs, execution, checking, and interpretation; never implement or imitate
 the SQS search in this Skill.
 
 Read the current plugin manifest and inspect the actual workflow node before planning.
@@ -47,7 +47,7 @@ handling replay.
    preference, propose one and display it in the plan.
 8. Require a positive hard `max_candidates`. For a large enumeration, show the exact
    candidate count, input scope, local resources, outputs, and expected cost in the
-   dry-run, then obtain the approval required for this expensive operation.
+   dry-run. Do not silently enlarge the reviewed scope.
 
 Default to the bundled generator. Set `sqs_script` only when the user explicitly asks
 for a reviewed custom generator that implements the same result and seed contract.
@@ -57,8 +57,9 @@ Never search for or execute a historical private script by default.
 
 Keep the operation `generate-sqs` local-only and `shell: false`. Use a fresh attempt;
 never overwrite an output directory/result manifest or delete an earlier attempt to
-simulate retry. Follow the MLIPFlow dry-run and boolean approval lifecycle before fresh
-generation.
+simulate retry. Ordinary local `generate-sqs` has `approval_required: false`: inspect
+the dry-run, then run it without stopping for `--approve`. Missing or invalid composition,
+site-count, SQS, seed, or candidate-limit inputs still block through Adapter validation.
 
 After execution, require Adapter `check/collect` and final plugin `OK`. Do not accept
 process exit zero or self-reported JSON alone. Confirm candidate IDs/order and coverage,

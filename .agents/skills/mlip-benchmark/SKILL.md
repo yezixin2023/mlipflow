@@ -66,10 +66,14 @@ research directories.
 ## Execute through MLIPFlow
 
 Never call the bundled runner, wrapper, framework, or historical script as a
-substitute for the Adapter lifecycle. Use MLIPFlow's ordinary plan, dry-run and
-approval flow. Confirm `shell=false`, argv-based execution, explicit input
+substitute for the Adapter lifecycle. Use MLIPFlow's ordinary plan and dry-run.
+`evaluate-fresh` requires approval because it launches fresh model inference;
+`normalize-execute`, `normalize-replay`, and compatibility metric-only
+`evaluate-static` paths do not. Every SSH-SLURM execution requires approval regardless
+of operation. Confirm `shell=false`, argv-based execution, explicit input
 paths/parameters, and a fresh empty output directory. Do not overwrite or delete an
-existing result; retry must create a new attempt.
+existing result; retry must create a new attempt. Missing units, conventions, split, or
+other scientific inputs still block independently of approval.
 
 For SSH-SLURM, declare only a named backend profile and abstract `cpus`, `gpus`,
 `memory`, and `walltime`. Never put a partition, module, conda path, executable, model

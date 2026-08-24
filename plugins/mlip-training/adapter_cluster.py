@@ -1189,6 +1189,16 @@ class Adapter:
     def __init__(self) -> None:
         self.legacy = LEGACY.Adapter()
 
+    def operation(self, context: dict[str, Any]) -> str:
+        parameters = (
+            context.get("parameters", {}) if isinstance(context, Mapping) else {}
+        )
+        return (
+            str(parameters.get("operation", "train"))
+            if isinstance(parameters, Mapping)
+            else "train"
+        )
+
     def validate(self, context: dict[str, Any]) -> list[dict[str, str]]:
         if context.get("backend") != "ssh-slurm" or _legacy_scheduled(context):
             return self.legacy.validate(context)

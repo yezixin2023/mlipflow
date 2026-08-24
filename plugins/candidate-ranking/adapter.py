@@ -94,6 +94,9 @@ def _read_json(path: Path) -> tuple[dict[str, Any] | None, dict[str, str] | None
 class Adapter:
     """Plan a ranking script and verify its top-k evidence."""
 
+    def operation(self, context: Any) -> str:
+        return "rank-candidates"
+
     def validate(self, context: Any) -> list[dict[str, str]]:
         diagnostics = _base_diagnostics(context)
         if not isinstance(context, dict):

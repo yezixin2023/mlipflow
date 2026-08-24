@@ -278,6 +278,9 @@ def _load_composition_contract(
 class Adapter:
     """Plan a user generator and verify its immutable structure manifest."""
 
+    def operation(self, context: Any) -> str:
+        return "generate-sqs"
+
     def validate(self, context: Any) -> list[dict[str, str]]:
         diagnostics = _context_diagnostics(context)
         if not isinstance(context, dict):

@@ -435,6 +435,9 @@ def _check_restart(context: dict[str, Any]) -> list[dict[str, str]]:
 
 
 class Adapter:
+    def operation(self, context: Any) -> str:
+        return base._operation(context)
+
     def validate(self, context: Any) -> list[dict[str, str]]:
         if not isinstance(context, dict):
             return base.Adapter().validate(context)

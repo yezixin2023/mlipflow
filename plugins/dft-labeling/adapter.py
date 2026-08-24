@@ -2797,6 +2797,9 @@ def _collect_dataset_assembly(
 class Adapter:
     """Plan one reviewed operation and verify its standardized result."""
 
+    def operation(self, context: Any) -> str:
+        return _operation(context)
+
     def validate(self, context: Any) -> list[dict[str, str]]:
         if not isinstance(context, Mapping):
             return _base_diagnostics(context)

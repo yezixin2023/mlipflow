@@ -56,11 +56,24 @@ or coordinate convention.
 
 ## Apply approval and execution boundaries
 
-Before any expensive fresh execution, show the stage, verified inputs, expected
-artifacts, backend/resources, cost class, and approval requirement. Follow the existing
-MLIPFlow dry-run/boolean-approval lifecycle; do not auto-submit, enlarge resources, convert smoke
-settings into production settings, or rerun existing expensive evidence without
-explicit intent.
+Use the current node dry-run's effective `approval_required` value. Approval is required
+for SSH-SLURM submission and for local operations declared expensive by the capability;
+ordinary local analysis, preparation, selection, checking, normalization, replay, and
+post-processing continue without an approval stop. Scientific validation remains
+independent: missing parameters still block or fail and must never be guessed.
+
+Before approval-required execution, show the stage, verified inputs, expected artifacts,
+backend/resources, cost class, and approval requirement. Follow the MLIPFlow
+dry-run/boolean-approval lifecycle; do not auto-submit, enlarge resources, convert smoke
+settings into production settings, or rerun existing expensive evidence without explicit
+intent. One explicitly reviewed batch of expensive nodes may receive one user approval;
+execute only those reviewed nodes with `--approve` internally. Do not create or imply a
+persistent batch-approval mechanism; there is no persistent batch approval.
+
+After an approved expensive stage reaches final `OK`, continue eligible local deterministic
+check, collect, normalization, transport/Arrhenius analysis, active-learning assessment, and
+ranking without asking again. Request new approval only for a new expensive or scheduled
+execution that was not part of the reviewed batch.
 
 Declare only abstract `backend`, `cpus`, `gpus`, `memory`, and `walltime` when supported
 by the selected plugin. Never guess site-owned SSH hosts, partitions, accounts, modules,

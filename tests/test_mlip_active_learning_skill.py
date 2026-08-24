@@ -79,6 +79,9 @@ def test_skill_preserves_strategy_math_decision_and_approval_boundaries():
     assert "`BUDGET_EXHAUSTED` is never convergence" in text
     assert "PES_ACTIVE_LEARNING_CONVERGENCE" in text
     assert "TRANSPORT_CONVERGENCE" in text
+    assert "Local `committee-evaluate`, `select-candidates`, and" in text
+    assert "`assess-round` have `approval_required: false`" in text
+    assert "SSH-SLURM `committee-evaluate` requires approval" in text
     assert "marginal-gain" not in text
     assert "marginal gain" not in text
 

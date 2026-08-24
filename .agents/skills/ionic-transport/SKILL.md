@@ -14,6 +14,12 @@ The plugin is local-only and has two formal operations:
 - `analyze-existing` analyzes existing trajectory or MSD evidence. When the node depends on completed AIMD `dft-labeling`, `ase-md`, or `lammps-md` nodes, core supplies their collected artifacts automatically; `inputs.input_paths` remains available for historical standalone files and explicit mixed-source selection. Never request an external `analysis_script`.
 - `md-smoke-and-analyze` is a tightly bounded local integration test. It invokes an explicitly supplied local ASE-MD source, then sends its tiny trajectories through the same packaged analysis runner and checker used by `analyze-existing`.
 
+Both local operations have `approval_required: false`. Inspect the dry-run and continue
+without asking for `--approve`, including multi-temperature Arrhenius fitting and the
+bounded smoke handoff. Approval removal does not relax the scientific contract: missing
+species, temperatures, timestep sources, units, fitting windows, or required dependencies
+still block or fail through Adapter validation.
+
 `analyze-existing` can also request one bounded AIMD-versus-MLIP partial RDF
 comparison while it analyzes the same trajectories. Require an explicit atom pair,
 radial range, bin count, common temperature when more than one is available, trajectory
@@ -37,7 +43,16 @@ multi-temperature D -> fit_arrhenius(..., mode="linear")
 
 Do not ask MLIPFlow to refit `analyzer.msd`, reconstruct the analyzer time axis, clone pymatgen's weighted fit, recompute Nernst-Einstein conductivity, or silently fall back to NumPy/MLIPFlow formulas. Formal mode requires the `transport` extra in the same local Python interpreter that runs MLIPFlow. A missing dependency is a blocking error with `pip install 'mlipflow[transport]'`; it must not affect core import or the isolated historical wrapper.
 
-Do not expand this Skill to Green-Kubo, custom anisotropic analysis, piecewise Arrhenius models, bootstrap uncertainty, or replica aggregation. `piecewise` must be `never`. A trajectory Haven ratio is an analyzer result, not an Agent-selected correction.
+Do not expand this Skill to Green-Kubo, custom anisotropic analysis, multiple-breakpoint
+models, bootstrap uncertainty, or replica aggregation. The bounded Arrhenius contract
+always retains the global pymatgen linear fit and may evaluate at most one breakpoint
+between adjacent sampled temperatures. Each branch must contain at least three points
+and is fitted with the same `fit_arrhenius(..., mode="linear")` API. `piecewise=auto`
+selects the two-branch result only when both the declared BIC improvement and relative
+activation-energy-change thresholds pass; `piecewise=always` exposes and selects the
+best valid two-branch fit even when that automatic evidence is weak, and must say that
+the selection was forced. A trajectory Haven ratio is an analyzer result, not an
+Agent-selected correction.
 
 Do not request formal `charge`, `dimensions`, `haven_ratio`, `drift_correction`, or `msd_mode` inputs. They do not control the pymatgen formal calculation and are not part of the formal contract. Optional `fit_start_ps`/`fit_end_ps` bounds apply only to an MSD table; trajectory analysis uses `DiffusionAnalyzer` over the selected trajectory frames.
 
@@ -102,7 +117,9 @@ The analysis manifest binds the declared parameters, runtime versions, and scien
 - trajectory: rebuild Structure frames and rerun `DiffusionAnalyzer`;
 - MSD-only: rerun `get_diffusivity_from_msd`;
 - MSD + Structure conductivity: rerun `get_conversion_factor`;
-- Arrhenius: rerun `fit_arrhenius(..., mode="linear")`.
+- Arrhenius: rerun the global `fit_arrhenius(..., mode="linear")` baseline and the same
+  declared zero-or-one-breakpoint enumeration, branch fits, BIC comparison, selection,
+  and target-regime prediction.
 
 The checker compares saved values and time/MSD artifacts with those reruns; it must not independently reimplement pymatgen mathematics.
 
@@ -115,5 +132,15 @@ Use `md-smoke-and-analyze` only to test the local handoff from an explicit ASE-M
 The smoke requires an explicit seed, but that seed covers only the documented NumPy velocity path. Do not claim framework or GPU bitwise determinism. Network-prone default model loading remains forbidden for MACE, CHGNet, M3GNet, and MatGL; use an explicit local model. EMT/LJ may use only the explicit `default` marker.
 
 ## Interpretation
+
+`ARRHENIUS_REGIME_CHANGE_DETECTED` means only that the bounded two-branch transport
+model passed the declared numerical evidence thresholds. Report the breakpoint as the
+interval between adjacent sampled temperatures, never as an exact transition
+temperature. It does not establish a physical phase transition; any phase-transition
+claim requires independent structural evidence. When a piecewise model is selected,
+use only the low-temperature branch below the breakpoint interval and only the
+high-temperature branch above it. A target inside the interval is ambiguous and must
+not receive a silently chosen Arrhenius branch. Keep directly simulated target
+conductivity separate from an Arrhenius prediction.
 
 `OK` means the declared files, parameters, pymatgen execution, provenance, and schemas are internally consistent. It does not establish equilibration, a diffusive regime, finite-size convergence, sufficient sampling, independent replicas, model accuracy, Nernst-Einstein validity in a correlated conductor, or safe long-range Arrhenius extrapolation. Historical numerical parity remains legacy reproduction only and is not evidence that a new formal pymatgen analysis must match old script conventions.

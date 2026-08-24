@@ -75,16 +75,17 @@ The Adapter checks each output seed against that order. A user-supplied generato
 not choose, shuffle, or merely self-report unrelated seeds. A seed is reproducibility
 provenance, not evidence of sampling convergence or optimality.
 
-## Candidate limit and approval
+## Candidate limit and execution
 
 `max_candidates` is a positive hard cap. The manifest candidate count must not exceed
 it, and output must cover exactly the approved ordered candidates—no missing, extra, or
 duplicate IDs. Do not use the cap as permission to truncate silently.
 
-The plugin is local-only and marked expensive. Review `run --dry-run`, including exact
-candidate count, parameters, local runtime/resources, generator path/version, fresh output
-locations, and staged argv. Start generation only after the user confirms with
-`--approve`. Keep retries in fresh attempts and retain earlier evidence.
+The plugin is local-only, and ordinary `generate-sqs` is not approval-gated. Review
+`run --dry-run`, including exact candidate count, parameters, local runtime/resources,
+generator path/version, fresh output locations, and staged argv, then run without
+`--approve`. The candidate cap and all scientific validation remain mandatory. Keep
+retries in fresh attempts and retain earlier evidence.
 
 ## Generator and execution boundary
 

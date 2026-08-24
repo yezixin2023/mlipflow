@@ -182,6 +182,9 @@ their separate rank-count semantics.
 
 Before submission, show calculator/model path, source-structure path, any supercell repeat and strict initial-cell bound, ensemble, temperature, timestep, total target duration, current segment start/remaining steps, frame/thermo record counts, checkpoint policy, device, resources, template family, and expected outputs. For NVT also show friction. For NPT also show target pressure, both damping times, stress requirement, isotropic cell mode, no-constraints requirement, and fixed MTK chain configuration.
 
+The `run` operation is expensive and requires approval. Every supported ASE-MD run is
+also SSH-SLURM, so review the dry-run and obtain approval before submission.
+
 A Slurm `COMPLETED` state is not scientific success. After completion, ordinary `advance` performs bounded fetch and invokes the scientific checker. The checker must verify:
 
 - completed global steps equal the original requested total;

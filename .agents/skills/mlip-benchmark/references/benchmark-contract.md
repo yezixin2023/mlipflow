@@ -19,6 +19,12 @@ the model.
 Legacy `evaluate-static` and `collect-existing` remain compatible operations,
 but prefer the three explicit modes above for new benchmark supervision.
 
+Operation-level approval follows execution semantics: `evaluate-fresh` requires
+approval, while local `normalize-execute`, `normalize-replay`, and compatibility
+metric-only paths do not. Any SSH-SLURM execution requires approval. This boundary does
+not supply missing units, conventions, splits, models, or datasets; Adapter validation
+still blocks those scientific gaps.
+
 ## Catalog and model selection
 
 Read the current exact-family catalog, aliases, and framework mapping from

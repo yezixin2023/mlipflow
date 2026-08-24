@@ -126,7 +126,7 @@ workflow:
         fit_scope: dataset
         target_temperature_k: 600
         piecewise: never
-        min_segment_points: 2
+        min_segment_points: 3
         piecewise_slope_change: 0.35
         piecewise_bic_delta: 2.0
         rdf_pair: [Li, S]
@@ -183,7 +183,7 @@ workflow:
         fit_scope: dataset
         target_temperature_k: 600
         piecewise: never
-        min_segment_points: 2
+        min_segment_points: 3
         piecewise_slope_change: 0.35
         piecewise_bic_delta: 2.0
         rdf_pair: [Li, S]

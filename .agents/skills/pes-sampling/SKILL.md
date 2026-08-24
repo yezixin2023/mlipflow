@@ -24,6 +24,13 @@ SSW, or infer undocumented LASP inputs in this Skill.
 Do not describe DIRECT as LASP, an archive replay as a new LASP calculation, or any of
 these operations as DFT labeling, AIMD, MLIP-MD, or model training.
 
+Operation-level approval is explicit. Local `direct-select`, `lasp-input-prepare`,
+`merge-structures`, and `lasp-ssw-normalize-replay` have
+`approval_required: false`; inspect their dry-runs and continue without an approval
+stop. `lasp-ssw-execute` requires approval for fresh LASP execution, and every
+SSH-SLURM execution requires approval independently. Missing or ambiguous scientific
+inputs still block and must never be guessed.
+
 ## Inspect before planning
 
 Run only MLIPFlow read-only inspection/status commands until the scientific inputs and
@@ -171,6 +178,7 @@ MPI is optional locally. If used, require an ordinary executable path whose base
 `mpirun` or `mpiexec` and a positive `mpi_processes`; do not accept either without the
 other. The wrapper stages declared inputs into a fresh `raw-run`, invokes argv
 with `shell: false`, and keeps an `INCOMPLETE.json` marker until normalization finishes.
+Review and approve this fresh numerical execution before launching it.
 
 ## Scheduled `lasp-ssw-execute`
 

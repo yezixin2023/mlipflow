@@ -29,7 +29,7 @@ SQLite does not copy workflow nodes or dependency edges. It has no artifact inde
 
 ## Built-in capabilities
 
-`src/mlipflow/plugins.py` contains a literal `BUILTIN_CAPABILITIES` mapping. Core uses only the adapter filename, supported execution backends, operation names, approval requirement, and a short description.
+`src/mlipflow/plugins.py` contains a literal `BUILTIN_CAPABILITIES` mapping. Core uses only the adapter filename, supported execution backends, operation names, approval-operation list, and a short description.
 
 There is no filesystem discovery, manifest loading, semantic-version selection, plugin API version, or user-supplied plugin path. A project names a capability directly:
 
@@ -51,8 +51,9 @@ The current IDs are:
 - `mlip-training`
 - `pes-sampling`
 
-Adapters remain ordinary Python implementations with four lifecycle methods where the execution path needs them:
+Adapters remain ordinary Python implementations with one operation resolver and four lifecycle methods where the execution path needs them:
 
+- `operation(context)` resolves the current operation with the same defaults used by the adapter;
 - `validate(context)` checks scientific inputs and prerequisites;
 - `plan(context)` describes the concrete local or scheduled action;
 - `check(context)` decides whether the scientific computation completed successfully;
@@ -66,7 +67,13 @@ The read-only commands are `list`, `status`, `json`, `inspect`, `logs`, `route`,
 
 The mutating commands are `init`, `run`, `advance`, `retry`, and `stop`.
 
-`run NODE --dry-run` builds the concrete plan without creating an attempt directory. Expensive capabilities and every SSH-Slurm submission require a later explicit `run NODE --approve`. The plan contains real paths for the current controller checkout; plans are not designed to move between machines or relocated projects.
+`run NODE --dry-run` builds the concrete plan without creating an attempt directory and exposes the effective `approval_required` value. Replay is never gated. Every SSH-Slurm execution is gated, as is each local operation listed in the capability's `approval_operations`; other local operations run without `--approve`. `inspect` reports the node-level effective value and the capability's approval-operation list rather than a misleading capability-wide boolean. The plan contains real paths for the current controller checkout; plans are not designed to move between machines or relocated projects.
+
+Approval is intentionally not persistent batch state. An agent may obtain one user
+approval for one explicitly reviewed batch and pass `--approve` for those nodes, but a
+new expensive or scheduled node requires a new review. Check/collect, scheduler
+observation, normalization, analysis, assessment, and ranking continue without another
+approval. Scientific validation remains separate and may still block any operation.
 
 ## Minimal state
 

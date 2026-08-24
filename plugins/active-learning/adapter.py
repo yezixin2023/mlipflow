@@ -402,6 +402,9 @@ def _operation(context: Any) -> str:
 class Adapter:
     """Plan the local runner and independently reproduce every result in check."""
 
+    def operation(self, context: Any) -> str:
+        return _operation(context)
+
     def validate(self, context: Any) -> list[dict[str, str]]:
         diagnostics: list[dict[str, str]] = []
         if not isinstance(context, Mapping):

@@ -11,7 +11,12 @@ from .plugins import capability
 
 
 def node_plan(
-    project: Project, node: dict[str, Any], capability_id: str, *, attempt: int
+    project: Project,
+    node: dict[str, Any],
+    capability_id: str,
+    *,
+    attempt: int,
+    operation: str | None,
 ) -> dict[str, Any]:
     spec = capability(capability_id)
     mode = node.get("mode", "execute")
@@ -20,10 +25,11 @@ def node_plan(
         raise CapabilityError(
             f"capability {capability_id} does not support execution on backend {backend}"
         )
+    requires_approval = approval_required(node, spec, operation)
     warnings: list[str] = []
-    if spec["approval_required"]:
+    if requires_approval and backend != "ssh-slurm":
         warnings.append("This plan may consume substantial compute allocation.")
-    if backend == "ssh-slurm":
+    if mode == "execute" and backend == "ssh-slurm":
         warnings.append("Approval will submit a scheduler job.")
     if mode == "replay":
         warnings.append("Replay only parses and references existing artifacts; it must not run numerics.")
@@ -33,24 +39,26 @@ def node_plan(
         "node_id": node["id"],
         "attempt": attempt,
         "capability": capability_id,
+        "operation": operation,
         "mode": mode,
         "backend": backend,
         "backend_profile": node.get("backend_profile"),
         "inputs": node.get("inputs", {}),
         "parameters": node.get("parameters", {}),
         "resources": node.get("resources", {}),
-        "approval_required": _approval_required(node, spec),
+        "approval_required": requires_approval,
         "warnings": warnings,
     }
 
 
-def _approval_required(node: dict[str, Any], spec: dict[str, Any]) -> bool:
+def approval_required(
+    node: dict[str, Any], spec: dict[str, Any], operation: str | None
+) -> bool:
     if node.get("mode", "execute") != "execute":
         return False
-    return bool(
-        spec["approval_required"]
-        or node.get("backend", "local") == "ssh-slurm"
-    )
+    if node.get("backend", "local") == "ssh-slurm":
+        return True
+    return operation in spec["approval_operations"]
 
 
 def action_plan(action: str, project: Project, node_id: str | None, details: Any) -> dict[str, Any]:

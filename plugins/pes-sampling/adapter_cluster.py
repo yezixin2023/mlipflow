@@ -698,6 +698,9 @@ class Adapter:
     def __init__(self) -> None:
         self._local = LEGACY.Adapter()
 
+    def operation(self, context: dict[str, Any]) -> str:
+        return _operation(context)
+
     def validate(self, context: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(context, Mapping) and context.get("backend") == "ssh-slurm":
             return _validate_scheduled(context)

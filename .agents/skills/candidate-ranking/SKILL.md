@@ -30,9 +30,10 @@ metric is invalid under either policy; never impute a value.
 Use only read-only MLIPFlow commands while establishing the node and input
 contract. Inspect the `candidate-ranking` node and confirm operation
 `rank-candidates`, backend `local`, both manifest paths, the metric rule, and the
-result path. Then use MLIPFlow's ordinary dry-run/approval lifecycle when the
-planned command requires approval; never invoke `rank.py` as a substitute for the
-plugin lifecycle.
+result path. `rank-candidates` has `approval_required: false`: inspect the dry-run,
+then run it without an approval stop. Never invoke `rank.py` as a substitute for the
+plugin lifecycle, and never guess a missing metric, direction, top-k, or missing-value
+policy.
 
 After execution or replay, require plugin `status: OK`. Report the requested rule,
 input/evaluated/missing counts, and returned top-k values. The deterministic tie

@@ -817,14 +817,6 @@ def _validate_md_smoke(
             diagnostics.append(
                 _diagnostic("ERROR", "parameter.%s" % name, "%s must be one of %s" % (name, sorted(allowed)))
             )
-    if parameters.get("piecewise") != "never":
-        diagnostics.append(
-            _diagnostic(
-                "ERROR",
-                "parameter.piecewise_unsupported",
-                "the smoke reuses only the formal single-line Arrhenius analysis",
-            )
-        )
     if parameters.get("fit_scope") != "all":
         diagnostics.append(
             _diagnostic(
@@ -846,6 +838,17 @@ def _validate_md_smoke(
     ) < 3:
         diagnostics.append(
             _diagnostic("ERROR", "parameter.min_msd_fit_points", "min_msd_fit_points must be >= 3")
+        )
+    if (
+        not _positive_int(parameters.get("min_segment_points"))
+        or int(parameters.get("min_segment_points", 0)) < 3
+    ):
+        diagnostics.append(
+            _diagnostic(
+                "ERROR",
+                "parameter.min_segment_points",
+                "min_segment_points must be an integer >= 3",
+            )
         )
     for name in ("piecewise_slope_change", "piecewise_bic_delta"):
         value = parameters.get(name)
@@ -2191,6 +2194,11 @@ def _verify_analysis_manifest(
         or contract.get("trajectory_diffusion") != "DiffusionAnalyzer"
         or contract.get("msd_only_diffusion") != "get_diffusivity_from_msd"
         or contract.get("arrhenius") != "fit_arrhenius(mode='linear')"
+        or contract.get("arrhenius_model_selection")
+        != (
+            "single baseline plus at most one adjacent-temperature breakpoint by BIC "
+            "and relative activation-energy change"
+        )
         or contract.get("historical_implementation")
         != "separate adapter-only legacy reproduction"
     ):
@@ -2604,64 +2612,60 @@ def _verify_aimd_mlip_comparison(
     return []
 
 
-def _verify_arrhenius_summary(summary: Mapping[str, Any]) -> List[Dict[str, str]]:
-    diagnostics: List[Dict[str, str]] = []
-    candidates: List[Tuple[str, Mapping[str, Any]]] = []
-    if isinstance(summary.get("single"), Mapping):
-        candidates.append(("all", summary))
-    datasets = summary.get("datasets")
-    if isinstance(datasets, Mapping):
-        candidates.extend(
-            (str(name), value) for name, value in datasets.items() if isinstance(value, Mapping)
+def _verify_arrhenius_summary(
+    output_dir: Path,
+    rows: Sequence[Mapping[str, str]],
+    summary: Mapping[str, Any],
+) -> List[Dict[str, str]]:
+    try:
+        manifest = json.loads(
+            (output_dir / "analysis_manifest.json").read_text(encoding="utf-8")
         )
-    for label, candidate in candidates:
-        try:
-            from pymatgen.analysis.diffusion.analyzer import (
-                fit_arrhenius,
-                get_extrapolated_diffusivity,
+        runner = _load_formal_runner()
+        args = argparse.Namespace(**_mapping(manifest.get("parameters")))
+        results_df = runner.pd.DataFrame([dict(row) for row in rows])
+        for name in (
+            "temperature_K",
+            "diffusivity_cm2_s",
+            "conductivity_NE_mS_cm",
+        ):
+            if name in results_df:
+                results_df[name] = runner.pd.to_numeric(results_df[name], errors="coerce")
+        expected = runner.build_arrhenius_summary(results_df, args)
+        if not _same_scientific_value(summary, runner.json_ready(expected)):
+            raise ValueError(
+                "saved single/piecewise Arrhenius evidence differs from the declared rerun"
             )
-
-            temperatures = [float(value) for value in candidate["fit_temperatures_K"]]
-            diffusivities = [float(value) for value in candidate["fit_diffusivities_cm2_s"]]
-            target = float(candidate["target_temperature_K"])
-            ea_eV, prefactor, ea_std = fit_arrhenius(
-                temperatures, diffusivities, mode="linear"
+    except (
+        AttributeError,
+        ImportError,
+        KeyError,
+        OSError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        return [
+            _diagnostic(
+                "ERROR",
+                "result.arrhenius_relation",
+                f"Arrhenius summary rerun failed: {exc}",
             )
-            target_diffusivity = get_extrapolated_diffusivity(
-                temperatures, diffusivities, target, mode="linear"
-            )
-            single = _mapping(candidate["single"])
-            expected = {
-                "Ea_eV": ea_eV,
-                "D0_cm2_s": prefactor,
-                f"D_{target:g}K_cm2_s": target_diffusivity,
-            }
-            for name, value in expected.items():
-                if not _finite_number(single.get(name)) or not _numbers_close(
-                    float(single[name]), float(value)
-                ):
-                    raise ValueError(f"{name} differs from the temperature rows")
-            actual_std = single.get("Ea_stderr_eV")
-            if ea_std is None:
-                if actual_std is not None:
-                    raise ValueError("Ea_stderr_eV must be null")
-            elif not _finite_number(actual_std) or not _numbers_close(
-                float(actual_std), float(ea_std)
-            ):
-                raise ValueError("Ea_stderr_eV differs from pymatgen")
-            if candidate.get("arrhenius_method") != "pymatgen-fit-arrhenius-linear":
-                raise ValueError("Arrhenius method is invalid")
-        except (ImportError, KeyError, TypeError, ValueError) as exc:
-            diagnostics.append(
-                _diagnostic(
-                    "ERROR", "result.arrhenius_relation", f"Arrhenius summary {label} failed: {exc}"
-                )
-            )
-    return diagnostics
+        ]
+    return []
 
 
 class Adapter:
     """Plan and collect reviewed analysis or its bounded local MD smoke handoff."""
+
+    def operation(self, context: Any) -> str:
+        parameters = (
+            _mapping(context.get("parameters"))
+            if isinstance(context, Mapping)
+            else {}
+        )
+        return _operation_name(parameters)
 
     def validate(self, context: Any) -> List[Dict[str, str]]:
         diagnostics: List[Dict[str, str]] = []
@@ -2935,12 +2939,15 @@ class Adapter:
                         "%s must be one of %s" % (name, sorted(allowed)),
                     )
                 )
-        if parameters.get("piecewise") != "never":
+        if (
+            not _positive_int(parameters.get("min_segment_points"))
+            or int(parameters.get("min_segment_points", 0)) < 3
+        ):
             diagnostics.append(
                 _diagnostic(
                     "ERROR",
-                    "parameter.piecewise_unsupported",
-                    "the formal workflow supports only the declared single-line Arrhenius fit",
+                    "parameter.min_segment_points",
+                    "min_segment_points must be an integer >= 3",
                 )
             )
 
@@ -3551,7 +3558,9 @@ class Adapter:
                 )
             )
             diagnostics.extend(_verify_transport_rows(rows, output_dir))
-            diagnostics.extend(_verify_arrhenius_summary(summary))
+            diagnostics.extend(
+                _verify_arrhenius_summary(output_dir, rows, summary)
+            )
             diagnostics.extend(
                 _verify_aimd_mlip_comparison(
                     context, output_dir, rows, summary

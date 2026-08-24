@@ -9,10 +9,10 @@ Use the `dft-labeling` plugin as the deterministic implementation. Do not genera
 
 ## Choose the operation
 
-- Use `vasp-prepare` to generate a fresh VASP input set and `dft-input-manifest.json`. It does not run VASP or submit a job.
+- Use `vasp-prepare` to generate a fresh VASP input set and `dft-input-manifest.json`. It does not run VASP or submit a job, and local preparation does not require approval.
 - Use `label` only after preparation has been reviewed. It is a separate expensive operation requiring explicit approval.
 - After a scheduled `label` reaches final `OK`, require `canonical-labeled-dataset.json` with stable record IDs; do not treat a loose `labels.json` as the reusable training contract.
-- Use `dataset-assemble` on `backend: ssh-slurm` to convert those verified artifacts into any non-empty subset of `deepmd`, `m3gnet`, `chgnet`, and `mace`. This operation does not run VASP or training, but it is still a state-changing scheduled publish and follows dry-run/approval.
+- Use `dataset-assemble` to convert those verified artifacts into any non-empty subset of `deepmd`, `m3gnet`, `chgnet`, and `mace`. Local assembly does not require approval. On `backend: ssh-slurm`, it is a scheduled publish and requires approval under the scheduler rule even though it does not run VASP or training.
 - Never combine preparation and DFT execution into one implied action.
 - Reject legacy `prepare_script` hooks in `label`; prepared inputs must arrive through the reviewed `dft-input-manifest.json` binding.
 
@@ -38,7 +38,7 @@ The optional `manuscript-static-v1` preset is evidence-bound. The SI reports `EN
 
 ## Execute and verify
 
-Before preparation, use MLIPFlow dry-run and show calculation type, structure count, important inputs, pymatgen executable/version expectation, KPOINTS rule, pseudopotential reference, output directory, and that VASP/scheduler execution is false.
+Before preparation, use MLIPFlow dry-run and show calculation type, structure count, important inputs, pymatgen executable/version expectation, KPOINTS rule, pseudopotential reference, output directory, and that VASP/scheduler execution and approval are false. Then run local `vasp-prepare` without an approval stop.
 
 After preparation, accept `OK` only when the checker verifies source/config/reference paths, INCAR semantics, KPOINTS content, structure lineage, POTCAR policy, and every declared file. A missing result is `WAIT`; a mismatch is `FAIL`. Retry into a new attempt.
 
@@ -70,8 +70,10 @@ minimal `split.json` contains only dataset/split IDs, strategy, optional seed,
 partition record IDs, and counts.
 
 For `dataset-assemble`, bind the collected canonical dataset and explicitly review the
-split strategy, seed, and fractions. The selected site's `dft-dataset/run.sh` owns the
-reviewed dpdata/ASE Python and canonical data root. The remote converter:
+split strategy, seed, and fractions. Run local assembly without approval when using the
+local converter. For SSH-SLURM assembly, review and approve the scheduled plan; the
+selected site's `dft-dataset/run.sh` owns the reviewed dpdata/ASE Python and canonical
+data root. The converter:
 
 - uses dpdata and rereads the generated DeepMD directory;
 - emits the exact JSON record fields consumed by the M3GNet/MatGL and CHGNet runners;

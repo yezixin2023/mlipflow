@@ -112,6 +112,9 @@ never overwrite, delete, or manually copy a model to make the handoff work.
 
 Before submission, show the user the framework, operation, config/dataset/foundation-model paths, seed, device, precision, abstract resources, selected backend profile, template family, important staged inputs, expected outputs, and fresh attempt workspace.
 
+Both `train` and `finetune` are expensive operations and require approval for local or
+SSH-SLURM execution. Review the dry-run and obtain approval before launching either.
+
 Scheduler `COMPLETED` is not scientific success. After completion, ordinary `advance` bounded-fetches the run's declared outputs, then runs `check/collect`.
 
 For the generic path, required remote outputs are:

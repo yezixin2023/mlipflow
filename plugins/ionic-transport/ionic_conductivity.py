@@ -2012,6 +2012,171 @@ def plot_single_msd(run: RunData, output_path: Path):
     fig.write_html(output_path, include_plotlyjs="cdn")
 
 
+def _arrhenius_fit_evidence(temperatures, diffusivities, api):
+    """Run the declared pymatgen fit and score its returned Arrhenius parameters."""
+
+    from scipy import constants
+
+    T = np.asarray(temperatures, dtype=float)
+    D = np.asarray(diffusivities, dtype=float)
+    ea_eV, prefactor_cm2_s, ea_std_eV = api["fit_arrhenius"](
+        T, D, mode="linear"
+    )
+    ea_eV = float(ea_eV)
+    prefactor_cm2_s = float(prefactor_cm2_s)
+    if not math.isfinite(ea_eV) or not math.isfinite(prefactor_cm2_s) or prefactor_cm2_s <= 0:
+        raise ValueError("pymatgen returned a non-finite Arrhenius fit")
+    boltzmann_eV_K = constants.k / constants.e
+    predicted_log_diffusivity = np.log(prefactor_cm2_s) - ea_eV / (
+        boltzmann_eV_K * T
+    )
+    residual_sum_squares = float(
+        np.sum((np.log(D) - predicted_log_diffusivity) ** 2)
+    )
+    if not math.isfinite(residual_sum_squares):
+        raise ValueError("Arrhenius log-space residuals are non-finite")
+    return {
+        "Ea_eV": ea_eV,
+        "Ea_stderr_eV": finite_or_none(ea_std_eV),
+        "D0_cm2_s": prefactor_cm2_s,
+        "residual_sum_squares_log_D": residual_sum_squares,
+    }
+
+
+def _arrhenius_bic(point_count: int, residual_sum_squares: float, parameter_count: int):
+    bounded_rss = max(
+        float(residual_sum_squares), point_count * np.finfo(float).eps
+    )
+    return float(
+        point_count * math.log(bounded_rss / point_count)
+        + parameter_count * math.log(point_count)
+    )
+
+
+def _piecewise_arrhenius_evidence(T, D, args, api, single_bic):
+    """Return the best valid one-breakpoint model without implementing another fit."""
+
+    minimum = int(args.min_segment_points)
+    if T.size < 2 * minimum:
+        return None, "insufficient_temperature_points"
+
+    best = None
+    for split in range(minimum, T.size - minimum + 1):
+        if not T[split - 1] < T[split]:
+            continue
+        try:
+            low = _arrhenius_fit_evidence(T[:split], D[:split], api)
+            high = _arrhenius_fit_evidence(T[split:], D[split:], api)
+        except (TypeError, ValueError):
+            continue
+        combined_rss = (
+            low["residual_sum_squares_log_D"]
+            + high["residual_sum_squares_log_D"]
+        )
+        bic = _arrhenius_bic(T.size, combined_rss, 4)
+        relative_ea_change = abs(low["Ea_eV"] - high["Ea_eV"]) / max(
+            0.5 * (abs(low["Ea_eV"]) + abs(high["Ea_eV"])),
+            np.finfo(float).tiny,
+        )
+        candidate = {
+            "breakpoint_interval_K": [float(T[split - 1]), float(T[split])],
+            "diagnostic_midpoint_K": float((T[split - 1] + T[split]) / 2.0),
+            "low_temperature": {
+                **low,
+                "temperature_range_K": [float(T[0]), float(T[split - 1])],
+                "temperatures_K": T[:split].tolist(),
+                "diffusivities_cm2_s": D[:split].tolist(),
+            },
+            "high_temperature": {
+                **high,
+                "temperature_range_K": [float(T[split]), float(T[-1])],
+                "temperatures_K": T[split:].tolist(),
+                "diffusivities_cm2_s": D[split:].tolist(),
+            },
+            "BIC": bic,
+            "BIC_parameter_count": 4,
+            "residual_sum_squares_log_D": float(combined_rss),
+            "delta_BIC": float(single_bic - bic),
+            "relative_Ea_change": float(relative_ea_change),
+        }
+        candidate["BIC_threshold_met"] = (
+            candidate["delta_BIC"] >= float(args.piecewise_bic_delta)
+        )
+        candidate["slope_change_threshold_met"] = (
+            candidate["relative_Ea_change"] >= float(args.piecewise_slope_change)
+        )
+        candidate["automatic_selection_evidence"] = (
+            candidate["BIC_threshold_met"]
+            and candidate["slope_change_threshold_met"]
+        )
+        if best is None or candidate["BIC"] < best["BIC"]:
+            best = candidate
+
+    return best, "evaluated" if best is not None else "no_valid_breakpoint"
+
+
+def _direct_target_evidence(results_df: pd.DataFrame, target_temperature_K: float):
+    target_rows = results_df.loc[
+        np.isclose(
+            results_df["temperature_K"].to_numpy(dtype=float),
+            float(target_temperature_K),
+            rtol=0.0,
+            atol=1.0e-8,
+        )
+    ]
+    if len(target_rows) != 1:
+        return {
+            "available": False,
+            "reason": (
+                "not_simulated_at_target_temperature"
+                if target_rows.empty
+                else "multiple_rows_at_target_temperature"
+            ),
+        }
+    row = target_rows.iloc[0]
+    return {
+        "available": True,
+        "diffusivity_cm2_s": finite_or_none(row.get("diffusivity_cm2_s")),
+        "conductivity_mS_cm": finite_or_none(row.get("conductivity_NE_mS_cm")),
+    }
+
+
+def _selected_target_prediction(T, D, target_temperature_K, selected_model, piecewise, api):
+    target = float(target_temperature_K)
+    if selected_model == "single":
+        return {
+            "status": "available",
+            "regime": "single",
+            "diffusivity_cm2_s": float(
+                api["get_extrapolated_diffusivity"](T, D, target, mode="linear")
+            ),
+        }
+
+    interval_low, interval_high = piecewise["breakpoint_interval_K"]
+    if interval_low < target < interval_high:
+        return {
+            "status": "ambiguous",
+            "regime": "ambiguous",
+            "diffusivity_cm2_s": None,
+            "reason": "target_temperature_inside_breakpoint_interval",
+        }
+    branch_name = "low_temperature" if target <= interval_low else "high_temperature"
+    branch = piecewise[branch_name]
+    return {
+        "status": "available",
+        "regime": branch_name,
+        "diffusivity_cm2_s": float(
+            api["get_extrapolated_diffusivity"](
+                branch["temperatures_K"],
+                branch["diffusivities_cm2_s"],
+                target,
+                mode="linear",
+            )
+        ),
+        "fit_temperature_range_K": branch["temperature_range_K"],
+    }
+
+
 def summarize_arrhenius_one(results_df: pd.DataFrame, args):
     temperatures = results_df["temperature_K"].to_numpy(dtype=float)
     diffusivities = results_df["diffusivity_cm2_s"].to_numpy(dtype=float)
@@ -2024,40 +2189,69 @@ def summarize_arrhenius_one(results_df: pd.DataFrame, args):
     if exclude_temps:
         valid &= ~is_close_to_any(temperatures, exclude_temps)
 
-    T = temperatures[valid]
-    D = diffusivities[valid]
+    fit_row_indices = np.flatnonzero(valid)
+    order = np.argsort(temperatures[valid], kind="stable")
+    T = temperatures[valid][order]
+    D = diffusivities[valid][order]
+    fit_row_indices = fit_row_indices[order]
     if T.size < 2:
         raise ValueError("Need at least two positive diffusivity values for Arrhenius fit")
+    if int(args.min_segment_points) < 3:
+        raise ValueError("min_segment_points must be at least 3")
 
     api = require_formal_diffusion_api()
-    ea_eV, prefactor_cm2_s, ea_std_eV = api["fit_arrhenius"](
-        T, D, mode="linear"
+    single = _arrhenius_fit_evidence(T, D, api)
+    single["BIC"] = _arrhenius_bic(
+        T.size, single["residual_sum_squares_log_D"], 2
     )
+    single["BIC_parameter_count"] = 2
     target_diffusivity = api["get_extrapolated_diffusivity"](
         T, D, float(args.target_temperature_K), mode="linear"
     )
+    single[f"D_{args.target_temperature_K:g}K_cm2_s"] = float(target_diffusivity)
 
-    single = {
-        "Ea_eV": float(ea_eV),
-        "Ea_stderr_eV": finite_or_none(ea_std_eV),
-        "D0_cm2_s": float(prefactor_cm2_s),
-        f"D_{args.target_temperature_K:g}K_cm2_s": float(target_diffusivity),
-    }
-    target_rows = results_df.loc[
-        np.isclose(
-            results_df["temperature_K"].to_numpy(dtype=float),
-            float(args.target_temperature_K),
-            rtol=0.0,
-            atol=1.0e-8,
+    piecewise = None
+    piecewise_status = "disabled"
+    if args.piecewise != "never":
+        piecewise, piecewise_status = _piecewise_arrhenius_evidence(
+            T, D, args, api, single["BIC"]
         )
-    ]
-    target_conductivity = [
-        finite_or_none(value)
-        for value in target_rows["conductivity_NE_mS_cm"].tolist()
-    ]
-    target_conductivity = [value for value in target_conductivity if value is not None]
-    if len(target_conductivity) == 1:
-        single[f"conductivity_{args.target_temperature_K:g}K_mS_cm"] = target_conductivity[0]
+
+    evidence_detected = bool(
+        piecewise is not None and piecewise["automatic_selection_evidence"]
+    )
+    if piecewise is not None and (
+        args.piecewise == "always" or evidence_detected
+    ):
+        selected_model = "piecewise"
+    else:
+        selected_model = "single"
+
+    if args.piecewise == "never":
+        selection_reason = "piecewise_disabled"
+    elif piecewise is None:
+        selection_reason = "insufficient_breakpoint_evidence"
+    elif evidence_detected:
+        selection_reason = "automatic_evidence_thresholds_met"
+    elif args.piecewise == "always":
+        selection_reason = "piecewise_forced_without_automatic_evidence"
+    else:
+        selection_reason = "automatic_evidence_thresholds_not_met"
+
+    target_prediction = {
+        "temperature_K": float(args.target_temperature_K),
+        "arrhenius_prediction": _selected_target_prediction(
+            T,
+            D,
+            args.target_temperature_K,
+            selected_model,
+            piecewise,
+            api,
+        ),
+        "direct_simulation": _direct_target_evidence(
+            results_df, float(args.target_temperature_K)
+        ),
+    }
 
     return {
         "fit_scope": "all",
@@ -2066,9 +2260,35 @@ def summarize_arrhenius_one(results_df: pd.DataFrame, args):
         "target_temperature_K": args.target_temperature_K,
         "fit_temperatures_K": T.tolist(),
         "fit_diffusivities_cm2_s": D.tolist(),
-        "fit_row_indices": np.flatnonzero(valid).astype(int).tolist(),
+        "fit_row_indices": fit_row_indices.astype(int).tolist(),
         "arrhenius_method": "pymatgen-fit-arrhenius-linear",
+        "piecewise_mode": args.piecewise,
+        "min_segment_points": int(args.min_segment_points),
+        "piecewise_slope_change_threshold": float(args.piecewise_slope_change),
+        "piecewise_BIC_delta_threshold": float(args.piecewise_bic_delta),
+        "BIC_definition": (
+            "n*ln(max(RSS_log_D,n*machine_epsilon)/n)+k*ln(n); "
+            "k_single=2, k_piecewise=4"
+        ),
+        "relative_Ea_change_definition": (
+            "abs(Ea_low-Ea_high)/(0.5*(abs(Ea_low)+abs(Ea_high)))"
+        ),
+        "selected_model": selected_model,
+        "selection_reason": selection_reason,
+        "regime_change_detected": evidence_detected,
+        "piecewise_evidence_status": piecewise_status,
+        "interpretation": (
+            "ARRHENIUS_REGIME_CHANGE_DETECTED"
+            if evidence_detected
+            else "NO_REGIME_CHANGE_EVIDENCE"
+        ),
+        "phase_transition_caveat": (
+            "Arrhenius breakpoint evidence diagnoses a transport-regime change only; "
+            "a phase-transition claim requires independent structural evidence."
+        ),
         "single": single,
+        "piecewise": piecewise,
+        "target_prediction": target_prediction,
     }
 
 
@@ -2096,6 +2316,22 @@ def summarize_arrhenius(results_df: pd.DataFrame, args):
         "datasets": summaries,
         "dataset_fit_failures": failures,
     }
+
+
+def build_arrhenius_summary(results_df: pd.DataFrame, args):
+    try:
+        return summarize_arrhenius(results_df, args)
+    except Exception as exc:
+        return {
+            "fit_scope": args.fit_scope,
+            "specie": args.specie,
+            "arrhenius_fit_space": "ln(D_cm2_s) vs 1/T",
+            "target_temperature_K": args.target_temperature_K,
+            "arrhenius_fit_skipped": True,
+            "skip_reason": str(exc),
+            "available_temperatures_K": results_df["temperature_K"].tolist(),
+            "available_diffusivities_cm2_s": results_df["diffusivity_cm2_s"].tolist(),
+        }
 
 
 def _temperature_pairs(
@@ -2575,7 +2811,10 @@ def build_parser():
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.min_segment_points < 3:
+        parser.error("--min-segment-points must be at least 3")
     input_paths = args.input if args.input else default_inputs()
     output_dir = args.output.resolve()
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -2612,19 +2851,7 @@ def main(argv: list[str] | None = None) -> int:
     results_path = output_dir / "diffusion_results_by_temperature.csv"
     results_df.to_csv(results_path, index=False)
 
-    try:
-        summary = summarize_arrhenius(results_df, args)
-    except Exception as exc:
-        summary = {
-            "fit_scope": args.fit_scope,
-            "specie": args.specie,
-            "arrhenius_fit_space": "ln(D_cm2_s) vs 1/T",
-            "target_temperature_K": args.target_temperature_K,
-            "arrhenius_fit_skipped": True,
-            "skip_reason": str(exc),
-            "available_temperatures_K": results_df["temperature_K"].tolist(),
-            "available_diffusivities_cm2_s": results_df["diffusivity_cm2_s"].tolist(),
-        }
+    summary = build_arrhenius_summary(results_df, args)
     summary_path = output_dir / "arrhenius_summary.json"
     summary_path.write_text(json.dumps(json_ready(summary), indent=2))
 
@@ -2676,6 +2903,10 @@ def main(argv: list[str] | None = None) -> int:
             "msd_only_diffusion": "get_diffusivity_from_msd",
             "msd_only_conductivity": "get_conversion_factor when a real Structure exists",
             "arrhenius": "fit_arrhenius(mode='linear')",
+            "arrhenius_model_selection": (
+                "single baseline plus at most one adjacent-temperature breakpoint by BIC "
+                "and relative activation-energy change"
+            ),
             "rdf": "periodic partial pair distribution over the approved trajectory window",
             "historical_implementation": "separate adapter-only legacy reproduction",
         },
@@ -2709,11 +2940,30 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{label}] Arrhenius fit skipped: {fit_summary.get('skip_reason', 'not enough data')}")
             return
         single_fit = fit_summary["single"]
-        print(f"[{label}] pymatgen linear Arrhenius fit: Ea={single_fit['Ea_eV']:.4f} eV")
+        print(f"[{label}] pymatgen single-line baseline: Ea={single_fit['Ea_eV']:.4f} eV")
         print(
-            f"[{label}] D_{args.target_temperature_K:g}K="
+            f"[{label}] single-line D_{args.target_temperature_K:g}K="
             f"{single_fit.get(target_key):.4e} cm^2/s"
         )
+        print(
+            f"[{label}] selected_model={fit_summary['selected_model']} "
+            f"reason={fit_summary['selection_reason']}"
+        )
+        if fit_summary.get("piecewise") is not None:
+            piecewise = fit_summary["piecewise"]
+            print(
+                f"[{label}] breakpoint_interval_K={piecewise['breakpoint_interval_K']} "
+                f"delta_BIC={piecewise['delta_BIC']:.4g} "
+                f"relative_Ea_change={piecewise['relative_Ea_change']:.4g}"
+            )
+        prediction = fit_summary["target_prediction"]["arrhenius_prediction"]
+        if prediction["status"] == "ambiguous":
+            print(
+                f"[{label}] target Arrhenius regime is ambiguous inside the "
+                "breakpoint interval"
+            )
+        if fit_summary["regime_change_detected"]:
+            print(f"[{label}] ARRHENIUS_REGIME_CHANGE_DETECTED")
 
     if summary.get("arrhenius_fit_skipped"):
         print(f"Arrhenius fit skipped: {summary.get('skip_reason')}")

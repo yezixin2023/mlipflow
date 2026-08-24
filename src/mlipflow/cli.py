@@ -175,7 +175,8 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             return plan
         if plan.get("approval_required") is True and not args.approve:
             raise ApprovalError(
-                "this run launches approval-required work; review --dry-run, then use --approve"
+                "approval is required for expensive or scheduled execution; "
+                "review --dry-run, then use --approve"
             )
         return run_node(project, args.node, args.approve, args.site)
     if command == "advance":

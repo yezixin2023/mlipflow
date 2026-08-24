@@ -93,6 +93,20 @@ def test_all_nineteen_natural_language_routes_are_explicit_and_safe() -> None:
             assert fragment in rows[scenario], (scenario, fragment)
 
 
+def test_workflow_uses_effective_operation_and_batch_approval_boundaries() -> None:
+    skill, reference = _skill_text()
+    text = skill + reference
+    for fragment in (
+        "effective `approval_required`",
+        "Every SSH-SLURM execution requires approval",
+        "One explicitly reviewed batch",
+        "no persistent batch approval",
+        "continue eligible local deterministic",
+        "Approval is not scientific validation",
+    ):
+        assert fragment in text
+
+
 def test_all_skill_files_are_declared_for_wheel_packaging() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     section = pyproject.split("[tool.setuptools.data-files]", 1)[1].split("\n[", 1)[0]
