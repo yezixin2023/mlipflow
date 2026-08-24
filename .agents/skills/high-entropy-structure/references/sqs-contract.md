@@ -1,154 +1,56 @@
-# SQS generation contract
+# SQS scientific judgment and historical guidance
 
-Use this reference for detailed, stable scientific and artifact semantics. The current
-`plugins/high-entropy-structure/plugin.yaml`, Adapter, and inspected MLIPFlow plan remain
-authoritative if the implementation evolves.
+Read this reference only when choosing SQS search controls, reviewing a request beyond
+the current one-sublattice model, or interpreting historical/manuscript evidence.
+Ordinary schema validation, seed derivation, generation, and checking belong to the
+inspected plan and Adapter.
 
-## Composition manifest semantics
+## Current scientific scope
 
-The schema-v1 JSON composition manifest declares:
+The current capability replaces every site of one explicitly selected prototype
+species with an allowed replacement species. It does not represent multiple
+independently disordered sublattices, vacancies, interstitial disorder, coupled charge
+disorder, oxidation-state balancing, partial site masks, or automatic composition
+design.
 
-- `alloy_sublattice.prototype_species`: the species marking every currently supported
-  disordered site in the prototype;
-- `alloy_sublattice.allowed_species`: a unique list with at least two entries that
-  includes `prototype_species`;
-- `cluster_cutoffs_angstrom`: non-empty positive finite cluster cutoffs;
-- `supercell_repeat`: exactly three positive integers;
-- `n_steps`: a positive integer search budget;
-- `output_format`: `vasp` or `cif` (default `vasp`);
-- `candidates`: a non-empty ordered list of unique safe IDs and `counts` mappings.
+Do not squeeze those requests into the one-sublattice contract. They need an explicit
+scientific model and a separately reviewed implementation.
 
-Every candidate `counts` mapping must contain exactly the allowed species. Counts are
-non-negative integers; a zero preserves the explicit species contract. Do not accept
-fractions, percentages, inferred stoichiometry, rounded values, omitted allowed species,
-or extra species.
+## Choosing the search
 
-## Current one-sublattice boundary
+Candidate integer counts define the requested compositions and must be preserved.
+Cluster cutoffs, supercell dimensions, search effort, and candidate scope determine the
+scientific search; they are not formatting choices and have no universal correct
+defaults.
 
-The current contract replaces every occurrence of one explicit `prototype_species`.
-It does not express multiple independently disordered sublattices, partial site masks,
-vacancies, interstitial disorder, coupled charge disorder, oxidation-state balancing,
-or automatic site classification. Require another reviewed contract rather than
-pretending these cases fit this one.
+Reuse values only when the user supplied them or a relevant project convention is
+identified and disclosed. A proposed value must be labeled as a proposal requiring
+review. Changing these controls changes the search and may change the resulting
+candidate.
 
-## Site-count rule
+A seed provides reproducible execution under the declared implementation and
+environment. It does not establish sampling convergence or optimality. A changed
+library/runtime may legitimately produce a different candidate without implying that
+either is a globally optimal SQS.
 
-Read the prototype's actual chemical symbols with a reliable structure parser. Let
-`N_prototype` be the number of sites labeled `prototype_species`, and let
-`R = repeat_a * repeat_b * repeat_c`. The alloy-site count is:
+## Historical and replay boundary
 
-```text
-N_alloy = N_prototype * R
-```
+Replay of a standard generation result validates existing inputs and structures without
+running icet or writing new candidates. Describe it as a **structured collection of
+existing results**, not regeneration or independent scientific validation.
 
-For every candidate:
+The historical generator exposed no seed. Therefore a current seeded run can be a
+reproducible new execution but cannot establish historical byte-for-byte parity.
+Missing historical inputs or outputs must remain missing; do not infer them or search
+for a private legacy generator.
 
-```text
-sum(candidate.counts.values()) == N_alloy
-```
+## Claim boundaries
 
-The generated structure's expected full composition is the repeated prototype
-composition with all repeated `prototype_species` sites removed, followed by the exact
-candidate alloy counts. Both the generator and Adapter enforce the contract. Never
-alter candidate counts to make the equality hold.
+- A generated SQS candidate is not proven globally optimal.
+- Deterministic execution is not search-convergence evidence.
+- A bounded integration smoke is not a production-quality SQS search.
+- Adapter `OK` does not establish material performance, thermodynamic stability,
+  synthesis feasibility, or model accuracy.
 
-## SQS parameter policy
-
-`cluster_cutoffs_angstrom`, `supercell_repeat`, and `n_steps` define the scientific
-search. They have no universal correct defaults. Reuse them only when explicitly
-provided by the user or a relevant, trusted, and disclosed project convention. When
-proposing values, label them as a proposal requiring review and explain that changing
-them changes the search—not merely formatting or compute metadata.
-
-`output_format` controls the structure artifact format, not scientific quality.
-
-## Seed policy
-
-Fresh generation requires an explicit non-negative base seed. Candidate order in the
-approved composition manifest is significant. The fixed policy is:
-
-```text
-candidate_random_seed = base_seed + zero_based_candidate_index
-```
-
-The Adapter checks each output seed against that order. A user-supplied generator may
-not choose, shuffle, or merely self-report unrelated seeds. A seed is reproducibility
-provenance, not evidence of sampling convergence or optimality.
-
-## Candidate limit and execution
-
-`max_candidates` is a positive hard cap. The manifest candidate count must not exceed
-it, and output must cover exactly the approved ordered candidates—no missing, extra, or
-duplicate IDs. Do not use the cap as permission to truncate silently.
-
-The plugin is local-only, and ordinary `generate-sqs` is not approval-gated. Review
-`run --dry-run`, including exact candidate count, parameters, local runtime/resources,
-generator path/version, fresh output locations, and staged argv, then run without
-`--approve`. The candidate cap and all scientific validation remain mandatory. Keep
-retries in fresh attempts and retain earlier evidence.
-
-## Generator and execution boundary
-
-Omitting `sqs_script` selects the bundled
-`icet.generate_sqs_from_supercells` implementation. Prefer it. A custom project-relative
-script is allowed only after explicit user request and review; it must accept the fixed
-argv contract, run without a shell, honor fresh outputs and the same deterministic seed
-policy, and emit the standard result contract.
-
-Do not put a shell command string in `interpreter_argv`, add override arguments, execute
-historical private generators implicitly, enable network loading, or add an HPC/
-scheduler backend. Numerical SQS implementation belongs to the plugin, not this Skill.
-
-## Result manifest and checker
-
-The standard generation result binds at least:
-
-- schema/plugin/status and the base `seed`;
-- exact `candidate_count`;
-- prototype and composition-manifest paths;
-- generator path/API/version;
-- ordered structure records with ID, safe attempt-relative path,
-  exact declared alloy composition, media type, and per-candidate `random_seed`;
-- method provenance, including seed policy and, for the bundled generator, icet library/
-  API/version and ASE version;
-- optional `cluster_vector` per structure.
-
-If `cluster_vector` is present, it must be a non-empty finite numeric array. Its presence
-does not mean the Adapter recomputed the icet objective or established a global optimum.
-
-Adapter `check/collect` independently rereads the approved composition manifest and
-actual structure artifacts. It enforces candidate coverage/order/uniqueness, exact
-species/counts, alloy site count, seed derivation, candidate cap, input and generator
-paths, and full structure composition. Missing, changed,
-malformed, non-finite, out-of-contract, or self-inconsistent evidence is `FAIL`.
-
-Framework versions are provenance. Same or different ASE/icet version strings do not by
-themselves establish scientific structure parity.
-
-## Replay semantics
-
-Replay consumes an existing standard `generation-result.json` plus the referenced,
-verifiable approved inputs and structure artifacts. It performs the same contract and
-scientific checks without importing/executing the generator, running icet, writing new
-structures, or mutating source evidence. Describe success as read-only verification of
-existing generation evidence, never as regeneration or independent scientific
-validation.
-
-## Scientific claim boundaries
-
-- “generated SQS candidate” does not mean “globally optimal SQS.”
-- deterministic output under the declared seed policy does not prove convergence.
-- a new seeded execution cannot establish historical byte-for-byte parity when the historical
-  generator had no seed.
-- `LOCAL_INTEGRATION_SMOKE_PASS` proves only the bounded wrapper/seed/write/manifest
-  integration and determinism exercised by that smoke; it is not production-quality SQS.
-- Adapter `OK` proves contract consistency and verifiable provenance, not material
-  performance, thermodynamic stability, synthesis feasibility, or model accuracy.
-
-## Downstream handoff
-
-This Skill stops at verified structure candidates. Use explicit downstream plugins for
-MLIP inference, DFT labeling, MD, or property calculation. Only after comparable numeric
-metrics exist should `$candidate-ranking` apply its explicit metric/direction/top-k
-policy. Never rank candidates by composition intuition, cluster-vector presence, file
-order, or generator brand.
+Use downstream MLIP/DFT/property calculations for candidate evidence and
+`$candidate-ranking` only after a metric and ranking policy are explicit.

@@ -5,199 +5,55 @@ description: Supervise scheduled ASE molecular dynamics with explicit DeepMD, M3
 
 # ASE molecular dynamics
 
-Use the `ase-md` plugin as the deterministic implementation. The Skill decides and explains scientific workflow inputs; it does not implement an integrator or calculator itself.
-
-## Version 0.4 boundary
-
-Version 0.4 supports one single-temperature trajectory per workflow node on `ssh-slurm`:
-
-- `nvt-langevin`: fixed-cell Langevin NVT.
-- `npt-isotropic-mtk`: isotropic Martyna-Tobias-Klein NPT using ASE `IsotropicMTKNPT`.
-- optional periodic checkpointing and exact restart across fresh scheduler attempts.
-- an optional explicit three-axis supercell repeat, strict initial-cell lower bound, and finite diagnostic stability summary.
-
-ASE is a hard compute-runtime dependency for every `ase-md` run. A missing ASE import must fail the run; never substitute another MD implementation.
-
-Do not silently substitute these contracts when the user requests NVE, anisotropic/full-cell NPT, replicas, a temperature sweep, automatic segment concatenation, diffusion fitting, conductivity, or Arrhenius analysis. Those remain separate workflow capabilities.
-
-## Choose the calculator
-
-Accept one explicit model family:
-
-- `deepmd`: explicit DeepMD model file through the ASE DeepMD calculator.
-- `m3gnet`: explicit local MatGL model directory through its ASE PES calculator.
-- `chgnet`: explicit CHGNet model file through `CHGNetCalculator.from_file`; require `default_dtype: float32`.
-- `mace`: explicit MACE model file through `MACECalculator`.
-
-Never choose a network model name, pretrained alias, package cache entry, or remote Hub model on the user's behalf. Scheduled MD is network-free and requires an explicit, verifiable model reference.
-
-For NPT, framework name alone is not sufficient evidence of stress capability. The compute-node runner must inspect the concrete loaded calculator's `implemented_properties` and successfully obtain a finite 3x3 ASE stress tensor before any fresh or restarted NPT step. If that probe fails, the job must fail before dynamics.
-
-## Bind the model without cluster paths
-
-Require `inputs.model_reference` to point to a small project JSON manifest containing:
-
-- `schema_version: 1`
-- a logical `model_id`
-- a safe `relative_path` below the site-owned model registry
-- `kind: file` for DeepMD/CHGNet/MACE or `kind: directory` for M3GNet/MatGL
-
-For an upstream artifact binding, accept the project-scoped resolved reference path
-produced by core. A predeclared DAG can consume that collected reference directly.
-
-The portable project must never contain the cluster's absolute model path. The site-owned `ase-md-<calculator>/run.sh` supplies `MODEL_ROOT`. The compute-node resolver verifies the model before and after inference.
-
-## Require explicit common MD physics
-
-For either ensemble, require the user/workflow to declare:
-
-- target `temperature_k`
-- `timestep_fs`
-- total global `steps`
-- `trajectory_interval`
-- `thermo_interval`
-- non-negative `seed`
-- `device` (`cpu` or `cuda`)
-- `default_dtype`
-- `fix_com`
-- the exact structure and model reference
-
-`steps` is always the total trajectory target. A retry from step 400000 of a 1000000-step node runs only the remaining 600000 steps; never reinterpret `steps` as a per-attempt count.
-
-`device: cuda` requires at least one scheduled GPU. Do not invent timestep, duration, temperature, pressure, damping, checkpoint cadence, or resource requests from the chemical system.
-
-DeepMD's ASE calculator uses model-native precision; `default_dtype` is recorded with the run but must not be described as recasting a DeepMD model.
-
-## Size the structure explicitly
-
-When the source cell is intentionally smaller than the MD cell, use
-`supercell_repeat: [a, b, c]` with three explicit positive integers. Do not
-manually rewrite or rename an intermediate structure outside MLIPFlow. The
-runner repeats the staged source before calculator construction and records the
-source atom count, expanded atom count, repeat, and initial cell lengths.
-
-Use `minimum_initial_cell_length_angstrom` only when the workflow has an
-explicit cell-size requirement. It is a strict lower bound: every expanded
-initial 3D periodic cell length must be greater than the declared value. Do not
-invent the bound or silently increase the repeat; a failed bound is a failed
-run that requires a reviewed parameter change.
-
-The repeat and lower bound are checked against the checkpoint, so a retry cannot
-change the effective cell. A sampling cell and a larger production cell should
-therefore be separate reviewed nodes even when both originate from the same
-structure.
-
-## NVT contract
-
-For `ensemble: nvt-langevin` also require an explicit positive `friction_per_fs`.
-
-`fix_com: true` uses ASE `FixCom` rather than deprecated Langevin `fixcm`. On a fresh attempt, the explicit seed initializes NumPy `PCG64`, Maxwell-Boltzmann velocities, and Langevin stochastic forces. On restart, do not reseed or reinitialize velocities: restore positions, momenta, cell and the saved PCG64 bit-generator state from the checkpoint.
-
-Do not add NPT pressure or damping parameters to an NVT node.
-
-## Isotropic NPT contract
-
-For `ensemble: npt-isotropic-mtk` require all of:
-
-- finite `pressure_gpa`;
-- positive `thermostat_damping_fs`;
-- positive `barostat_damping_fs`;
-- `fix_com: false`;
-- no `friction_per_fs`.
-
-Do not infer damping times from the timestep. They are scientific inputs and must be explicit in MLIPFlow.
-
-The NPT implementation is deliberately isotropic: only volume changes, preserving the initial cell shape. Version 0.4 pins thermostat/barostat chain lengths to 3/3 and chain integration substeps to 1/1; report them as fixed implementation choices rather than pretending they are user-selected.
-
-NPT requires a full-rank 3D periodic cell and no ASE constraints. Reject a molecular/nonperiodic or constrained structure rather than silently converting it. A fresh NPT seed controls initial Maxwell-Boltzmann velocities only.
-
-Exact NPT restart restores atomic state plus MTK particle/cell state, thermostat-chain coordinates/momenta and barostat-chain coordinates/momenta. Because these are currently ASE implementation-private fields, require the checkpoint's exact ASE version to match the compute environment. Refuse a version mismatch rather than approximating a restart from the saved geometry.
-
-NPT thermodynamics must additionally record finite `pressure_GPa`, positive `volume_A3`, and positive `cell_a_A`, `cell_b_A`, `cell_c_A` on the declared thermo schedule.
-
-## Checkpoint and restart contract
-
-Checkpointing is opt-in. Accept:
-
-- `checkpoint_interval`: positive global MD-step interval.
-- `restart_policy`: `disabled` or `auto-from-previous-attempt`.
-
-`auto-from-previous-attempt` requires `checkpoint_interval`. The runner atomically replaces `output/md-checkpoint.json` using a temporary file, flush/fsync, then rename, so an interrupted write should leave the previous complete checkpoint rather than a partially overwritten one.
-
-A checkpoint is strict JSON, never pickle. It records the model/structure paths, ensemble physics, total target steps, completed global step, ASE version, atomic numbers/order, positions, momenta, cell, masses and PBC. NVT also records the Langevin implementation version and PCG64 RNG state. NPT also records the complete MTK extended state.
-
-Do not let the Agent choose an arbitrary checkpoint path. A retry may consume only `md-checkpoint.json` already salvaged into the immediately previous local attempt by MLIPFlow core. The next run shows the checkpoint source attempt and completed step.
-
-Do not auto-resume a normal scientific `FAIL` whose scheduler state was `COMPLETED`. Automatic restart is for scheduler terminal interruption such as `TIMEOUT`, `PREEMPTED`, node/OOM/deadline failures, or an observed scheduler cancellation with a validated salvaged checkpoint. If the checkpoint is absent, has different scientific parameters, is already complete, or belongs to a non-eligible attempt, block the retry.
-
-## Terminal failure salvage
-
-A scheduler terminal state is not permission to download arbitrary remote files. When checkpointing is enabled, the adapter declares a small `failure_salvage` subset selected only from the run's normal fetch allowlist.
-
-For a terminal scheduler interruption:
-
-1. Run `advance` while the interrupted attempt is still the latest attempt.
-2. Core inventories and fetches only the declared salvage subset, verifying bounded transport.
-3. Core leaves the attempt `FAIL` or `STOPPED`; salvage is not scientific success.
-4. Only after the checkpoint exists locally may `retry` create a fresh attempt. Retry itself does not launch computation.
-5. The next run plan must show `restart_from_attempt`, `segment_start_step`, remaining steps, and the new per-attempt output schedules before submission.
-
-Do not describe `retry` itself as fetching remote state. It only creates a fresh attempt; the new adapter plan stages the already salvaged local checkpoint.
-
-An explicit MLIPFlow `stop` that transitions state immediately may not provide the same salvage opportunity as observing a scheduler-side terminal cancellation. Do not promise a resumable manual stop unless a checkpoint has first been safely salvaged through the normal observation flow.
-
-## Segment semantics
-
-Every attempt has a fresh remote workspace and writes its own `trajectory.traj`, `trajectory-index.json`, and `thermo.csv`. Restarted segments use global MD step/time numbers beginning at the checkpoint step. The producer keeps these per-attempt outputs; downstream `$ionic-transport` now recognizes all collected segments from the same node, orders them by global step, and removes a repeated restart-boundary frame automatically.
-
-Do not discard prior segments after restart. Keep each attempt's artifacts so `$ionic-transport` can join them while checking the checkpoint boundary and global step continuity. Never ask the user to rename, copy, or concatenate `trajectory.traj`.
-
-## Cluster boundary
-
-Require `backend: ssh-slurm`, a named `backend_profile`, and exactly the abstract resources `cpus`, `gpus`, `memory`, and `walltime`.
-
-Never put an SSH host, account, partition, QoS, module, conda path, Python path, absolute model path, template root, work root, submit script, or `remote_cwd` in the workflow node. Those belong to the local site profile and persistent remote templates.
-
-The selected template family is one of:
-
-- `ase-md-deepmd`
-- `ase-md-m3gnet`
-- `ase-md-chgnet`
-- `ase-md-mace`
-
-Site-published CHGNet and M3GNet artifacts use the corresponding
-`ase-md-<calculator>-canonical` family so the model resolves below the site's canonical
-MLIPFlow model root rather than a historical research directory.
-
-Each site template may activate a separate framework environment while keeping the same MLIPFlow scheduler/restart contract.
-
-ASE MD has `execution_model: single-python`. `resources.cpus` is the CPU/thread
-budget for one Python process, and the site Slurm template must therefore use
-`--ntasks=1` with `--cpus-per-task={{CPUS}}`. Do not expose ASE `CPUS` as the
-Slurm task count; doing so makes Lightning-backed calculators look like an
-unconfigured distributed job. MPI execution models such as VASP/LAMMPS retain
-their separate rank-count semantics.
-
-## Execution and completion
-
-Before submission, show calculator/model path, source-structure path, any supercell repeat and strict initial-cell bound, ensemble, temperature, timestep, total target duration, current segment start/remaining steps, frame/thermo record counts, checkpoint policy, device, resources, template family, and expected outputs. For NVT also show friction. For NPT also show target pressure, both damping times, stress requirement, isotropic cell mode, no-constraints requirement, and fixed MTK chain configuration.
-
-The `run` operation is expensive and requires approval. Every supported ASE-MD run is
-also SSH-SLURM, so review the dry-run and obtain approval before submission.
-
-A Slurm `COMPLETED` state is not scientific success. After completion, ordinary `advance` performs bounded fetch and invokes the scientific checker. The checker must verify:
-
-- completed global steps equal the original requested total;
-- model, structure, and any restart checkpoint match the attempt inputs;
-- any explicit repeat yields the recorded expanded atom count and all initial cell lengths strictly exceed the approved lower bound;
-- trajectory-index and thermo schedules start at the attempt's segment start and reach the original final step;
-- thermodynamic values are finite and NPT pressure/cell metrics satisfy the NPT contract;
-- trajectory, index, thermo table, final extxyz, checkpoint when enabled, and reports are complete and internally consistent;
-- calculator and ASE versions are recorded.
-- stored-frame minimum pair distance and temperature, energy-per-atom, and volume summaries contain only finite values.
-
-Treat missing, oversized, scientifically inconsistent, non-finite, stress-incompatible, or checkpoint-incompatible output as `FAIL`, not a warning.
-
-## Scientific interpretation
-
-The `ase-md` plugin produces trajectory segments; it does not by itself establish equilibration, diffusion, ionic conductivity, phase stability, or model validity. The stability summary is diagnostic evidence, not an automatic pass/fail threshold or a substitute for the shared held-out benchmark. A successful restart proves continuity of the declared integrator state under the recorded implementation/version contract, not physical convergence. Do not report transport or convergence conclusions unless a separate reviewed analysis stage supports them.
+Use `plugins/ase-md` through MLIPFlow for the `run` operation. The Skill chooses and
+reviews MD physics; calculator construction, integration, restart, checking, and
+collection belong to the plugin and ASE.
+
+## Route the request
+
+Use `nvt-langevin` for fixed-cell Langevin NVT and `npt-isotropic-mtk` for the supported
+isotropic MTK NPT contract. Do not silently substitute either for NVE, anisotropic or
+full-cell NPT, replica studies, temperature sweeps, transport analysis, or another MD
+engine.
+
+Require an explicit compatible local model artifact for DeepMD, M3GNet/MatGL, CHGNet,
+or MACE. Do not select remote model aliases, cached pretrained names, or a model family
+by reputation. NPT additionally needs evidence that the concrete calculator supplies
+usable stress.
+
+## Artifact first
+
+Reuse matching final `OK` model and structure references. If a suitable verified
+trajectory already exists, route it directly to `$ionic-transport` instead of rerunning
+MD. Preserve all collected restart segments; downstream analysis joins compatible
+segments without user-side copying, renaming, or concatenation.
+
+## Scientific judgment
+
+Require explicit temperature, timestep, total duration/steps, output cadence, seed,
+ensemble controls, model/structure identity, device/precision intent, cell-size choices,
+and abstract resources. NPT pressure and damping choices and NVT friction are
+scientific inputs. Do not infer them from composition or typical practice.
+
+Use checkpoint restart only when the prior attempt and salvaged checkpoint satisfy the
+plugin's compatibility and interruption rules. Do not promise that a manual stop is
+resumable, reinterpret total steps as per-attempt steps, or treat salvage as scientific
+success. A successful restart establishes state continuity under the recorded runtime,
+not physical convergence.
+
+## Execute and interpret
+
+Use `mlipflow inspect` and the dry-run to review the effective ensemble, segment,
+checkpoint source, model/structure bindings, trajectory scale, backend/resources, and
+expected artifacts. Follow the plan's effective `approval_required` value rather than
+duplicating approval rules here.
+
+Never launch ASE, a framework runner, or a scheduler directly, guess site-owned cluster
+details, or bypass Adapter `validate/plan/execute/check/collect`. Scheduler
+`COMPLETED` and process exit zero are insufficient; success requires final plugin
+`OK`. Let MLIPFlow perform bounded salvage and fresh-attempt retry.
+
+Report the actual ensemble and model, physical controls, segment/total scale, restart
+status, collected trajectory artifacts, and checker result. `OK` does not establish
+equilibration, diffusion, ionic conductivity, phase stability, sufficient sampling,
+model validity, or transport convergence.

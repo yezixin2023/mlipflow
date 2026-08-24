@@ -5,248 +5,69 @@ description: Supervise MLIPFlow potential-energy-surface sampling with local MAM
 
 # Potential-energy-surface sampling
 
-Use the current `plugins/pes-sampling` manifest and adapters as the deterministic
-implementation. Do not estimate energies, choose structures by intuition, implement
-SSW, or infer undocumented LASP inputs in this Skill.
+Use `plugins/pes-sampling` through MLIPFlow. The Skill chooses the sampling intent and
+guards scientific claims; selection, conversion, LASP execution, normalization, and
+checking belong to the plugin.
 
-## Choose exactly one operation
+## Route the request
 
-- Use `direct-select` for local MAML/DIRECT representative-structure selection.
-- Use `lasp-input-prepare` locally to convert one explicit ASE-readable periodic frame
-  into a single-frame LASP `input.arc` with recorded source/frame metadata.
-- Use `merge-structures` locally to normalize and deduplicate verified DIRECT and
-  scheduled-LASP selected outputs into one DFT-ready `structures.json`.
-- Use `lasp-ssw-execute` to run a user- or site-supplied LASP executable, locally or
-  through MLIPFlow's `ssh-slurm` lifecycle.
-- Use `lasp-ssw-normalize-replay` to normalize and verify an existing LASP archive
-  locally without running LASP.
+- Select representative structures from existing ensembles with MAML/DIRECT:
+  `direct-select`.
+- Convert one explicit ASE-readable periodic frame to reviewed LASP input:
+  `lasp-input-prepare`.
+- Combine verified DIRECT and LASP selections into one DFT-ready structure manifest:
+  `merge-structures`.
+- Run fresh LASP/SSW locally or through the supported scheduler path:
+  `lasp-ssw-execute`.
+- Normalize an existing LASP archive without running LASP:
+  `lasp-ssw-normalize-replay`.
 
-Do not describe DIRECT as LASP, an archive replay as a new LASP calculation, or any of
-these operations as DFT labeling, AIMD, MLIP-MD, or model training.
+Do not describe DIRECT as LASP, replay as fresh LASP, or any operation as DFT, MD,
+training, or energetic ranking.
 
-Operation-level approval is explicit. Local `direct-select`, `lasp-input-prepare`,
-`merge-structures`, and `lasp-ssw-normalize-replay` have
-`approval_required: false`; inspect their dry-runs and continue without an approval
-stop. `lasp-ssw-execute` requires approval for fresh LASP execution, and every
-SSH-SLURM execution requires approval independently. Missing or ambiguous scientific
-inputs still block and must never be guessed.
+## Artifact first
 
-## Inspect before planning
+Reuse accepted structure ensembles, DIRECT selections, prepared LASP inputs, LASP
+archives, and merged structure manifests. Pass collected artifacts directly between
+operations and to `$dft-labeling`; do not copy, rename, or rebuild them manually. Use
+replay for suitable historical archives rather than rerunning LASP to recreate evidence.
 
-Run only MLIPFlow read-only inspection/status commands until the scientific inputs and
-backend are understood. Inspect the selected operation, all important inputs, the
-literal `lasp.in`, potential type, auxiliary-file names, output bounds, and requested
-resources. Treat repository example inputs as contract fixtures, not real scientific
-inputs.
+## Scientific judgment
 
-Do not guess a LASP parameter, random seed, potential, auxiliary file, executable,
-launcher, or resource request. If an input is missing or ambiguous, report the missing
-scientific contract and stop.
+Use DIRECT only when representative/configurational selection is necessary. Require
+the actual clustering and input-scope choices; do not invent them. The current bundled
+MAML path does not expose control of its selection seed, so a recorded seed must not be
+claimed to make the selection reproducible.
 
-## `direct-select`
+For LASP preparation, review the selected source frame and any scientific cell-size
+bound. For merge, require scientifically chosen structure-matching tolerances and
+scope. The merge normalizes and deduplicates; it does not evaluate energies or decide
+which source is scientifically better.
 
-Use `backend: local`. Require:
+For fresh LASP, review the literal scientific input, potential, auxiliary artifacts,
+selection policy, output bounds, and resources. Do not infer undocumented LASP
+parameters, seeds, potentials, executables, or launch details. If LASP may invoke
+VASP/DFT, disclose that scope and obtain the separate explicit DFT intent required by
+repository policy. Never expose or collect POTCAR content.
 
-- `inputs.input_dirs`: one or more existing local structure directories;
-- non-empty relative `globs`, boolean `recursive`, positive `stride`, `n_clusters`,
-  `threshold_init`, and `k_per_cluster`;
-- optional positive `max_frames_per_file` and `max_input_structures`;
-- optional positive-integer-to-element `lammps_type_map`;
-- an explicit non-negative recorded `seed` and
-  `acknowledge_uncontrolled_seed: true`.
+Historical normalization must preserve source evidence and ordering. Describe it as a
+structured collection of existing results, not a rerun, numerical parity, or
+independent validation.
 
-MLIPFlow uses the bundled `plugins/pes-sampling/direct_select.py`; do not ask the user
-for a DIRECT script. The runner adapts the reviewed multi-format reader/output flow but
-delegates representative selection to MAML's `DIRECTSampler`, `BirchClustering`, and
-`SelectKFromClusters`. Its Python runtime must provide compatible `pymatgen` and `maml`
-packages, plus ASE for ASE/LAMMPS inputs and Plotly only for optional diagnostics.
+## Execute and interpret
 
-The bundled MAML path has no exposed seed control. Record the declared seed but state
-that it does not control the selection implementation. Do not claim seeded
-reproducibility.
+Use `mlipflow inspect` and the dry-run; let Adapter validation supply detailed
+parameter, staging, and output rules. Follow the plan's effective
+`approval_required` value instead of maintaining operation/backend approval rules in
+this Skill.
 
-Keep `output_subdir` fresh, relative, confined to the attempt, and disjoint from every
-input directory. Both the adapter and bundled runner reject an existing output
-directory; neither deletes or reuses it. Preserve `shell: false`. Completion requires a
-valid non-empty `manifest.csv` and confined selected structure files; optional plots are
-diagnostics only.
+Never invoke DIRECT, LASP, VASP, plugin runners, or schedulers outside MLIPFlow; never
+guess site-owned cluster configuration or bypass Adapter
+`validate/plan/execute/check/collect`. Final plugin `OK`, not scheduler `COMPLETED` or
+process exit zero, is required. Diagnose failure before a fresh retry and preserve
+earlier attempts.
 
-Use only the current manifest parameter names. Do not invent aliases for cluster count,
-threshold, input limits, or output directory.
-
-## `lasp-input-prepare`
-
-Use `backend: local`. Bind one existing project-scoped ASE-readable structure file and
-an explicit Python executable with ASE. Optionally declare the exact ASE reader format,
-but always select exactly one frame with `input_index`; use `-1` for the final MD frame.
-For sampling-cell handoff, set the reviewed strict
-`minimum_cell_length_angstrom` bound rather than assuming that an MD input remained the
-right size. The converter requires a full-rank 3D periodic cell and writes a fresh
-`input.arc` plus `lasp-input-manifest.json` with source/frame and geometry records.
-Pass that verified ARC artifact directly to `lasp-ssw-execute`; do not ask the
-user to copy, rename, or hand-write an ARC. This operation does not run LASP, MD, or DFT.
-
-For a reviewed `potential vasp` run, also bind the same portable licensed
-`pseudopotential_reference` contract used by `$dft-labeling`: explicit
-`PMG_VASP_PSP_DIR`, functional, element-to-symbol map,
-and license acknowledgement. The converter may materialize `POTCAR` only inside its
-fresh attempt and records `collectable: false`. Its checker verifies the approved
-functional and symbols. Collection returns the manifest and `input.arc` but
-never `POTCAR`.
-
-## `merge-structures`
-
-Use `backend: local`. Bind the verified DIRECT `manifest.csv`, LASP
-`selected-structures.json`, and its exact `selected-structures.tar.gz`. Require explicit
-portable source-group IDs, `matcher_ltol`, `matcher_stol`,
-`matcher_angle_tol_deg`, `minimum_distance_angstrom`, and `max_structures`, plus an
-explicit Python executable with pymatgen and ASE. Do not guess scientific tolerances.
-
-The operation verifies archive membership, parses LASP ARC frames, rejects
-non-finite/non-positive-volume/too-close structures, preserves source lineage, writes
-normalized POSCARs, removes exact duplicates, then applies the explicitly reviewed
-pymatgen `StructureMatcher` tolerances with cell scaling disabled. It neither evaluates
-energies nor chooses which sampling source is scientifically better. Pass its verified
-`structures.json` directly to `$dft-labeling`; do not manually copy, rename, or rebuild
-the selected structures.
-
-## Common LASP/SSW contract
-
-Require an explicit `lasp.in` that parses to `explore_type ssw` and integer
-`SSW.SSWsteps >= 1`. Inline `#` comments are ignored by the current parser. Also
-require:
-
-- a portable `historical_source_id` without a private absolute path;
-- positive `selection_stride`;
-- finite `energy_max_ev` or null;
-- explicit positive `max_frames` no greater than 10000;
-- boolean `include_best_arc` and `include_md_arc`;
-- `seed_status: HISTORICAL_PARAMETER_UNKNOWN`;
-- `acknowledge_uncontrolled_seed: true`;
-- `preserve_historical_order: true`.
-
-Keep historical order. Apply the inclusive energy filter first, renumber accepted
-frames, and apply `selection_stride` to that accepted order. Never reorder frames by an
-inferred notion of quality.
-
-`best.arc` is optional AIMD-seed-candidate lineage and `md.arc` is optional sampled
-structure lineage. Include either only when the declared run is expected to produce it.
-Their normalization does not run AIMD/MD and does not establish that the structures are
-scientifically suitable for those downstream uses.
-
-### Determine the potential without generalizing one case
-
-Read the actual potential declaration and auxiliary-file contract before approving an
-execute operation. LASP may use an NN potential, VASP/DFT, or another site-supported
-potential; this Skill is not LASP-NN-specific.
-
-- For an NN or other non-DFT potential, require its exact auxiliary files; do not assume
-  a filename or element set from an earlier run.
-- If `potential vasp` or the runtime would invoke VASP/DFT, disclose the explicit LASP
-  settings, required auxiliary-file names, MPI/resources, and DFT call bound derivable
-  from declared inputs. Obtain the separate DFT authorization required by repository
-  policy before submission. Do not infer a call count from undocumented behavior. In
-  scheduled mode, bind the verified upstream `lasp-input-manifest`; the adapter derives
-  its sibling runtime-only POTCAR and stages it as sensitive.
-  Do not put POTCAR in `lasp_auxiliary_files` or ask the user for its attempt path.
-- Never read, display, package, or commit POTCAR content. Keep licensed material outside
-  the repository and pass it only through the core input/staging contract.
-
-Do not claim LASP numerical parity. Success proves the declared execution, archive
-lineage, selection policy, and checker contract, not independent validation of LASP's
-SSW numerics.
-
-## `lasp-ssw-normalize-replay`
-
-Use `backend: local`. Require an ordinary read-only `historical_run_dir` containing
-`allstr.arc`, the explicit `lasp.in`, and `best.arc`/`md.arc` only when their include
-flags are true. Do not supply a LASP executable, MPI settings, or `lasp_version`.
-
-Write normalized results only in a fresh attempt output. Describe the result as
-structured collection and validation of existing LASP artifacts, never as a rerun or
-independent scientific validation. Do not mutate the historical source tree.
-
-## Local `lasp-ssw-execute`
-
-Require a user-supplied ordinary executable LASP file, an explicit single-frame ARC
-input structure, `lasp.in`, explicit `lasp_version`, and a mapping of safe auxiliary
-destination basenames to files. Reserved LASP input/output names cannot be auxiliary
-destinations. Require an explicit absolute non-symlink Python executable for the
-wrapper.
-
-MPI is optional locally. If used, require an ordinary executable path whose basename is
-`mpirun` or `mpiexec` and a positive `mpi_processes`; do not accept either without the
-other. The wrapper stages declared inputs into a fresh `raw-run`, invokes argv
-with `shell: false`, and keeps an `INCOMPLETE.json` marker until normalization finishes.
-Review and approve this fresh numerical execution before launching it.
-
-## Scheduled `lasp-ssw-execute`
-
-Use `backend: ssh-slurm`, a named `backend_profile`, project-scoped `input_structure`,
-`lasp_input`, and declared `lasp_auxiliary_files`. For `potential vasp`, also require
-the exact verified upstream `lasp_input_manifest`; POTCAR is automatically staged from
-that manifest's attempt and remains absent from fetch and collect. Resources must contain exactly the
-abstract fields `cpus`, `gpus`, `memory`, and `walltime`. Scheduled LASP uses MPI
-execution semantics: `resources.cpus` is the MPI task/rank count. Do not set
-`mpi_processes` in the project, and keep `output_subdir: lasp-ssw` as required by the
-current scheduled adapter.
-
-Keep all site-owned knowledge out of the project: SSH host/profile details, partition,
-account/QoS, modules, LASP/Python/MPI executable paths, launcher flags, template root,
-and work root. The named local site profile selects the site; the persistent remote
-`lasp-ssw/run.sh` template supplies executable/module/launcher knowledge, while the
-site's `slurm/mpi/cpu.sbatch` or `slurm/mpi/gpu.sbatch` supplies scheduler knowledge.
-
-Treat one physical site as having one canonical template root and one canonical work
-root across plugins, partitions, potentials, and validation runs. If `lasp-ssw/run.sh`
-is absent, first inventory the canonical root and compare every target, then add only
-the missing `lasp-ssw/` family below it. Never create sibling `templates-*` or work
-roots, and never silently overwrite an existing template.
-
-Follow the complete lifecycle: review the dry-run's scientific parameters, important
-inputs, resources, fresh attempt workspace, and expected outputs. Let MLIPFlow core stage, submit, and persist
-scheduler job IDs; never call `sbatch` directly. Poll through MLIPFlow read-only
-status/log interfaces. After scheduler `COMPLETED`, ordinary `advance` bounded-fetches
-the run's declared outputs and runs scientific checker/collect.
-
-Slurm `COMPLETED` alone is never scientific success. Report `OK` only after bounded
-fetch and scientific checker/collect both succeed.
-
-## ARC compatibility and completion
-
-For execute operations, the current wrapper binds the SSW walk archive to canonical
-`raw-run/allstr.arc`:
-
-- If LASP produces only `allstr.arc`, keep it as canonical.
-- If LASP produces `all.arc`, treat that as the walk archive. When no `allstr.arc`
-  exists, copy `all.arc` to canonical `allstr.arc`.
-- If both files exist and have identical content, retain them and use `allstr.arc` as
-  canonical without rewriting it.
-- If both exist and differ, rename the original `allstr.arc` to
-  `allstr.native.arc`, then copy `all.arc` to canonical `allstr.arc`. Refuse to
-  overwrite a pre-existing `allstr.native.arc`.
-
-`lasp-run-metadata.json` records the source/canonical names, whether canonicalization
-occurred, and, when preserved, the native copy's name and size. Its source records bind
-canonical `allstr.arc`; the result manifest binds the metadata artifact. In scheduled mode, bounded fetch returns the
-canonical `allstr.arc`, not `all.arc` or `allstr.native.arc`. Treat the native record as
-preserved provenance, not as the selected scientific trajectory or an independently
-fetched archive.
-
-Do not trust a self-reported `OK` JSON. The scientific checker must reparse fetched canonical
-`allstr.arc`, enforce frame/byte bounds and finite Energy records, recompute deterministic
-structure IDs, historical order, energy acceptance, accepted-order stride, selected
-counts, and selected-manifest records. Scheduled checking must also verify every safe
-member of `selected-structures.tar.gz` against its declared source frame. Reparse declared
-`best.arc`/`md.arc` when included. Fail on changed inputs/outputs,
-unsafe archive members, missing/oversized files, non-finite data, or lineage mismatch.
-
-## Retry and failure handling
-
-Classify failures before proposing a retry: repair site templates/configuration for a
-site/environment failure; stop rather than guess for a scientific-input failure; fix a
-general MLIPFlow defect with regression coverage rather than adding site-specific code.
-
-Use `retry` to create a fresh local attempt while preserving the failed attempt and its
-artifacts. Retry does not launch the scheduled job. Never delete, overwrite, or reuse the prior workspace to
-simulate retry, and never retry automatically.
+Report the selected operation, evidence mode, important scientific choices, collected
+structures and lineage, whether LASP or DFT actually ran, and limitations. `OK`
+establishes the declared selection/execution and artifact contract, not SSW numerical
+parity, global PES coverage, DFT suitability, or downstream transport convergence.

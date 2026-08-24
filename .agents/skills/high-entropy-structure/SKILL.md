@@ -5,77 +5,56 @@ description: Supervise reproducible, auditable high-entropy or SQS disordered-st
 
 # High-entropy structure
 
-Use `plugins/high-entropy-structure` as the deterministic implementation. Supervise
-inputs, execution, checking, and interpretation; never implement or imitate
-the SQS search in this Skill.
+Use `plugins/high-entropy-structure` through MLIPFlow for `generate-sqs`. The Skill
+reviews the requested search space and scientific claims; the plugin owns composition
+validation, seeded generation, checking, and collection.
 
-Read the current plugin manifest and inspect the actual workflow node before planning.
-Do not copy parameters from old documentation or invoke `sqs.py` outside the MLIPFlow
-lifecycle. Read [references/sqs-contract.md](references/sqs-contract.md) whenever
-constructing or validating a composition manifest, reviewing result provenance, or
-handling replay.
+## Route the request
 
-## Select the mode
+- Explicit prototype, one alloy sublattice, allowed species, and integer candidate
+  counts: generate or verify SQS candidates.
+- Existing standard generation result: reuse or replay it without running icet.
+- An open-ended request to design compositions: request an explicit enumeration rule;
+  do not invent the search space.
+- A request for the best candidate: obtain comparable downstream property evidence,
+  then use `$candidate-ranking`.
 
-- For an explicit prototype and explicit candidate integer counts, prepare a fresh
-  generation contract.
-- If the user asks to “design some high-entropy compositions” without candidate counts
-  or an explicit enumeration rule, stop and request them. Do not invent a search space.
-- For an existing standard `generation-result.json`, use replay and verify existing
-  inputs/artifacts only. Never run icet or regenerate a structure during replay.
-- For “which candidate performs best,” hand off to explicit downstream MLIP/DFT or
-  property calculations and then `$candidate-ranking`. This Skill generates no property
-  values and performs no ranking.
+Read [references/sqs-contract.md](references/sqs-contract.md) only when human review is
+needed for SQS search controls, a request exceeds the current one-sublattice model, or
+historical/manuscript evidence needs interpretation. It is not required to restate the
+ordinary composition schema or checker rules.
 
-## Establish the scientific contract
+## Artifact first
 
-1. Confirm the exact prototype structure path and composition.
-2. Confirm one explicit alloy sublattice selected by `prototype_species`. Do not claim
-   arbitrary multi-sublattice support or introduce vacancies/charge disorder.
-3. Confirm the complete unique `allowed_species` list.
-4. Confirm every candidate ID and every species' non-negative integer count. Preserve
-   them exactly: never round, rebalance, add, or delete species.
-5. Parse the actual prototype and account for `supercell_repeat`. Require each
-   candidate's count sum to equal the repeated alloy-sublattice site count. Show a
-   mismatch and stop; do not repair it silently.
-6. Require explicit `cluster_cutoffs_angstrom`, `supercell_repeat`, and `n_steps` from
-   the user or a trusted project convention, and confirm `output_format` as `vasp` or
-   `cif`. If a search parameter is absent, explain that it requires scientific judgment
-   and either request it or offer a clearly labeled, reviewable proposal—not a unique
-   correct default.
-7. Require an explicit non-negative deterministic `seed`. If the user has no
-   preference, propose one and display it in the plan.
-8. Require a positive hard `max_candidates`. For a large enumeration, show the exact
-   candidate count, input scope, local resources, outputs, and expected cost in the
-   dry-run. Do not silently enlarge the reviewed scope.
+Reuse verified prototype, composition, and generation artifacts when their scientific
+contract matches. Do not regenerate candidates merely to confirm a standard result or
+to reconstruct a canonical workflow. Never mutate historical evidence during replay.
 
-Default to the bundled generator. Set `sqs_script` only when the user explicitly asks
-for a reviewed custom generator that implements the same result and seed contract.
-Never search for or execute a historical private script by default.
+## Scientific judgment
 
-## Execute and verify
+Preserve the user's exact candidate counts and search scope. The user or an explicit
+project convention must determine the composition enumeration, cluster cutoffs,
+supercell, search effort, seed, output scope, and any custom generator. Do not round or
+rebalance compositions, add disorder modes, infer universal defaults, or search for a
+private historical script.
 
-Keep the operation `generate-sqs` local-only and `shell: false`. Use a fresh attempt;
-never overwrite an output directory/result manifest or delete an earlier attempt to
-simulate retry. Ordinary local `generate-sqs` has `approval_required: false`: inspect
-the dry-run, then run it without stopping for `--approve`. Missing or invalid composition,
-site-count, SQS, seed, or candidate-limit inputs still block through Adapter validation.
+The current capability covers one explicitly selected alloy sublattice. Vacancies,
+multiple disordered sublattices, charge balancing, or automated composition discovery
+need a different reviewed scientific contract.
 
-After execution, require Adapter `check/collect` and final plugin `OK`. Do not accept
-process exit zero or self-reported JSON alone. Confirm candidate IDs/order and coverage,
-integer compositions, structure count, per-candidate seed policy, prototype and
-composition-manifest paths, generator provenance, actual
-structure composition, and any declared cluster vector.
+## Execute and interpret
 
-## Report without overclaiming
+Use `mlipflow inspect` and the dry-run to review the exact prototype, composition
+scope, SQS controls, candidate count, generator, scale, and outputs. Follow the plan's
+effective `approval_required` value rather than hard-coding it in this Skill.
 
-Briefly report mode, prototype, alloy sublattice, allowed species, candidate counts,
-supercell, cutoffs, `n_steps`, seed, generated count, output paths,
-generator/icet version, and scientific limitations. Do not dump the full JSON unless
-asked.
+Never call icet or a generator outside MLIPFlow or bypass Adapter
+`validate/plan/execute/check/collect`. Final plugin `OK`, not process exit zero or a
+self-reported result, is required. Preserve earlier attempts and use a fresh retry.
 
-Call each output a **generated SQS candidate**. Never equate deterministic same-seed
-execution with a historically identical structure, a bounded local smoke with a
-production-quality converged search, or Adapter `OK` with proof of global SQS
-optimality. The historical generator exposed no seed; current seeded output is a
-reproducible new execution, not historical byte parity.
+Report generated versus replay mode, search controls, candidate coverage, provenance,
+and output paths. Call outputs generated SQS candidates. A seed supports reproducible
+execution under the declared contract; it does not prove search convergence, historical
+byte parity, global SQS optimality, material performance, or model accuracy. Replay is
+a structured collection of existing results, not fresh generation or independent
+scientific validation.

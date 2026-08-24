@@ -5,105 +5,64 @@ description: Orchestrate auditable end-to-end MLIP research workflows by identif
 
 # MLIP workflow
 
-Act as the control plane for existing MLIPFlow capabilities. Do not create a new
-scientific implementation, force every request through a fixed pipeline, or repeat an
-expensive stage merely to make a workflow look complete.
+Act as a lightweight orchestrator for existing MLIPFlow capabilities. Do not impose a
+canonical pipeline, implement scientific calculations, or duplicate specialist and
+Adapter contracts.
 
-Read [references/workflow-contract.md](references/workflow-contract.md) when selecting
-an entry point, connecting stages, choosing replay versus fresh execution, routing MD,
-or handling approval/failure. For every selected stage, read its current specialist
-Skill and plugin manifest; keep their scientific and safety boundaries authoritative.
-
-## Determine the next stage
+## Select the next necessary stage
 
 1. State the user's final scientific objective.
-2. Inspect current MLIPFlow state with read-only commands and inventory actual inputs,
-   outputs, paths/parameters, and completion evidence.
-3. Distinguish merely present artifacts from artifacts accepted by the applicable
-   Adapter `check/collect`. Validate or replay unverified evidence before reuse.
-4. Mark completed necessary stages and omit irrelevant optional stages.
-5. Select the earliest missing prerequisite for the objective. Start there, not at the
-   beginning of a canonical diagram.
-6. Delegate that stage to the matching specialist Skill. Use the
-   `electrochemical-voltage` plugin directly for voltage; no voltage Skill exists.
-7. Expand only the current stage. After it returns final plugin `OK`, bind its verified
-   collected artifacts as downstream inputs and reconsider the next stage.
+2. Inspect persistent MLIPFlow state and inventory the supplied and collected artifacts.
+3. Reuse artifacts accepted by the producing Adapter; validate or replay unverified
+   evidence instead of repeating an expensive upstream stage.
+4. Skip irrelevant or already completed stages and select the earliest missing
+   prerequisite for the objective.
+5. Load the current specialist Skill for that stage, then use `mlipflow inspect` and the
+   dry-run as the executable contract.
+6. After final plugin `OK`, pass collected artifacts downstream and reconsider the next
+   necessary stage.
 
-For DFT-to-training requests, treat `dft-labeling` canonical collection and remote
-`dataset-assemble` as distinct artifact gates. Reuse exact framework references when
-present; otherwise assemble only the requested DeepMD/M3GNet/CHGNet/MACE views, then
-hand their collected reference manifests to `$mlip-training`. Never ask the user for a
-custom conversion script. Review one framework-independent split before serialization;
-all requested framework views must preserve that exact split.
+Continue through deterministic downstream work when no new scientific choice or
+approval is required. Stop on a real scientific failure, unresolved information, or a
+new plan whose effective approval requirement needs user review.
 
-For a same-test-set model comparison, also route the collected
-`benchmark-dataset-reference.json` from that assembly to scheduled `$mlip-benchmark`
-nodes, then normalize their prediction evidence into one joint ranking. Do not create a
-second split or derive benchmark labels from framework-specific training views.
+Route structure generation to `$high-entropy-structure`, PES selection or LASP to
+`$pes-sampling`, VASP preparation/DFT/dataset assembly to `$dft-labeling`, training to
+`$mlip-training`, model evaluation to `$mlip-benchmark`, finite offline campaigns to
+`$mlip-active-learning`, trajectory generation to `$ase-md` or `$lammps-md`, transport
+analysis to `$ionic-transport`, and metric-based top-k selection to
+`$candidate-ranking`. Use the `electrochemical-voltage` plugin directly for voltage;
+there is no voltage Skill.
 
-Never continue downstream from `FAIL`, `BLOCKED`, `STOPPED`, a scheduler-only
-`COMPLETED`, or process exit zero without scientific completion checks.
+Read [references/workflow-contract.md](references/workflow-contract.md) only for
+manuscript or historical reproduction, ambiguous legacy evidence, or cross-stage claim
+interpretation. It is not required for ordinary stage selection or artifact handoff.
 
-For an ionic-transport objective, treat a final `OK` AIMD `dft-labeling`, `ase-md`, or
-`lammps-md` node as the trajectory handoff. Pass its collected dependency artifacts to
-`$ionic-transport` directly; core includes preserved restart attempts and the transport loader joins them
-by global step. Do not ask the user to identify filenames, rename/copy trajectories,
-concatenate attempts, write metadata, or repeat timestep, temperature, or atom-type
-information already recorded upstream. When several completed temperature nodes are
-selected, hand all of them to one analysis for D(T), conductivity, Arrhenius Ea, and
-the requested extrapolated temperature. Do not rerun MD merely to change a dump name
-or coordinate convention.
+## Preserve scientific decisions
 
-## Apply approval and execution boundaries
+Do not choose a model by brand when the objective requires comparison evidence. Require
+an explicit model choice or comparable benchmark/routing evidence and an explicit
+metric policy. Preserve shared dataset splits when models are to be compared.
 
-Use the current node dry-run's effective `approval_required` value. Approval is required
-for SSH-SLURM submission and for local operations declared expensive by the capability;
-ordinary local analysis, preparation, selection, checking, normalization, replay, and
-post-processing continue without an approval stop. Scientific validation remains
-independent: missing parameters still block or fail and must never be guessed.
+Keep replay, smoke, fresh execution, scheduler completion, and final scientific `OK`
+distinct. PES coverage does not establish transport convergence, and a generated or
+ranked candidate is not thereby a validated material.
 
-Before approval-required execution, show the stage, verified inputs, expected artifacts,
-backend/resources, cost class, and approval requirement. Follow the MLIPFlow
-dry-run/boolean-approval lifecycle; do not auto-submit, enlarge resources, convert smoke
-settings into production settings, or rerun existing expensive evidence without explicit
-intent. One explicitly reviewed batch of expensive nodes may receive one user approval;
-execute only those reviewed nodes with `--approve` internally. Do not create or imply a
-persistent batch-approval mechanism; there is no persistent batch approval.
+## Execute through MLIPFlow
 
-After an approved expensive stage reaches final `OK`, continue eligible local deterministic
-check, collect, normalization, transport/Arrhenius analysis, active-learning assessment, and
-ranking without asking again. Request new approval only for a new expensive or scheduled
-execution that was not part of the reviewed batch.
+Use read-only state inspection, `mlipflow inspect`, and the selected node's dry-run.
+Follow the dry-run's effective `approval_required` value rather than maintaining an
+approval table in this Skill. When approval is required, show the actual stage, inputs,
+scale, backend/resources, expected outputs, and fresh-attempt semantics.
 
-Declare only abstract `backend`, `cpus`, `gpus`, `memory`, and `walltime` when supported
-by the selected plugin. Never guess site-owned SSH hosts, partitions, accounts, modules,
-environments, executables, remote roots, or templates. Never route a local-only plugin
-to `ssh-slurm`.
+Never invoke a scientific runner directly, bypass Adapter
+`validate/plan/execute/check/collect`, guess site-owned cluster configuration, or
+continue downstream from `FAIL`, `BLOCKED`, `STOPPED`, scheduler-only `COMPLETED`, or a
+zero process exit without final plugin `OK`.
 
-## Preserve specialist ownership
+## Report
 
-Use these Skills rather than copying their domain rules:
-
-- `$high-entropy-structure`, `$pes-sampling`, `$dft-labeling`;
-- `$mlip-training`, `$mlip-benchmark`;
-- `$ase-md`, `$lammps-md`, `$ionic-transport`;
-- `$candidate-ranking`, `$mlip-active-learning`.
-
-Do not select a model by brand. Require an explicit user choice or comparable benchmark,
-routing, and metric-policy evidence. Do not sort candidates yourself. Do not implement
-the voltage formula, SQS search, DFT, training, inference, MD, transport analysis, or
-ranking in this Skill.
-
-## Report progressively
-
-For the first response, report only:
-
-- objective;
-- verified existing artifacts and important gaps;
-- concise suggested stage path, with optional stages labeled;
-- current next stage and why;
-- whether that stage is expensive or needs approval.
-
-After each stage, report its status, collected artifacts and scientific metadata, next eligible
-stage, and any new approval. State whether the original numerical program ran when relevant, and
-never strengthen the scientific claim language defined by a specialist Skill.
+Report the objective, reusable verified artifacts, important gaps, the concise stage
+path, the current next stage, and its effective approval requirement. After each stage,
+report final status, collected artifacts, scientific limitations, and the next eligible
+stage without strengthening the specialist's claim language.

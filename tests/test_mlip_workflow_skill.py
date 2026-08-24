@@ -1,4 +1,4 @@
-"""Release and natural-language routing contract for the MLIP workflow Skill."""
+"""Release and orchestration responsibilities for the MLIP workflow Skill."""
 
 from __future__ import annotations
 
@@ -20,23 +20,22 @@ def _skill_text() -> tuple[str, str]:
     )
 
 
-def test_skill_is_control_plane_only_and_lists_current_capabilities() -> None:
-    skill, reference = _skill_text()
+def test_skill_is_a_thin_control_plane_with_current_routes() -> None:
+    skill, _ = _skill_text()
     metadata = yaml.safe_load(
         (SKILL_ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
     )
-    expected_files = {
-        "SKILL.md",
-        "agents/openai.yaml",
-        "references/workflow-contract.md",
-    }
     actual_files = {
         path.relative_to(SKILL_ROOT).as_posix()
         for path in SKILL_ROOT.rglob("*")
         if path.is_file()
     }
 
-    assert actual_files == expected_files
+    assert actual_files == {
+        "SKILL.md",
+        "agents/openai.yaml",
+        "references/workflow-contract.md",
+    }
     assert metadata["interface"]["display_name"] == "MLIP Workflow"
     assert metadata["interface"]["default_prompt"].startswith("$mlip-workflow ")
     for specialist in (
@@ -51,60 +50,40 @@ def test_skill_is_control_plane_only_and_lists_current_capabilities() -> None:
         "$candidate-ranking",
         "$mlip-active-learning",
     ):
-        assert specialist in skill + reference
-    assert "`electrochemical-voltage` plugin" in skill + reference
-    assert ("$" + "electrochemical-voltage") not in skill + reference
+        assert specialist in skill
+    assert "`electrochemical-voltage` plugin" in skill
+    assert ("$" + "electrochemical-voltage") not in skill
     assert not (SKILL_ROOT / "scripts").exists()
     assert not (SKILL_ROOT / "assets").exists()
 
 
-def test_all_nineteen_natural_language_routes_are_explicit_and_safe() -> None:
-    _, reference = _skill_text()
-    rows = {}
-    for line in reference.splitlines():
-        match = re.match(r"\|\s*(\d+)\s*\|", line)
-        if match:
-            rows[int(match.group(1))] = line
-    expected_fragments = {
-        1: ("$high-entropy-structure", "do not jump to training"),
-        2: ("$dft-labeling", "do not regenerate SQS"),
-        3: ("$mlip-training", "explicit framework"),
-        4: ("$mlip-benchmark", "labeled test set/evidence"),
-        5: ("$ase-md", "$lammps-md", "skip unrelated upstream"),
-        6: ("$ionic-transport", "do not rerun MD"),
-        7: ("$candidate-ranking", "top_k=10", "missing policy"),
-        8: ("prefer replay", "do not default to fresh expensive reruns"),
-        9: ("check/collect", "do not claim `OK` yet"),
-        10: ("Refuse brand preference", "comparable benchmark/routing evidence"),
-        11: ("dry-run", "approval boundary"),
-        12: ("Reuse verified labels", "explicit scoped intent"),
-        13: ("Do not invent a native pair style", "$ase-md"),
-        14: ("electrochemical-voltage", "do not seek a voltage Skill"),
-        15: ("$high-entropy-structure", "replay/check", "explicit intent"),
-        16: ("Stop downstream", "final `OK`"),
-        17: ("dataset-assemble", "no custom converter script"),
-        18: ("$ionic-transport", "auto-read md-result/index", "do not request files"),
-        19: ("$ionic-transport", "old/new coordinate columns", "do not rerun MD"),
-    }
+def test_workflow_starts_at_the_earliest_missing_stage_and_continues_safely() -> None:
+    skill, _ = _skill_text()
+    normalized = " ".join(skill.split())
 
-    assert set(rows) == set(range(1, 20))
-    for scenario, fragments in expected_fragments.items():
-        for fragment in fragments:
-            assert fragment in rows[scenario], (scenario, fragment)
+    assert "final scientific objective" in normalized
+    assert "Reuse artifacts accepted by the producing Adapter" in normalized
+    assert "earliest missing prerequisite" in normalized
+    assert "Load the current specialist Skill for that stage" in normalized
+    assert "Continue through deterministic downstream work" in normalized
+    assert "Stop on a real scientific failure, unresolved information" in normalized
+    assert "effective `approval_required`" in normalized
+    assert "validate/plan/execute/check/collect" in normalized
+    assert "without final plugin `OK`" in normalized
 
 
-def test_workflow_uses_effective_operation_and_batch_approval_boundaries() -> None:
+def test_workflow_reference_is_exceptional_not_a_normal_prerequisite() -> None:
     skill, reference = _skill_text()
-    text = skill + reference
-    for fragment in (
-        "effective `approval_required`",
-        "Every SSH-SLURM execution requires approval",
-        "One explicitly reviewed batch",
-        "no persistent batch approval",
-        "continue eligible local deterministic",
-        "Approval is not scientific validation",
-    ):
-        assert fragment in text
+    normalized_skill = " ".join(skill.split())
+    normalized_reference = " ".join(reference.split())
+
+    assert "only for manuscript or historical reproduction" in normalized_skill
+    assert "not required for ordinary stage selection or artifact handoff" in normalized_skill
+    assert "Read this reference only for manuscript or historical reproduction" in normalized_reference
+    assert "Ordinary workflow routing should use the thin specialist Skill" in normalized_reference
+    assert "structured collection of existing results" in normalized_reference
+    assert "plugin manifest" not in normalized_skill.lower()
+    assert "for every selected stage" not in normalized_skill.lower()
 
 
 def test_all_skill_files_are_declared_for_wheel_packaging() -> None:

@@ -5,123 +5,58 @@ description: Supervise MLIPFlow energy, force, and stress benchmarks and model r
 
 # MLIP benchmark
 
-Use `plugins/mlip-benchmark` as the deterministic execution layer. Do not
-reimplement inference, metrics, ranking, or parsing in this
-Skill. Read [references/benchmark-contract.md](references/benchmark-contract.md)
-before planning or interpreting a benchmark.
+Use `plugins/mlip-benchmark` through MLIPFlow. The Skill selects the evidence mode and
+guards comparability and claims; the Adapter and runner own inference, metrics,
+normalization, ranking, and schemas.
 
-## Select exactly one mode
+## Route by scientific inputs
 
-- Choose `evaluate-fresh` only for an explicit model artifact plus a labeled
-  dataset. It must load the model, generate predictions, and produce provenance
-  with `model_execution=true`.
-- Choose `normalize-execute` for supplied reference/prediction pairs. Recompute
-  MAE, RMSE, Pearson r, and ranking without loading a model. When force evidence
-  retains explicit N×3 vectors, also compute the maximum atomic L2 force error;
-  describe this as metric-only evaluation.
-- Choose `normalize-replay` for historical JSON, CSV, XLSX, workbook, or metric
-  evidence. Describe it as read-only evidence normalization/verification with
-  `model_execution=false`, never as fresh inference or fresh numerical parity.
+- Explicit model artifact plus labeled dataset: `evaluate-fresh`; a model is executed.
+- Supplied reference/prediction pairs: `normalize-execute`; metrics are recomputed
+  without loading a model.
+- Historical JSON, CSV, XLSX, workbook, or reported metric evidence:
+  `normalize-replay`; existing evidence is normalized with
+  `model_execution=false`.
 
-An old workbook is replay input even if the user calls it a “fresh benchmark.”
-Prediction pairs are metric-only input even if they came from a recent model
-run. Resolve the mode from the supplied scientific inputs, not the adjective.
+Resolve the mode from the inputs, not words such as “fresh” or “reproduce.” Use
+`mlipflow inspect` for the current exact-family catalog rather than reading source code
+or maintaining a model catalog in this Skill.
 
-## Establish the contract
+Read [references/benchmark-contract.md](references/benchmark-contract.md) only when
+historical or legacy evidence has ambiguous provenance, units, conventions, or missing
+source support. It is not required for an ordinary fresh or metric-only benchmark.
 
-Use read-only MLIPFlow commands to inspect persistent state and the node before
-execution. Confirm the exact operation, backend, inputs, task, scenario,
-split, target set, units, conventions, and expected fresh output directory.
+## Artifact first
 
-Read the supported exact model families and framework mapping from
-`src/mlipflow/science/model_runtime.py` or the installed MLIPFlow model catalog;
-cross-check the `mlip-benchmark` manifest. Never maintain a model list in this
-Skill, accept an under-specified DeepMD family, or choose a model by brand.
+Reuse verified prediction evidence or a completed normalized benchmark when its model,
+dataset, task, scenario, split, targets, units, and conventions match. Do not rerun a
+model merely to normalize already available prediction pairs. For a multi-model
+comparison, use one shared labeled test set and normalize the collected evidence
+together.
 
-Require the inputs appropriate to the selected mode:
+## Scientific judgment
 
-- Fresh local: model path, canonical labeled dataset path, exact family,
-  task/scenario/split, targets, target units, total/per-atom
-  energy convention, and an explicit stress convention when stress is selected.
-- Fresh SSH-SLURM: collected `model-reference.json` and
-  `benchmark-dataset-reference.json` pointing below the selected site's canonical roots,
-  with the same exact family, task/scenario/split, targets, units, and
-  conventions. The reviewed `benchmark-<framework>/run.sh` owns the environment and
-  root paths.
-- Metric-only: reference/prediction evidence plus explicit or evidence-backed
-  model/task/scenario/split/unit IDs and values.
-- Replay: historical evidence, portable evidence locator, exact IDs/paths, and
-  optional read-only historical source reference for provenance.
+Do not choose a model by brand or rank incomparable records. A between-model claim
+requires the same task, scenario, split, metric, unit, direction, and relevant
+scientific dimensions across the requested model set. Preserve unavailable or unknown
+metrics and units explicitly; never guess them, replace them with numeric values, or
+use a one-model metric to declare a winner.
 
-Do not guess units, total/per-atom normalization, stress ordering/sign, split,
-or scalar-count semantics. Ask for the missing value when execution requires it;
-otherwise preserve the contract's unknown or `source-unit-unspecified` value.
+Keep fresh inference, metric recomputation, replay, manuscript parity, and external
+validation as separate claims.
 
-For scheduled upstream artifact bindings, accept the project-scoped resolved reference
-paths produced by core. A predeclared DAG can consume those collected references directly. Use the
-site's `benchmark-<framework>-canonical/run.sh` family so inference resolves the
-published model and held-out dataset below canonical MLIPFlow roots, not historical
-research directories.
+## Execute and report
 
-## Execute through MLIPFlow
+Use `mlipflow inspect` and the dry-run to review the exact model/evidence and dataset
+bindings, targets, conventions, backend/resources, and expected artifacts. Follow the
+plan's effective `approval_required` value rather than hard-coding approval by
+operation or backend in this Skill.
 
-Never call the bundled runner, wrapper, framework, or historical script as a
-substitute for the Adapter lifecycle. Use MLIPFlow's ordinary plan and dry-run.
-`evaluate-fresh` requires approval because it launches fresh model inference;
-`normalize-execute`, `normalize-replay`, and compatibility metric-only
-`evaluate-static` paths do not. Every SSH-SLURM execution requires approval regardless
-of operation. Confirm `shell=false`, argv-based execution, explicit input
-paths/parameters, and a fresh empty output directory. Do not overwrite or delete an
-existing result; retry must create a new attempt. Missing units, conventions, split, or
-other scientific inputs still block independently of approval.
+Never invoke a model, historical script, benchmark runner, or scheduler outside
+MLIPFlow, and never bypass Adapter `validate/plan/execute/check/collect`. Require final
+plugin `OK`; scheduler `COMPLETED` or process exit zero is insufficient.
 
-For SSH-SLURM, declare only a named backend profile and abstract `cpus`, `gpus`,
-`memory`, and `walltime`. Never put a partition, module, conda path, executable, model
-root, data root, template root, or work root in the project. Require bounded fetch of
-the five fresh artifacts and `cluster-benchmark-report.json`; scheduler completion is
-not scientific success.
-
-To compare multiple fresh runs, feed their `prediction_evidence.json` artifacts to one
-local `normalize-execute` node with `expected_models`. Because every fresh run uses the
-same basename, assign a distinct portable `evidence_locator` to each input. Require the
-same task, scenario, split, metric, unit, direction, and scientific dimensions before
-interpreting the joint ranking. A ranking group is eligible for a between-model
-selection claim only when `comparable_model_count` equals the number of
-`expected_models`. Preserve a metric available for only one model as diagnostic
-evidence, but never use it to declare that model the winner over a model lacking that
-metric.
-
-For AIMD-reference validation, each `$ionic-transport` comparison may supply one
-`aimd_mlip_comparison.json` containing explicit reference/prediction pairs for RDF and
-available transport quantities. Feed the explicit files for all requested MLIPs to one
-`normalize-execute` node and declare the exact `expected_models` set; the set may contain
-2, 3, 6, or another supported count. Keep `static-pes`, `structural-dynamics`, and
-`ionic-transport` as separate task groups. Do not form a cross-task weighted score
-unless the user supplied that policy explicitly, and keep unavailable AIMD quantities
-absent.
-
-After execution, require Adapter `check` and `collect` to return `OK`. Treat
-partial output, model/dataset/evidence mismatch, unsupported scientific fields, non-finite
-metrics, or provenance mismatch as `FAIL`. Scheduler or process completion alone
-is not scientific success.
-
-MAE and RMSE are required for every selected target. Pearson correlation is only
-numeric when at least two scalar pairs exist and neither side is constant. When it is
-mathematically undefined, require an explicit unavailable record and reason; never
-invent a value, emit NaN as a ranking value, or discard the valid MAE/RMSE evidence.
-For a force audit, require `maximum_atomic_force_error` from explicit N×3 vectors;
-do not reconstruct it from flattened force components or substitute a componentwise
-maximum.
-
-## Report the result
-
-Lead with success/failure, selected mode, and whether a model actually ran. Then
-report the exact family, dataset/scenario/split, comparable MAE/RMSE/Pearson
-values, metric direction and ranking, units/conventions, and the important
-model/dataset/evidence/output paths. State missing or unknown scientific
-information explicitly. Keep the default answer concise and provide full JSON
-only when requested.
-
-Never claim historical replay as fresh inference, metric recomputation as model
-execution, contract coverage as production numerical validation, or parity
-without an appropriate comparison against real reference evidence.
+Report the selected mode, whether a model actually ran, exact family, dataset/scenario/
+split, comparable metrics and direction, units/conventions, evidence paths, and
+limitations. Replay is a structured collection of existing results, not fresh
+inference or independent scientific validation.

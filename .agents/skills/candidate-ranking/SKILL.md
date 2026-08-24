@@ -5,38 +5,32 @@ description: Supervise deterministic single-metric ranking and top-k selection f
 
 # Candidate ranking
 
-Use `plugins/candidate-ranking` as the deterministic implementation. Call its
-`rank-candidates` operation through MLIPFlow; do not implement sorting in this
-Skill or rank candidates by inspection.
+Use `plugins/candidate-ranking` through MLIPFlow for `rank-candidates`. This Skill
+selects the ranking intent; the plugin owns validation, sorting, tie handling, checking,
+and collection.
 
-## Require the complete contract
+## Artifact first
 
-Require all of the following without guessing:
+Require existing candidate and numeric metric evidence. Reuse a verified matching
+ranking result instead of recalculating it. Do not generate candidates, compute missing
+properties, rerun MLIP/MD/DFT, or impute values in order to make a ranking possible.
 
-- an existing schema-v1 candidate manifest with unique non-empty candidate IDs;
-- an existing schema-v1 metric-results manifest whose records reference those IDs
-  and contain finite values under `metrics`;
-- the exact metric key and its documented unit/provenance;
-- `direction: maximize` or `direction: minimize`;
-- a positive integer `top_k`;
-- `missing_metric_policy: reject` or `missing_metric_policy: error`.
+## Scientific judgment
 
-`reject` deterministically excludes candidates with no metric record. `error`
-requires complete coverage. A present record with a missing or non-finite selected
-metric is invalid under either policy; never impute a value.
+Require an explicit metric, its unit and provenance, maximize/minimize direction,
+top-k, and missing-metric policy. Do not guess any of these or choose them from
+candidate names, composition, or file order. Ranking is meaningful only for comparable
+numeric evidence under the declared policy.
 
-## Supervise the plugin
+## Execute and interpret
 
-Use only read-only MLIPFlow commands while establishing the node and input
-contract. Inspect the `candidate-ranking` node and confirm operation
-`rank-candidates`, backend `local`, both manifest paths, the metric rule, and the
-result path. `rank-candidates` has `approval_required: false`: inspect the dry-run,
-then run it without an approval stop. Never invoke `rank.py` as a substitute for the
-plugin lifecycle, and never guess a missing metric, direction, top-k, or missing-value
-policy.
+Use `mlipflow inspect` and the dry-run to review the actual manifests and ranking rule.
+Follow the effective `approval_required` value rather than duplicating it in this Skill.
+Never call the ranking script directly, sort candidates in the Agent, or bypass Adapter
+`validate/plan/execute/check/collect`. Require final plugin `OK`.
 
-After execution or replay, require plugin `status: OK`. Report the requested rule,
-input/evaluated/missing counts, and returned top-k values. The deterministic tie
-break is candidate ID ascending. Do not reinterpret a ranking as candidate
-generation, a property calculation, model selection, predictive validation, or
-high-fidelity validation.
+Report the rule, evidence coverage, exclusions, and returned top-k values. The result is
+a deterministic ordering under one declared metric and policy; it is not candidate
+generation, property calculation, model selection, predictive validation, or
+high-fidelity scientific validation. Replay is a structured collection of existing
+results, not a new property calculation.

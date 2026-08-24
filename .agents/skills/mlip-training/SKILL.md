@@ -5,147 +5,52 @@ description: Supervise MLIPFlow training and fine-tuning for DeepMD, M3GNet/MatG
 
 # MLIP training and fine-tuning
 
-Use the `mlip-training` plugin as the deterministic execution layer. The Skill chooses and reviews workflow intent; framework numerics remain in explicit config files and the bundled `mlip_*.py` runners.
+Use `plugins/mlip-training` through MLIPFlow. The Skill selects and reviews training
+intent; the framework runner and Adapter own deterministic configuration validation,
+execution, checking, and collection.
 
-## Choose framework and operation
+## Route the request
 
-The supported frameworks are `deepmd`, `m3gnet`, `chgnet`, and `mace`. All four support `train` and `finetune` in the bundled scheduler contract.
+- Train a new DeepMD, M3GNet/MatGL, CHGNet, or MACE model: `train`.
+- Start from an explicit compatible foundation model: `finetune`.
 
-Do not choose a framework from name recognition alone. Prefer an explicit user choice, an upstream benchmark/routing artifact, or constraints such as an existing foundation model. If evidence is insufficient, expose the alternatives instead of inventing a ranking.
+Do not silently change frameworks, convert training to fine-tuning, select a foundation
+model, enable a training technique, or choose a model by brand. Use the user's exact
+choice or comparable routing/benchmark evidence; otherwise expose the unresolved
+alternatives.
 
-Framework-specific execution shapes are:
+## Artifact first
 
-- DeepMD: labeled data is a directory. Fine-tuning uses a file foundation artifact for the currently bundled path and is limited to DeePMD backends whose verified entry points expose `--finetune` (TF/TF2/PyTorch/Paddle in the bundled runner).
-- M3GNet/MatGL: labeled data is a JSON/JSONL file or an assembled directory with train/valid/test JSON. Fine-tuning requires an extracted MatGL model directory.
-- CHGNet: labeled data is a JSON/JSONL file or an assembled directory with train/valid/test JSON. Fine-tuning requires a CHGNet checkpoint file. Precision must be `float32`.
-- MACE: labeled data is a framework-supported file or an assembled directory with train/valid/test extxyz. Fine-tuning requires a MACE foundation model file. Optional LoRA is configured in the explicit MACE config, never inferred by the Skill.
+Prefer verified dataset references from `$dft-labeling` and preserve their predefined
+split. Reuse matching foundation-model and completed model references instead of
+copying large artifacts or repeating training. When downstream work needs a stable
+published model, use the plugin's reviewed publication path; never overwrite or
+manually republish an existing model.
 
-Never silently convert a `train` request into `finetune`, reuse a checkpoint, change a foundation model, or enable LoRA.
+## Scientific judgment
 
-## Prefer the scheduler contract for cluster work
+Require an explicit dataset, framework, operation, scientific configuration, seed,
+device/precision choice, and resources appropriate to the intended scale. Fine-tuning
+also requires an explicit compatible foundation-model artifact. Do not invent
+hyperparameters, labels, dataset splits, model compatibility, or convergence criteria.
 
-For cluster execution use `backend: ssh-slurm` and a named `backend_profile`. The project node carries only abstract resources:
+Distinguish a smoke or short validation run from production training. Model selection
+claims require comparable benchmark evidence; training loss or successful artifact
+creation alone does not establish superiority.
 
-- `cpus`
-- `gpus`
-- `memory`
-- `walltime`
+## Execute and interpret
 
-Never put an SSH host, partition, account, QoS, module command, conda path, framework executable, absolute dataset path, absolute model path, template root, work root, submit script, or `remote_cwd` in the project node. Those are site-owned details selected by `~/.mlipflow/site.yaml` and the remote template library.
+Use `mlipflow inspect` and the dry-run to review actual artifact bindings, framework,
+operation, configuration, backend, abstract resources, and expected outputs. Follow the
+effective `approval_required` value rather than maintaining a separate approval table
+in this Skill.
 
-The generic template families are:
+Never invoke framework scripts or the scheduler directly, copy site-owned paths into
+the project, or bypass Adapter `validate/plan/execute/check/collect`. Scheduler
+`COMPLETED` or process exit zero is insufficient; require final plugin `OK`. Retry must
+preserve the failed attempt and create a fresh attempt.
 
-- `mlip-deepmd/run.sh`
-- `mlip-m3gnet/run.sh`
-- `mlip-chgnet/run.sh`
-- `mlip-mace/run.sh`
-
-When canonical publication is requested, core selects the corresponding
-`mlip-<framework>-publish/run.sh` family. This lets the site bind a read-only
-foundation-model root and a separate canonical model-publication root. Do not route a
-publish request through a historical model directory or modify the scientific node to
-carry those site paths.
-
-Each site template may activate a different framework environment. It supplies the cluster data/model roots and, when needed, a separate read-only foundation-model root, then calls the staged `training_cluster.py`; MLIPFlow core alone owns SSH, staging, `sbatch`, polling, bounded fetch, retry, and cancellation.
-
-The scheduler stages the small shared `model_runtime.py` needed to record the framework version
-together with the bundled trainer. Do not install MLIPFlow into an otherwise
-validated framework environment merely to satisfy that import.
-
-The bundled training contract has `execution_model: single-python`. It launches
-one Python process, so `resources.cpus` means the CPU/thread budget for that one
-process. The selected Slurm submit template must use `--ntasks=1` and
-`--cpus-per-task={{CPUS}}`. Never map training `CPUS` to `--ntasks`; Lightning
-interprets that as a distributed launch. This does not change MPI contracts such
-as VASP, LAMMPS, or LASP, where `CPUS` is the task/rank count.
-
-## Bind large data and models logically
-
-Do not copy production datasets or foundation models through the control plane. Scheduled nodes use small project-scoped reference manifests.
-
-A dataset reference declares:
-
-- `schema_version: 1`
-- stable `dataset_id`
-- safe site-root-relative `relative_path`
-- `kind: file` or `directory`
-
-A fine-tune node additionally needs a foundation-model reference with `model_id`, `relative_path`, and `kind`. A site template may resolve that reference below `MLIPFLOW_FOUNDATION_MODEL_ROOT` while reserving `MLIPFLOW_MODEL_ROOT` for canonical publication. If no separate foundation root is configured, the model root remains the fallback.
-
-All DFT-assembled datasets are directories so their predefined split remains intact.
-Legacy M3GNet/CHGNet/MACE single-file datasets remain supported. M3GNet foundation
-models are directories; the currently bundled DeepMD/CHGNet/MACE foundation paths are files.
-
-The remote runner resolves the declared path below the site-owned root, checks the declared file/directory kind, and loads that artifact for training. Do not manually copy an installed or historical foundation into the canonical publication root merely to connect the stages.
-
-Prefer a matching `*-dataset-reference.json` collected from
-`dft-labeling.dataset-assemble`. When the input uses an upstream artifact binding, the
-collected reference supplies the dataset path directly. The four references
-from one assembly share one `split_id`; their train/validation/test partitions contain
-the same canonical record IDs. The framework runners must consume these predefined
-partitions and must not randomly split the combined data again.
-
-## Build a scheduled node
-
-Require these scheduled inputs:
-
-- `training_config`
-- `dataset_reference`
-- `foundation_model_reference` only for `finetune`
-
-Require these parameters:
-
-- `framework`
-- `operation`
-- `seed`
-- `device`
-- `precision`
-
-`result_manifest` may set the fetched result filename. Configs must be JSON on the generic scheduler path. Bind actual dataset/config/foundation-model references; do not substitute similarly named files.
-
-When a downstream benchmark or MD node needs a stable site-owned model, set both
-`publish_model_id` and `publish_model_relative_path`. Treat that canonical destination
-as an explicit training parameter. Publication refuses an existing destination;
-never overwrite, delete, or manually copy a model to make the handoff work.
-
-## Execution
-
-Before submission, show the user the framework, operation, config/dataset/foundation-model paths, seed, device, precision, abstract resources, selected backend profile, template family, important staged inputs, expected outputs, and fresh attempt workspace.
-
-Both `train` and `finetune` are expensive operations and require approval for local or
-SSH-SLURM execution. Review the dry-run and obtain approval before launching either.
-
-Scheduler `COMPLETED` is not scientific success. After completion, ordinary `advance` bounded-fetches the run's declared outputs, then runs `check/collect`.
-
-For the generic path, required remote outputs are:
-
-- `cluster-run-report.json`
-- `training-result.json`
-- `model-artifact`
-
-When canonical publication was requested, also require `model-reference.json`. M3GNet
-is published as its extracted model directory; the other supported framework outputs
-are published as files. The reference must bind logical ID, framework, kind, safe
-site-root-relative path.
-
-Optional training stdout/stderr logs are bounded and may also be fetched.
-
-## Completion checks
-
-Accept `OK` only when the scientific checker confirms:
-
-- framework and operation match the attempt snapshot;
-- seed, device, and precision match;
-- staged config and cluster-resolved dataset match the requested inputs;
-- the foundation model matches for fine-tuning;
-- the cluster runner reports return code 0;
-- all reported numeric metrics are finite;
-- the fetched model path matches `training-result.json` and the output exists.
-- requested canonical publication succeeded without overwrite and the fetched
-  `model-reference.json` records the published model path and kind.
-
-Retry always creates a fresh attempt. Do not infer resume behavior from a failed attempt.
-
-## Agent boundary
-
-The Skill may propose framework/operation/resources from explicit evidence, compose project nodes, explain blocked requirements, and route successful model artifacts to downstream benchmark or simulation stages. It must not fabricate benchmark superiority, training convergence, framework versions, cluster paths, foundation models, labels, or hyperparameters.
+Report the framework, train versus fine-tune mode, dataset/split, foundation model when
+used, seed, scale, collected model reference, and checker result. `OK` establishes the
+declared training contract and artifacts, not generalization, physical accuracy,
+production readiness, or universal model ranking.

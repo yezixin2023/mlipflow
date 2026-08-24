@@ -1,4 +1,4 @@
-"""Release and intent contract for the MLIP benchmark supervisor Skill."""
+"""Release and supervision responsibilities for the MLIP benchmark Skill."""
 
 from __future__ import annotations
 
@@ -8,61 +8,69 @@ from pathlib import Path
 
 import yaml
 
-from mlipflow.science.model_runtime import (
-    FRESH_MODEL_FAMILIES,
-    MODEL_FAMILIES,
-    MODEL_FAMILY_FRAMEWORKS,
-)
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = ROOT / ".agents" / "skills" / "mlip-benchmark"
 
 
-def test_skill_files_metadata_and_catalog_source_are_bounded() -> None:
-    skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
-    reference = (SKILL_ROOT / "references" / "benchmark-contract.md").read_text(
-        encoding="utf-8"
+def _texts() -> tuple[str, str]:
+    return (
+        (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8"),
+        (SKILL_ROOT / "references" / "benchmark-contract.md").read_text(encoding="utf-8"),
     )
+
+
+def test_skill_files_and_metadata_are_bounded() -> None:
+    skill, _ = _texts()
     metadata = yaml.safe_load(
         (SKILL_ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
     )
 
     assert metadata["interface"]["display_name"] == "MLIP Benchmark"
     assert metadata["interface"]["default_prompt"].startswith("$mlip-benchmark ")
-    assert "src/mlipflow/science/model_runtime.py" in skill
-    assert "Do not copy either" in reference
-    assert len(MODEL_FAMILIES) == 6
-    assert len(FRESH_MODEL_FAMILIES) == 7
-    assert sum(family.startswith("deepmd-") for family in MODEL_FAMILIES) == 4
-    assert set(FRESH_MODEL_FAMILIES) == set(MODEL_FAMILY_FRAMEWORKS)
+    assert "current exact-family catalog" in skill
+    assert "rather than reading source code" in skill
     assert not (SKILL_ROOT / "scripts").exists()
 
 
-def test_natural_language_intents_preserve_execution_and_claim_boundaries() -> None:
-    skill = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
-    reference = (SKILL_ROOT / "references" / "benchmark-contract.md").read_text(
-        encoding="utf-8"
-    )
+def test_skill_routes_by_evidence_and_preserves_claim_boundaries() -> None:
+    skill, _ = _texts()
+    normalized = " ".join(skill.split())
 
-    assert "model artifact plus a labeled" in skill
-    assert "Choose `evaluate-fresh`" in skill
-    assert "`model_execution=true`" in skill
-    assert "Choose `normalize-execute` for supplied reference/prediction pairs" in skill
-    assert "without loading a model" in skill
-    assert "Choose `normalize-replay` for historical JSON, CSV, XLSX" in skill
-    assert "`model_execution=false`" in skill
-    assert "historical CHGNet stress unit" in reference
-    assert "Report unknown" in reference
-    assert "Which of the available exact models is best?" in reference
-    assert "no brand preference" in reference
-    assert "Use this old workbook for a fresh benchmark" in reference
-    assert "Correct the mode to replay" in reference
-    assert "Changed input paths or existing output" in reference
-    assert "do not bypass or overwrite" in reference
-    assert "`evaluate-fresh` requires approval" in skill + reference
-    assert "`normalize-execute`, `normalize-replay`" in skill + reference
-    assert "Any SSH-SLURM execution requires approval" in skill + reference
+    assert "Explicit model artifact plus labeled dataset: `evaluate-fresh`" in normalized
+    assert "Supplied reference/prediction pairs: `normalize-execute`" in normalized
+    assert "Historical JSON, CSV, XLSX, workbook" in normalized
+    assert "`normalize-replay`" in normalized
+    assert "`model_execution=false`" in normalized
+    assert "Do not choose a model by brand or rank incomparable records" in normalized
+    assert "fresh inference, metric recomputation, replay, manuscript parity" in normalized
+    assert "structured collection of existing results, not fresh inference" in normalized
+
+
+def test_historical_reference_is_conditional_and_keeps_source_limitations() -> None:
+    skill, reference = _texts()
+    normalized_skill = " ".join(skill.split())
+    normalized_reference = " ".join(reference.split())
+
+    assert "only when historical or legacy evidence has ambiguous provenance" in normalized_skill
+    assert "not required for an ordinary fresh or metric-only benchmark" in normalized_skill
+    assert "Read this reference only for historical or legacy benchmark evidence" in (
+        normalized_reference
+    )
+    assert "MISSING_SOURCE" in reference
+    assert "Preserve an unknown value as unknown" in normalized_reference
+    assert "Never synthesize missing historical evidence" in normalized_reference
+
+
+def test_skill_uses_artifacts_effective_plan_and_adapter_lifecycle() -> None:
+    skill, _ = _texts()
+    normalized = " ".join(skill.split())
+
+    assert "Reuse verified prediction evidence" in normalized
+    assert "effective `approval_required`" in normalized
+    assert "validate/plan/execute/check/collect" in normalized
+    assert "Require final plugin `OK`" in normalized
+    assert "scheduler `COMPLETED` or process exit zero is insufficient" in normalized
 
 
 def test_all_skill_files_are_declared_for_wheel_packaging() -> None:
@@ -76,9 +84,8 @@ def test_all_skill_files_are_declared_for_wheel_packaging() -> None:
             match.group(1) == prefix or match.group(1).startswith(prefix + "/")
         ):
             declared.update(ast.literal_eval(match.group(2)))
-    expected = {
+    assert declared == {
         ".agents/skills/mlip-benchmark/SKILL.md",
         ".agents/skills/mlip-benchmark/agents/openai.yaml",
         ".agents/skills/mlip-benchmark/references/benchmark-contract.md",
     }
-    assert declared == expected
