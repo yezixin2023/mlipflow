@@ -14,8 +14,7 @@ in `mlipflow/plugins/__init__.py`, not a parallel documentation table.
 
 A single task can run directly. Use the workflow Skill only when several stages or
 artifact handoffs need coordination. Examples and installation/Skill discovery are
-in `docs/USAGE.md`. Architecture, migration notes and source reading are for development
-or a concrete failure, not routine prerequisites.
+in `README.md`. Source reading is for development or a concrete failure.
 
 ## Scientific decisions and authorization
 

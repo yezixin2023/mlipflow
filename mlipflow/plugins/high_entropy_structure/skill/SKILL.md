@@ -63,8 +63,8 @@ reads the saved result later.
 Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
 Require final plugin `OK` before using outputs. On failure start with `reason`,
 `check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
-shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
-installed environment's `share/mlipflow/examples/`.
+shows saved stdout/stderr. Example paths refer to the
+[repository examples](https://github.com/yezixin2023/mlipflow/tree/public/examples).
 
 Report generated versus replay mode, search controls, candidate coverage, provenance,
 and output paths. Call outputs generated SQS candidates. A seed supports reproducible

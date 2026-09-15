@@ -9,14 +9,8 @@ from unittest.mock import patch
 
 from mlipflow.backends import ExecutionResult
 from mlipflow.config import load_project
-from mlipflow.services import (
-    initialize,
-    make_retry_plan,
-    make_run_plan,
-    query_workflow,
-    retry,
-    run_node,
-)
+from mlipflow.services.commands import initialize, make_retry_plan, make_run_plan, retry, run_node
+from mlipflow.services.queries import query_workflow
 
 from .helpers import project_config, snapshot, write_json
 

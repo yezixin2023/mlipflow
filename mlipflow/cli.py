@@ -12,21 +12,17 @@ from . import __version__
 from .config import load_project
 from .errors import MLIPFlowError
 from .presentation import compact_output, render_text, structured_output
-from .services import (
+from .services.commands import (
     advance,
     initialize,
     make_advance_plan,
     make_retry_plan,
     make_run_plan,
-    query_doctor,
-    query_inspect,
-    query_logs,
-    query_route,
-    query_workflow,
     retry,
     run_node,
     stop,
 )
+from .services.queries import query_doctor, query_inspect, query_logs, query_route, query_workflow
 
 
 READ_ONLY_COMMANDS = frozenset({"list", "status", "json", "inspect", "logs", "route", "doctor"})
@@ -103,6 +99,14 @@ def _approval_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run CLI arguments (without the program name), defaulting to ``sys.argv``.
+
+    Write text or the versioned JSON envelope to stdout; command errors use
+    stderr. Return 0 on command success, 1 for a failed synchronous run or doctor
+    check, and 2 for configuration, approval or I/O errors. A submitted job is
+    still unfinished; downstream work requires node state OK. Argparse handles
+    help/version and invalid syntax with SystemExit(0/2).
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
     output_format = "json" if args.command == "json" else args.format

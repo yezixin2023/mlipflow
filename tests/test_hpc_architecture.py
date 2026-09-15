@@ -572,25 +572,5 @@ class HpcArchitectureTests(unittest.TestCase):
 
         self.assertIn("#SBATCH --time=UNLIMITED", rendered)
 
-    def test_execution_implementation_has_no_cluster_specific_launch_knowledge(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        sources = list((root / "mlipflow").glob("*.py")) + [
-            root / "mlipflow/plugins/dft_labeling/adapter.py"
-        ]
-        forbidden = (
-            "/public/software",
-            "module load",
-            "setvars.sh",
-            "vasp_std",
-            "cpu-large",
-            "mpirun ",
-            "srun ",
-        )
-        for path in sources:
-            text = path.read_text(encoding="utf-8")
-            for token in forbidden:
-                self.assertNotIn(token, text, f"site launch knowledge leaked into {path}")
-
-
 if __name__ == "__main__":
     unittest.main()

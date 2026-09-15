@@ -87,9 +87,7 @@ registration do not depend on Skill discovery.
 
 Scheduled and standalone runners explicitly load the files distributed with their
 execution bundle. This boundary permits scientific environments without a full
-MLIPFlow installation. Source locations and remote filenames are separate: moving
-a module need not change an existing remote plan's filename or output contract.
-See [source migration](MIGRATION.md) for the old-to-new mapping.
+MLIPFlow installation.
 
 ## Commands and mutation boundaries
 

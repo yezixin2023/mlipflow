@@ -7,7 +7,7 @@ import pytest
 
 from mlipflow.config import load_project
 from mlipflow.errors import ConfigError
-from mlipflow.services import make_run_plan
+from mlipflow.services.commands import make_run_plan
 from mlipflow.site import load_site_config
 from .helpers import write_json
 from .test_scheduled_dft import prepared_fixture, FakeTemplateLibrary

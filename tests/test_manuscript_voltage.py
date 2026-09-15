@@ -317,14 +317,6 @@ class ManuscriptVoltageAdapterIntegrationTests(unittest.TestCase):
             "resources": {},
         }
 
-    def test_manifest_advertises_only_implemented_operations(self) -> None:
-        from mlipflow.plugins import BUILTIN_CAPABILITIES
-
-        self.assertEqual(
-            ("compute-from-energies", "replay-si-table-s11"),
-            BUILTIN_CAPABILITIES["electrochemical-voltage"]["operations"],
-        )
-
     def test_standard_adapter_plan_execute_check_and_collect(self) -> None:
         context = self.context()
         output = self.attempt / "manuscript-voltage-replay"

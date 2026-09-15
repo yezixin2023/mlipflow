@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mlipflow.services import initialize
+from mlipflow.services.commands import initialize
 
 from .helpers import project_config, run_cli, write_json
 

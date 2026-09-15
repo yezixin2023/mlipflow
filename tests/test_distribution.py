@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from email.parser import Parser
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -66,30 +67,38 @@ def test_wheel_and_sdist_install_outside_checkout(tmp_path):
         assert "3.12" in supported_python
         assert all(version not in supported_python for version in ("3.9", "3.10", "3.11"))
         assert "mlipflow/plugins/dft_labeling/adapter.py" in names
-        assert not any("share/mlipflow/plugins/" in name for name in names)
-        assert not any(name.startswith(("tests/", "src/")) for name in names)
-        assert not any(Path(name).name == ".DS_Store" for name in names)
-        assert any(
-            name.endswith("examples/high_entropy_sulfide/replay/structure-result.json")
-            for name in names
-        )
-        assert any(name.endswith("agent-skills/mlip-workflow/SKILL.md") for name in names)
-        for directory, skill_name, files in agent_skill_sources():
+        sources = list(agent_skill_sources())
+        assert sum(name.endswith("/SKILL.md") for name in names) == len(sources)
+        expected_resources = set()
+        for directory, skill_name, files in sources:
             for path in files:
                 relative = path.relative_to(directory).as_posix()
-                export = f"/share/mlipflow/agent-skills/{skill_name}/{relative}"
-                matches = [name for name in names if name.endswith(export)]
-                assert len(matches) == 1, export
-                assert archive.read(matches[0]) == path.read_bytes()
                 if directory.is_relative_to(ROOT / "mlipflow"):
                     packaged = path.relative_to(ROOT).as_posix()
-                    assert archive.read(packaged) == path.read_bytes()
+                else:
+                    export = f"/share/mlipflow/agent-skills/{skill_name}/{relative}"
+                    matches = [name for name in names if name.endswith(export)]
+                    assert len(matches) == 1, export
+                    packaged = matches[0]
+                expected_resources.add(packaged)
+                assert archive.read(packaged) == path.read_bytes()
+        # Only Python code, one copy of each Skill, and wheel metadata belong here.
+        actual_resources = {
+            name for name in names
+            if not (name.startswith("mlipflow/") and name.endswith(".py"))
+            and ".dist-info/" not in name
+        }
+        assert actual_resources == expected_resources
     with tarfile.open(sdist) as archive:
         assert_public_members((item.name, item.size) for item in archive.getmembers() if item.isfile())
         names = archive.getnames()
         assert any(name.endswith("mlipflow/plugins/dft_labeling/adapter.py") for name in names)
         assert not any(Path(name).name == ".DS_Store" for name in names)
         sdist_root = names[0].split("/", 1)[0]
+        assert not any(
+            Path(name).parts[1:2] in [(directory,) for directory in ("docs", "examples", "schemas", "tests")]
+            for name in names
+        )
         for _, _, files in agent_skill_sources():
             for path in files:
                 member = archive.getmember(f"{sdist_root}/{path.relative_to(ROOT).as_posix()}")
@@ -106,10 +115,12 @@ def test_wheel_and_sdist_install_outside_checkout(tmp_path):
         [python, "-m", "pip", "install", "--no-deps", "--no-index", "--ignore-installed", wheel],
         cwd=tmp_path,
     )
+    # Example inputs are repository fixtures, not installation resources.
+    shutil.copytree(ROOT / "examples/high_entropy_sulfide", tmp_path / "replay")
+    shutil.copytree(ROOT / "examples/local_ranking", tmp_path / "local-ranking")
     script = r"""
 import importlib.abc
 import json
-import shutil
 import sys
 import sysconfig
 from pathlib import Path
@@ -142,19 +153,21 @@ for name in BUILTIN_CAPABILITIES:
         continue
     frontmatter = (skill / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[1]
     skill_name = yaml.safe_load(frontmatter)["name"]
-    exported = data / "agent-skills" / skill_name
-    for path in skill.rglob("*"):
-        if path.is_file():
-            assert (exported / path.relative_to(skill)).read_bytes() == path.read_bytes()
+    assert (skill / "agents/openai.yaml").is_file()
+    assert not (data / "agent-skills" / skill_name).exists()
+assert sorted(path.name for path in data.iterdir()) == ["agent-skills"]
+assert sorted(path.name for path in (data / "agent-skills").iterdir()) == ["mlip-workflow"]
+workflow = data / "agent-skills/mlip-workflow"
+assert (workflow / "SKILL.md").is_file()
+assert (workflow / "agents/openai.yaml").is_file()
+assert (workflow / "references/workflow-contract.md").is_file()
 example = Path.cwd() / "replay"
-shutil.copytree(data / "examples" / "high_entropy_sulfide", example)
 for command in (["init"], ["list"], ["run", "structure-replay", "--dry-run"], ["run", "structure-replay"], ["status"]):
     assert main(["--project", str(example), *command]) == 0
 records = list((example / ".mlipflow" / "runs").rglob("run-manifest.json"))
 assert len(records) == 1
 assert json.loads(records[0].read_text())["state"] == "OK"
 ranking = Path.cwd() / "local-ranking"
-shutil.copytree(data / "examples" / "local_ranking", ranking)
 for command in (["init"], ["run", "rank", "--dry-run"], ["run", "rank"], ["json", "rank"]):
     assert main(["--project", str(ranking), "--format", "json", *command]) == 0
 result = json.loads((ranking / ".mlipflow/runs/rank/attempt-1/ranking-result.json").read_text())

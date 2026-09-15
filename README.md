@@ -7,7 +7,7 @@
   <a href="https://github.com/yezixin2023/mlipflow/actions/workflows/tests.yml?query=branch%3Apublic"><img src="https://github.com/yezixin2023/mlipflow/actions/workflows/tests.yml/badge.svg?branch=public&amp;event=push" alt="Tests on public branch"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&amp;logoColor=white" alt="Python: 3.12 or newer"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue" alt="License: Apache-2.0"></a>
-  <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-guide-0A7EA4" alt="Documentation guide"></a>
+  <a href="#validation-and-documentation"><img src="https://img.shields.io/badge/docs-guide-0A7EA4" alt="Documentation guide"></a>
 </p>
 
 MLIPFlow connects structure generation, sampling, DFT labeling, dataset assembly, MLIP training, molecular dynamics, benchmarking, active learning, transport analysis, and candidate selection in one explicit workflow. Attempts, scheduler jobs, logs, and scientific results remain inspectable across local machines and Slurm clusters.
@@ -15,6 +15,8 @@ MLIPFlow connects structure generation, sampling, DFT labeling, dataset assembly
 MLIPFlow is a **workflow layer**, not a new interatomic-potential framework. Researchers choose the scientific codes, models, datasets, and numerical settings; MLIPFlow coordinates them without hiding execution boundaries or evidence.
 
 **Python:** `>=3.12` for the core and all extras · **License:** Apache-2.0
+
+**Project status:** pre-release development (0.1.x). CLI and configuration contracts may change before 1.0; scientific validation is capability-specific.
 
 ## What MLIPFlow provides
 
@@ -216,7 +218,7 @@ Software implementation, workflow completion, numerical agreement, and real-clus
 
 Researchers remain responsible for validating DFT settings, models, datasets, simulation parameters, convergence, and uncertainty for their system.
 
-The [`documentation index`](docs/README.md) organizes user guidance, HPC setup, and manuscript-specific reproduction material. Core references include [`ARCHITECTURE.md`](docs/ARCHITECTURE.md), the bundled [Agent Skills](#scientific-capabilities-and-agent-skills), and [`CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md).
+Core references include [`ARCHITECTURE.md`](docs/ARCHITECTURE.md), the bundled [Agent Skills](#scientific-capabilities-and-agent-skills), and [`CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md).
 
 ## Source guide
 
@@ -237,12 +239,19 @@ then follow the query or execution services into a built-in capability.
 
 Python package names use underscores; project capability IDs retain hyphens
 (`dft_labeling` implements `uses: dft-labeling`). See the
-[architecture](docs/ARCHITECTURE.md), [example index](examples/README.md) and
-[source migration guide](docs/MIGRATION.md).
+[architecture](docs/ARCHITECTURE.md) and [example index](examples/README.md).
 
 ## Contributing, security, and citation
 
 Contributions are welcome across the core, built-in capabilities, schemas, tests, examples, Agent Skills, and site templates. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Run the local tests and lint checks in a Python 3.12+ development environment:
+
+```bash
+python -m pip install -e ".[dev,local]"
+python -m pytest
+python -m ruff check mlipflow tests examples
+```
 
 Report security issues according to [`SECURITY.md`](SECURITY.md). Do not commit credentials, private cluster details, licensed pseudopotentials, model weights, large trajectories, or unpublished data.
 

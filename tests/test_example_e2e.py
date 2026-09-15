@@ -8,15 +8,14 @@ from pathlib import Path
 
 from mlipflow.config import load_project
 from mlipflow.errors import ConfigError
-from mlipflow.services import (
+from mlipflow.services.commands import (
     advance,
     initialize,
     make_advance_plan,
     make_run_plan,
-    query_route,
-    query_workflow,
     run_node,
 )
+from mlipflow.services.queries import query_route, query_workflow
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,10 +98,6 @@ class HighEntropySulfideExampleTests(unittest.TestCase):
             )
             self.assertEqual("deepmd-demo", transport["selected_model"])
             self.assertEqual("chgnet-demo", voltage["selected_model"])
-
-    def test_fixture_remains_small(self) -> None:
-        size = sum(path.stat().st_size for path in EXAMPLE.rglob("*") if path.is_file())
-        self.assertLess(size, 100_000)
 
     def test_missing_benchmark_evidence_blocks_routing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

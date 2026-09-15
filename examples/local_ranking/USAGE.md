@@ -14,14 +14,9 @@ mlipflow --project /tmp/mlipflow-ranking-demo --format json run rank
 mlipflow --project /tmp/mlipflow-ranking-demo json rank
 ```
 
-For a pip installation, locate the installed examples first:
-
-```bash
-python -c 'import sysconfig; print(sysconfig.get_path("data") + "/share/mlipflow/examples")'
-```
-
-Copy `local_ranking` from that directory in the first command. Choose a fresh
-destination if `/tmp/mlipflow-ranking-demo` already exists.
+With a pip installation, obtain these input files from the
+[repository example](https://github.com/yezixin2023/mlipflow/tree/public/examples/local_ranking).
+Choose a fresh work destination if `/tmp/mlipflow-ranking-demo` already exists.
 
 Expected run output: exit code `0`, `ok: true`, `data.state: OK`,
 `data.metrics.selected_count: 2`, and `data.summary.ranked_candidates` containing

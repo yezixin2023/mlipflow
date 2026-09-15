@@ -9,7 +9,8 @@ from unittest.mock import patch
 from mlipflow.backends import ExecutionResult
 from mlipflow.config import load_project
 from mlipflow.errors import ApprovalError, CapabilityError
-from mlipflow.services import initialize, make_run_plan, retry, run_node, state_path
+from mlipflow.services.commands import initialize, make_run_plan, retry, run_node
+from mlipflow.services.paths import state_path
 from mlipflow.state import RunState, StateStore
 
 from .helpers import project_config, run_cli, write_json

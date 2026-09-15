@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from mlipflow.backends import ExecutionResult
 from mlipflow.config import load_project
-from mlipflow.services import (
+from mlipflow.services.commands import (
     advance,
     initialize,
     make_advance_plan,

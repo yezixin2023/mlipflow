@@ -70,7 +70,7 @@ def test_documented_transport_recipe_runs_existing_msd_fixture(tmp_path):
 ])
 def test_documented_scheduled_recipes_plan_with_site_templates(tmp_path, directory, node_id, family):
     from mlipflow.config import load_project
-    from mlipflow.services import make_run_plan
+    from mlipflow.services.commands import make_run_plan
     from .test_scheduled_dft import FakeTemplateLibrary, RUN_TEMPLATE, write_site
     from .test_lammps_prepare import _context
 

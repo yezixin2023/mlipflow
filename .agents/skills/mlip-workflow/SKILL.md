@@ -68,7 +68,7 @@ next input as `{from_node: NODE, role: ROLE}`. `metrics`, `check`, `collection`,
 `manifest_path` and `logs` expose the next decision without scanning attempt folders.
 Do not continue from a failed node. For a complete multi-stage configuration see
 `examples/training_all_models/dft-to-all-training.yaml`; single-task recipes are in
-`docs/USAGE.md` and the installed `share/mlipflow/examples/` directory.
+the [repository examples](https://github.com/yezixin2023/mlipflow/tree/public/examples).
 
 ## Report
 

@@ -12,14 +12,14 @@ import pytest
 
 from mlipflow.plugins.active_learning import science as al
 from mlipflow.config import load_project
-from mlipflow.services import (
+from mlipflow.services.commands import (
     advance,
     initialize,
     make_advance_plan,
     make_run_plan,
-    query_workflow,
     run_node,
 )
+from mlipflow.services.queries import query_workflow
 
 
 ROOT = Path(__file__).resolve().parents[1]

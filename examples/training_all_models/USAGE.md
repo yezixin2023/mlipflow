@@ -39,22 +39,18 @@ explicit `foundation_model_reference` as illustrated in `CLUSTER.md`.
 On failure use `reason`, `check.diagnostics`, and the returned log artifacts. After
 diagnosis, `retry train-mace` creates a fresh attempt; the next `run` uses that attempt.
 
-## Earlier DeepMD configurations
+## DeepMD inputs and optional curve checks
 
-All scheduled training now uses the bundled `mlip-<framework>` runner. A legacy
-dataset reference `{"schema_version":1,"dataset_id":"my-data"}` is normalized at
-input parsing to `relative_path: my-data` and `kind: directory` for DeepMD. Write the
-fields explicitly when the dataset is stored elsewhere:
+DeepMD dataset references default to `relative_path: <dataset_id>` and
+`kind: directory`. Supply the path explicitly when the dataset is stored elsewhere:
 
 ```json
 {"schema_version":1,"dataset_id":"my-data","relative_path":"datasets/my-data","kind":"directory"}
 ```
 
-Use the existing canonical site's `mlip-deepmd/run.sh` family. Missing or malformed
-references produce input errors. They never select a different training runner.
-Historical attempts can still be read or replayed as existing results.
+Use the site's `mlip-deepmd/run.sh` template family.
 
-To retain the historical bounded TensorFlow fresh-training learning-curve audit,
+For a bounded TensorFlow fresh-training learning-curve audit,
 add `validation_profile: deepmd-curve` to `parameters`. It preserves the explicit
 seed, system-count, at-most-20,000-step, complete curve, positive learning rate,
 normal completion marker and checkpoint checks. The extra collected artifact is

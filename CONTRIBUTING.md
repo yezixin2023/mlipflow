@@ -52,7 +52,14 @@ Prefer focused changes with a clear motivation. A pull request should explain:
 
 If a change affects scientific results, include the relevant units, normalization conventions, seeds, reference values, tolerances, software/model versions, and source provenance. Do not treat "the program ran" as sufficient scientific validation.
 
-## Core behavior to preserve
+## Public interfaces and core behavior
+
+The public interfaces are the `mlipflow` CLI, documented project/site/registry
+configuration, and versioned CLI and scientific result formats. Use `mlipflow --help`
+and the [README](README.md) for commands; capability Skills describe scientific inputs,
+units and result interpretation. Python services, state/backend classes and runner
+helpers are internal implementation details, not a supported Python SDK or third-party
+plugin registration API.
 
 Some behaviors are part of the public workflow contract:
 
@@ -99,12 +106,12 @@ Keep a relative directory symlink at `.agents/skills/<skill-name>` pointing to
 same source files. The cross-capability `mlip-workflow` Skill stays in
 `.agents/skills/mlip-workflow/`; it has no single owning capability.
 
-Preserve the Skill's declared name and `agents/openai.yaml` metadata when moving
-it. In particular, `mlip-active-learning` belongs to the `active_learning` package.
-Update `pyproject.toml` data-file sources to the canonical Skill paths. Package
-data keeps specialist Skills beside installed code, and the existing
-`share/mlipflow/agent-skills/<skill-name>/` exports remain available. Include new
-resource types in the package-data and source-distribution rules when needed.
+Preserve the Skill's declared name and `agents/openai.yaml` metadata. Specialist
+Skills install once beside their capability code. The standalone workflow Skill
+installs once at `share/mlipflow/agent-skills/mlip-workflow/`. Repository discovery
+is separate from pip installation; installing the tool does not enable agent Skills
+automatically. Examples, documentation and development schemas stay in the repository.
+Add package resources only when runtime code or a canonical Skill needs them.
 
 Skills describe how an agent should supervise a capability: what evidence to request, which MLIPFlow operation to call, when approval is required, and how to interpret results. They should not duplicate scientific computation that belongs in adapters or external tools.
 

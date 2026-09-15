@@ -6,7 +6,8 @@ from pathlib import Path
 
 from mlipflow.config import load_project
 from mlipflow.errors import ConfigError, StateError
-from mlipflow.services import initialize, make_run_plan, run_node, state_path
+from mlipflow.services.commands import initialize, make_run_plan, run_node
+from mlipflow.services.paths import state_path
 from mlipflow.state import StateStore
 
 from .helpers import project_config, write_json

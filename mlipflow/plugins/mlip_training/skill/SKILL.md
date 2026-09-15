@@ -29,7 +29,7 @@ The existing `dft-to-all-training.yaml` reuses assembled datasets in a multi-sta
 For local execution, supply the wrapper executable/script, config, data, output and
 result-manifest paths; the CLI dry-run displays the complete wrapper argv.
 Earlier DeepMD references and the optional bounded curve audit are explained in the
-example's `USAGE.md`; unreadable input never selects a legacy runner.
+example's `USAGE.md`.
 
 ## Scientific judgment
 
@@ -60,8 +60,8 @@ progresses; `mlipflow --project PROJECT json NODE` reads the saved result.
 Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
 Require final plugin `OK` before using outputs. On failure start with `reason`,
 `check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
-shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
-installed environment's `share/mlipflow/examples/`.
+shows saved stdout/stderr. Example paths refer to the
+[repository examples](https://github.com/yezixin2023/mlipflow/tree/public/examples).
 
 Report the framework, train versus fine-tune mode, dataset/split, foundation model when
 used, seed, scale, collected model reference, and checker result. `OK` establishes the

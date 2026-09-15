@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import ast
 from tests.helpers import load_module
 import json
-import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,21 +22,8 @@ def test_validation_helper_uses_the_plugin_candidate_contract() -> None:
     assert module.ACTIVE_CANDIDATE_CONTRACT == CANDIDATE_CONTRACT
 
 
-def test_validation_example_and_cluster_template_are_packaged_portably() -> None:
+def test_validation_cluster_template_is_portable() -> None:
     root = Path(__file__).resolve().parents[1]
-    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
-    section = pyproject.split("[tool.setuptools.data-files]", 1)[1].split("\n[", 1)[0]
-    declared = set()
-    for line in section.splitlines():
-        match = re.fullmatch(r'"([^"]+)"\s*=\s*(\[.*\])', line.strip())
-        if match is not None and "active_learning_validation" in match.group(1):
-            declared.update(ast.literal_eval(match.group(2)))
-    assert declared == {
-        "examples/active_learning_validation/*.md",
-        "examples/active_learning_validation/*.py",
-        "examples/active_learning_validation/cluster/*.example",
-    }
-
     template = (
         root
         / "examples"

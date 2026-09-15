@@ -62,8 +62,8 @@ progresses; `mlipflow --project PROJECT json NODE` reads the saved result.
 Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
 Require final plugin `OK` before using outputs. On failure start with `reason`,
 `check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
-shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
-installed environment's `share/mlipflow/examples/`.
+shows saved stdout/stderr. Example paths refer to the
+[repository examples](https://github.com/yezixin2023/mlipflow/tree/public/examples).
 
 Report the actual ensemble and model, physical controls, segment/total scale, restart
 status, collected trajectory artifacts, and checker result. `OK` does not establish

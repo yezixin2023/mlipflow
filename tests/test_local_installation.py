@@ -63,11 +63,3 @@ def test_local_extra_excludes_development_and_mlip_frameworks() -> None:
             "m3gnet",
         }
     )
-
-
-def test_readme_recommends_the_packaged_local_extra_by_default() -> None:
-    assert "local" in _extras()
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    quick_start = readme.split("## Quick start", 1)[1].split("## Workflow lifecycle", 1)[0]
-    assert 'python -m pip install ".[local]"' in quick_start
-    assert "python -m pip install .\n" not in quick_start

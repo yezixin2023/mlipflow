@@ -33,7 +33,7 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/yezixin2023/mlipflow"
 Repository = "https://github.com/yezixin2023/mlipflow"
-Documentation = "https://github.com/yezixin2023/mlipflow/blob/public/docs/README.md"
+Documentation = "https://github.com/yezixin2023/mlipflow/blob/public/README.md"
 Issues = "https://github.com/yezixin2023/mlipflow/issues"
 Changelog = "https://github.com/yezixin2023/mlipflow/blob/public/CHANGELOG.md"
 
@@ -62,6 +62,9 @@ local = [
 [project.scripts]
 mlipflow = "mlipflow.cli:main"
 
+[tool.setuptools]
+include-package-data = false
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["mlipflow", "mlipflow.*"]
@@ -71,59 +74,9 @@ namespaces = false
 "*" = ["skill/SKILL.md", "skill/agents/*.yaml", "skill/references/*.md"]
 
 [tool.setuptools.data-files]
-"share/mlipflow/examples" = ["examples/README.md"]
-"share/mlipflow/examples/local_ranking" = ["examples/local_ranking/*.md", "examples/local_ranking/*.yaml", "examples/local_ranking/*.json"]
-"share/mlipflow/examples/ionic_transport" = ["examples/ionic_transport/*.md", "examples/ionic_transport/*.yaml"]
-"share/mlipflow/examples/sqs" = ["examples/sqs/*.md", "examples/sqs/*.yaml", "examples/sqs/*.json", "examples/sqs/*.vasp"]
-"share/mlipflow/examples/high_entropy_sulfide/data" = ["examples/high_entropy_sulfide/data/*.md"]
-"share/mlipflow/examples/high_entropy_sulfide/replay" = ["examples/high_entropy_sulfide/replay/*.json", "examples/high_entropy_sulfide/replay/*.csv"]
-"share/mlipflow/schemas" = ["schemas/*.json"]
-"share/mlipflow/docs" = ["docs/*.md"]
-"share/mlipflow/docs/assets" = ["docs/assets/*.png"]
-"share/mlipflow/examples/high_entropy_sulfide" = ["examples/high_entropy_sulfide/*.md", "examples/high_entropy_sulfide/*.yaml"]
-"share/mlipflow/examples/high_entropy_sulfide_reproduction" = ["examples/high_entropy_sulfide_reproduction/*.md", "examples/high_entropy_sulfide_reproduction/*.yaml", "examples/high_entropy_sulfide_reproduction/*.py"]
-"share/mlipflow/examples/high_entropy_sulfide_reproduction/evidence" = ["examples/high_entropy_sulfide_reproduction/evidence/*.json", "examples/high_entropy_sulfide_reproduction/evidence/*.csv"]
-"share/mlipflow/examples/high_entropy_sulfide_reproduction/benchmark" = ["examples/high_entropy_sulfide_reproduction/benchmark/*.json", "examples/high_entropy_sulfide_reproduction/benchmark/*.csv"]
-"share/mlipflow/examples/high_entropy_sulfide_reproduction/reports" = ["examples/high_entropy_sulfide_reproduction/reports/*.json", "examples/high_entropy_sulfide_reproduction/reports/*.md"]
-"share/mlipflow/examples/aimd_reference_validation" = ["examples/aimd_reference_validation/*.md", "examples/aimd_reference_validation/*.yaml"]
-"share/mlipflow/examples/lasp_random_walk" = ["examples/lasp_random_walk/*.md", "examples/lasp_random_walk/*.in"]
-"share/mlipflow/examples/lasp_random_walk/cluster" = ["examples/lasp_random_walk/cluster/*.example"]
-"share/mlipflow/examples/training_all_models" = ["examples/training_all_models/*.md", "examples/training_all_models/*.json", "examples/training_all_models/*.yaml"]
-"share/mlipflow/examples/training_all_models/cluster" = ["examples/training_all_models/cluster/*.example"]
-"share/mlipflow/examples/ase_md_cluster" = ["examples/ase_md_cluster/*.md", "examples/ase_md_cluster/*.yaml", "examples/ase_md_cluster/*.example"]
-"share/mlipflow/examples/lammps_mlip_inputs" = ["examples/lammps_mlip_inputs/*.md", "examples/lammps_mlip_inputs/*.yaml", "examples/lammps_mlip_inputs/*.json", "examples/lammps_mlip_inputs/*.example"]
-"share/mlipflow/examples/active_learning_validation" = ["examples/active_learning_validation/*.md", "examples/active_learning_validation/*.py"]
-"share/mlipflow/examples/active_learning_validation/cluster" = ["examples/active_learning_validation/cluster/*.example"]
-"share/mlipflow/examples/site_templates/slurm/mpi" = ["examples/site_templates/slurm/mpi/*.example"]
-"share/mlipflow/examples/site_templates/slurm/single-python" = ["examples/site_templates/slurm/single-python/*.example"]
-"share/mlipflow/examples/site_templates" = ["examples/site_templates/*.md", "examples/site_templates/*.yaml.example"]
-"share/mlipflow/examples/site_templates/vasp" = ["examples/site_templates/vasp/*.example"]
-"share/mlipflow/agent-skills/pes-sampling" = ["mlipflow/plugins/pes_sampling/skill/SKILL.md"]
-"share/mlipflow/agent-skills/pes-sampling/agents" = ["mlipflow/plugins/pes_sampling/skill/agents/openai.yaml"]
-"share/mlipflow/agent-skills/dft-labeling" = ["mlipflow/plugins/dft_labeling/skill/SKILL.md"]
-"share/mlipflow/agent-skills/dft-labeling/agents" = ["mlipflow/plugins/dft_labeling/skill/agents/openai.yaml"]
-"share/mlipflow/agent-skills/mlip-training" = ["mlipflow/plugins/mlip_training/skill/SKILL.md"]
-"share/mlipflow/agent-skills/mlip-training/agents" = ["mlipflow/plugins/mlip_training/skill/agents/openai.yaml"]
-"share/mlipflow/agent-skills/ase-md" = ["mlipflow/plugins/ase_md/skill/SKILL.md"]
-"share/mlipflow/agent-skills/ase-md/agents" = ["mlipflow/plugins/ase_md/skill/agents/openai.yaml"]
-"share/mlipflow/agent-skills/lammps-md" = ["mlipflow/plugins/lammps_md/skill/SKILL.md"]
-"share/mlipflow/agent-skills/lammps-md/agents" = ["mlipflow/plugins/lammps_md/skill/agents/openai.yaml"]
-"share/mlipflow/agent-skills/mlip-benchmark" = ["mlipflow/plugins/mlip_benchmark/skill/SKILL.md"]
-"share/mlipflow/agent-skills/mlip-benchmark/agents" = ["mlipflow/plugins/mlip_benchmark/skill/agents/openai.yaml"]
-"share/mlipflow/agent-skills/mlip-benchmark/references" = ["mlipflow/plugins/mlip_benchmark/skill/references/benchmark-contract.md"]
-"share/mlipflow/agent-skills/ionic-transport" = ["mlipflow/plugins/ionic_transport/skill/SKILL.md"]
-"share/mlipflow/agent-skills/ionic-transport/agents" = ["mlipflow/plugins/ionic_transport/skill/agents/openai.yaml"]
-"share/mlipflow/agent-skills/candidate-ranking" = ["mlipflow/plugins/candidate_ranking/skill/SKILL.md"]
-"share/mlipflow/agent-skills/candidate-ranking/agents" = ["mlipflow/plugins/candidate_ranking/skill/agents/openai.yaml"]
-"share/mlipflow/agent-skills/high-entropy-structure" = ["mlipflow/plugins/high_entropy_structure/skill/SKILL.md"]
-"share/mlipflow/agent-skills/high-entropy-structure/agents" = ["mlipflow/plugins/high_entropy_structure/skill/agents/openai.yaml"]
-"share/mlipflow/agent-skills/high-entropy-structure/references" = ["mlipflow/plugins/high_entropy_structure/skill/references/sqs-contract.md"]
 "share/mlipflow/agent-skills/mlip-workflow" = [".agents/skills/mlip-workflow/SKILL.md"]
 "share/mlipflow/agent-skills/mlip-workflow/agents" = [".agents/skills/mlip-workflow/agents/openai.yaml"]
 "share/mlipflow/agent-skills/mlip-workflow/references" = [".agents/skills/mlip-workflow/references/workflow-contract.md"]
-"share/mlipflow/agent-skills/mlip-active-learning" = ["mlipflow/plugins/active_learning/skill/SKILL.md"]
-"share/mlipflow/agent-skills/mlip-active-learning/agents" = ["mlipflow/plugins/active_learning/skill/agents/openai.yaml"]
-"share/mlipflow/agent-skills/mlip-active-learning/references" = ["mlipflow/plugins/active_learning/skill/references/active-learning-contract.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

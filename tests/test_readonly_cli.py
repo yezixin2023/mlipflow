@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mlipflow.services import initialize
+from mlipflow.services.commands import initialize
 from mlipflow.config import load_project
 from mlipflow.services.paths import state_path
 from mlipflow.state import StateStore, RunState

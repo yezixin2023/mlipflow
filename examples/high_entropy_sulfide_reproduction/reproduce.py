@@ -737,7 +737,7 @@ def _verify_registry_matches_records(root: Path, normalized_metrics: Mapping[str
 
 def _route_models(root: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     from mlipflow.config import load_project
-    from mlipflow.services import query_route
+    from mlipflow.services.queries import query_route
 
     project = load_project(root)
     registry = _json(root / "model_registry.yaml")

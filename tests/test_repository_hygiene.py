@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import re
 import subprocess
 import unittest
@@ -16,26 +15,6 @@ def tracked_files() -> list[Path]:
     """Inspect public source files without scanning ignored research workspaces."""
     output = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT, text=True)
     return [ROOT / name for name in output.split("\0") if name and (ROOT / name).is_file()]
-
-
-def declared_agent_skill_files() -> dict[str, set[Path]]:
-    """Return every source file named by an agent-skill data-files declaration."""
-
-    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    section = pyproject.split("[tool.setuptools.data-files]", 1)[1]
-    section = section.split("\n[", 1)[0]
-    declarations: dict[str, set[Path]] = {}
-    prefix = "share/mlipflow/agent-skills/"
-    for line in section.splitlines():
-        match = re.fullmatch(r'"([^"]+)"\s*=\s*(\[.*\])', line.strip())
-        if match is None or not match.group(1).startswith(prefix):
-            continue
-        destination = match.group(1)[len(prefix) :]
-        skill_name = destination.split("/", 1)[0]
-        declarations.setdefault(skill_name, set()).update(
-            ROOT / pattern for pattern in ast.literal_eval(match.group(2))
-        )
-    return declarations
 
 
 class RepositoryHygieneTests(unittest.TestCase):
@@ -64,77 +43,23 @@ class RepositoryHygieneTests(unittest.TestCase):
             {entry.name for entry in discovery.iterdir() if (entry / "SKILL.md").is_file()},
         )
 
-    def test_agent_skill_packaging_declarations_resolve_to_files(self) -> None:
-        declarations = declared_agent_skill_files()
-        self.assertTrue(declarations)
-        missing = sorted(
-            path.relative_to(ROOT).as_posix()
-            for paths in declarations.values()
-            for path in paths
-            if not path.is_file()
-        )
-        if missing:
-            self.fail(
-                "agent skill packaging declarations reference missing files:\n"
-                + "\n".join(missing)
-            )
 
     def test_agent_skill_default_prompts_start_with_declared_skill_name(self) -> None:
         invalid: list[str] = []
-        for skill_name, paths in declared_agent_skill_files().items():
-            metadata_paths = [
-                path
-                for path in paths
-                if path.as_posix().endswith("/agents/openai.yaml")
-            ]
-            if len(metadata_paths) != 1 or not metadata_paths[0].is_file():
-                continue
-            metadata = yaml.safe_load(metadata_paths[0].read_text(encoding="utf-8"))
+        for skill in sorted((ROOT / ".agents/skills").iterdir()):
+            skill_name = skill.name
+            metadata_path = skill / "agents/openai.yaml"
+            self.assertTrue(metadata_path.is_file(), metadata_path)
+            metadata = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
             interface = metadata.get("interface") if isinstance(metadata, dict) else None
             prompt = interface.get("default_prompt") if isinstance(interface, dict) else None
             prefix = f"${skill_name}"
             if not isinstance(prompt, str) or not (
                 prompt == prefix or prompt.startswith(prefix + " ")
             ):
-                invalid.append(metadata_paths[0].relative_to(ROOT).as_posix())
+                invalid.append(metadata_path.relative_to(ROOT).as_posix())
         self.assertEqual([], sorted(invalid))
 
-    def test_release_data_declarations_cover_publishable_assets(self) -> None:
-        """Keep wheel declarations in sync with the source assets shipped by the sdist."""
-
-        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        section = pyproject.split("[tool.setuptools.data-files]", 1)[1]
-        section = section.split("\n[", 1)[0]
-        declared: set[str] = set()
-        for line in section.splitlines():
-            match = re.fullmatch(r'"[^"]+"\s*=\s*(\[.*\])', line.strip())
-            if match is None:
-                continue
-            for pattern in ast.literal_eval(match.group(1)):
-                declared.update(
-                    path.relative_to(ROOT).as_posix() for path in ROOT.glob(pattern)
-                )
-
-        publishable: set[str] = set()
-        skill_roots = [ROOT / ".agents" / "skills" / "mlip-workflow"]
-        skill_roots.extend((ROOT / "mlipflow" / "plugins").glob("*/skill"))
-        for directory, suffixes in (
-            (ROOT / "schemas", {".json"}),
-            *((directory, {".md", ".yaml"}) for directory in skill_roots),
-            (ROOT / "docs", {".md"}),
-            (
-                ROOT / "examples" / "high_entropy_sulfide_reproduction",
-                {".py", ".md", ".yaml", ".json", ".csv"},
-            ),
-            (ROOT / "examples" / "site_templates", {".md", ".example"}),
-        ):
-            publishable.update(
-                path.relative_to(ROOT).as_posix()
-                for path in directory.rglob("*")
-                if path.is_file() and path.suffix in suffixes
-            )
-
-        self.assertEqual(set(), publishable - declared)
 
     def test_no_generated_build_artifacts_are_tracked(self) -> None:
         result = subprocess.run(

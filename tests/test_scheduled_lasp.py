@@ -10,7 +10,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from mlipflow.config import load_project
-from mlipflow.services import initialize, make_run_plan
+from mlipflow.services.commands import initialize, make_run_plan
 from mlipflow.services.contracts import _scheduled_contract
 
 from .helpers import project_config, write_json
