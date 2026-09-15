@@ -79,20 +79,20 @@ MLIPFlow ships a fixed set of scientific capability adapters. Each adapter valid
 
 | Research capability | Capability ID | Agent Skill | Main scope | Execution |
 |---|---|---|---|---|
-| End-to-end workflow design | MLIPFlow core | `$mlip-workflow` | DAG construction, evidence handoff, approval boundaries, and supervision | Supervision |
-| High-entropy and SQS structures | `high-entropy-structure` | `$high-entropy-structure` | Seeded `icet` SQS generation with explicit composition and supercell contracts | Local |
-| PES sampling | `pes-sampling` | `$pes-sampling` | DIRECT-based structure selection, LASP/SSW sampling, replay of existing sampling runs, and structure-set merging | Local; SSH-Slurm for scheduled LASP |
-| DFT labeling and datasets | `dft-labeling` | `$dft-labeling` | VASP preparation and static, relaxation, or AIMD labeling, followed by standardized labeled-dataset assembly | Local preparation/assembly; local or SSH-Slurm labeling/assembly |
-| MLIP training and fine-tuning | `mlip-training` | `$mlip-training` | DeepMD, M3GNet/MatGL, CHGNet, and MACE training or fine-tuning with explicit references | Local; SSH-Slurm |
-| ASE molecular dynamics | `ase-md` | `$ase-md` | NVT Langevin or isotropic MTK NPT, supercells, checkpoints, and fresh-attempt restart | SSH-Slurm |
-| LAMMPS molecular dynamics | `lammps-md` | `$lammps-md` | Deterministic input preparation, DeepMD/MACE/MatGL execution, collection, and binary restart | Local preparation; SSH-Slurm execution |
-| MLIP benchmarking | `mlip-benchmark` | `$mlip-benchmark` | Fresh or normalized static-PES evidence plus task-separated AIMD-reference RDF and transport metrics | Local; SSH-Slurm for fresh inference |
-| Offline active learning | `active-learning` | `$mlip-active-learning` | Uncertainty/risk-based screening, DFT-label selection, and round-wise declared-domain coverage and independent-accuracy assessment | Local selection and assessment; SSH-Slurm for large-scale inference |
-| Ionic transport and dynamics | `ionic-transport` | `$ionic-transport` | Trajectory/MSD analysis, diffusion, conductivity, Haven ratio, Arrhenius fitting, and bounded partial-RDF comparison | Local |
-| Candidate ranking | `candidate-ranking` | `$candidate-ranking` | Ranking and top-k selection of candidates according to user-defined quantitative metrics | Local |
+| End-to-end workflow design | MLIPFlow core | [`$mlip-workflow`](.agents/skills/mlip-workflow/SKILL.md) | DAG construction, evidence handoff, approval boundaries, and supervision | Supervision |
+| High-entropy and SQS structures | `high-entropy-structure` | [`$high-entropy-structure`](mlipflow/plugins/high_entropy_structure/skill/SKILL.md) | Seeded `icet` SQS generation with explicit composition and supercell contracts | Local |
+| PES sampling | `pes-sampling` | [`$pes-sampling`](mlipflow/plugins/pes_sampling/skill/SKILL.md) | DIRECT-based structure selection, LASP/SSW sampling, replay of existing sampling runs, and structure-set merging | Local; SSH-Slurm for scheduled LASP |
+| DFT labeling and datasets | `dft-labeling` | [`$dft-labeling`](mlipflow/plugins/dft_labeling/skill/SKILL.md) | VASP preparation and static, relaxation, or AIMD labeling, followed by standardized labeled-dataset assembly | Local preparation/assembly; local or SSH-Slurm labeling/assembly |
+| MLIP training and fine-tuning | `mlip-training` | [`$mlip-training`](mlipflow/plugins/mlip_training/skill/SKILL.md) | DeepMD, M3GNet/MatGL, CHGNet, and MACE training or fine-tuning with explicit references | Local; SSH-Slurm |
+| ASE molecular dynamics | `ase-md` | [`$ase-md`](mlipflow/plugins/ase_md/skill/SKILL.md) | NVT Langevin or isotropic MTK NPT, supercells, checkpoints, and fresh-attempt restart | SSH-Slurm |
+| LAMMPS molecular dynamics | `lammps-md` | [`$lammps-md`](mlipflow/plugins/lammps_md/skill/SKILL.md) | Deterministic input preparation, DeepMD/MACE/MatGL execution, collection, and binary restart | Local preparation; SSH-Slurm execution |
+| MLIP benchmarking | `mlip-benchmark` | [`$mlip-benchmark`](mlipflow/plugins/mlip_benchmark/skill/SKILL.md) | Fresh or normalized static-PES evidence plus task-separated AIMD-reference RDF and transport metrics | Local; SSH-Slurm for fresh inference |
+| Offline active learning | `active-learning` | [`$mlip-active-learning`](mlipflow/plugins/active_learning/skill/SKILL.md) | Uncertainty/risk-based screening, DFT-label selection, and round-wise declared-domain coverage and independent-accuracy assessment | Local selection and assessment; SSH-Slurm for large-scale inference |
+| Ionic transport and dynamics | `ionic-transport` | [`$ionic-transport`](mlipflow/plugins/ionic_transport/skill/SKILL.md) | Trajectory/MSD analysis, diffusion, conductivity, Haven ratio, Arrhenius fitting, and bounded partial-RDF comparison | Local |
+| Candidate ranking | `candidate-ranking` | [`$candidate-ranking`](mlipflow/plugins/candidate_ranking/skill/SKILL.md) | Ranking and top-k selection of candidates according to user-defined quantitative metrics | Local |
 | Electrochemical voltage | `electrochemical-voltage` | — | Average Li intercalation voltage calculations between adjacent compositions, with support for replaying existing results | Local |
 
-The voltage capability is orchestrated directly or through `$mlip-workflow`; it does not currently have a dedicated Agent Skill. Implementations live under [`mlipflow/plugins/`](mlipflow/plugins/), while supervision guidance lives under [`.agents/skills/`](.agents/skills/). `mlipflow inspect NODE` reports the node's resolved operation, effective approval requirement, and the operations supported by its built-in capability.
+The voltage capability is orchestrated directly or through `$mlip-workflow`; it does not currently have a dedicated Agent Skill. Each specialist Skill lives in its capability's `skill/` folder under [`mlipflow/plugins/`](mlipflow/plugins/), beside the implementation. [`.agents/skills/`](.agents/skills/) provides relative directory links for Agent discovery and holds the standalone `mlip-workflow` Skill. `mlipflow inspect NODE` reports the node's resolved operation, effective approval requirement, and the operations supported by its built-in capability.
 
 ## Environments and HPC
 
@@ -144,7 +144,7 @@ Software implementation, workflow completion, numerical agreement, and real-clus
 
 Researchers remain responsible for validating DFT settings, models, datasets, simulation parameters, convergence, and uncertainty for their system.
 
-The [`documentation index`](docs/README.md) organizes user guidance, HPC setup, and manuscript-specific reproduction material. Core references include [`ARCHITECTURE.md`](docs/ARCHITECTURE.md), the bundled [Agent Skills](.agents/skills/), and [`CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md).
+The [`documentation index`](docs/README.md) organizes user guidance, HPC setup, and manuscript-specific reproduction material. Core references include [`ARCHITECTURE.md`](docs/ARCHITECTURE.md), the bundled [Agent Skills](#scientific-capabilities-and-agent-skills), and [`CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md).
 
 ## Source guide
 
@@ -160,7 +160,8 @@ then follow the query or execution services into a built-in capability.
 | `mlipflow/plugins/<capability>/` | Operation contracts, scientific checks and runners |
 | `mlipflow/plugins/model_runtime.py` | Shared lazy model-family and inference support |
 | `schemas/`, `tests/`, `examples/` | Configuration contracts, regression tests and runnable examples |
-| `.agents/skills/` | Agent supervision guidance |
+| `mlipflow/plugins/<capability>/skill/` | Specialist Agent guidance and references beside its implementation |
+| `.agents/skills/` | Skill discovery links and the standalone `mlip-workflow` Skill |
 
 Python package names use underscores; project capability IDs retain hyphens
 (`dft_labeling` implements `uses: dft-labeling`). See the

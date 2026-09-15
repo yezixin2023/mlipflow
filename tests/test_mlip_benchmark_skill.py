@@ -85,7 +85,7 @@ def test_all_skill_files_are_declared_for_wheel_packaging() -> None:
         ):
             declared.update(ast.literal_eval(match.group(2)))
     assert declared == {
-        ".agents/skills/mlip-benchmark/SKILL.md",
-        ".agents/skills/mlip-benchmark/agents/openai.yaml",
-        ".agents/skills/mlip-benchmark/references/benchmark-contract.md",
+        "mlipflow/plugins/mlip_benchmark/skill/SKILL.md",
+        "mlipflow/plugins/mlip_benchmark/skill/agents/openai.yaml",
+        "mlipflow/plugins/mlip_benchmark/skill/references/benchmark-contract.md",
     }

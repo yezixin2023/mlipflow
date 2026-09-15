@@ -80,15 +80,31 @@ Adapter execution should use explicit argv lists and controlled working director
 
 ## Adding or changing an Agent Skill
 
-Agent Skills live under:
+Each specialist Agent Skill lives beside its capability implementation:
 
 ```text
-.agents/skills/<skill-name>/
-  SKILL.md
-  agents/openai.yaml
+mlipflow/plugins/<underscored_id>/
+  adapter.py
+  skill/
+    SKILL.md
+    agents/openai.yaml
 ```
 
-Read the selected Skill's [`SKILL.md`](.agents/skills/) and any references it links.
+Read the selected Skill's `SKILL.md` and its relevant linked references. The
+[capability guide](README.md#scientific-capabilities-and-agent-skills) links directly
+to these files.
+
+Keep a relative directory symlink at `.agents/skills/<skill-name>` pointing to
+`../../mlipflow/plugins/<underscored_id>/skill` so repository agents discover the
+same source files. The cross-capability `mlip-workflow` Skill stays in
+`.agents/skills/mlip-workflow/`; it has no single owning capability.
+
+Preserve the Skill's declared name and `agents/openai.yaml` metadata when moving
+it. In particular, `mlip-active-learning` belongs to the `active_learning` package.
+Update `pyproject.toml` data-file sources to the canonical Skill paths. Package
+data keeps specialist Skills beside installed code, and the existing
+`share/mlipflow/agent-skills/<skill-name>/` exports remain available. Include new
+resource types in the package-data and source-distribution rules when needed.
 
 Skills describe how an agent should supervise a capability: what evidence to request, which MLIPFlow operation to call, when approval is required, and how to interpret results. They should not duplicate scientific computation that belongs in adapters or external tools.
 
@@ -129,7 +145,8 @@ When behavior changes, update the closest source of truth as needed:
 
 - schemas for configuration contracts;
 - `mlipflow/plugins/__init__.py` for the built-in capability lookup;
-- `.agents/skills/<skill-name>/SKILL.md` for Agent Skill contracts;
+- `mlipflow/plugins/<underscored_id>/skill/SKILL.md` for specialist Agent Skill contracts;
+- `.agents/skills/mlip-workflow/SKILL.md` for cross-capability supervision;
 - the closest adapter and deterministic tests for implementation state;
 - `CHANGELOG.md` for notable user-facing changes.
 

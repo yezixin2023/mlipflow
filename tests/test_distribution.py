@@ -9,6 +9,8 @@ import tarfile
 import zipfile
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,6 +40,16 @@ def assert_public_members(members):
         assert size < 1_000_000, name
 
 
+def agent_skill_sources():
+    directories = sorted((ROOT / "mlipflow" / "plugins").glob("*/skill"))
+    directories.append(ROOT / ".agents" / "skills" / "mlip-workflow")
+    for directory in directories:
+        frontmatter = (directory / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[1]
+        name = yaml.safe_load(frontmatter)["name"]
+        files = sorted(path for path in directory.rglob("*") if path.is_file())
+        yield directory, name, files
+
+
 def test_wheel_and_sdist_install_outside_checkout(tmp_path):
     release = tmp_path / "release"
     run([sys.executable, "-m", "build", "--no-isolation", "--outdir", release], cwd=ROOT)
@@ -55,11 +67,28 @@ def test_wheel_and_sdist_install_outside_checkout(tmp_path):
             for name in names
         )
         assert any(name.endswith("agent-skills/mlip-workflow/SKILL.md") for name in names)
+        for directory, skill_name, files in agent_skill_sources():
+            for path in files:
+                relative = path.relative_to(directory).as_posix()
+                export = f"/share/mlipflow/agent-skills/{skill_name}/{relative}"
+                matches = [name for name in names if name.endswith(export)]
+                assert len(matches) == 1, export
+                assert archive.read(matches[0]) == path.read_bytes()
+                if directory.is_relative_to(ROOT / "mlipflow"):
+                    packaged = path.relative_to(ROOT).as_posix()
+                    assert archive.read(packaged) == path.read_bytes()
     with tarfile.open(sdist) as archive:
         assert_public_members((item.name, item.size) for item in archive.getmembers() if item.isfile())
         names = archive.getnames()
         assert any(name.endswith("mlipflow/plugins/dft_labeling/adapter.py") for name in names)
         assert not any(Path(name).name == ".DS_Store" for name in names)
+        sdist_root = names[0].split("/", 1)[0]
+        for _, _, files in agent_skill_sources():
+            for path in files:
+                member = archive.getmember(f"{sdist_root}/{path.relative_to(ROOT).as_posix()}")
+                assert member.isfile(), member.name
+                with archive.extractfile(member) as source:
+                    assert source.read() == path.read_bytes()
 
     environment = tmp_path / "installed"
     # Reuse scientific dependencies without network access. The wheel itself must
@@ -77,6 +106,8 @@ import shutil
 import sys
 import sysconfig
 from pathlib import Path
+
+import yaml
 
 class NoScientificImports(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
@@ -97,6 +128,17 @@ for name in BUILTIN_CAPABILITIES:
     assert all(callable(getattr(adapter, method)) for method in ("operation", "validate", "plan", "check", "collect"))
     adapter.operation({"parameters": {}})
 data = Path(sysconfig.get_path("data")) / "share" / "mlipflow"
+for name in BUILTIN_CAPABILITIES:
+    skill = capability_directory(name) / "skill"
+    if name == "electrochemical-voltage":
+        assert not skill.exists()
+        continue
+    frontmatter = (skill / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[1]
+    skill_name = yaml.safe_load(frontmatter)["name"]
+    exported = data / "agent-skills" / skill_name
+    for path in skill.rglob("*"):
+        if path.is_file():
+            assert (exported / path.relative_to(skill)).read_bytes() == path.read_bytes()
 example = Path.cwd() / "replay"
 shutil.copytree(data / "examples" / "high_entropy_sulfide", example)
 for command in (["init"], ["list"], ["run", "structure-replay", "--dry-run"], ["run", "structure-replay"], ["status"]):

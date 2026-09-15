@@ -77,6 +77,14 @@ Shared helpers stay inside that capability. The sole shared model runtime lives 
 `mlipflow/plugins/model_runtime.py` and imports MLIP frameworks only on demand.
 Historical transport formulas remain isolated from formal diffusion analysis.
 
+Specialist Agent Skills live in their capability's `skill/` subdirectory, alongside
+the Python implementation. `.agents/skills/<skill-name>` is a relative directory
+symlink to that source, preserving repository discovery without a second maintained
+copy. `mlip-active-learning` belongs to `active_learning`; the cross-capability
+`mlip-workflow` Skill remains under `.agents/skills/mlip-workflow/`.
+`electrochemical_voltage` has no dedicated Skill. Python imports and capability
+registration do not depend on Skill discovery.
+
 Scheduled and standalone runners explicitly load the files distributed with their
 execution bundle. This boundary permits scientific environments without a full
 MLIPFlow installation. Source locations and remote filenames are separate: moving

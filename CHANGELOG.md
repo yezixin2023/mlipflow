@@ -16,6 +16,9 @@ MLIPFlow follows semantic versioning for the Python package. Scientific validati
 
 ### Changed
 
+- Colocate specialist Agent Skills with their computational capabilities, preserve
+  repository discovery through relative directory symlinks, and ship the canonical
+  resources alongside installed code and through the existing Skill data exports.
 - Consolidate Python implementation into the top-level `mlipflow` package with
   standard imports and one adapter entrypoint per built-in capability.
 - Separate DFT, PES and transport operations and isolate scheduled/restart helpers.

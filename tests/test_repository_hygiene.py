@@ -39,6 +39,31 @@ def declared_agent_skill_files() -> dict[str, set[Path]]:
 
 
 class RepositoryHygieneTests(unittest.TestCase):
+    def test_specialist_skills_are_discoverable_through_relative_directory_links(self) -> None:
+        discovery = ROOT / ".agents" / "skills"
+        canonical_skills = sorted((ROOT / "mlipflow" / "plugins").glob("*/skill"))
+        self.assertTrue(canonical_skills)
+        names = {"mlip-workflow"}
+        for canonical in canonical_skills:
+            frontmatter = (canonical / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[1]
+            name = yaml.safe_load(frontmatter)["name"]
+            with self.subTest(skill=name):
+                self.assertNotIn(name, names)
+                names.add(name)
+                entry = discovery / name
+                self.assertTrue(entry.is_symlink())
+                self.assertFalse(entry.readlink().is_absolute())
+                self.assertEqual(canonical, entry.resolve())
+                self.assertEqual(
+                    (canonical / "SKILL.md").read_bytes(),
+                    (entry / "SKILL.md").read_bytes(),
+                )
+        self.assertFalse((discovery / "mlip-workflow").is_symlink())
+        self.assertEqual(
+            names,
+            {entry.name for entry in discovery.iterdir() if (entry / "SKILL.md").is_file()},
+        )
+
     def test_agent_skill_packaging_declarations_resolve_to_files(self) -> None:
         declarations = declared_agent_skill_files()
         self.assertTrue(declarations)
@@ -91,9 +116,11 @@ class RepositoryHygieneTests(unittest.TestCase):
                 )
 
         publishable: set[str] = set()
+        skill_roots = [ROOT / ".agents" / "skills" / "mlip-workflow"]
+        skill_roots.extend((ROOT / "mlipflow" / "plugins").glob("*/skill"))
         for directory, suffixes in (
             (ROOT / "schemas", {".json"}),
-            (ROOT / ".agents" / "skills", {".md", ".yaml"}),
+            *((directory, {".md", ".yaml"}) for directory in skill_roots),
             (ROOT / "docs", {".md"}),
             (
                 ROOT / "examples" / "high_entropy_sulfide_reproduction",

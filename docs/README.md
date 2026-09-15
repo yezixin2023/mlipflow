@@ -14,7 +14,7 @@ This index separates the main user path from implementation references and proje
 |---|---|---|
 | Create and operate a workflow | [`README`](../README.md), [`ARCHITECTURE.md`](ARCHITECTURE.md) | [`examples/high_entropy_sulfide/`](../examples/high_entropy_sulfide/) |
 | Configure a Slurm cluster | [`CLUSTER_ENVIRONMENTS.md`](CLUSTER_ENVIRONMENTS.md) | [`examples/site_templates/`](../examples/site_templates/) |
-| Supervise work with an Agent Skill | [`.agents/skills/`](../.agents/skills/) | Each Skill's `SKILL.md` and references |
+| Supervise work with an Agent Skill | [Capability and Skill guide](../README.md#scientific-capabilities-and-agent-skills) | Each capability's `skill/SKILL.md` and references |
 | Prepare DFT labels and shared datasets | `dft-labeling` adapter | [`examples/training_all_models/`](../examples/training_all_models/) |
 | Train or fine-tune MLIPs | `mlip-training` adapter | [`examples/training_all_models/`](../examples/training_all_models/), [`CLUSTER_ENVIRONMENTS.md`](CLUSTER_ENVIRONMENTS.md) |
 | Run ASE or LAMMPS MD | `ase-md` and `lammps-md` adapters | [`examples/ase_md_cluster/`](../examples/ase_md_cluster/), [`examples/lammps_mlip_inputs/`](../examples/lammps_mlip_inputs/) |
@@ -32,7 +32,7 @@ This index separates the main user path from implementation references and proje
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) describes core services, execution boundaries, trust assumptions, and artifact flow.
 - The installed `mlipflow --help` output is the authoritative command reference; [`ARCHITECTURE.md`](ARCHITECTURE.md) explains state transitions, approvals, retries, and reconciliation boundaries.
-- [`.agents/skills/`](../.agents/skills/) contains the current supervision contracts and their specialist references.
+- Specialist supervision contracts and references live in each [`capability's`](../mlipflow/plugins/) `skill/` folder. [`.agents/skills/`](../.agents/skills/) provides discovery links and the standalone `mlip-workflow` Skill.
 - [`CLUSTER_ENVIRONMENTS.md`](CLUSTER_ENVIRONMENTS.md) documents isolated scientific environments and site-template binding.
 
 Historical migration, source-audit, and predecessor-project notes are intentionally omitted from this public navigation. They are not required to install, operate, extend, or validate MLIPFlow.

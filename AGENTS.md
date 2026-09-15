@@ -178,13 +178,17 @@ They must not be described as:
 
 ## Skills and Plugins
 
-- `.agents/skills/` teaches the Agent:
+- `mlipflow/plugins/<capability>/skill/` contains each capability's Agent Skill,
+  with relative directory symlinks under `.agents/skills/` for discovery.
+  The cross-capability `mlip-workflow` Skill remains in
+  `.agents/skills/mlip-workflow/`. Skills teach the Agent:
   - when a capability should be used;
   - what inputs are required;
   - how results should be interpreted;
   - when user approval or clarification is required.
 
-  Skills do not contain the primary numerical implementation.
+  Maintain each specialist Skill beside its capability implementation. Skills do
+  not contain the primary numerical implementation.
 
 - `mlipflow/plugins/` defines deterministic computational units, including:
   - dependencies;

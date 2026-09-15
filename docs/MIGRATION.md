@@ -42,11 +42,30 @@ LAMMPS preparation now directly writes the existing v2 completion contract;
 there is no second generator wrapper. The unused `m3gnet_runner.py` placeholder
 was removed; M3GNet training continues through `mlip_m3gnet.py`.
 
+## Agent Skill locations
+
+Specialist Skill folders now live at
+`mlipflow/plugins/<underscored_id>/skill/`, including their `SKILL.md`,
+`agents/openai.yaml` and optional references. Their previous
+`.agents/skills/<skill-name>` locations are relative directory symlinks to the
+canonical folders, preserving repository discovery and `$skill-name` invocation.
+Edit the files beside the corresponding capability; there is one maintained copy.
+
+`mlip-active-learning` maps to `mlipflow/plugins/active_learning/skill/`.
+The cross-capability `mlip-workflow` Skill remains in
+`.agents/skills/mlip-workflow/`, and `electrochemical-voltage` still has no
+dedicated Skill.
+
+Repository skill discovery requires a checkout that preserves directory symlinks.
+Release builds use the canonical files directly and do not depend on these links.
+
 ## Installed and standalone execution
 
 Plugin Python files are regular package code. They are no longer installed below
-`share/mlipflow/plugins`. Documentation, schemas, small examples and Agent Skills
-remain distributed as data below `share/mlipflow`.
+`share/mlipflow/plugins`. Specialist Skills are included as package data beside
+their installed capability code. Documentation, schemas, small examples and the
+existing `share/mlipflow/agent-skills/<skill-name>/` Skill exports remain
+distributed below `share/mlipflow`.
 
 The controller imports only its registered package modules. Scientific scripts
 also support execution by filename with their explicitly bundled sibling files.
