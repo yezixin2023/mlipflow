@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Iterable
+
+
+def artifact_record(path: Path) -> dict[str, str]:
+    """Return the location of one produced file or directory."""
+    return {"uri": path.resolve().as_uri()}
 
 
 def run_manifest(

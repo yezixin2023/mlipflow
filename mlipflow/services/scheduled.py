@@ -9,10 +9,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import artifact as artifact_record
 from ..config import Project
 from ..errors import ApprovalError, BackendError, ConfigError, StateError
-from ..manifests import result_summary
+from ..manifests import artifact_record, result_summary
 from ..io import load_mapping, write_json_atomic, write_text_atomic
 from ..plugins import capability, load_adapter
 from ..state import RunState, StateStore, StepRun, utc_now

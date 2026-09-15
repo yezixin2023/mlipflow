@@ -169,25 +169,6 @@ def _expected_steps(total: int, interval: int) -> list[int]:
     return values
 
 
-def _validate_resources(context: dict[str, Any]) -> list[dict[str, str]]:
-    resources = context.get("resources")
-    if not isinstance(resources, dict):
-        return [_diagnostic("error", "ase_md.resources", "resources must be an object")]
-    diagnostics: list[dict[str, str]] = []
-    allowed = {"cpus", "gpus", "memory", "walltime"}
-    if set(resources) != allowed:
-        diagnostics.append(_diagnostic("error", "ase_md.resource_fields", "ssh-slurm resources must contain exactly cpus, gpus, memory, walltime"))
-        return diagnostics
-    if not _positive_int(resources.get("cpus")):
-        diagnostics.append(_diagnostic("error", "ase_md.cpus", "resources.cpus must be positive"))
-    if not _nonnegative_int(resources.get("gpus")):
-        diagnostics.append(_diagnostic("error", "ase_md.gpus", "resources.gpus must be non-negative"))
-    for key in ("memory", "walltime"):
-        if not _plain_string(resources.get(key)):
-            diagnostics.append(_diagnostic("error", f"ase_md.{key}", f"resources.{key} must be a non-empty string"))
-    return diagnostics
-
-
 def validate(context: dict[str, Any]) -> list[dict[str, str]]:
     diagnostics: list[dict[str, str]] = []
     if not isinstance(context, dict):
@@ -263,7 +244,6 @@ def validate(context: dict[str, Any]) -> list[dict[str, str]]:
         value = parameters.get(key)
         if value is not None and not _plain_string(str(value)):
             diagnostics.append(_diagnostic("error", f"ase_md.{key}", f"{key} must be a plain string when provided"))
-    diagnostics.extend(_validate_resources(context))
     return diagnostics
 
 

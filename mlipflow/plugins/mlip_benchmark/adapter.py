@@ -66,7 +66,6 @@ BUNDLED_NORMALIZATION = BUNDLED_WRAPPER.with_name("benchmark_normalization.py")
 SHARED_MODEL_RUNTIME = Path(model_runtime.__file__).resolve()
 CLUSTER_FRESH_RUNNER = BUNDLED_FRESH_RUNNER.with_name("fresh_benchmark_cluster.py")
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
-HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
 UNAVAILABLE_PEARSON_REASONS = frozenset(
     {"insufficient-scalar-pairs", "constant-reference-or-prediction"}
 )
@@ -411,9 +410,6 @@ def _scheduled_fresh_inputs(
         raise ValueError("model reference framework differs from the exact model family")
     if dataset["kind"] != "file":
         raise ValueError("benchmark dataset reference kind must be file")
-    resources = context.get("resources")
-    if not isinstance(resources, dict) or set(resources) != HPC_RESOURCES:
-        raise ValueError("scheduled benchmark resources must be cpus, gpus, memory, walltime")
     output_dir = _normalized_output_dir(context)
     if output_dir.exists() and (not output_dir.is_dir() or any(output_dir.iterdir())):
         raise ValueError("fresh output directory must be absent or empty")

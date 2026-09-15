@@ -24,7 +24,6 @@ UNKNOWN = "HISTORICAL_PARAMETER_UNKNOWN"
 
 MAX_FRAMES = 10000
 
-HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
 
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -204,16 +203,6 @@ def validate(context: Any) -> list[dict[str, str]]:
                 "ERROR",
                 "path.project_file",
                 "scheduled LASP requires project.yaml/project.yml/project.json",
-            )
-        )
-
-    resources = context.get("resources", {})
-    if not isinstance(resources, Mapping) or set(resources) != HPC_RESOURCES:
-        diagnostics.append(
-            _diag(
-                "ERROR",
-                "resource.hpc_contract",
-                "ssh-slurm LASP resources must be cpus, gpus, memory, walltime",
             )
         )
 

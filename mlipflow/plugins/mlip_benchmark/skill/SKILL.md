@@ -26,14 +26,12 @@ Read [references/benchmark-contract.md](references/benchmark-contract.md) only w
 historical or legacy evidence has ambiguous provenance, units, conventions, or missing
 source support. It is not required for an ordinary fresh or metric-only benchmark.
 
-## Inputs and example
+## Inputs
 
 Reuse verified prediction evidence for the same dataset/scenario/split and targets.
 Fresh evaluation requires an explicit model reference and labeled test dataset;
 normalization requires the existing evidence manifest, declared units and metric policy.
-`examples/high_entropy_sulfide_reproduction/project.yaml` contains complete historical
-normalization nodes and adjacent small evidence files. It demonstrates replay only;
-use `evaluate-fresh` with the actual model/dataset for new inference. The dry-run
+The dry-run
 reports the resolved evidence mode and expected metrics/model-ranking artifacts.
 
 ## Scientific judgment

@@ -9,7 +9,7 @@ description = "Deterministic workflows for machine-learned interatomic-potential
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
+license-files = ["LICENSE"]
 authors = [{name = "MLIPFlow contributors"}]
 keywords = [
   "machine-learned interatomic potentials",
@@ -35,7 +35,6 @@ Homepage = "https://github.com/yezixin2023/mlipflow"
 Repository = "https://github.com/yezixin2023/mlipflow"
 Documentation = "https://github.com/yezixin2023/mlipflow/blob/public/README.md"
 Issues = "https://github.com/yezixin2023/mlipflow/issues"
-Changelog = "https://github.com/yezixin2023/mlipflow/blob/public/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["build>=1", "setuptools>=77", "pytest>=7", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22", "dpdata>=0.2.18"]

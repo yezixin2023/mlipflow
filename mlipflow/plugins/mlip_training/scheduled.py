@@ -33,8 +33,6 @@ FRAMEWORKS = set(FRAMEWORK_FILES)
 
 OPERATIONS = {"train", "finetune"}
 
-HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
-
 GENERIC_CONTRACT = "bundled-mlip-v1"
 
 
@@ -181,21 +179,11 @@ def validate(context: Any) -> list[dict[str, str]]:
         return diagnostics
     parameters = context.get("parameters", {})
     inputs = context.get("inputs", {})
-    resources = context.get("resources", {})
     if not isinstance(parameters, Mapping) or not isinstance(inputs, Mapping):
         diagnostics.append(
             _diag("error", "context.mapping", "inputs and parameters must be objects")
         )
         return diagnostics
-    if not isinstance(resources, Mapping) or set(resources) != HPC_RESOURCES:
-        diagnostics.append(
-            _diag(
-                "error",
-                "resource.hpc_contract",
-                "ssh-slurm resources must be cpus, gpus, memory, walltime",
-            )
-        )
-
     framework = parameters.get("framework")
     operation = parameters.get("operation", "train")
     if framework not in FRAMEWORKS:

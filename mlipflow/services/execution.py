@@ -14,12 +14,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..artifacts import artifact as artifact_record
 from ..backends import LocalBackend
 from ..config import Project
 from ..errors import BackendError, ConfigError
 from ..io import write_json_atomic, write_text_atomic
-from ..manifests import run_manifest
+from ..manifests import artifact_record, run_manifest
 from ..planning import resolve_reference
 from ..plugins import load_adapter
 from ..state import RunState, StateStore

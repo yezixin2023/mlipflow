@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from ..artifacts import artifact as artifact_record
 from ..config import Project
 from ..errors import CapabilityError, ConfigError
 from ..hpc import EXECUTION_MODELS
 from ..io import load_mapping
+from ..manifests import artifact_record
 from ..site import ClusterProfile, load_site_config
 from ..state import RunState, StateStore, StepRun, utc_now
 from .paths import attempt_directory, state_path

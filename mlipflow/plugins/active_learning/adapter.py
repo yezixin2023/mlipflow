@@ -19,7 +19,6 @@ SHARED_MODEL_RUNTIME = Path(model_runtime.__file__).resolve()
 SHARED_ACTIVE_SCIENCE = Path(active_science.__file__).resolve()
 OPERATIONS = ("committee-evaluate", "select-candidates", "assess-round")
 EXECUTION_BACKENDS = frozenset({"local", "ssh-slurm"})
-HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
 MODEL_INDEX_CONTRACT = "mlipflow/active-learning-committee-model-index"
 EVALUATION_DATASET_CONTRACT = "mlipflow/active-learning-evaluation-dataset"
 REQUIRED_INPUTS = {
@@ -250,9 +249,6 @@ def _scheduled_inputs(
         if isinstance(sample, dict) and sample.get("split") == "calibration"
     }:
         raise ValueError("evaluation calibration samples differ from dataset_split")
-    resources = context.get("resources")
-    if not isinstance(resources, Mapping) or set(resources) != HPC_RESOURCES:
-        raise ValueError("scheduled committee resources must be cpus, gpus, memory, walltime")
     for path in (
         CLUSTER_RUNNER,
         SHARED_MODEL_RUNTIME,

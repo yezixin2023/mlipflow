@@ -243,7 +243,7 @@ Python package names use underscores; project capability IDs retain hyphens
 
 ## Contributing, security, and citation
 
-Contributions are welcome across the core, built-in capabilities, tests, examples, Agent Skills, and site templates. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Contributions are welcome across the core, built-in capabilities, tests, examples, Agent Skills, and site templates. See [`CONTRIBUTING.md`](.github/CONTRIBUTING.md).
 
 Run the local tests and lint checks in a Python 3.12+ development environment:
 
@@ -253,6 +253,6 @@ python -m pytest
 python -m ruff check mlipflow tests examples
 ```
 
-Report security issues according to [`SECURITY.md`](SECURITY.md). Do not commit credentials, private cluster details, licensed pseudopotentials, model weights, large trajectories, or unpublished data.
+Report security issues according to [`SECURITY.md`](.github/SECURITY.md). Do not commit credentials, private cluster details, licensed pseudopotentials, model weights, large trajectories, or unpublished data.
 
 MLIPFlow is licensed under the [Apache License 2.0](LICENSE). For published research, cite the software version or commit using [`CITATION.cff`](CITATION.cff), together with the scientific methods, datasets, models, and external codes used by the executed capabilities.

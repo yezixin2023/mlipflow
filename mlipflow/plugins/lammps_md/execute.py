@@ -164,24 +164,9 @@ def _positive_int(value: Any) -> bool:
     return not isinstance(value, bool) and isinstance(value, int) and value > 0
 
 
-def _nonnegative_int(value: Any) -> bool:
-    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
-
-
 def _resources(context: dict[str, Any], target: str | None, framework: str | None = None) -> list[dict[str, str]]:
-    resources = context.get("resources")
-    if not isinstance(resources, dict):
-        return [prepare._diagnostic("error", "lammps.resources", "resources must be an object")]
+    resources = context["resources"]
     diagnostics: list[dict[str, str]] = []
-    if set(resources) != {"cpus", "gpus", "memory", "walltime"}:
-        return [prepare._diagnostic("error", "lammps.resource_fields", "ssh-slurm resources must contain exactly cpus, gpus, memory, walltime")]
-    if not _positive_int(resources.get("cpus")):
-        diagnostics.append(prepare._diagnostic("error", "lammps.cpus", "resources.cpus must be positive"))
-    if not _nonnegative_int(resources.get("gpus")):
-        diagnostics.append(prepare._diagnostic("error", "lammps.gpus", "resources.gpus must be non-negative"))
-    for key in ("memory", "walltime"):
-        if not _plain(resources.get(key)):
-            diagnostics.append(prepare._diagnostic("error", f"lammps.{key}", f"resources.{key} must be a non-empty string"))
     if target == "cpu" and resources.get("gpus") != 0:
         diagnostics.append(prepare._diagnostic("error", "lammps.cpu_gpus", "target=cpu requires resources.gpus=0"))
     if target == "gpu" and not _positive_int(resources.get("gpus")):
