@@ -183,13 +183,12 @@ def make_run_plan(
         operation=operation,
     )
     if context is not None:
-        diagnostics = adapter.validate(context)
         adapter_plan = adapter.plan(context)
         if not isinstance(adapter_plan, dict):
             raise CapabilityError(
                 f"capability {capability_id} plan must return a mapping"
             )
-        plan["adapter_diagnostics"] = diagnostics
+        plan["adapter_diagnostics"] = adapter_plan.get("diagnostics", [])
         plan["adapter_plan"] = adapter_plan
         if (
             str(node.get("backend", "local")) == "ssh-slurm"

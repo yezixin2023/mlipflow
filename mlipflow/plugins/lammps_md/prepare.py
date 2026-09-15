@@ -412,9 +412,6 @@ def check(context: Any) -> dict[str, Any]:
 
 
 def collect(context: Any) -> dict[str, Any]:
-    checked = check(context)
-    if checked.get("status") != "OK" or not isinstance(context, dict):
-        return checked
     output_dir = _output_dir(context)
     manifest, _ = _read_json(output_dir / "lammps-input-manifest.json")
     assert manifest is not None

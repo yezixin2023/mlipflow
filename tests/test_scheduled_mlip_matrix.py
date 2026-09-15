@@ -3,6 +3,9 @@ from __future__ import annotations
 from tests.helpers import load_module
 import io
 import json
+import os
+import shutil
+import subprocess
 import sys
 import tarfile
 from pathlib import Path
@@ -97,6 +100,10 @@ def test_generic_scheduler_matrix_is_ready(
     assert scheduled["execution_model"] == "single-python"
     assert scheduled["template_family"] == f"mlip-{framework}"
     staged = {item["remote_name"] for item in scheduled["staged_files"]}
+    assert {name for name in staged if name.endswith(".py")} == {
+        "training_cluster.py", "training_wrapper.py", "mlip_common.py",
+        "model_runtime.py", f"mlip_{framework}.py",
+    }
     assert {"project.yaml", "training-config.json", "dataset-reference.json"} <= staged
     assert ("foundation-model-reference.json" in staged) is (operation == "finetune")
     required = {
@@ -105,6 +112,85 @@ def test_generic_scheduler_matrix_is_ready(
         if item["required"]
     }
     assert {"training-result.json", "model-artifact", "cluster-run-report.json"} <= required
+
+
+@pytest.mark.parametrize("profile", [None, "deepmd-curve"])
+def test_deepmd_curve_is_staged_only_when_requested(tmp_path, profile):
+    from mlipflow.config import load_project
+    from mlipflow.plugins.mlip_training.adapter import Adapter
+    from mlipflow.services.contracts import _adapter_context
+    from .test_scheduled_training import build_project
+
+    build_project(tmp_path, parameters={"validation_profile": profile})
+    project = load_project(tmp_path)
+    plan = Adapter().plan(_adapter_context(project, project.node("train-deepmd"), 1))
+    assert plan["status"] == "READY", plan["diagnostics"]
+    staged = {item["remote_name"] for item in plan["scheduled_execution"]["staged_files"]}
+    assert ("deepmd_curve.py" in staged) is (profile == "deepmd-curve")
+
+
+@pytest.mark.parametrize("execution_mode", ["package", "bundle"])
+def test_training_wrapper_loads_only_the_selected_framework(tmp_path, execution_mode):
+    from mlipflow.plugins.mlip_training.adapter import Adapter
+
+    context = _context(tmp_path, "mace", "train")
+    plan = Adapter().plan(context)
+    assert plan["status"] == "READY", plan["diagnostics"]
+    if execution_mode == "bundle":
+        module_root = tmp_path / "bundle"
+        module_root.mkdir()
+        for item in plan["scheduled_execution"]["staged_files"]:
+            if item["remote_name"].endswith(".py"):
+                shutil.copy2(item["source"], module_root / item["remote_name"])
+    else:
+        module_root = ROOT
+    config = tmp_path / "mace.json"
+    _write_json(config, {"framework": "mace", "mace": {"name": "selected-mace"}})
+    dataset = tmp_path / "data.extxyz"
+    dataset.write_text("0\nfixture\n", encoding="utf-8")
+    script = r"""
+import importlib
+import importlib.abc
+import sys
+
+mode, module_root = sys.argv[1:3]
+
+class SelectedFrameworkOnly(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.rsplit(".", 1)[-1] in {
+            "mlip_deepmd", "mlip_m3gnet", "mlip_chgnet", "deepmd_curve"
+        }:
+            raise AssertionError("unselected training module imported: " + fullname)
+        if mode == "bundle" and (fullname == "mlipflow" or fullname.startswith("mlipflow.")):
+            raise AssertionError("bundle imported controller: " + fullname)
+
+sys.meta_path.insert(0, SelectedFrameworkOnly())
+sys.path.insert(0, module_root)
+module_name = "mlipflow.plugins.mlip_training.training_wrapper" if mode == "package" else "training_wrapper"
+wrapper = importlib.import_module(module_name)
+assert not any(name.rsplit(".", 1)[-1] == "mlip_mace" for name in sys.modules)
+assert wrapper.main(sys.argv[3:]) == 0
+assert any(name.rsplit(".", 1)[-1] == "mlip_mace" for name in sys.modules)
+"""
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [
+            sys.executable, "-I", "-c", script, execution_mode, str(module_root),
+            "--framework", "mace", "--operation", "train", "--config", str(config),
+            "--data", str(dataset), "--output", str(tmp_path / "model.pt"),
+            "--result-manifest", str(tmp_path / "result.json"), "--device", "cpu",
+            "--seed", "7", "--precision", "float64", "--dry-run",
+        ],
+        cwd=tmp_path,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)["framework"] == "mace"
+    assert not (tmp_path / "model.pt").exists()
 
 
 def test_generic_scheduler_stages_the_selected_project_file(tmp_path: Path) -> None:

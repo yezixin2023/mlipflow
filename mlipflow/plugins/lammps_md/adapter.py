@@ -23,7 +23,7 @@ class Adapter:
     def validate(self, context: Any) -> list[dict[str, str]]:
         if not isinstance(context, dict) or execute._operation(context) != EXECUTE:
             return prepare.validate(context)
-        return _validate(context)
+        return execute.validate(_proxy(context)) + _validate(context)
 
     def plan(self, context: Any) -> dict[str, Any]:
         if not isinstance(context, dict) or execute._operation(context) != EXECUTE:
@@ -52,7 +52,11 @@ class Adapter:
     def collect(self, context: Any) -> dict[str, Any]:
         if not isinstance(context, dict) or execute._operation(context) != EXECUTE:
             return prepare.collect(context)
-        checked = self.check(context)
-        if checked.get("status") != "OK":
-            return checked
-        return execute.collect(_proxy(context), checked=checked)
+        collected = execute.collect(_proxy(context))
+        calculation = prepare._mapping(execute._scheduled_plan(context).get("lammps_calculation"))
+        result = execute._read_json(Path(str(context["attempt_dir"])) / "lammps-execution-result.json")
+        collected["metrics"].update(
+            segment_start_step=float(result.get("segment_start_step", 0)),
+            resumed=1.0 if calculation.get("restart_from_attempt") is not None else 0.0,
+        )
+        return collected

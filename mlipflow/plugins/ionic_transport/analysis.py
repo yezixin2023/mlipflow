@@ -1336,18 +1336,13 @@ def check(context: Any) -> Dict[str, Any]:
 
 
 def collect(context: Any) -> Dict[str, Any]:
-    checked = check(context)
-    if checked.get("status") != "OK":
-        return {
-            "plugin_id": contracts.PLUGIN_ID,
-            "status": checked.get("status", "FAIL"),
-            "artifacts": [],
-            "metrics": {},
-            "diagnostics": checked.get("diagnostics", []),
-        }
-    output_dir, rows, summary, failures, diagnostics = _read_results(context)
+    output_dir, paths = _result_paths(context)
     assert output_dir is not None
-    _, paths = _result_paths(context)
+    with paths["diffusion_results_by_temperature.csv"].open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    summary = json.loads(paths["arrhenius_summary.json"].read_text(encoding="utf-8"))
+    failures = json.loads(paths["postprocess_failures.json"].read_text(encoding="utf-8"))
+    diagnostics: List[Dict[str, str]] = []
     artifacts: List[Dict[str, str]] = [
         {
             "role": "transport-results",
@@ -1411,10 +1406,20 @@ def collect(context: Any) -> Dict[str, Any]:
     operation = contracts._operation_name(parameters)
     integration_manifest: Optional[Dict[str, Any]] = None
     if operation == contracts._SMOKE_OPERATION and isinstance(context, Mapping):
-        integration_manifest, integration_artifacts, integration_diagnostics = (
-            md_handoff._verify_smoke_manifest(context)
-        )
-        diagnostics.extend(integration_diagnostics)
+        manifest_path = md_handoff._integration_manifest_path(context)
+        assert manifest_path is not None
+        project_root = contracts._resolve(context.get("project_root"), Path.cwd()) or Path.cwd().resolve()
+        attempt_dir = contracts._resolve(context.get("attempt_dir"), project_root)
+        assert attempt_dir is not None
+        integration_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        integration_artifacts = [
+            {"role": "md-integration-manifest", "path": str(manifest_path),
+             "media_type": "application/json"},
+            *({"role": "production-trajectory",
+               "path": str(contracts._resolve(record["path"], attempt_dir)),
+               "media_type": "application/octet-stream"}
+              for record in integration_manifest["trajectory_artifacts"]),
+        ]
         for artifact in integration_artifacts:
             if artifact["path"] not in seen:
                 artifacts.append(artifact)

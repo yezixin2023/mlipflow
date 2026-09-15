@@ -164,7 +164,7 @@ A zero process exit code alone is not scientific success.
 
 Cluster details stay in the user-owned `site.yaml` and remote template tree. A project supplies abstract resources—CPUs, GPUs, memory, and wall time—and may name `backend_profile` explicitly.
 
-When `backend_profile` is omitted, core compares configured scheduler profiles against the requested resources and current partition availability, then selects a capable cluster. Within that profile, the existing partition router chooses a compatible partition. This routing remains part of the scheduler subsystem rather than the scientific adapters.
+An explicit `backend_profile` selects that profile. When omitted, core uses the site's default profile or its sole profile; multiple profiles without a default require an explicit choice. Only `backend_profile: auto` compares configured scheduler profiles against requested resources and current partition availability. Within the selected profile, the partition router chooses a compatible partition.
 
 The scheduled lifecycle is:
 
@@ -191,5 +191,3 @@ Schema-3 scheduled plans represent one scheduler job. Schema-4 plans retain inde
 Core controls execution and state transitions. It does not calculate or infer energies, forces, stresses, diffusion coefficients, conductivities, voltages, or rankings.
 
 Scientific runners own formulas, model commands, DFT/MD settings, convergence checks, result schemas, and numerical output. Agent Skills supervise parameter selection and approval boundaries. Scheduler completion must always be followed by the capability's scientific check before a node reaches `OK`.
-
-The scheduler backend, site configuration, template rendering, automatic cluster/partition routing, restart logic, and multi-job execution remain substantial engineering subsystems. They are deliberately retained for a later scheduler-focused contraction rather than redesigned here.

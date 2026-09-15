@@ -437,9 +437,6 @@ class Adapter:
         }
 
     def collect(self, context: Any) -> dict[str, Any]:
-        checked = self.check(context)
-        if checked["status"] != "OK":
-            return checked
         assert isinstance(context, dict)
         candidate_path, _, result_path = self._paths(context)
         candidate_manifest, _ = _read_json(candidate_path)

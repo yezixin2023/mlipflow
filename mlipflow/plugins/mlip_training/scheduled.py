@@ -8,7 +8,6 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from mlipflow.plugins import model_runtime
-from . import deepmd_curve
 
 HERE = Path(__file__).resolve().parent
 
@@ -16,25 +15,34 @@ CLUSTER_RUNNER = HERE / "training_cluster.py"
 
 SHARED_MODEL_RUNTIME = Path(model_runtime.__file__).resolve()
 
-BUNDLED_FILES = (
+COMMON_FILES = (
     "training_wrapper.py",
     "mlip_common.py",
-    "mlip_deepmd.py",
-    "deepmd_curve.py",
-    "mlip_m3gnet.py",
-    "mlip_chgnet.py",
-    "mlip_mace.py",
 )
+
+FRAMEWORK_FILES = {
+    "deepmd": ("mlip_deepmd.py",),
+    "m3gnet": ("mlip_m3gnet.py",),
+    "chgnet": ("mlip_chgnet.py",),
+    "mace": ("mlip_mace.py",),
+}
 
 PLUGIN_ID = "mlip-training"
 
-FRAMEWORKS = {"deepmd", "m3gnet", "chgnet", "mace"}
+FRAMEWORKS = set(FRAMEWORK_FILES)
 
 OPERATIONS = {"train", "finetune"}
 
 HPC_RESOURCES = {"cpus", "gpus", "memory", "walltime"}
 
 GENERIC_CONTRACT = "bundled-mlip-v1"
+
+
+def _bundled_files(framework: str, validation_profile: str | None) -> tuple[str, ...]:
+    files = (*COMMON_FILES, *FRAMEWORK_FILES.get(framework, ()))
+    if framework == "deepmd" and validation_profile == "deepmd-curve":
+        files += ("deepmd_curve.py",)
+    return files
 
 
 def _template_family(framework: str, *, publishes_model: bool) -> str:
@@ -348,7 +356,7 @@ def validate(context: Any) -> list[dict[str, str]]:
                 "scheduled training requires project.yaml/project.yml/project.json",
             )
         )
-    for name in (CLUSTER_RUNNER.name, *BUNDLED_FILES):
+    for name in (CLUSTER_RUNNER.name, *_bundled_files(framework, parameters.get("validation_profile"))):
         if not (HERE / name).is_file():
             diagnostics.append(
                 _diag("error", "training.bundled_file", f"missing bundled cluster file: {name}")
@@ -367,6 +375,8 @@ def validate(context: Any) -> list[dict[str, str]]:
             diagnostics.append(_diag("error", "training.validation_profile",
                                      "validation_profile deepmd-curve requires DeepMD fresh train"))
         elif config is not None and dataset_path is not None and not _errors(diagnostics):
+            from . import deepmd_curve
+
             curve_diagnostics, _ = deepmd_curve.calculation(context, config, dataset_path)
             diagnostics.extend(curve_diagnostics)
     return diagnostics
@@ -396,7 +406,7 @@ def plan(context: Mapping[str, Any]) -> dict[str, Any]:
         _staged(dataset_path, "dataset-reference.json"),
         _staged(CLUSTER_RUNNER, "training_cluster.py"),
     ]
-    for name in BUNDLED_FILES:
+    for name in _bundled_files(framework, parameters.get("validation_profile")):
         staged.append(_staged(HERE / name, name))
     staged.append(_staged(SHARED_MODEL_RUNTIME, "model_runtime.py"))
     foundation: dict[str, Any] | None = None
@@ -476,6 +486,8 @@ def plan(context: Mapping[str, Any]) -> dict[str, Any]:
         "publish_model": publish_model,
     }
     if parameters.get("validation_profile") == "deepmd-curve":
+        from . import deepmd_curve
+
         _, curve = deepmd_curve.calculation(context, config, dataset_path)
         calculation.update(curve)
         calculation["validation_profile"] = "deepmd-curve"
@@ -1091,6 +1103,8 @@ def _check_training(
     if calculation.get("framework") == "m3gnet":
         diagnostics.extend(_m3gnet_completion_diagnostics(context, result))
     if calculation.get("validation_profile") == "deepmd-curve":
+        from . import deepmd_curve
+
         curve_diagnostics, _ = deepmd_curve._check_scheduled_training(context)
         diagnostics.extend(curve_diagnostics)
     if diagnostics:
@@ -1114,15 +1128,6 @@ def check(context: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def collect(context: Mapping[str, Any]) -> dict[str, Any]:
-    diagnostics, analysis = _check_training(context)
-    if diagnostics or analysis is None:
-        return {
-            "plugin_id": PLUGIN_ID,
-            "status": "FAIL",
-            "diagnostics": diagnostics,
-            "artifacts": [],
-            "metrics": {},
-        }
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
     parameters = context.get("parameters", {})
     result_name = (
@@ -1130,6 +1135,8 @@ def collect(context: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(parameters, Mapping)
         else "mlip-training-result.json"
     )
+    result = json.loads((attempt / result_name).read_text(encoding="utf-8"))
+    metrics = dict(result.get("metrics", {}))
     artifacts = [
         {
             "path": str(attempt / result_name),
@@ -1139,7 +1146,7 @@ def collect(context: Mapping[str, Any]) -> dict[str, Any]:
         {
             "path": str(attempt / "model-artifact"),
             "role": "model",
-            "media_type": analysis["result"]
+            "media_type": result
             .get("model_artifact", {})
             .get("media_type", "application/octet-stream"),
         },
@@ -1149,7 +1156,7 @@ def collect(context: Mapping[str, Any]) -> dict[str, Any]:
             "media_type": "application/json",
         },
     ]
-    if analysis.get("model_reference") is not None:
+    if (attempt / "model-reference.json").is_file():
         artifacts.append(
             {
                 "path": str(attempt / "model-reference.json"),
@@ -1164,15 +1171,17 @@ def collect(context: Mapping[str, Any]) -> dict[str, Any]:
                 {"path": str(path), "role": "training-log", "media_type": "text/plain"}
             )
     if parameters.get("validation_profile") == "deepmd-curve":
+        from . import deepmd_curve
+
         curve = deepmd_curve._collect_scheduled_training(context)
         if curve["status"] != "OK":
             return curve
         artifacts.extend(curve["artifacts"])
-        analysis["metrics"].update(curve["metrics"])
+        metrics.update(curve["metrics"])
     return {
         "plugin_id": PLUGIN_ID,
         "status": "OK",
         "diagnostics": [],
-        "metrics": analysis["metrics"],
+        "metrics": metrics,
         "artifacts": artifacts,
     }

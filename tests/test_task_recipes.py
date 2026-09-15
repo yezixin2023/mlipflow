@@ -4,6 +4,9 @@ import shutil
 from pathlib import Path
 
 import pytest
+from unittest.mock import patch
+
+from mlipflow.plugins.candidate_ranking.adapter import Adapter as RankingAdapter
 
 from .helpers import run_cli
 
@@ -14,7 +17,9 @@ def test_documented_local_ranking_runs_and_exposes_top_k(tmp_path):
     shutil.copytree(ROOT / "examples/local_ranking", tmp_path / "task")
     base = ["--project", str(tmp_path / "task"), "--format", "json"]
     for command in (["init"], ["run", "rank", "--dry-run"], ["run", "rank"], ["json", "rank"]):
-        code, out, err = run_cli([*base, *command])
+        with patch.object(RankingAdapter, "check", autospec=True, side_effect=RankingAdapter.check) as check:
+            code, out, err = run_cli([*base, *command])
+            assert check.call_count == (1 if command == ["run", "rank"] else 0)
         assert code == 0, err or out
     node = json.loads(out)["data"]["nodes"][0]
     assert node["state"] == "OK"

@@ -1,16 +1,14 @@
-"""NPT planning and completion checks, sharing NVT staging and model contracts."""
+"""Isotropic MTK NPT validation, planning, and completion checks."""
 from __future__ import annotations
 
 import csv
 import math
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from . import nvt
+from . import common
 
 PLUGIN_ID = "ase-md"
-NVT = "nvt-langevin"
 NPT = "npt-isotropic-mtk"
 NPT_TCHAIN = 3
 NPT_PCHAIN = 3
@@ -30,34 +28,25 @@ def _finite_positive(value: Any) -> bool:
     return _finite(value) and float(value) > 0.0
 
 
-def _nvt_proxy(context: dict[str, Any]) -> dict[str, Any]:
-    proxy = deepcopy(context)
-    parameters = dict(nvt._mapping(proxy.get("parameters")))
-    parameters["ensemble"] = NVT
-    parameters["friction_per_fs"] = 0.01
-    proxy["parameters"] = parameters
-    return proxy
-
-
-def _validate_npt(context: dict[str, Any]) -> list[dict[str, str]]:
-    diagnostics = list(nvt.validate(_nvt_proxy(context)))
-    parameters = nvt._mapping(context.get("parameters"))
+def validate(context: dict[str, Any]) -> list[dict[str, str]]:
+    diagnostics = common.validate(context)
+    parameters = common._mapping(common._mapping(context).get("parameters"))
     if parameters.get("ensemble") != NPT:
         diagnostics.append(
-            nvt._diagnostic("error", "ase_md.ensemble", "ensemble must be npt-isotropic-mtk")
+            common._diagnostic("error", "ase_md.ensemble", "ensemble must be npt-isotropic-mtk")
         )
     if not _finite(parameters.get("pressure_gpa")):
         diagnostics.append(
-            nvt._diagnostic("error", "ase_md.pressure", "pressure_gpa must be a finite number")
+            common._diagnostic("error", "ase_md.pressure", "pressure_gpa must be a finite number")
         )
     for key in ("thermostat_damping_fs", "barostat_damping_fs"):
         if not _finite_positive(parameters.get(key)):
             diagnostics.append(
-                nvt._diagnostic("error", f"ase_md.{key}", f"{key} must be finite and positive")
+                common._diagnostic("error", f"ase_md.{key}", f"{key} must be finite and positive")
             )
     if parameters.get("friction_per_fs") is not None:
         diagnostics.append(
-            nvt._diagnostic(
+            common._diagnostic(
                 "error",
                 "ase_md.npt_friction",
                 "friction_per_fs is NVT-only and must be omitted for npt-isotropic-mtk",
@@ -65,7 +54,7 @@ def _validate_npt(context: dict[str, Any]) -> list[dict[str, str]]:
         )
     if parameters.get("fix_com") is not False:
         diagnostics.append(
-            nvt._diagnostic(
+            common._diagnostic(
                 "error",
                 "ase_md.npt_constraints",
                 "npt-isotropic-mtk requires fix_com=false because ASE IsotropicMTKNPT "
@@ -75,17 +64,15 @@ def _validate_npt(context: dict[str, Any]) -> list[dict[str, str]]:
     return diagnostics
 
 
-def _plan_npt(context: dict[str, Any]) -> dict[str, Any]:
-    diagnostics = _validate_npt(context)
+def plan(context: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = validate(context)
     if diagnostics:
-        return nvt._blocked(diagnostics)
-    base = nvt.plan(_nvt_proxy(context))
+        return common._blocked(diagnostics)
+    base = common.build_plan(context, NPT)
     if base.get("status") != "READY":
         return base
-    parameters = nvt._mapping(context["parameters"])
-    settings = nvt._mapping(base.get("md_parameters"))
-    settings["ensemble"] = NPT
-    settings.pop("friction_per_fs", None)
+    parameters = common._mapping(context["parameters"])
+    settings = common._mapping(base.get("md_parameters"))
     settings.update(
         {
             "pressure_gpa": float(parameters["pressure_gpa"]),
@@ -99,7 +86,7 @@ def _plan_npt(context: dict[str, Any]) -> dict[str, Any]:
             "barostat_substeps": NPT_PLOOP,
         }
     )
-    summary = nvt._mapping(base.get("approval_summary"))
+    summary = common._mapping(base.get("approval_summary"))
     summary.update(
         {
             "ensemble": NPT,
@@ -141,7 +128,7 @@ def _npt_thermo_header() -> list[str]:
 def _check_npt_thermo(
     path: Path, settings: dict[str, Any]
 ) -> tuple[str | None, dict[str, float] | None]:
-    if not nvt._ordinary_file(path):
+    if not common._ordinary_file(path):
         return "thermo.csv is missing or empty", None
     expected_steps = settings.get("thermo_steps")
     if not isinstance(expected_steps, list):
@@ -155,7 +142,7 @@ def _check_npt_thermo(
             if reader.fieldnames != header:
                 return "NPT thermo.csv header differs from the contract", None
             for index, row in enumerate(reader):
-                if index >= nvt.MAX_RECORDS:
+                if index >= common.MAX_RECORDS:
                     return "thermo.csv exceeds the bounded record count", None
                 try:
                     step = int(row["step"])
@@ -189,16 +176,16 @@ def _check_npt(
 ) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
     diagnostics: list[dict[str, str]] = []
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
-    settings = nvt._mapping(nvt._scheduled_plan(context).get("md_parameters"))
+    settings = common._mapping(common._scheduled_plan(context).get("md_parameters"))
     if settings.get("ensemble") != NPT:
         return [
-            nvt._diagnostic("error", "ase_md.plan_parameters", "plan is not isotropic MTK NPT")
+            common._diagnostic("error", "ase_md.plan_parameters", "plan is not isotropic MTK NPT")
         ], None
     try:
-        result = nvt._read_json(attempt / "md-result.json")
+        result = common._read_json(attempt / "md-result.json")
     except Exception as exc:
         return [
-            nvt._diagnostic("error", "ase_md.result", f"md-result.json is unreadable: {exc}")
+            common._diagnostic("error", "ase_md.result", f"md-result.json is unreadable: {exc}")
         ], None
 
     expected_pairs = {
@@ -232,41 +219,41 @@ def _check_npt(
     for key, expected in expected_pairs.items():
         if result.get(key) != expected:
             diagnostics.append(
-                nvt._diagnostic(
+                common._diagnostic(
                     "error",
                     f"ase_md.result_{key}",
                     f"md-result.json field {key} differs from the approved NPT plan",
                 )
             )
-    diagnostics.extend(nvt._check_structure_summary(result, settings))
+    diagnostics.extend(common._check_structure_summary(result, settings))
     initial_pressure = result.get("initial_pressure_GPa")
     if not _finite(initial_pressure):
         diagnostics.append(
-            nvt._diagnostic(
+            common._diagnostic(
                 "error",
                 "ase_md.initial_pressure",
                 "md-result must record the finite pressure from the pre-run stress probe",
             )
         )
-    model = nvt._mapping(result.get("model"))
+    model = common._mapping(result.get("model"))
     if (
         model.get("id") != settings.get("model_id")
         or model.get("path") != settings.get("model_path")
     ):
         diagnostics.append(
-            nvt._diagnostic("error", "ase_md.result_model", "md-result model record differs")
+            common._diagnostic("error", "ase_md.result_model", "md-result model record differs")
         )
-    if not nvt._plain_string(result.get("calculator_version")) or not nvt._plain_string(
+    if not common._plain_string(result.get("calculator_version")) or not common._plain_string(
         result.get("ase_version")
     ):
         diagnostics.append(
-            nvt._diagnostic("error", "ase_md.versions", "md-result must record calculator and ASE versions")
+            common._diagnostic("error", "ase_md.versions", "md-result must record calculator and ASE versions")
         )
 
     try:
-        artifacts = nvt._artifact_records(result.get("artifacts"))
+        artifacts = common._artifact_records(result.get("artifacts"))
     except ValueError as exc:
-        diagnostics.append(nvt._diagnostic("error", "ase_md.artifacts", str(exc)))
+        diagnostics.append(common._diagnostic("error", "ase_md.artifacts", str(exc)))
         artifacts = {}
     expected_artifacts = {
         "trajectory": "trajectory.traj",
@@ -276,26 +263,26 @@ def _check_npt(
     }
     if set(artifacts) != set(expected_artifacts):
         diagnostics.append(
-            nvt._diagnostic("error", "ase_md.artifact_set", "md-result artifact set is incomplete")
+            common._diagnostic("error", "ase_md.artifact_set", "md-result artifact set is incomplete")
         )
     for role, name in expected_artifacts.items():
         if role in artifacts:
-            error = nvt._check_artifact(attempt / name, artifacts[role])
+            error = common._check_artifact(attempt / name, artifacts[role])
             if error:
-                diagnostics.append(nvt._diagnostic("error", f"ase_md.artifact_{role}", error))
+                diagnostics.append(common._diagnostic("error", f"ase_md.artifact_{role}", error))
 
-    index_error = nvt._check_trajectory_index(attempt / "trajectory-index.json", settings)
+    index_error = common._check_trajectory_index(attempt / "trajectory-index.json", settings)
     if index_error:
-        diagnostics.append(nvt._diagnostic("error", "ase_md.trajectory_index", index_error))
+        diagnostics.append(common._diagnostic("error", "ase_md.trajectory_index", index_error))
     thermo_error, final_thermo = _check_npt_thermo(attempt / "thermo.csv", settings)
     if thermo_error:
-        diagnostics.append(nvt._diagnostic("error", "ase_md.thermo", thermo_error))
+        diagnostics.append(common._diagnostic("error", "ase_md.thermo", thermo_error))
 
     try:
-        report = nvt._read_json(attempt / "cluster-run-report.json")
+        report = common._read_json(attempt / "cluster-run-report.json")
     except Exception as exc:
         diagnostics.append(
-            nvt._diagnostic(
+            common._diagnostic(
                 "error", "ase_md.cluster_report", f"cluster-run-report.json is unreadable: {exc}"
             )
         )
@@ -307,7 +294,7 @@ def _check_npt(
         or report.get("steps_completed") != settings.get("steps")
     ):
         diagnostics.append(
-            nvt._diagnostic(
+            common._diagnostic(
                 "error",
                 "ase_md.cluster_run",
                 "cluster report does not describe the planned completed NPT run",
@@ -320,19 +307,19 @@ def _check_npt(
     ):
         if report.get(key) != settings.get(setting_key):
             diagnostics.append(
-                nvt._diagnostic("error", f"ase_md.cluster_{key}", f"cluster report {key} differs")
+                common._diagnostic("error", f"ase_md.cluster_{key}", f"cluster report {key} differs")
             )
-    report_model = nvt._mapping(report.get("model"))
+    report_model = common._mapping(report.get("model"))
     if (
         report_model.get("id") != settings.get("model_id")
         or report_model.get("path") != settings.get("model_path")
     ):
         diagnostics.append(
-            nvt._diagnostic("error", "ase_md.cluster_model", "cluster report model record differs")
+            common._diagnostic("error", "ase_md.cluster_model", "cluster report model record differs")
         )
     if report.get("structure_path") != settings.get("structure_path"):
         diagnostics.append(
-            nvt._diagnostic("error", "ase_md.cluster_structure", "cluster report structure differs")
+            common._diagnostic("error", "ase_md.cluster_structure", "cluster report structure differs")
         )
     if "supercell_repeat" in settings:
         for key in (
@@ -345,7 +332,7 @@ def _check_npt(
         ):
             if report.get(key) != result.get(key):
                 diagnostics.append(
-                    nvt._diagnostic(
+                    common._diagnostic(
                         "error",
                         f"ase_md.cluster_{key}",
                         f"cluster report {key} differs",
@@ -356,33 +343,12 @@ def _check_npt(
     return diagnostics, {"result": result, "final_thermo": final_thermo or {}}
 
 
-def _check_ensemble(context: dict[str, Any]) -> str | None:
-    plan_parameters = nvt._mapping(nvt._scheduled_plan(context).get("md_parameters"))
-    if plan_parameters:
-        return plan_parameters.get("ensemble")
-    return nvt._mapping(context.get("parameters")).get("ensemble")
-
-
-def validate(context: dict[str, Any]) -> list[dict[str, str]]:
-    if nvt._mapping(context.get("parameters")).get("ensemble", NVT) == NPT:
-        return _validate_npt(context)
-    return nvt.validate(context)
-
-
-def plan(context: dict[str, Any]) -> dict[str, Any]:
-    if nvt._mapping(context.get("parameters")).get("ensemble", NVT) == NPT:
-        return _plan_npt(context)
-    return nvt.plan(context)
-
-
 def check(context: dict[str, Any]) -> dict[str, Any]:
-    if _check_ensemble(context) != NPT:
-        return nvt.check(context)
     diagnostics, analysis = _check_npt(context)
     if diagnostics or analysis is None:
         return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
-    result = nvt._mapping(analysis.get("result"))
-    final = nvt._mapping(analysis.get("final_thermo"))
+    result = common._mapping(analysis.get("result"))
+    final = common._mapping(analysis.get("final_thermo"))
     return {
         "plugin_id": PLUGIN_ID,
         "status": "OK",

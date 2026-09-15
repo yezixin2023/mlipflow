@@ -7,6 +7,7 @@ import shutil
 import sys
 import types
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from ase import Atoms
@@ -635,3 +636,9 @@ def test_checker_verifies_schedule_and_scientific_outputs(tmp_path: Path) -> Non
     checked = module.check(context)
     assert checked["status"] == "OK", checked.get("diagnostics")
     assert checked["metrics"]["steps_completed"] == 5.0
+    from mlipflow.plugins.ase_md.adapter import Adapter
+
+    with patch.object(Adapter, "check", side_effect=AssertionError("collect repeated check")):
+        collected = Adapter().collect(context)
+    assert collected["metrics"] == checked["metrics"]
+    assert all(Path(item["path"]).is_file() for item in collected["artifacts"])

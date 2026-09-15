@@ -869,16 +869,9 @@ def check(context: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def collect(context: Mapping[str, Any]) -> dict[str, Any]:
-    checked = check(context)
-    if checked.get("status") != "OK":
-        return {
-            "plugin_id": "pes-sampling",
-            "status": "FAIL",
-            "artifacts": [],
-            "metrics": {},
-            "diagnostics": checked.get("diagnostics", []),
-        }
     root = Path(str(context["attempt_dir"])).expanduser().absolute() / "lasp-ssw"
+    result = json.loads((root / "sampling-result.json").read_text(encoding="utf-8"))
+    counts = result["counts"]
     roles = {
         "cluster-run-report.json": "lasp-cluster-report",
         "sampling-result.json": "sample-manifest",
@@ -912,6 +905,8 @@ def collect(context: Mapping[str, Any]) -> dict[str, Any]:
         "plugin_id": "pes-sampling",
         "status": "OK",
         "artifacts": artifacts,
-        "metrics": checked.get("metrics", {}),
-        "diagnostics": checked.get("diagnostics", []),
+        "metrics": {name: counts[name] for name in (
+            "generated_structure_count", "selected_structure_count", "energy_accepted_count"
+        )},
+        "diagnostics": [],
     }

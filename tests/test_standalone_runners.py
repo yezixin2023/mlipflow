@@ -16,19 +16,6 @@ from mlipflow.plugins import capability_directory
 # runners. Existing scheduled-plan tests verify staging and scientific execution.
 BUNDLES = [
     (
-        "mlip-training",
-        "training_wrapper.py",
-        [
-            "training_wrapper.py",
-            "mlip_common.py",
-            "mlip_chgnet.py",
-            "mlip_deepmd.py",
-            "mlip_mace.py",
-            "mlip_m3gnet.py",
-        ],
-        True,
-    ),
-    (
         "mlip-benchmark",
         "benchmark_wrapper.py",
         ["benchmark_wrapper.py", "benchmark_normalization.py"],

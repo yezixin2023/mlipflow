@@ -456,17 +456,10 @@ def check(context: Any) -> Dict[str, Any]:
 
 
 def collect(context: Any) -> Dict[str, Any]:
-    checked = check(context)
-    if checked.get("status") != "OK":
-        return {
-            "plugin_id": contracts.PLUGIN_ID,
-            "status": checked.get("status", "FAIL"),
-            "artifacts": [],
-            "metrics": {},
-            "diagnostics": checked.get("diagnostics", []),
-        }
-    manifest, rows, diagnostics = _read_direct_manifest(context)
+    manifest = contracts._manifest_path(context)
     assert manifest is not None
+    with manifest.open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
     artifacts: List[Dict[str, str]] = [
         {"role": "sample-manifest", "path": str(manifest), "media_type": "text/csv"}
     ]
@@ -504,5 +497,5 @@ def collect(context: Any) -> Dict[str, Any]:
             "unique_formula_count": len(formulas),
             "source_file_count": len(sources),
         },
-        "diagnostics": diagnostics,
+        "diagnostics": [],
     }

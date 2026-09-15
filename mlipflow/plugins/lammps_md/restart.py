@@ -74,7 +74,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _validate(context: dict[str, Any]) -> list[dict[str, str]]:
-    diagnostics = list(execute.validate(_proxy(context)))
+    diagnostics: list[dict[str, str]] = []
     if execute._operation(context) != EXECUTE:
         return diagnostics
     parameters = prepare._mapping(context.get("parameters"))

@@ -38,12 +38,13 @@ def query_workflow(project: Project, node_id: str | None = None) -> dict[str, An
     An uninitialized project returns a configuration preview. Metrics retain the
     producing capability's names and units; this query never recomputes them.
     """
+    nodes = project.nodes if node_id is None else [project.node(node_id)]
     database = state_path(project)
     if database.is_file():
         with StateStore(database, readonly=True) as store:
             store.assert_project_id(project.project_id)
             steps = []
-            for node in project.nodes:
+            for node in nodes:
                 record = store.latest_step(project.project_id, str(node["id"]))
                 step = record.to_dict()
                 step["capability"] = node["uses"]
@@ -72,12 +73,8 @@ def query_workflow(project: Project, node_id: str | None = None) -> dict[str, An
                 "artifacts": [],
                 "persisted": False,
             }
-            for node in project.nodes
+            for node in nodes
         ]
-    if node_id is not None:
-        steps = [step for step in steps if step["node_id"] == node_id]
-        if not steps:
-            raise ConfigError(f"unknown workflow node: {node_id}")
     counts: dict[str, int] = {}
     for step in steps:
         counts[step["state"]] = counts.get(step["state"], 0) + 1

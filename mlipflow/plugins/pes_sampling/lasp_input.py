@@ -400,13 +400,21 @@ def check(context: Any) -> Dict[str, Any]:
 
 
 def collect(context: Any) -> Dict[str, Any]:
-    checked = check(context)
-    if checked["status"] != "OK":
-        return {**checked, "artifacts": [], "metrics": {}}
-    manifest = Path(str(checked["result_file"]))
+    project_root = contracts._resolve(context.get("project_root"), Path.cwd()) or Path.cwd()
+    plan = contracts._mapping(contracts._mapping(context.get("execution")).get("plan"))
+    expected = plan.get("expected_outputs")
+    manifest = contracts._unresolved(
+        expected[0] if isinstance(expected, list) and len(expected) == 1
+        else contracts._mapping(context.get("inputs")).get("result_manifest"), project_root
+    )
+    assert manifest is not None
     value = json.loads(manifest.read_text(encoding="utf-8"))
     return {
-        **checked,
+        "plugin_id": contracts.PLUGIN_ID,
+        "operation": contracts.LASP_INPUT_OPERATION,
+        "status": "OK",
+        "result_file": str(manifest),
+        "diagnostics": [],
         "artifacts": [
             {
                 "role": "lasp-input-manifest",

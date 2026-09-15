@@ -1,16 +1,42 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from tests.helpers import load_module
 import json
 from pathlib import Path
 
 import pytest
+from unittest.mock import patch
+
+from mlipflow.plugins.ase_md import common, npt, nvt
+from mlipflow.plugins.ase_md.adapter import Adapter
 
 from mlipflow.errors import ConfigError
 from mlipflow.services.scheduled import _failure_salvage_outputs
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "mlipflow" / "plugins" / "ase_md"
+
+
+@pytest.mark.parametrize("ensemble", ["nvt-langevin", "npt-isotropic-mtk"])
+def test_planning_validates_only_the_selected_ensemble_once(tmp_path, ensemble):
+    context = _context(tmp_path, ensemble=ensemble)
+    before = deepcopy(context)
+    selected, other = (npt, nvt) if ensemble == npt.NPT else (nvt, npt)
+    with patch.object(selected, "validate", wraps=selected.validate) as validate, patch.object(
+        common, "validate", wraps=common.validate
+    ) as common_validate, patch.object(
+        other, "validate", side_effect=AssertionError("wrong ensemble validation")
+    ), patch.object(other, "plan", side_effect=AssertionError("wrong ensemble plan")), patch.object(
+        common, "build_plan", wraps=common.build_plan
+    ) as build:
+        plan = Adapter().plan(context)
+    assert plan["status"] == "READY", plan["diagnostics"]
+    validate.assert_called_once_with(context)
+    common_validate.assert_called_once_with(context)
+    build.assert_called_once_with(context, ensemble)
+    assert context == before
+    assert ("friction_per_fs" in plan["md_parameters"]) is (ensemble == nvt.NVT)
 
 
 def _load(name: str, path: Path):

@@ -710,17 +710,11 @@ class Adapter:
         }
 
     def collect(self, context: Any) -> dict[str, Any]:
-        checked = self.check(context)
-        if checked["status"] != "OK":
-            return checked
         assert isinstance(context, dict)
         if _operation(context) == REPLAY_OPERATION:
-            observed, diagnostics, status = self._verify_replay_outputs(context)
-            if observed is None or status != "OK":
-                return {"plugin_id": PLUGIN_ID, "status": status, "diagnostics": diagnostics}
             _, output_paths = self._replay_paths(context)
-            metrics = observed["metrics.json"]
-            ranking = observed["model_ranking.json"]
+            metrics = json.loads(output_paths["metrics.json"].read_text(encoding="utf-8"))
+            ranking = json.loads(output_paths["model_ranking.json"].read_text(encoding="utf-8"))
             winner = ranking["ranking"][0]
             output_relative = context["parameters"].get(
                 "replay_output_subdir", DEFAULT_REPLAY_OUTPUT_SUBDIR
@@ -733,7 +727,7 @@ class Adapter:
                 "model_execution": False,
                 "dft_execution": False,
                 "recomputed_from_total_energies": False,
-                "diagnostics": diagnostics,
+                "diagnostics": [],
                 "artifacts": [
                     {
                         "name": "manuscript-replay-metrics",

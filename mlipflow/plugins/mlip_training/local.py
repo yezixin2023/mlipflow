@@ -322,13 +322,17 @@ def check(context: dict[str, Any]) -> dict[str, Any]:
 
 
 def collect(context: dict[str, Any]) -> dict[str, Any]:
-    checked = check(context)
-    if checked["status"] != "OK":
-        return checked
+    path = Path(_safe_attempt_output(context, _mapping(context.get("inputs")).get("result_manifest")))
+    result = _read_json(path)
+    model = result["model_artifact"]
     return {
         "plugin_id": PLUGIN_ID,
         "status": "OK",
-        "artifacts": checked["artifacts"],
-        "metrics": checked["metrics"],
+        "artifacts": [
+            {"path": str(path), "role": "result-manifest", "media_type": "application/json"},
+            {"path": str(_portable_child(path.parent, model["path"], "model_artifact.path")),
+             "role": "model", "media_type": model.get("media_type", "application/octet-stream")},
+        ],
+        "metrics": {name: float(value) for name, value in (result.get("metrics") or {}).items()},
         "diagnostics": [],
     }

@@ -504,16 +504,14 @@ def _check_scheduled_training(context: dict[str, Any]) -> tuple[list[dict[str, s
 
 
 def _collect_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
-    diagnostics, analysis = _check_scheduled_training(context)
-    if diagnostics or analysis is None:
-        return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
     parameters = _mapping(context["parameters"])
     planned = _mapping(_mapping(context.get("execution")).get("plan"))
     calculation = _mapping(planned.get("training_calculation"))
     hpc_execution = _mapping(_mapping(context.get("execution")).get("hpc_execution"))
-    report = analysis["report"]
-    curve = analysis["curve"]
+    report, _ = _read_json_file(attempt / "training-report.json")
+    curve, _ = _parse_lcurve(attempt / "lcurve.out")
+    assert isinstance(report, dict) and curve is not None
 
     manifest = {
         "schema_version": SCHEDULED_RESULT_SCHEMA,
@@ -551,7 +549,7 @@ def _collect_scheduled_training(context: dict[str, Any]) -> dict[str, Any]:
         },
         "completed_steps": curve["steps"][-1],
         "requested_steps": _mapping(calculation.get("training")).get("numb_steps"),
-        "model_artifacts": analysis["checkpoints"],
+        "model_artifacts": report["checkpoint_files"],
         "execution": {
             "template_family": _mapping(planned.get("scheduled_execution")).get("template_family"),
             "templates": hpc_execution.get("template_paths"),

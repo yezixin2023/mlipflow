@@ -9,6 +9,7 @@ from unittest.mock import patch
 from mlipflow.services.commands import initialize
 from mlipflow.config import load_project
 from mlipflow.services.paths import state_path
+from mlipflow.services import queries
 from mlipflow.state import StateStore, RunState
 from .helpers import project_config, run_cli, snapshot, write_json
 
@@ -84,6 +85,24 @@ class ReadOnlyCliTests(unittest.TestCase):
                 self.assertIn(code, {0, 1}, stderr)
         self.assertEqual(snapshot(self.root), before)
         self.assertFalse((self.root / ".mlipflow").exists())
+
+    def test_single_node_queries_read_only_its_attempt(self) -> None:
+        node = load_project(self.root).nodes[0]
+        write_json(self.root / "project.yaml", project_config([
+            {**node, "id": node_id} for node_id in ("first", "benchmark", "last")
+        ]))
+        initialize(self.root)
+        project = load_project(self.root)
+        self.assertEqual(3, len(queries.query_workflow(project)["steps"]))
+        for query in (queries.query_workflow, queries.query_inspect):
+            with self.subTest(query=query.__name__), patch.object(
+                queries, "attempt_details", wraps=queries.attempt_details
+            ) as details, patch.object(
+                StateStore, "latest_step", autospec=True, side_effect=StateStore.latest_step
+            ) as latest:
+                query(project, "benchmark")
+                details.assert_called_once_with(project, "benchmark", 1)
+                self.assertEqual(["benchmark"], [call.args[2] for call in latest.call_args_list])
 
     def test_initialized_queries_and_logs_are_zero_write(self) -> None:
         initialize(self.root)

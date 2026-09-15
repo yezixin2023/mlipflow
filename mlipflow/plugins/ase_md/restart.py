@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import npt, nvt
+from . import common
 
 PLUGIN_ID = "ase-md"
 
@@ -102,12 +102,12 @@ def _checkpoint_matches_parameters(checkpoint: dict[str, Any], settings: dict[st
     for key, value in expected.items():
         if checkpoint.get(key) != value:
             raise ValueError(f"previous checkpoint parameter mismatch for {key}")
-    model = nvt._mapping(checkpoint.get("model"))
+    model = common._mapping(checkpoint.get("model"))
     if model.get("id") != settings.get("model_id") or model.get("path") != settings.get(
         "model_path"
     ):
         raise ValueError("previous checkpoint model record differs from the plan")
-    if settings.get("ensemble") == npt.NVT:
+    if settings.get("ensemble") == "nvt-langevin":
         if checkpoint.get("friction_per_fs") != settings.get("friction_per_fs"):
             raise ValueError("previous checkpoint Langevin friction differs")
         if checkpoint.get("rng_algorithm") != "PCG64":
@@ -148,7 +148,7 @@ def _previous_checkpoint(
     manifest = _read_json(manifest_path)
     if manifest.get("state") not in {"FAIL", "STOPPED"}:
         raise ValueError("previous attempt is not a failed/stopped scheduler attempt")
-    job = nvt._mapping(manifest.get("job"))
+    job = common._mapping(manifest.get("job"))
     scheduler_state = str(job.get("scheduler_state", "")).upper()
     if scheduler_state not in RECOVERABLE_SCHEDULER_STATES:
         raise ValueError(
@@ -160,13 +160,13 @@ def _previous_checkpoint(
     return checkpoint_path, checkpoint, completed
 
 
-def _validate_restart(context: dict[str, Any]) -> list[dict[str, str]]:
-    diagnostics = list(npt.validate(context))
-    parameters = nvt._mapping(context.get("parameters"))
+def validate(context: dict[str, Any]) -> list[dict[str, str]]:
+    diagnostics: list[dict[str, str]] = []
+    parameters = common._mapping(common._mapping(context).get("parameters"))
     policy = parameters.get("restart_policy", RESTART_DISABLED)
     if policy not in RESTART_POLICIES:
         diagnostics.append(
-            nvt._diagnostic(
+            common._diagnostic(
                 "error",
                 "ase_md.restart_policy",
                 "restart_policy must be disabled or auto-from-previous-attempt",
@@ -176,13 +176,13 @@ def _validate_restart(context: dict[str, Any]) -> list[dict[str, str]]:
     if interval is not None:
         if not _positive_int(interval):
             diagnostics.append(
-                nvt._diagnostic(
+                common._diagnostic(
                     "error", "ase_md.checkpoint_interval", "checkpoint_interval must be positive"
                 )
             )
         elif _positive_int(parameters.get("steps")) and interval > parameters["steps"]:
             diagnostics.append(
-                nvt._diagnostic(
+                common._diagnostic(
                     "error",
                     "ase_md.checkpoint_interval",
                     "checkpoint_interval cannot exceed total steps",
@@ -190,7 +190,7 @@ def _validate_restart(context: dict[str, Any]) -> list[dict[str, str]]:
             )
     if policy == RESTART_AUTO and interval is None:
         diagnostics.append(
-            nvt._diagnostic(
+            common._diagnostic(
                 "error",
                 "ase_md.restart_checkpoint_interval",
                 "auto restart requires an explicit checkpoint_interval",
@@ -199,26 +199,25 @@ def _validate_restart(context: dict[str, Any]) -> list[dict[str, str]]:
     try:
         _attempt_number(context)
     except ValueError as exc:
-        diagnostics.append(nvt._diagnostic("error", "ase_md.attempt", str(exc)))
+        diagnostics.append(common._diagnostic("error", "ase_md.attempt", str(exc)))
     return diagnostics
 
 
-def _plan_restart(context: dict[str, Any]) -> dict[str, Any]:
-    diagnostics = _validate_restart(context)
-    if diagnostics:
-        return nvt._blocked(diagnostics)
-    plan = npt.plan(context)
+def apply_restart(context: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
     if plan.get("status") != "READY":
         return plan
-    parameters = nvt._mapping(context["parameters"])
-    settings = nvt._mapping(plan.get("md_parameters"))
-    scheduled = nvt._mapping(plan.get("scheduled_execution"))
+    diagnostics = validate(context)
+    if diagnostics:
+        return common._blocked(diagnostics)
+    parameters = common._mapping(context["parameters"])
+    settings = common._mapping(plan.get("md_parameters"))
+    scheduled = common._mapping(plan.get("scheduled_execution"))
     fetch_outputs = scheduled.get("fetch_outputs")
     staged = scheduled.get("staged_files")
     if not isinstance(fetch_outputs, list) or not isinstance(staged, list):
-        return nvt._blocked(
+        return common._blocked(
             [
-                nvt._diagnostic(
+                common._diagnostic(
                     "error", "ase_md.restart_contract", "base scheduled contract is incomplete"
                 )
             ]
@@ -254,15 +253,15 @@ def _plan_restart(context: dict[str, Any]) -> dict[str, Any]:
         try:
             previous = _previous_checkpoint(context, settings, attempt)
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-            return nvt._blocked([nvt._diagnostic("error", "ase_md.restart_previous", str(exc))])
+            return common._blocked([common._diagnostic("error", "ase_md.restart_previous", str(exc))])
         if previous is None:
-            return nvt._blocked(
-                [nvt._diagnostic("error", "ase_md.restart_previous", "previous checkpoint is missing")]
+            return common._blocked(
+                [common._diagnostic("error", "ase_md.restart_previous", "previous checkpoint is missing")]
             )
         checkpoint_path, _checkpoint, start_step = previous
         restart_path = "restart/md-checkpoint.json"
         restart_attempt = attempt - 1
-        staged.append(nvt._staged_record(checkpoint_path, "restart/md-checkpoint.json"))
+        staged.append(common._staged_record(checkpoint_path, "restart/md-checkpoint.json"))
         input_paths = plan.setdefault("input_paths", {})
         if isinstance(input_paths, dict):
             input_paths["restart_checkpoint"] = str(checkpoint_path)
@@ -282,7 +281,7 @@ def _plan_restart(context: dict[str, Any]) -> dict[str, Any]:
         }
     )
     plan["md_parameters"] = settings
-    summary = nvt._mapping(plan.get("approval_summary"))
+    summary = common._mapping(plan.get("approval_summary"))
     summary.update(
         {
             "checkpoint_interval": interval,
@@ -300,20 +299,20 @@ def _plan_restart(context: dict[str, Any]) -> dict[str, Any]:
     return plan
 
 
-def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
+def check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
     diagnostics: list[dict[str, str]] = []
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
-    settings = nvt._mapping(nvt._scheduled_plan(context).get("md_parameters"))
+    settings = common._mapping(common._scheduled_plan(context).get("md_parameters"))
     interval = settings.get("checkpoint_interval")
     try:
-        result = nvt._read_json(attempt / "md-result.json")
+        result = common._read_json(attempt / "md-result.json")
     except Exception as exc:
-        return [nvt._diagnostic("error", "ase_md.restart_result", str(exc))]
+        return [common._diagnostic("error", "ase_md.restart_result", str(exc))]
     if result.get("segment_start_step") != settings.get("segment_start_step"):
         diagnostics.append(
-            nvt._diagnostic("error", "ase_md.segment_start", "md-result segment start differs")
+            common._diagnostic("error", "ase_md.segment_start", "md-result segment start differs")
         )
-    restart = nvt._mapping(result.get("restart"))
+    restart = common._mapping(result.get("restart"))
     resumed = int(settings.get("segment_start_step", 0)) > 0
     expected_restart = {
         "resumed": resumed,
@@ -324,21 +323,21 @@ def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
     for key, value in expected_restart.items():
         if restart.get(key) != value:
             diagnostics.append(
-                nvt._diagnostic("error", f"ase_md.restart_{key}", f"restart field {key} differs")
+                common._diagnostic("error", f"ase_md.restart_{key}", f"restart field {key} differs")
             )
     if interval is not None:
         checkpoint_path = attempt / "md-checkpoint.json"
-        if not nvt._ordinary_file(checkpoint_path):
+        if not common._ordinary_file(checkpoint_path):
             diagnostics.append(
-                nvt._diagnostic("error", "ase_md.checkpoint_missing", "final checkpoint is missing")
+                common._diagnostic("error", "ase_md.checkpoint_missing", "final checkpoint is missing")
             )
         else:
-            checkpoint_record = nvt._mapping(result.get("checkpoint"))
+            checkpoint_record = common._mapping(result.get("checkpoint"))
             if checkpoint_record.get("path") != "md-checkpoint.json" or checkpoint_record.get(
                 "completed_steps"
             ) != settings.get("steps"):
                 diagnostics.append(
-                    nvt._diagnostic(
+                    common._diagnostic(
                         "error", "ase_md.checkpoint_record", "final checkpoint record differs"
                     )
                 )
@@ -347,7 +346,7 @@ def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
                 completed = _checkpoint_matches_parameters(checkpoint, settings)
                 if completed != settings.get("steps"):
                     diagnostics.append(
-                        nvt._diagnostic(
+                        common._diagnostic(
                             "error",
                             "ase_md.checkpoint_completed",
                             "final checkpoint is not at the requested total step",
@@ -359,7 +358,7 @@ def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
                 checkpoint = _read_json(checkpoint_path)
                 expected_total = settings.get("steps")
                 if checkpoint.get("completed_steps") != expected_total:
-                    diagnostics.append(nvt._diagnostic("error", "ase_md.checkpoint", str(exc)))
+                    diagnostics.append(common._diagnostic("error", "ase_md.checkpoint", str(exc)))
                 else:
                     probe = dict(checkpoint)
                     probe["completed_steps"] = max(0, int(expected_total) - 1)
@@ -367,19 +366,19 @@ def _check_restart_metadata(context: dict[str, Any]) -> list[dict[str, str]]:
                         _checkpoint_matches_parameters(probe, settings)
                     except ValueError as parameter_exc:
                         diagnostics.append(
-                            nvt._diagnostic("error", "ase_md.checkpoint", str(parameter_exc))
+                            common._diagnostic("error", "ase_md.checkpoint", str(parameter_exc))
                         )
     try:
-        report = nvt._read_json(attempt / "cluster-run-report.json")
+        report = common._read_json(attempt / "cluster-run-report.json")
     except Exception as exc:
-        diagnostics.append(nvt._diagnostic("error", "ase_md.restart_cluster", str(exc)))
+        diagnostics.append(common._diagnostic("error", "ase_md.restart_cluster", str(exc)))
         report = {}
     if report.get("segment_start_step") != settings.get("segment_start_step"):
         diagnostics.append(
-            nvt._diagnostic("error", "ase_md.cluster_segment_start", "cluster segment start differs")
+            common._diagnostic("error", "ase_md.cluster_segment_start", "cluster segment start differs")
         )
-    if nvt._mapping(report.get("restart")) != nvt._mapping(result.get("restart")):
+    if common._mapping(report.get("restart")) != common._mapping(result.get("restart")):
         diagnostics.append(
-            nvt._diagnostic("error", "ase_md.cluster_restart", "cluster restart record differs")
+            common._diagnostic("error", "ase_md.cluster_restart", "cluster restart record differs")
         )
     return diagnostics

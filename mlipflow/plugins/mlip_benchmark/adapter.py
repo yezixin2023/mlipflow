@@ -1818,17 +1818,48 @@ class Adapter:
         }
 
     def collect(self, context: dict[str, Any]) -> dict[str, Any]:
-        checked = self.check(context)
-        if checked["status"] != "OK":
-            return checked
-        result = {
-            "plugin_id": PLUGIN_ID,
-            "status": "OK",
-            "artifacts": checked["artifacts"],
-            "metrics": checked["metrics"],
-            "diagnostics": [],
+        operation = _operation(context)
+        if operation in NORMALIZE_OPERATIONS or operation == FRESH_OPERATION:
+            paths = _normalized_output_paths(context)
+            payload = _read_json(paths["metrics.json"])
+            roles = {
+                "prediction_evidence.json": ("prediction-evidence", "application/json"),
+                "metrics.json": ("normalized-metrics", "application/json"),
+                "benchmark_summary.csv": ("benchmark-summary", "text/csv"),
+                "model_ranking.json": ("model-ranking", "application/json"),
+                "provenance.json": ("provenance", "application/json"),
+            }
+            artifacts = [
+                {"path": str(path), "role": roles[name][0], "media_type": roles[name][1]}
+                for name, path in paths.items()
+            ]
+            if operation == FRESH_OPERATION and context.get("backend") == "ssh-slurm":
+                artifacts.append({
+                    "path": str(Path(str(context["attempt_dir"])) / "cluster-benchmark-report.json"),
+                    "role": "benchmark-cluster-report", "media_type": "application/json",
+                })
+            return {
+                "plugin_id": PLUGIN_ID, "status": "OK", "diagnostics": [],
+                "artifacts": artifacts, "mode": payload["mode"], "records": payload["records"],
+                "metrics": {_normalized_metric_key(record): float(record["value"])
+                            for record in payload["records"]},
+            }
+        path = _result_path(context)
+        payload = _read_json(path)
+        metrics = payload.get("metrics")
+        artifacts = [{"path": str(path), "role": "result-manifest", "media_type": "application/json"}]
+        artifacts.extend({
+            "path": str(_relative_child(path.parent, item["path"], "artifact.path")),
+            "role": item.get("role", "benchmark-output"), "media_type": item.get("media_type"),
+        } for item in payload.get("artifacts", []))
+        if metrics is None and payload.get("metrics_file") is not None:
+            metrics_path = _relative_child(path.parent, payload["metrics_file"], "metrics_file")
+            metrics = _read_json(metrics_path)
+            if isinstance(metrics, dict) and "metrics" in metrics:
+                metrics = metrics["metrics"]
+            artifacts.append({"path": str(metrics_path), "role": "metrics", "media_type": "application/json"})
+        return {
+            "plugin_id": PLUGIN_ID, "status": "OK", "diagnostics": [],
+            "artifacts": artifacts,
+            "metrics": {name: float(record["value"]) for name, record in metrics.items()},
         }
-        if "mode" in checked:
-            result["mode"] = checked["mode"]
-            result["records"] = checked["records"]
-        return result

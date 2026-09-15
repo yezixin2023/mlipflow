@@ -4,6 +4,7 @@ from tests.helpers import load_module
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -196,7 +197,9 @@ def _previous_runtime(context: dict, scheduler_state: str = "TIMEOUT", checkpoin
 
 def test_attempt_one_declares_periodic_failure_salvage(tmp_path: Path) -> None:
     module = _load("lammps_restart_adapter_first", PLUGIN / "adapter.py")
-    plan = module.Adapter().plan(_context(tmp_path))
+    with patch.object(module.execute, "validate", wraps=module.execute.validate) as validate:
+        plan = module.Adapter().plan(_context(tmp_path))
+    validate.assert_called_once()
     assert plan["status"] == "READY", plan.get("diagnostics")
     calculation = plan["lammps_calculation"]
     assert calculation["restart_policy"] == "auto-from-previous-attempt"

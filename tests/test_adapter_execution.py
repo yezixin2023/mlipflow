@@ -28,6 +28,7 @@ class FixtureAdapter:
     def plan(self, context):
         return {
             "status": "READY",
+            "diagnostics": self.validate(context),
             "executable": True,
             "argv": self.argv,
             "cwd": context["attempt_dir"],
@@ -124,6 +125,8 @@ class AdapterExecutionTests(unittest.TestCase):
             ):
                 plan = make_run_plan(project, "ordered")
             self.assertEqual("READY", plan["adapter_plan"]["status"])
+            self.assertEqual(["plan", "validate"], calls)
+            self.assertEqual(plan["adapter_plan"]["diagnostics"], plan["adapter_diagnostics"])
             self.assertEqual(before, snapshot(root))
             initialize(root)
             calls.clear()
@@ -142,7 +145,7 @@ class AdapterExecutionTests(unittest.TestCase):
 
             self.assertEqual("OK", result["step"]["state"])
             self.assertEqual(
-                ["validate", "plan", "process", "check", "collect"], calls
+                ["plan", "validate", "process", "check", "collect"], calls
             )
             state = query_workflow(project)["steps"][0]
             self.assertEqual(

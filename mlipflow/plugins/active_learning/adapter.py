@@ -612,9 +612,6 @@ class Adapter:
         }
 
     def collect(self, context: Any) -> dict[str, Any]:
-        checked = self.check(context)
-        if checked.get("status") != "OK":
-            return checked
         assert isinstance(context, Mapping)
         operation = _operation(context)
         result_path = _result_path(context, operation)

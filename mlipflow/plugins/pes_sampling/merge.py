@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from pathlib import Path
@@ -435,18 +436,10 @@ def check(context: Any) -> Dict[str, Any]:
 
 
 def collect(context: Any) -> Dict[str, Any]:
-    checked = check(context)
-    if checked.get("status") != "OK":
-        return {
-            "plugin_id": contracts.PLUGIN_ID,
-            "operation": contracts.MERGE_OPERATION,
-            "status": checked.get("status", "FAIL"),
-            "artifacts": [],
-            "metrics": {},
-            "diagnostics": checked.get("diagnostics", []),
-        }
-    manifest, value, diagnostics, records = _read_merge_manifest(context)
+    manifest = contracts._manifest_path(context)
     assert manifest is not None
+    value = json.loads(manifest.read_text(encoding="utf-8"))
+    records = value["structures"]
     artifacts: List[Dict[str, str]] = [
         {"role": "structures-manifest", "path": str(manifest), "media_type": "application/json"}
     ]
@@ -471,5 +464,5 @@ def collect(context: Any) -> Dict[str, Any]:
             "near_duplicate_count": counts.get("near_duplicates", 0),
             "rejected_bad_structure_count": counts.get("rejected_bad", 0),
         },
-        "diagnostics": diagnostics,
+        "diagnostics": [],
     }

@@ -4,6 +4,7 @@ import csv
 from tests.helpers import load_module
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -288,3 +289,9 @@ def test_npt_checker_verifies_pressure_cell_schedule_and_outputs(tmp_path: Path)
     assert checked["status"] == "OK", checked.get("diagnostics")
     assert checked["metrics"]["final_pressure_GPa"] == 0.1
     assert checked["metrics"]["final_volume_A3"] == 1000.0
+    from mlipflow.plugins.ase_md.adapter import Adapter
+
+    with patch.object(Adapter, "check", side_effect=AssertionError("collect repeated check")):
+        collected = Adapter().collect(context)
+    assert collected["metrics"] == checked["metrics"]
+    assert all(Path(item["path"]).is_file() for item in collected["artifacts"])

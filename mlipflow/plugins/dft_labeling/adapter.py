@@ -113,9 +113,6 @@ class Adapter:
         }
 
     def collect(self, context: Any) -> dict[str, Any]:
-        checked = self.check(context)
-        if checked["status"] != "OK":
-            return checked
         assert isinstance(context, Mapping)
         if (
             context.get("backend") == "ssh-slurm"
@@ -126,7 +123,7 @@ class Adapter:
                 manifest, _ = contracts._read_json(result_path)
                 assert manifest is not None
                 return label._collected_scheduled_label(
-                    context, manifest, checked.get("diagnostics", [])
+                    context, manifest, []
                 )
             return label._collect_scheduled_result(context)
         result_path = self._result_path(context)
@@ -135,7 +132,7 @@ class Adapter:
         parameters = contracts._mapping(context["parameters"])
         if contracts._operation(context) == contracts.DATASET_OPERATION:
             return dataset._collect_dataset_assembly(
-                context, manifest, checked.get("diagnostics", [])
+                context, manifest, []
             )
         if contracts._operation(context) == contracts.PREPARE_OPERATION:
             artifacts: list[dict[str, Any]] = [

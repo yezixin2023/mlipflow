@@ -556,13 +556,15 @@ def check(context: Any) -> dict[str, Any]:
     }
 
 
-def collect(context: Any, *, checked: dict[str, Any] | None = None) -> dict[str, Any]:
-    if checked is None:
-        checked = check(context)
-    if checked.get("status") != "OK":
-        return checked
+def collect(context: Any) -> dict[str, Any]:
     assert isinstance(context, dict)
     attempt = Path(str(context["attempt_dir"])).expanduser().absolute()
+    result = _read_json(attempt / "lammps-execution-result.json")
+    calculation = prepare._mapping(_scheduled_plan(context).get("lammps_calculation"))
+    metrics = {
+        "steps_completed": float(result["steps_completed"]),
+        "simulated_time_ps": float(result["steps_completed"]) * float(calculation.get("timestep_fs", 0.0)) / 1000.0,
+    }
     specs = (
         ("lammps-execution-result.json", "lammps-execution-result", "application/json"),
         ("trajectory.lammpstrj", "trajectory", "text/plain"),
@@ -580,4 +582,4 @@ def collect(context: Any, *, checked: dict[str, Any] | None = None) -> dict[str,
     for name in ("lammps.stdout.log", "lammps.stderr.log", "runner.stdout.log", "runner.stderr.log"):
         if _ordinary_file(attempt / name):
             artifacts.append({"path": str(attempt / name), "role": "execution-log", "media_type": "text/plain"})
-    return {"plugin_id": PLUGIN_ID, "status": "OK", "diagnostics": [], "metrics": checked.get("metrics", {}), "artifacts": artifacts}
+    return {"plugin_id": PLUGIN_ID, "status": "OK", "diagnostics": [], "metrics": metrics, "artifacts": artifacts}

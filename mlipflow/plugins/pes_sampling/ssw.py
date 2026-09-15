@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from pathlib import Path
@@ -1568,18 +1569,14 @@ def check(context: Any) -> Dict[str, Any]:
 
 def collect(context: Any) -> Dict[str, Any]:
     operation = contracts._operation(context)
-    checked = check(context)
-    if checked.get("status") != "OK":
-        return {
-            "plugin_id": contracts.PLUGIN_ID,
-            "operation": operation,
-            "status": checked.get("status", "FAIL"),
-            "artifacts": [],
-            "metrics": {},
-            "diagnostics": checked.get("diagnostics", []),
-        }
-    manifest, result, diagnostics, artifacts = _read_lasp_result(context)
+    manifest = contracts._manifest_path(context)
     assert manifest is not None
+    result = json.loads(manifest.read_text(encoding="utf-8"))
+    artifacts = [
+        {"role": str(item["role"]), "path": str((manifest.parent / item["path"]).resolve()),
+         "media_type": str(item.get("media_type", "application/octet-stream"))}
+        for item in result["artifacts"]
+    ]
     counts = contracts._mapping(result.get("counts"))
     return {
         "plugin_id": contracts.PLUGIN_ID,
@@ -1602,5 +1599,5 @@ def collect(context: Any) -> Dict[str, Any]:
             "lasp_execution": operation == "lasp-ssw-execute",
             "lasp_replay": operation == "lasp-ssw-normalize-replay",
         },
-        "diagnostics": diagnostics,
+        "diagnostics": [],
     }

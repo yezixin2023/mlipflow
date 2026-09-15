@@ -31,6 +31,7 @@ class FixtureAdapter:
     def plan(self, context):
         return {
             "status": "READY",
+            "diagnostics": self.validate(context),
             "executable": True,
             "argv": ["true"],
             "cwd": context["attempt_dir"],

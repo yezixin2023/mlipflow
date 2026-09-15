@@ -2,25 +2,10 @@
 
 from __future__ import annotations
 import argparse
+import importlib
 import json
 import sys
 from pathlib import Path
-if __package__:
-    from . import mlip_chgnet
-else:
-    import mlip_chgnet
-if __package__:
-    from . import mlip_deepmd
-else:
-    import mlip_deepmd
-if __package__:
-    from . import mlip_m3gnet
-else:
-    import mlip_m3gnet
-if __package__:
-    from . import mlip_mace
-else:
-    import mlip_mace
 if __package__:
     from mlipflow.plugins import model_runtime
 else:
@@ -59,7 +44,12 @@ else:
         write_result,
     )
 
-BACKENDS = {"deepmd": mlip_deepmd, "m3gnet": mlip_m3gnet, "chgnet": mlip_chgnet, "mace": mlip_mace}
+FRAMEWORK_MODULES = {
+    "deepmd": "mlip_deepmd",
+    "m3gnet": "mlip_m3gnet",
+    "chgnet": "mlip_chgnet",
+    "mace": "mlip_mace",
+}
 
 
 def build_parser():
@@ -119,7 +109,8 @@ def main(argv=None):
     try:
         config_path, data_path = _paths(a)
         config = load_config(config_path)
-        backend = BACKENDS[a.framework]
+        module_name = FRAMEWORK_MODULES[a.framework]
+        backend = importlib.import_module(f".{module_name}", __package__) if __package__ else importlib.import_module(module_name)
         plan = (
             backend.plan(a, config, config_path, data_path)
             if a.framework == "mace"
