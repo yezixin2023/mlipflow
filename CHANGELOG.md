@@ -19,8 +19,9 @@ MLIPFlow follows semantic versioning for the Python package. Scientific validati
 ### Changed
 
 - Require Python 3.12 or newer for the core and all dependency extras.
-- Install runtime code and one copy of each Agent Skill; examples, documentation
-  and development schemas are available from the repository.
+- Install runtime code and one copy of each Agent Skill; examples and documentation
+  are available from the repository.
+- Remove standalone configuration JSON Schemas and the `jsonschema` development dependency.
 - Preserve artifact paths, reported metrics, checks, manifests and logs in CLI JSON;
   synchronous execution/check/collection failures now return exit code 1 and `ok: false`.
 - Choose explicit/default/sole site profiles without

@@ -24,7 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "high_entropy_sulfide_reproduction"
 REPRODUCE_PATH = EXAMPLE / "reproduce.py"
 BENCHMARK_WRAPPER = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "benchmark_wrapper.py"
-SCHEMAS = ROOT / "schemas"
+
+
 def _load_reproduce():
     module = load_module(REPRODUCE_PATH, 'test_high_entropy_sulfide_reproduce')
     return module
@@ -45,7 +46,7 @@ class ManuscriptReproductionTests(unittest.TestCase):
             write=False,
         )
 
-    def test_recorded_real_evidence_and_schema_valid_registry(self) -> None:
+    def test_recorded_real_evidence_and_valid_registry(self) -> None:
         provenance = json.loads(
             (EXAMPLE / "evidence" / "transcription_provenance.json").read_text(encoding="utf-8")
         )
@@ -64,19 +65,6 @@ class ManuscriptReproductionTests(unittest.TestCase):
             {"available"},
             {item["status"] for item in registry["_evidence_files"]},
         )
-
-        try:
-            from jsonschema import Draft202012Validator
-        except ImportError:
-            Draft202012Validator = None
-        if Draft202012Validator is not None:
-            for filename, schema_name in (
-                ("project.yaml", "project.schema.json"),
-                ("model_registry.yaml", "model-registry.schema.json"),
-            ):
-                value = json.loads((EXAMPLE / filename).read_text(encoding="utf-8"))
-                schema = json.loads((SCHEMAS / schema_name).read_text(encoding="utf-8"))
-                Draft202012Validator(schema).validate(value)
 
         table_s2 = _csv(EXAMPLE / "evidence" / "table_s2_model_implementation.csv")
         by_family = {row["family"]: row for row in table_s2}

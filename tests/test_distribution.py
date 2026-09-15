@@ -96,7 +96,7 @@ def test_wheel_and_sdist_install_outside_checkout(tmp_path):
         assert not any(Path(name).name == ".DS_Store" for name in names)
         sdist_root = names[0].split("/", 1)[0]
         assert not any(
-            Path(name).parts[1:2] in [(directory,) for directory in ("docs", "examples", "schemas", "tests")]
+            Path(name).parts[1:2] in [(directory,) for directory in ("docs", "examples", "tests")]
             for name in names
         )
         for _, _, files in agent_skill_sources():

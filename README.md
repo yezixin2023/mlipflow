@@ -233,7 +233,7 @@ then follow the query or execution services into a built-in capability.
 | `mlipflow/plugins/<capability>/adapter.py` | Capability operation and lifecycle entrypoint |
 | `mlipflow/plugins/<capability>/` | Operation contracts, scientific checks and runners |
 | `mlipflow/plugins/model_runtime.py` | Shared lazy model-family and inference support |
-| `schemas/`, `tests/`, `examples/` | Configuration contracts, regression tests and runnable examples |
+| `tests/`, `examples/` | Regression tests and runnable examples |
 | `mlipflow/plugins/<capability>/skill/` | Specialist Agent guidance and references beside its implementation |
 | `.agents/skills/` | Skill discovery links and the standalone `mlip-workflow` Skill |
 
@@ -243,7 +243,7 @@ Python package names use underscores; project capability IDs retain hyphens
 
 ## Contributing, security, and citation
 
-Contributions are welcome across the core, built-in capabilities, schemas, tests, examples, Agent Skills, and site templates. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Contributions are welcome across the core, built-in capabilities, tests, examples, Agent Skills, and site templates. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Run the local tests and lint checks in a Python 3.12+ development environment:
 

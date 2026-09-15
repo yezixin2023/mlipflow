@@ -51,7 +51,7 @@ def test_local_extra_covers_all_general_science_runtime_extras() -> None:
 
 def test_local_extra_excludes_development_and_mlip_frameworks() -> None:
     names = set(_requirements(_extras()["local"]))
-    assert names.isdisjoint({"pytest", "jsonschema", "ruff"})
+    assert names.isdisjoint({"pytest", "ruff"})
     assert names.isdisjoint(
         {
             "deepmd",

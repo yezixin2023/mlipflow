@@ -110,7 +110,7 @@ Preserve the Skill's declared name and `agents/openai.yaml` metadata. Specialist
 Skills install once beside their capability code. The standalone workflow Skill
 installs once at `share/mlipflow/agent-skills/mlip-workflow/`. Repository discovery
 is separate from pip installation; installing the tool does not enable agent Skills
-automatically. Examples, documentation and development schemas stay in the repository.
+automatically. Examples and documentation stay in the repository.
 Add package resources only when runtime code or a canonical Skill needs them.
 
 Skills describe how an agent should supervise a capability: what evidence to request, which MLIPFlow operation to call, when approval is required, and how to interpret results. They should not duplicate scientific computation that belongs in adapters or external tools.
@@ -150,7 +150,7 @@ The top-level README is the user entry point. Keep it concise, capability-orient
 
 When behavior changes, update the closest source of truth as needed:
 
-- schemas for configuration contracts;
+- configuration loaders and validators for project, site, and model registry inputs;
 - `mlipflow/plugins/__init__.py` for the built-in capability lookup;
 - `mlipflow/plugins/<underscored_id>/skill/SKILL.md` for specialist Agent Skill contracts;
 - `.agents/skills/mlip-workflow/SKILL.md` for cross-capability supervision;

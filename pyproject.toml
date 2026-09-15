@@ -38,7 +38,7 @@ Issues = "https://github.com/yezixin2023/mlipflow/issues"
 Changelog = "https://github.com/yezixin2023/mlipflow/blob/public/CHANGELOG.md"
 
 [project.optional-dependencies]
-dev = ["build>=1", "setuptools>=77", "pytest>=7", "jsonschema>=4", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22", "dpdata>=0.2.18"]
+dev = ["build>=1", "setuptools>=77", "pytest>=7", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22", "dpdata>=0.2.18"]
 science = ["numpy>=1.23", "ase>=3.22", "icet>=2.0", "pandas>=1.5", "plotly>=5"]
 dft = ["pymatgen>=2024.5", "dpdata>=0.2.18", "ase>=3.22"]
 transport = [

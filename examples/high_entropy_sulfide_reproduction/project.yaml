@@ -1,5 +1,4 @@
 {
-  "$schema": "../../schemas/project.schema.json",
   "schema_version": 1,
   "project": {
     "id": "high-entropy-sulfide-manuscript-reproduction",

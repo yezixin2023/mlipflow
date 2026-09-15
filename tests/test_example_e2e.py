@@ -21,24 +21,12 @@ from mlipflow.services.queries import query_route, query_workflow
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "high_entropy_sulfide"
 AIMD_EXAMPLE = ROOT / "examples" / "aimd_reference_validation"
-SCHEMAS = ROOT / "schemas"
 
 
 class HighEntropySulfideExampleTests(unittest.TestCase):
-    def test_schema_plugin_coverage_and_elements(self) -> None:
+    def test_plugin_coverage_and_elements(self) -> None:
         project_data = json.loads((EXAMPLE / "project.yaml").read_text(encoding="utf-8"))
         registry_data = json.loads((EXAMPLE / "model_registry.yaml").read_text(encoding="utf-8"))
-        try:
-            from jsonschema import Draft202012Validator
-        except ImportError:
-            Draft202012Validator = None
-        if Draft202012Validator is not None:
-            for value, schema_name in (
-                (project_data, "project.schema.json"),
-                (registry_data, "model-registry.schema.json"),
-            ):
-                schema = json.loads((SCHEMAS / schema_name).read_text(encoding="utf-8"))
-                Draft202012Validator(schema).validate(value)
         uses = {node["uses"] for node in project_data["workflow"]["nodes"]}
         self.assertEqual(
             {

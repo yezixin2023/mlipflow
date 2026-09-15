@@ -1,5 +1,4 @@
 {
-  "$schema": "../../schemas/model-registry.schema.json",
   "schema_version": 1,
   "registry_id": "high-entropy-sulfide-manuscript-evidence",
   "description": "Metadata-only registry whose task metrics are direct or transparent reductions of the recorded manuscript evidence. No model weights are distributed and recommended_tasks is intentionally empty so routing is driven only by policy metrics.",
