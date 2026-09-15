@@ -19,13 +19,17 @@ model, enable a training technique, or choose a model by brand. Use the user's e
 choice or comparable routing/benchmark evidence; otherwise expose the unresolved
 alternatives.
 
-## Artifact first
+## Inputs and example
 
-Prefer verified dataset references from `$dft-labeling` and preserve their predefined
-split. Reuse matching foundation-model and completed model references instead of
-copying large artifacts or repeating training. When downstream work needs a stable
-published model, use the plugin's reviewed publication path; never overwrite or
-manually republish an existing model.
+Reuse the existing framework config and dataset split. For a scheduled task set
+`inputs.training_config` and `inputs.dataset_reference`; `finetune` also needs
+`foundation_model_reference`. Declare framework, operation, seed, device, precision
+and resources. Use `examples/training_all_models/project.yaml` and its `USAGE.md`.
+The existing `dft-to-all-training.yaml` reuses assembled datasets in a multi-stage task.
+For local execution, supply the wrapper executable/script, config, data, output and
+result-manifest paths; the CLI dry-run displays the complete wrapper argv.
+Earlier DeepMD references and the optional bounded curve audit are explained in the
+example's `USAGE.md`; unreadable input never selects a legacy runner.
 
 ## Scientific judgment
 
@@ -38,17 +42,26 @@ Distinguish a smoke or short validation run from production training. Model sele
 claims require comparable benchmark evidence; training loss or successful artifact
 creation alone does not establish superiority.
 
-## Execute and interpret
+## Run and read the result
 
-Use `mlipflow inspect` and the dry-run to review actual artifact bindings, framework,
-operation, configuration, backend, abstract resources, and expected outputs. Follow the
-effective `approval_required` value rather than maintaining a separate approval table
-in this Skill.
+Preview the actual task and effective `approval_required` value. Reuse explicit
+user authorization for this task and scale; use `--approve` when the plan requires it.
 
-Never invoke framework scripts or the scheduler directly, copy site-owned paths into
-the project, or bypass Adapter `validate/plan/execute/check/collect`. Scheduler
-`COMPLETED` or process exit zero is insufficient; require final plugin `OK`. Retry must
-preserve the failed attempt and create a fresh attempt.
+```bash
+mlipflow --project PROJECT init
+mlipflow --project PROJECT --format json run NODE --dry-run
+mlipflow --project PROJECT --format json run NODE --approve
+```
+
+For a plan without an approval requirement, `run NODE` suffices. For scheduled
+execution, use `mlipflow --project PROJECT --format json advance` when the job
+progresses; `mlipflow --project PROJECT json NODE` reads the saved result.
+
+Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
+Require final plugin `OK` before using outputs. On failure start with `reason`,
+`check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
+shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
+installed environment's `share/mlipflow/examples/`.
 
 Report the framework, train versus fine-tune mode, dataset/split, foundation model when
 used, seed, scale, collected model reference, and checker result. `OK` establishes the

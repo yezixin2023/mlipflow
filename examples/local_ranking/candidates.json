@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "description": "Fictional identifiers for an offline CLI demonstration; no material properties.",
+  "candidates": [{"id": "a"}, {"id": "b"}, {"id": "c"}, {"id": "missing"}]
+}

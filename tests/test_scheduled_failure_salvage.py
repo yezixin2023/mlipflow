@@ -94,9 +94,9 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
         return _remote_dir
 
     with patch(
-        "mlipflow.services.SshSlurmBackend.stage_workspace", side_effect=stage
+        "mlipflow.backends.SshSlurmBackend.stage_workspace", side_effect=stage
     ), patch(
-        "mlipflow.services.SshSlurmBackend.submit",
+        "mlipflow.backends.SshSlurmBackend.submit",
         return_value=ExecutionResult(0, "Submitted batch job 91\n", "", "91"),
     ):
         run_node(
@@ -141,9 +141,9 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
 
     timeout = {"state": "TIMEOUT", "detail": "walltime", "source": "fake"}
     with patch(
-        "mlipflow.services.SshSlurmBackend.status", return_value=timeout
+        "mlipflow.backends.SshSlurmBackend.status", return_value=timeout
     ), patch(
-        "mlipflow.services.SshSlurmBackend.inspect_file",
+        "mlipflow.backends.SshSlurmBackend.inspect_file",
         autospec=True,
         side_effect=inspect,
     ):
@@ -164,13 +164,13 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
     ).exists()
 
     with patch(
-        "mlipflow.services.SshSlurmBackend.status", return_value=timeout
+        "mlipflow.backends.SshSlurmBackend.status", return_value=timeout
     ), patch(
-        "mlipflow.services.SshSlurmBackend.inspect_file",
+        "mlipflow.backends.SshSlurmBackend.inspect_file",
         autospec=True,
         side_effect=inspect,
     ), patch(
-        "mlipflow.services.SshSlurmBackend.fetch_from",
+        "mlipflow.backends.SshSlurmBackend.fetch_from",
         autospec=True,
         side_effect=fetch,
     ):

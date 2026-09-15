@@ -107,4 +107,7 @@ Training is one Python process. `resources.cpus` is its thread budget, so the Sl
 
 Required fetched outputs are `cluster-run-report.json`, `training-result.json`, and `model-artifact`. The checker verifies framework/operation/seed/device/precision, the recorded config, dataset and foundation-model paths, finite reported metrics, and the declared model output.
 
-Legacy DeepMD fresh-training references without `relative_path`/`kind` keep using the earlier strict DeepMD scheduler contract for backward compatibility. Add the explicit generic reference fields to use the unified bundled scheduler contract.
+All new scheduled training uses the bundled contract. ID-only dataset references
+are normalized at input parsing; missing or malformed references fail explicitly.
+See [USAGE.md](USAGE.md#earlier-deepmd-configurations) for explicit reference fields
+and the optional bounded DeepMD curve audit.

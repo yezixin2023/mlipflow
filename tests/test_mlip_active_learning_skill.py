@@ -86,8 +86,8 @@ def test_advanced_reference_is_conditional_and_execution_uses_effective_plan() -
         normalized_reference
     )
     assert "effective `approval_required`" in normalized_skill
-    assert "validate/plan/execute/check/collect" in normalized_skill
-    assert "Final plugin `OK`" in normalized_skill
+    assert "mlipflow --project PROJECT" in normalized_skill
+    assert "final plugin `OK`" in normalized_skill
 
 
 def test_all_skill_files_are_declared_for_wheel_packaging() -> None:

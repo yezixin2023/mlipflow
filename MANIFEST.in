@@ -3,5 +3,5 @@ recursive-include schemas *.json
 recursive-include .agents/skills/mlip-workflow *.md *.yaml
 recursive-include mlipflow/plugins *.md *.yaml
 recursive-include docs *.md *.png
-recursive-include examples *.md *.yaml *.json *.csv *.py *.in *.example
+recursive-include examples *.md *.yaml *.json *.csv *.py *.in *.example *.vasp
 global-exclude .DS_Store *.py[cod]

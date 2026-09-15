@@ -1,0 +1,39 @@
+schema_version: 1
+project:
+  id: lammps-md
+workflow:
+  nodes:
+  - id: prepare-lammps-mace
+    uses: lammps-md
+    mode: execute
+    backend: local
+    inputs:
+      structure: inputs/start.extxyz
+      model_reference: mace-model-reference.json
+      lammps_config: lammps-npt.json
+    parameters:
+      operation: lammps-prepare
+      output_dir: prepared/lammps-mace
+      structure_format: extxyz
+    resources: {}
+  - id: run-lammps-mace-gpu
+    uses: lammps-md
+    mode: execute
+    backend: ssh-slurm
+    backend_profile: cluster-a
+    inputs:
+      lammps_input_manifest:
+        from_node: prepare-lammps-mace
+        role: lammps-input-manifest
+    parameters:
+      operation: execute
+      target: gpu
+      checkpoint_interval: 10000
+      restart_policy: auto-from-previous-attempt
+    resources:
+      cpus: 8
+      gpus: 1
+      memory: 32G
+      walltime: '24:00:00'
+    needs:
+    - prepare-lammps-mace

@@ -79,6 +79,16 @@ class SiteConfig:
     clusters: dict[str, ClusterProfile]
 
     def cluster(self, name: str | None) -> ClusterProfile:
+        """Resolve an explicit, default, or sole profile without contacting a site."""
+        if name is None:
+            name = self.raw.get("default_profile")
+            if name is None and len(self.clusters) == 1:
+                return next(iter(self.clusters.values()))
+            if name is None:
+                raise ConfigError(
+                    "multiple cluster profiles: set site.default_profile or node.backend_profile; "
+                    "use backend_profile: auto to explicitly compare clusters"
+                )
         if not isinstance(name, str) or not name:
             raise ConfigError("ssh-slurm node requires backend_profile")
         try:
@@ -111,7 +121,7 @@ def load_site_config(path: Path | None = None) -> SiteConfig:
 def validate_site_config(
     raw: dict[str, Any], source: Path | str = "site config"
 ) -> dict[str, ClusterProfile]:
-    unknown_root = sorted(set(raw) - {"schema_version", "clusters"})
+    unknown_root = sorted(set(raw) - {"schema_version", "clusters", "default_profile"})
     if unknown_root:
         raise ConfigError(f"{source}: unsupported top-level fields: {', '.join(unknown_root)}")
     if raw.get("schema_version") != 1:
@@ -121,6 +131,8 @@ def validate_site_config(
         raise ConfigError(f"{source}: clusters must be a non-empty mapping")
     clusters: dict[str, ClusterProfile] = {}
     for name, value in values.items():
+        if name == "auto":
+            raise ConfigError(f"{source}: cluster name 'auto' is reserved for explicit selection")
         if not isinstance(name, str) or not PROFILE_NAME.fullmatch(name):
             raise ConfigError(f"{source}: invalid cluster profile name {name!r}")
         if not isinstance(value, dict):
@@ -214,4 +226,7 @@ def validate_site_config(
             work_root=str(PurePosixPath(work_root)),
             scheduler=scheduler,
         )
+    default = raw.get("default_profile")
+    if "default_profile" in raw and (not isinstance(default, str) or default not in clusters):
+        raise ConfigError(f"{source}: default_profile must name an existing cluster, got {default!r}")
     return clusters

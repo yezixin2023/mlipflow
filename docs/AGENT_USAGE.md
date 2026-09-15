@@ -1,4 +1,15 @@
-# Agent request examples
+# Agent use
+
+For installation, Skill discovery, CLI output and executable task recipes, see
+[USAGE.md](USAGE.md). Installing the Python package and enabling a Skill are separate
+steps. Routine tasks use the selected Skill, existing configuration and CLI results.
+Source inspection is appropriate for development or a specific error.
+
+Reuse parameters and authorization already supplied for the task. Gather consequential
+missing decisions in one question; a new costly scope needs new intent. Status checks,
+collection and deterministic postprocessing continue within the existing authorization.
+
+## Request examples
 
 After initializing an MLIPFlow project, you can describe a scientific task directly to a compatible AI agent. The agent can select the appropriate bundled Skill, or you can explicitly invoke one with `$skill-name`.
 

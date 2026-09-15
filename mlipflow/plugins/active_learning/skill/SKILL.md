@@ -27,13 +27,16 @@ two-framework strategy, resolving ambiguous historical oracle evidence, or expla
 an exceptional convergence dispute. Ordinary operation routing and `assess-round` do
 not require it.
 
-## Artifact first
+## Inputs and example
 
 Inventory verified canonical labels, fixed splits, models, trajectories, committee
-evidence, selections, DFT results, and audit benchmarks before planning a round. Reuse
-matching accepted artifacts and start at the earliest missing stage. Keep historical
-oracle evidence read-only and label it `ORACLE_REPLAY_VALIDATION`; it is not a fresh
-round. Never edit the canonical dataset or replace prior rounds.
+evidence, selections, DFT results, and audit benchmarks. Reuse matching accepted
+artifacts and start at the earliest missing stage. Keep historical oracle evidence
+read-only as `ORACLE_REPLAY_VALIDATION`. Never edit the canonical dataset or replace
+prior rounds. Use the operation-specific configs in
+`examples/active_learning_validation/README.md` and its input-preparation example.
+Campaign policy, candidate pool, calibration evidence and independent audit data
+must be explicit before starting a round.
 
 ## Scientific judgment
 
@@ -50,18 +53,29 @@ integrity. Uncertainty-distribution change is diagnostic, not a stopping gate.
 `BUDGET_EXHAUSTED` is not convergence. `CONVERGED_FOR_DECLARED_DOMAIN` is bounded to
 the declared PES domain and does not establish transport convergence.
 
-## Execute and report
+Retry creates a fresh attempt in the same round; only a checked `CONTINUE` decision
+creates the next scientific round.
 
-Use `mlipflow inspect` and each node's dry-run. Follow its effective
-`approval_required` value rather than copying approval rules into this Skill. A request
-for end-to-end execution does not waive a new approval requirement or a missing
-scientific decision.
+## Run and read the result
 
-Never call plugin runners or schedulers directly or bypass Adapter
-`validate/plan/execute/check/collect`. Final plugin `OK`, not scheduler `COMPLETED` or
-process exit zero, is required before artifacts or decisions are reused. Retry creates
-a fresh attempt in the same round; only a checked `CONTINUE` decision creates one next
-scientific round.
+Preview the actual task and effective `approval_required` value. Reuse explicit
+user authorization for this task and scale; use `--approve` when the plan requires it.
+
+```bash
+mlipflow --project PROJECT init
+mlipflow --project PROJECT --format json run NODE --dry-run
+mlipflow --project PROJECT --format json run NODE --approve
+```
+
+For a plan without an approval requirement, `run NODE` suffices. For scheduled
+execution, use `mlipflow --project PROJECT --format json advance` when the job
+progresses; `mlipflow --project PROJECT json NODE` reads the saved result.
+
+Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
+Require final plugin `OK` before using outputs. On failure start with `reason`,
+`check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
+shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
+installed environment's `share/mlipflow/examples/`.
 
 Report per-round and cumulative label use, calibration/coverage evidence, independent
 audit accuracy, integrity, budgets, consecutive stability, the literal decision, and

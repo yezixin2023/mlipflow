@@ -181,7 +181,7 @@ class ApprovalTests(unittest.TestCase):
             ), patch(
                 "mlipflow.services.execution.load_adapter", return_value=adapter
             ), patch(
-                "mlipflow.services.LocalBackend.run",
+                "mlipflow.backends.LocalBackend.run",
                 return_value=ExecutionResult(0, "", ""),
             ):
                 result = run_node(project, "transport")
@@ -284,7 +284,7 @@ class ApprovalTests(unittest.TestCase):
             ), patch(
                 "mlipflow.services.execution.load_adapter", return_value=adapter
             ), patch(
-                "mlipflow.services.LocalBackend.run",
+                "mlipflow.backends.LocalBackend.run",
                 return_value=ExecutionResult(0, "", ""),
             ):
                 result = run_node(project, "train", approval=True)

@@ -24,11 +24,16 @@ needed for SQS search controls, a request exceeds the current one-sublattice mod
 historical/manuscript evidence needs interpretation. It is not required to restate the
 ordinary composition schema or checker rules.
 
-## Artifact first
+## Inputs and example
 
-Reuse verified prototype, composition, and generation artifacts when their scientific
-contract matches. Do not regenerate candidates merely to confirm a standard result or
-to reconstruct a canonical workflow. Never mutate historical evidence during replay.
+Reuse accepted prototype/composition artifacts. Supply `inputs.prototype_structure`
+and `inputs.composition_manifest`, plus explicit `parameters.seed` and
+`parameters.max_candidates`. The composition manifest declares the one alloy
+sublattice, allowed species, integer candidate counts, supercell repeat, cluster
+cutoffs, search steps and output format. See `examples/sqs/project.yaml` and
+`USAGE.md` for a small complete input example. For existing results, the
+`structure-replay` node in `examples/high_entropy_sulfide/project.yaml` is a separate
+replay example.
 
 ## Scientific judgment
 
@@ -42,15 +47,24 @@ The current capability covers one explicitly selected alloy sublattice. Vacancie
 multiple disordered sublattices, charge balancing, or automated composition discovery
 need a different reviewed scientific contract.
 
-## Execute and interpret
+## Run and read the result
 
-Use `mlipflow inspect` and the dry-run to review the exact prototype, composition
-scope, SQS controls, candidate count, generator, scale, and outputs. Follow the plan's
-effective `approval_required` value rather than hard-coding it in this Skill.
+For the existing local inputs, the shortest execution is:
 
-Never call icet or a generator outside MLIPFlow or bypass Adapter
-`validate/plan/execute/check/collect`. Final plugin `OK`, not process exit zero or a
-self-reported result, is required. Preserve earlier attempts and use a fresh retry.
+```bash
+mlipflow --project PROJECT init
+mlipflow --project PROJECT --format json run NODE
+```
+
+Use `run NODE --dry-run` when reviewing changed inputs or execution scope; it reports
+the effective `approval_required` value. `mlipflow --project PROJECT json NODE`
+reads the saved result later.
+
+Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
+Require final plugin `OK` before using outputs. On failure start with `reason`,
+`check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
+shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
+installed environment's `share/mlipflow/examples/`.
 
 Report generated versus replay mode, search controls, candidate coverage, provenance,
 and output paths. Call outputs generated SQS candidates. A seed supports reproducible

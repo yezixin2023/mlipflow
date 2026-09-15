@@ -25,12 +25,15 @@ checking belong to the plugin.
 Do not describe DIRECT as LASP, replay as fresh LASP, or any operation as DFT, MD,
 training, or energetic ranking.
 
-## Artifact first
+## Inputs and example
 
-Reuse accepted structure ensembles, DIRECT selections, prepared LASP inputs, LASP
-archives, and merged structure manifests. Pass collected artifacts directly between
-operations and to `$dft-labeling`; do not copy, rename, or rebuild them manually. Use
-replay for suitable historical archives rather than rerunning LASP to recreate evidence.
+Reuse collected structure ensembles, DIRECT selections and LASP archives.
+DIRECT needs an explicit ensemble and clustering settings; LASP execution needs
+reviewed LASP input, potential/auxiliary files, selection policy and output bounds.
+Use `examples/lasp_random_walk/CLUSTER.md` for a scheduled node and the adjacent
+`lasp.in` as the editable input example. For an existing archive choose
+`lasp-ssw-normalize-replay`; for a downstream structure set use `merge-structures`
+with explicit matching tolerances. The CLI reports accepted input bindings.
 
 ## Scientific judgment
 
@@ -54,18 +57,26 @@ Historical normalization must preserve source evidence and ordering. Describe it
 structured collection of existing results, not a rerun, numerical parity, or
 independent validation.
 
-## Execute and interpret
+## Run and read the result
 
-Use `mlipflow inspect` and the dry-run; let Adapter validation supply detailed
-parameter, staging, and output rules. Follow the plan's effective
-`approval_required` value instead of maintaining operation/backend approval rules in
-this Skill.
+Preview the actual task and effective `approval_required` value. Reuse explicit
+user authorization for this task and scale; use `--approve` when the plan requires it.
 
-Never invoke DIRECT, LASP, VASP, plugin runners, or schedulers outside MLIPFlow; never
-guess site-owned cluster configuration or bypass Adapter
-`validate/plan/execute/check/collect`. Final plugin `OK`, not scheduler `COMPLETED` or
-process exit zero, is required. Diagnose failure before a fresh retry and preserve
-earlier attempts.
+```bash
+mlipflow --project PROJECT init
+mlipflow --project PROJECT --format json run NODE --dry-run
+mlipflow --project PROJECT --format json run NODE --approve
+```
+
+For a plan without an approval requirement, `run NODE` suffices. For scheduled
+execution, use `mlipflow --project PROJECT --format json advance` when the job
+progresses; `mlipflow --project PROJECT json NODE` reads the saved result.
+
+Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
+Require final plugin `OK` before using outputs. On failure start with `reason`,
+`check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
+shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
+installed environment's `share/mlipflow/examples/`.
 
 Report the selected operation, evidence mode, important scientific choices, collected
 structures and lineage, whether LASP or DFT actually ran, and limitations. `OK`

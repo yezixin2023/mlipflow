@@ -5,29 +5,14 @@ on:
   pull_request:
 
 jobs:
-  core-python39:
+  python312:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install . pytest
-      - run: python -c "import mlipflow"
-      - run: pytest -q tests/test_manuscript_transport.py
-      - run: >-
-          pytest -q
-          tests/test_pes_transport_adapters.py::IonicTransportAdapterTests::test_missing_pymatgen_diffusion_dependency_blocks_formal_plan
-
-  transport-python311:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install '.[dev,transport]'
+      - run: python -m pip install '.[dev,local]'
       - run: pytest -q
       - run: ruff check mlipflow tests examples

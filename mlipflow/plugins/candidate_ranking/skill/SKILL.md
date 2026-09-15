@@ -9,11 +9,12 @@ Use `mlipflow/plugins/candidate_ranking` through MLIPFlow for `rank-candidates`.
 selects the ranking intent; the plugin owns validation, sorting, tie handling, checking,
 and collection.
 
-## Artifact first
+## Inputs and example
 
-Require existing candidate and numeric metric evidence. Reuse a verified matching
-ranking result instead of recalculating it. Do not generate candidates, compute missing
-properties, rerun MLIP/MD/DFT, or impute values in order to make a ranking possible.
+Supply `inputs.candidate_manifest` and `inputs.metric_results_manifest`; reuse
+matching existing results. Set `metric`, `direction`, `top_k` and
+`missing_metric_policy` from the requested rule. The complete, offline example is
+`examples/local_ranking/project.yaml`; follow its `USAGE.md` with no model download.
 
 ## Scientific judgment
 
@@ -22,12 +23,24 @@ top-k, and missing-metric policy. Do not guess any of these or choose them from
 candidate names, composition, or file order. Ranking is meaningful only for comparable
 numeric evidence under the declared policy.
 
-## Execute and interpret
+## Run and read the result
 
-Use `mlipflow inspect` and the dry-run to review the actual manifests and ranking rule.
-Follow the effective `approval_required` value rather than duplicating it in this Skill.
-Never call the ranking script directly, sort candidates in the Agent, or bypass Adapter
-`validate/plan/execute/check/collect`. Require final plugin `OK`.
+For the existing local inputs, the shortest execution is:
+
+```bash
+mlipflow --project PROJECT init
+mlipflow --project PROJECT --format json run NODE
+```
+
+Use `run NODE --dry-run` when reviewing changed inputs or execution scope; it reports
+the effective `approval_required` value. `mlipflow --project PROJECT json NODE`
+reads the saved result later.
+
+Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
+Require final plugin `OK` before using outputs. On failure start with `reason`,
+`check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
+shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
+installed environment's `share/mlipflow/examples/`.
 
 Report the rule, evidence coverage, exclusions, and returned top-k values. The result is
 a deterministic ordering under one declared metric and policy; it is not candidate

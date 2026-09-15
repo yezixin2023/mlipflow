@@ -298,6 +298,12 @@ def run(args: argparse.Namespace) -> int:
                 return_code = int(training_wrapper.main(wrapper_args))
         result_path = output_dir / "training-result.json"
         result = _load_mapping(result_path) if result_path.is_file() else None
+        if parameters.get("validation_profile") == "deepmd-curve" and return_code == 0:
+            if __package__:
+                from .deepmd_curve import export_training_evidence
+            else:
+                from deepmd_curve import export_training_evidence
+            export_training_evidence(output_dir, result, dataset_ref["id"])
         published_model: dict[str, str] | None = None
         publish_id = parameters.get("publish_model_id")
         publish_relative = parameters.get("publish_model_relative_path")

@@ -20,12 +20,13 @@ reference and a supported interface. Do not pass raw training checkpoints as exp
 LAMMPS models or invent a CHGNet pair style; route CHGNet MD to `$ase-md` unless an
 explicit supported bridge exists.
 
-## Artifact first
+## Inputs and example
 
-Reuse accepted prepared-input manifests, model references, checkpoints, and final `OK`
-trajectories. Do not regenerate a deck when a matching verified preparation exists. If
-a suitable trajectory already exists, pass all collected segments directly to
-`$ionic-transport` rather than rerunning MD or asking the user to manipulate files.
+Reuse the existing prepared-input manifest when it matches. Preparation requires a
+periodic structure, LAMMPS-ready model reference and simulation config; execution
+requires the prepared manifest and explicit target. The existing NVT/NPT configs,
+model reference examples and `USAGE.md` are in `examples/lammps_mlip_inputs/`.
+Reuse collected trajectory segments directly in `$ionic-transport`.
 
 ## Scientific judgment
 
@@ -41,17 +42,26 @@ select binary restarts in the Skill, silently fresh-start, or call a scientifica
 failed completed run resumable. Describe a valid resume as state-continuous under a
 compatible runtime, not universally bitwise identical.
 
-## Execute and interpret
+## Run and read the result
 
-Use `mlipflow inspect` and the dry-run to review the prepared manifest, model/interface,
-physics, total and remaining scale, restart source, backend/resources, and expected
-artifacts. Follow the effective `approval_required` value rather than copying
-operation/backend approval rules into this Skill.
+Preview the actual task and effective `approval_required` value. Reuse explicit
+user authorization for this task and scale; use `--approve` when the plan requires it.
 
-Never invoke LAMMPS, plugin runners, or schedulers outside MLIPFlow, guess site-owned
-cluster details, or bypass Adapter `validate/plan/execute/check/collect`. Scheduler
-`COMPLETED` and process exit zero are insufficient; require final plugin `OK`. Let
-MLIPFlow own bounded salvage and fresh retry attempts.
+```bash
+mlipflow --project PROJECT init
+mlipflow --project PROJECT --format json run NODE --dry-run
+mlipflow --project PROJECT --format json run NODE --approve
+```
+
+For a plan without an approval requirement, `run NODE` suffices. For scheduled
+execution, use `mlipflow --project PROJECT --format json advance` when the job
+progresses; `mlipflow --project PROJECT json NODE` reads the saved result.
+
+Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
+Require final plugin `OK` before using outputs. On failure start with `reason`,
+`check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
+shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
+installed environment's `share/mlipflow/examples/`.
 
 Report preparation versus actual execution, model/interface, physical controls,
 restart status, collected trajectory segments, and checker result. `OK` does not prove

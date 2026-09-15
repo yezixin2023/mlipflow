@@ -85,16 +85,18 @@ class CliPresentationTests(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         return json.loads(stdout)
 
-    def test_status_and_inspect_are_compact(self) -> None:
+    def test_json_status_and_inspect_keep_actionable_details(self) -> None:
         run_code, _, run_error = run_cli([*self.base, "run", "benchmark"])
         self.assertEqual(run_code, 0, run_error)
 
         status = self._json(["status", "benchmark"])["data"]
         self.assertIn("nodes", status)
         serialized = json.dumps(status)
-        for removed in ("run_id", "manifest_path", "provenance", "events"):
+        for removed in ("run_id", "provenance", "events"):
             self.assertNotIn(removed, serialized)
-        self.assertEqual(["metrics"], status["nodes"][0]["outputs"])
+        self.assertEqual("metrics", status["nodes"][0]["artifacts"][0]["role"])
+        self.assertTrue(Path(status["nodes"][0]["artifacts"][0]["path"]).is_file())
+        self.assertTrue(Path(status["nodes"][0]["manifest_path"]).is_file())
 
         inspected = self._json(["inspect", "benchmark"])["data"]
         self.assertEqual("candidate-ranking", inspected["capability"]["id"])

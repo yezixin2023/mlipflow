@@ -222,9 +222,9 @@ class ScheduledLifecycle:
             for index in range(max(1, self.count if self.concurrency > 1 else 1))
         )
         with patch(
-            "mlipflow.services.SshSlurmBackend.stage_workspace", side_effect=stage
+            "mlipflow.backends.SshSlurmBackend.stage_workspace", side_effect=stage
         ), patch(
-            "mlipflow.services.SshSlurmBackend.submit",
+            "mlipflow.backends.SshSlurmBackend.submit",
             side_effect=lambda *_args, **_kwargs: next(submitted),
         ):
             run_node(
@@ -315,21 +315,21 @@ class ScheduledLifecycle:
     def finish(self) -> dict[str, Any]:
         inspect, fetch = self._hooks()
         with patch(
-            "mlipflow.services.SshSlurmBackend.status",
+            "mlipflow.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.services.SshSlurmBackend.inspect_file", autospec=True,
+            "mlipflow.backends.SshSlurmBackend.inspect_file", autospec=True,
             side_effect=inspect,
         ):
             make_advance_plan(self.project)
         with patch(
-            "mlipflow.services.SshSlurmBackend.status",
+            "mlipflow.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.services.SshSlurmBackend.inspect_file", autospec=True,
+            "mlipflow.backends.SshSlurmBackend.inspect_file", autospec=True,
             side_effect=inspect,
         ), patch(
-            "mlipflow.services.SshSlurmBackend.fetch_from", autospec=True,
+            "mlipflow.backends.SshSlurmBackend.fetch_from", autospec=True,
             side_effect=fetch,
         ):
             return advance(self.project)

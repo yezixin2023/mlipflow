@@ -8,6 +8,9 @@ MLIPFlow follows semantic versioning for the Python package. Scientific validati
 
 ### Added
 
+- A real offline candidate-ranking example and complete training, ASE MD and ionic
+  transport task recipes, shipped with installation and Skill-discovery instructions.
+
 - Finite offline active-learning workflows with calibrated one- or two-model committees, risk-union candidate selection, reviewed DIRECT subsets, and immutable round assessment.
 - Direct handoff of verified VASP AIMD `vasprun.xml` trajectories from `dft-labeling` to `ionic-transport`.
 - Bounded AIMD-versus-MLIP partial RDF comparison with explicit trajectory windows, atom pairs, radial grids, common-temperature transport errors, and machine-readable comparison evidence.
@@ -15,6 +18,18 @@ MLIPFlow follows semantic versioning for the Python package. Scientific validati
 - A documentation index that separates user guidance, HPC setup, extension references, validation evidence, and manuscript-specific reproduction material.
 
 ### Changed
+
+- Require Python 3.12 or newer for the core and all dependency extras, matching
+  current NumPy/SciPy support; use one full-science CI job and standard-library TOML parsing.
+- Preserve artifact paths, reported metrics, checks, manifests and logs in CLI JSON;
+  synchronous execution/check/collection failures now return exit code 1 and `ok: false`.
+- Generate one plan per run. Choose explicit/default/sole site profiles without
+  cross-cluster probes; cross-cluster selection now requires `backend_profile: auto`.
+- Use one bundled scheduler path for training. Normalize ID-only dataset references
+  at input parsing; report unreadable references directly. The explicit
+  `validation_profile: deepmd-curve` retains bounded historical trajectory checks.
+- Remove private service re-exports and legacy test patch paths; keep public lifecycle
+  and query entry points. Skills now point directly to task inputs, commands and results.
 
 - Colocate specialist Agent Skills with their computational capabilities, preserve
   repository discovery through relative directory symlinks, and ship the canonical

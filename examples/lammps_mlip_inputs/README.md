@@ -6,7 +6,7 @@
 2. `execute` consumes one reviewed `lammps-md-input-v2` bundle and submits exactly one CPU or GPU target through `ssh-slurm`.
 3. Optional periodic binary restart files can be salvaged after scheduler interruption and rebound into a fresh retry attempt.
 
-Preparation success is not execution success. Scheduler `COMPLETED` is also not scientific success: completed output fetch/check remains a separate approval.
+Preparation success is not execution success. Scheduler `COMPLETED` is also not scientific success: completed output fetch/check continues the approved run without another approval.
 
 ## Preparation inputs and outputs
 
@@ -100,7 +100,7 @@ Slurm TIMEOUT or PREEMPTED
 advance
     ↓
 inventory and verify the bounded failure_salvage outputs
-    ↓ approval
+    ↓
 fetch of available checkpoint files + restart-runtime.json + diagnostics
     ↓
 attempt-1 remains FAIL/STOPPED

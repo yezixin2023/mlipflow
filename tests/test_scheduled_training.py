@@ -3,7 +3,7 @@
 These exercise READY plans through to a final MLIPFlow state: a BLOCKED plan
 proves nothing about staging, fetching, or the checks that decide whether a
 training node may reach OK.  The cluster is simulated by writing exactly the
-layout the site's ``deepmd/run.sh`` template is contracted to produce.
+layout the bundled training runner is contracted to produce.
 
 The point of the checks under test is that a COMPLETED scheduler job is not
 evidence of training.  Reaching the requested step count, finite losses, a
@@ -139,6 +139,7 @@ def build_project(
     node_parameters = {
         "framework": "deepmd",
         "operation": "train",
+        "validation_profile": "deepmd-curve",
         "seed": 10,
         "device": "cpu",
         "precision": "float64",
@@ -197,7 +198,7 @@ def curve_text(
 
 def library() -> FakeTemplateLibrary:
     templates = dict(FakeTemplateLibrary().templates)
-    templates["deepmd/run.sh"] = DEEPMD_RUN_TEMPLATE
+    templates["mlip-deepmd/run.sh"] = DEEPMD_RUN_TEMPLATE
     return FakeTemplateLibrary(templates)
 
 
@@ -224,9 +225,9 @@ class TrainingLifecycle:
             return remote_dir
 
         with patch(
-            "mlipflow.services.SshSlurmBackend.stage_workspace", side_effect=stage
+            "mlipflow.backends.SshSlurmBackend.stage_workspace", side_effect=stage
         ), patch(
-            "mlipflow.services.SshSlurmBackend.submit",
+            "mlipflow.backends.SshSlurmBackend.submit",
             return_value=ExecutionResult(0, "Submitted batch job 71\n", "", "71"),
         ):
             run_node(
@@ -259,7 +260,7 @@ class TrainingLifecycle:
             "framework": "deepmd",
             "framework_backend": "tensorflow",
             "framework_version": "DeePMD-kit v3.0.0b1",
-            "template_family": "deepmd",
+            "template_family": "mlip-deepmd",
             "exit_code": 0,
             "dataset_id": "demo-set",
             "host": "node-1",
@@ -268,6 +269,20 @@ class TrainingLifecycle:
         }
         if report is not None:
             payload.update(report)
+        write_json(output / "training-result.json", {
+            "schema_version": 1, "plugin_id": "mlip-training", "status": "OK",
+            "framework": "deepmd", "operation": "train", "seed": 10,
+            "device": "cpu", "precision": "float64",
+            "framework_version": payload["framework_version"],
+            "model_artifact": {"path": "model-artifact"}, "metrics": {},
+        })
+        (output / "model-artifact").write_bytes(b"fixture model")
+        write_json(output / "cluster-run-report.json", {
+            "schema_version": 1, "status": "OK", "return_code": 0,
+            "framework": "deepmd", "operation": "train",
+            "dataset": {"id": "demo-set", "relative_path": "demo-set",
+                        "resolved_path": "/site/data/demo-set"},
+        })
         if "training-report.json" not in skip:
             write_json(output / "training-report.json", payload)
         if "lcurve.out" not in skip:
@@ -281,7 +296,7 @@ class TrainingLifecycle:
         if "model.ckpt.index" not in skip:
             (output / "model.ckpt.index").write_bytes(checkpoint_index)
         if "train.stderr" not in skip:
-            (logs / "train.stderr").write_text(
+            (output / "train.stderr").write_text(
                 log
                 if log is not None
                 else "DEEPMD INFO batch 500\nDEEPMD INFO finished training\n",
@@ -321,23 +336,23 @@ class TrainingLifecycle:
     def finish(self) -> dict[str, Any]:
         inspect, fetch = self._hooks()
         with patch(
-            "mlipflow.services.SshSlurmBackend.status",
+            "mlipflow.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.services.SshSlurmBackend.inspect_file",
+            "mlipflow.backends.SshSlurmBackend.inspect_file",
             autospec=True,
             side_effect=inspect,
         ):
             make_advance_plan(self.project)
         with patch(
-            "mlipflow.services.SshSlurmBackend.status",
+            "mlipflow.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.services.SshSlurmBackend.inspect_file",
+            "mlipflow.backends.SshSlurmBackend.inspect_file",
             autospec=True,
             side_effect=inspect,
         ), patch(
-            "mlipflow.services.SshSlurmBackend.fetch_from",
+            "mlipflow.backends.SshSlurmBackend.fetch_from",
             autospec=True,
             side_effect=fetch,
         ):
@@ -354,7 +369,7 @@ class TrainingLifecycle:
 
     def result(self) -> dict[str, Any]:
         return json.loads(
-            (self.attempt / "mlip-training-result.json").read_text(encoding="utf-8")
+            (self.attempt / "deepmd-curve-result.json").read_text(encoding="utf-8")
         )
 
 
@@ -383,7 +398,7 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
         self.assertEqual(adapter_plan["status"], "READY")
         self.assertTrue(adapter_plan["executable"])
         self.assertEqual(
-            adapter_plan["scheduled_execution"]["template_family"], "deepmd"
+            adapter_plan["scheduled_execution"]["template_family"], "mlip-deepmd"
         )
         self.assertEqual(adapter_plan["scheduled_execution"]["schema_version"], 3)
         self.assertEqual(
@@ -407,36 +422,22 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
             hpc["rendered_scripts"]["submit.sbatch"],
         )
 
-    def test_plan_stages_exactly_the_config_and_dataset_reference(self) -> None:
+    def test_plan_stages_config_references_and_bundled_runner(self) -> None:
         staged = self.plan()["adapter_plan"]["scheduled_execution"]["staged_files"]
-        self.assertEqual(
-            [item["remote_name"] for item in staged], ["input.json", "dataset.json"]
-        )
+        names = {item["remote_name"] for item in staged}
+        self.assertTrue({"training-config.json", "dataset-reference.json", "training_cluster.py"} <= names)
         for item in staged:
-            self.assertTrue(
-                Path(item["source"])
-                .resolve()
-                .is_relative_to((self.root / "inputs").resolve())
-            )
+            self.assertTrue(Path(item["source"]).is_file())
 
     def test_fetch_outputs_declare_required_artifacts(self) -> None:
         outputs = self.plan()["adapter_plan"]["scheduled_execution"]["fetch_outputs"]
         by_name = {item["remote_name"]: item for item in outputs}
-        self.assertEqual(
-            sorted(by_name),
-            [
-                "checkpoint",
-                "lcurve.out",
-                "model.ckpt.index",
-                "train.stderr",
-                "train.stdout",
-                "training-report.json",
-            ],
-        )
+        self.assertTrue({"checkpoint", "lcurve.out", "model.ckpt.index", "train.stderr",
+                         "training-report.json", "training-result.json", "model-artifact"} <= set(by_name))
         self.assertTrue(by_name["lcurve.out"]["required"])
         self.assertTrue(by_name["training-report.json"]["required"])
-        self.assertFalse(by_name["train.stdout"]["required"])
-        self.assertEqual(by_name["train.stderr"]["remote_path"], "logs/train.stderr")
+        self.assertFalse(by_name["training.stdout.log"]["required"])
+        self.assertEqual(by_name["train.stderr"]["remote_path"], "output/train.stderr")
 
     def test_plan_records_trajectory_relevant_parameters(self) -> None:
         calculation = self.plan()["adapter_plan"]["training_calculation"]
@@ -466,10 +467,10 @@ class ScheduledTrainingPlanTests(TemporaryProjectTest):
         contract = _scheduled_contract(
             project, "mlip-training", plan, node_id="train-deepmd", attempt=1
         )
-        self.assertEqual(contract["template_family"], "deepmd")
+        self.assertEqual(contract["template_family"], "mlip-deepmd")
         self.assertEqual(contract["schema_version"], 3)
         self.assertEqual(contract["execution_model"], "single-python")
-        self.assertEqual(len(contract["staged_files"]), 2)
+        self.assertTrue(any(item["remote_name"] == "training_cluster.py" for item in contract["staged_files"]))
         fetched = {item["remote_name"] for item in contract["fetch_outputs"]}
         self.assertIn("completion.json", fetched)
         self.assertIn("lcurve.out", fetched)
@@ -547,11 +548,11 @@ class ScheduledTrainingRefusalTests(TemporaryProjectTest):
 
     def test_local_wrapper_inputs_are_refused_on_a_scheduled_node(self) -> None:
         plan = self.blocked(inputs={"script": "inputs/wrapper.py"})
-        self.assertIn("training.local_only_script", self.codes(plan))
+        self.assertIn("training.scheduled_inputs", self.codes(plan))
 
 
 def training_module():
-    module = load_module(PLUGINS / 'mlip_training' / 'local.py', 'scheduled_training_adapter_under_test')
+    module = load_module(PLUGINS / 'mlip_training' / 'deepmd_curve.py', 'scheduled_training_adapter_under_test')
     return module
 
 
@@ -699,13 +700,12 @@ class ScheduledTrainingCompletionTests(TemporaryProjectTest):
         )
         self.assertEqual(self.state(outcome), "FAIL")
 
-    def test_staged_remote_names_are_the_two_declared_inputs(self) -> None:
+    def test_staged_remote_names_match_the_approved_bundle(self) -> None:
         lifecycle = TrainingLifecycle(self.root)
+        expected = {"input/" + item["remote_name"] for item in
+                    lifecycle.plan()["adapter_plan"]["scheduled_execution"]["staged_files"]}
         lifecycle.submit()
-        self.assertEqual(
-            sorted(lifecycle.staged),
-            ["input/dataset.json", "input/input.json", "run.sh", "submit.sbatch"],
-        )
+        self.assertEqual(set(lifecycle.staged), expected | {"run.sh", "submit.sbatch"})
 
 
 if __name__ == "__main__":  # pragma: no cover

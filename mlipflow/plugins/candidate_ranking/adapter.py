@@ -451,6 +451,7 @@ class Adapter:
             "artifacts": [
                 {
                     "name": "ranking-result",
+                    "role": "ranking-result",
                     "path": context["parameters"].get("result_manifest", "ranking-result.json"),
                     "media_type": "application/json",
                 }
@@ -459,5 +460,10 @@ class Adapter:
                 "candidate_count": len(candidate_manifest["candidates"]),
                 "selected_count": len(result["ranked_candidates"]),
                 "missing_metric_count": len(result["excluded_missing"]),
+            },
+            "summary": {
+                "rule": result["rule"],
+                "ranked_candidates": result["ranked_candidates"],
+                "excluded_missing": result["excluded_missing"],
             },
         }

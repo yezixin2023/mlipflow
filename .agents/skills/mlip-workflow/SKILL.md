@@ -24,7 +24,8 @@ Adapter contracts.
 
 Continue through deterministic downstream work when no new scientific choice or
 approval is required. Stop on a real scientific failure, unresolved information, or a
-new plan whose effective approval requirement needs user review.
+new costly scope whose authorization is missing. Reuse explicit user authorization
+for the same task and scale, including its observation and deterministic postprocessing.
 
 Route structure generation to `$high-entropy-structure`, PES selection or LASP to
 `$pes-sampling`, VASP preparation/DFT/dataset assembly to `$dft-labeling`, training to
@@ -50,15 +51,24 @@ ranked candidate is not thereby a validated material.
 
 ## Execute through MLIPFlow
 
-Use read-only state inspection, `mlipflow inspect`, and the selected node's dry-run.
-Follow the dry-run's effective `approval_required` value rather than maintaining an
-approval table in this Skill. When approval is required, show the actual stage, inputs,
-scale, backend/resources, expected outputs, and fresh-attempt semantics.
+```bash
+mlipflow --project PROJECT json
+mlipflow --project PROJECT inspect NODE
+mlipflow --project PROJECT --format json run NODE --dry-run
+mlipflow --project PROJECT --format json run NODE --approve
+```
 
-Never invoke a scientific runner directly, bypass Adapter
-`validate/plan/execute/check/collect`, guess site-owned cluster configuration, or
-continue downstream from `FAIL`, `BLOCKED`, `STOPPED`, scheduler-only `COMPLETED`, or a
-zero process exit without final plugin `OK`.
+Use `--approve` for the effective `approval_required` task after its inputs, scale and
+resources have been reviewed and authorized. Local deterministic nodes can use
+`run NODE` directly. `advance` reconciles scheduled jobs and dependency state; it
+does not launch another node.
+
+After final plugin `OK`, use `artifacts[].role` and `artifacts[].path`, or bind the
+next input as `{from_node: NODE, role: ROLE}`. `metrics`, `check`, `collection`,
+`manifest_path` and `logs` expose the next decision without scanning attempt folders.
+Do not continue from a failed node. For a complete multi-stage configuration see
+`examples/training_all_models/dft-to-all-training.yaml`; single-task recipes are in
+`docs/USAGE.md` and the installed `share/mlipflow/examples/` directory.
 
 ## Report
 

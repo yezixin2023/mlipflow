@@ -10,8 +10,8 @@ from typing import Any, Sequence
 
 from . import __version__
 from .config import load_project
-from .errors import ApprovalError, MLIPFlowError
-from .presentation import compact_output, render_text
+from .errors import MLIPFlowError
+from .presentation import compact_output, render_text, structured_output
 from .services import (
     advance,
     initialize,
@@ -108,22 +108,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_format = "json" if args.command == "json" else args.format
     try:
         raw_data = dispatch(args)
-        data = compact_output(
+        present = structured_output if output_format == "json" else compact_output
+        data = present(
             args.command,
             raw_data,
             dry_run=bool(getattr(args, "dry_run", False)),
         )
+        succeeded = not (
+            (args.command == "doctor" and not raw_data.get("ok", False))
+            or (args.command == "run" and raw_data.get("step", {}).get("state") == "FAIL")
+        )
         envelope = {
             "schema_version": 1,
-            "ok": True,
+            "ok": succeeded,
             "command": args.command,
             "read_only": args.command in READ_ONLY_COMMANDS,
             "data": data,
         }
         _emit(envelope, output_format, error=False)
-        if args.command == "doctor" and not raw_data.get("ok", False):
-            return 1
-        return 0
+        return 0 if succeeded else 1
     except (MLIPFlowError, OSError, ValueError) as exc:
         code = exc.code if isinstance(exc, MLIPFlowError) else "IO_OR_VALUE_ERROR"
         envelope = {
@@ -155,6 +158,7 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
                     "capability": step["capability"],
                     "state": step["state"],
                     "attempt": step["attempt"],
+                    **({"job_id": step["job_id"]} if step.get("job_id") else {}),
                 }
                 for step in data["steps"]
             ],
@@ -170,14 +174,8 @@ def dispatch(args: argparse.Namespace) -> dict[str, Any]:
             project, task=args.task, elements=args.elements, scenario=args.scenario
         )
     if command == "run":
-        plan = make_run_plan(project, args.node, args.site)
         if args.dry_run:
-            return plan
-        if plan.get("approval_required") is True and not args.approve:
-            raise ApprovalError(
-                "approval is required for expensive or scheduled execution; "
-                "review --dry-run, then use --approve"
-            )
+            return make_run_plan(project, args.node, args.site)
         return run_node(project, args.node, args.approve, args.site)
     if command == "advance":
         if args.dry_run:

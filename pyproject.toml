@@ -7,7 +7,7 @@ name = "mlipflow"
 version = "0.1.0"
 description = "Deterministic workflows for machine-learned interatomic-potential research"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{name = "MLIPFlow contributors"}]
@@ -33,9 +33,9 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/yezixin2023/mlipflow"
 Repository = "https://github.com/yezixin2023/mlipflow"
-Documentation = "https://github.com/yezixin2023/mlipflow/blob/main/docs/README.md"
+Documentation = "https://github.com/yezixin2023/mlipflow/blob/public/docs/README.md"
 Issues = "https://github.com/yezixin2023/mlipflow/issues"
-Changelog = "https://github.com/yezixin2023/mlipflow/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/yezixin2023/mlipflow/blob/public/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["build>=1", "setuptools>=77", "pytest>=7", "jsonschema>=4", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22", "dpdata>=0.2.18"]
@@ -72,6 +72,9 @@ namespaces = false
 
 [tool.setuptools.data-files]
 "share/mlipflow/examples" = ["examples/README.md"]
+"share/mlipflow/examples/local_ranking" = ["examples/local_ranking/*.md", "examples/local_ranking/*.yaml", "examples/local_ranking/*.json"]
+"share/mlipflow/examples/ionic_transport" = ["examples/ionic_transport/*.md", "examples/ionic_transport/*.yaml"]
+"share/mlipflow/examples/sqs" = ["examples/sqs/*.md", "examples/sqs/*.yaml", "examples/sqs/*.json", "examples/sqs/*.vasp"]
 "share/mlipflow/examples/high_entropy_sulfide/data" = ["examples/high_entropy_sulfide/data/*.md"]
 "share/mlipflow/examples/high_entropy_sulfide/replay" = ["examples/high_entropy_sulfide/replay/*.json", "examples/high_entropy_sulfide/replay/*.csv"]
 "share/mlipflow/schemas" = ["schemas/*.json"]
@@ -87,8 +90,8 @@ namespaces = false
 "share/mlipflow/examples/lasp_random_walk/cluster" = ["examples/lasp_random_walk/cluster/*.example"]
 "share/mlipflow/examples/training_all_models" = ["examples/training_all_models/*.md", "examples/training_all_models/*.json", "examples/training_all_models/*.yaml"]
 "share/mlipflow/examples/training_all_models/cluster" = ["examples/training_all_models/cluster/*.example"]
-"share/mlipflow/examples/ase_md_cluster" = ["examples/ase_md_cluster/*.md", "examples/ase_md_cluster/*.example"]
-"share/mlipflow/examples/lammps_mlip_inputs" = ["examples/lammps_mlip_inputs/*.md", "examples/lammps_mlip_inputs/*.json", "examples/lammps_mlip_inputs/*.example"]
+"share/mlipflow/examples/ase_md_cluster" = ["examples/ase_md_cluster/*.md", "examples/ase_md_cluster/*.yaml", "examples/ase_md_cluster/*.example"]
+"share/mlipflow/examples/lammps_mlip_inputs" = ["examples/lammps_mlip_inputs/*.md", "examples/lammps_mlip_inputs/*.yaml", "examples/lammps_mlip_inputs/*.json", "examples/lammps_mlip_inputs/*.example"]
 "share/mlipflow/examples/active_learning_validation" = ["examples/active_learning_validation/*.md", "examples/active_learning_validation/*.py"]
 "share/mlipflow/examples/active_learning_validation/cluster" = ["examples/active_learning_validation/cluster/*.example"]
 "share/mlipflow/examples/site_templates/slurm/mpi" = ["examples/site_templates/slurm/mpi/*.example"]
@@ -128,7 +131,7 @@ addopts = "-q"
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]

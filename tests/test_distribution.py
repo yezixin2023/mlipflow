@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from email.parser import Parser
 import subprocess
 import sys
 import tarfile
@@ -10,6 +11,7 @@ import zipfile
 from pathlib import Path
 
 import yaml
+from packaging.specifiers import SpecifierSet
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,6 +60,11 @@ def test_wheel_and_sdist_install_outside_checkout(tmp_path):
     with zipfile.ZipFile(wheel) as archive:
         assert_public_members((item.filename, item.file_size) for item in archive.infolist())
         names = archive.namelist()
+        metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
+        metadata = Parser().parsestr(archive.read(metadata_name).decode("utf-8"))
+        supported_python = SpecifierSet(metadata["Requires-Python"])
+        assert "3.12" in supported_python
+        assert all(version not in supported_python for version in ("3.9", "3.10", "3.11"))
         assert "mlipflow/plugins/dft_labeling/adapter.py" in names
         assert not any("share/mlipflow/plugins/" in name for name in names)
         assert not any(name.startswith(("tests/", "src/")) for name in names)
@@ -146,6 +153,13 @@ for command in (["init"], ["list"], ["run", "structure-replay", "--dry-run"], ["
 records = list((example / ".mlipflow" / "runs").rglob("run-manifest.json"))
 assert len(records) == 1
 assert json.loads(records[0].read_text())["state"] == "OK"
+ranking = Path.cwd() / "local-ranking"
+shutil.copytree(data / "examples" / "local_ranking", ranking)
+for command in (["init"], ["run", "rank", "--dry-run"], ["run", "rank"], ["json", "rank"]):
+    assert main(["--project", str(ranking), "--format", "json", *command]) == 0
+result = json.loads((ranking / ".mlipflow/runs/rank/attempt-1/ranking-result.json").read_text())
+assert [item["candidate_id"] for item in result["ranked_candidates"]] == ["b", "c"]
+assert result["excluded_missing"] == ["missing"]
 """
     run([python, "-I", "-m", "mlipflow", "--version"], cwd=tmp_path)
     run([python, "-I", "-c", script], cwd=tmp_path)

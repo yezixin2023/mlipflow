@@ -18,17 +18,17 @@ guards scientific interpretation; it does not calculate diffusion or conductivit
 - Production trajectory generation: use `$ase-md`, `$lammps-md`, or reviewed AIMD
   first; do not expand the smoke operation into production MD.
 
-## Artifact first
+## Inputs and example
 
-Reuse final `OK` trajectory and metadata artifacts from upstream MD or AIMD nodes.
-MLIPFlow supplies collected restart segments and their recorded timing, temperature,
-species, model, and structure information. Do not ask the user to copy, rename,
-concatenate, or manually redescribe native artifacts. Reuse a completed compatible
-analysis rather than rerunning MD or transport merely to recreate a workflow shape.
-
-Use standalone historical files only through their supported compatibility path. Keep
-the legacy manuscript carrier-count convention isolated: its historical `N=7` value is
-parity evidence, not a physical default or a rule for formal analysis.
+Reuse collected trajectories, including restart segments, through
+`inputs.input_paths`; preserve their physical time and temperature metadata.
+For MSD input, supply the column meaning, explicit time/MSD units and temperature;
+add the real `inputs.structure` when conductivity is required. Set the scientific
+window, species and smoothing policy from the project. A complete MSD task and
+commands are in `examples/ionic_transport/project.yaml` and `USAGE.md`.
+The bundled runner uses the active environment's `transport` dependencies.
+Keep historical manuscript carrier-count conventions isolated; the old `N=7`
+value is parity evidence, not a default for formal analysis.
 
 ## Scientific judgment
 
@@ -48,12 +48,24 @@ claim needs independent structural evidence. Keep a directly simulated target va
 separate from an extrapolated prediction, and do not silently select a branch for a
 target inside the breakpoint interval.
 
-## Execute and interpret
+## Run and read the result
 
-Use `mlipflow inspect` and the dry-run; let Adapter validation define the detailed input
-and output contract. Follow the effective `approval_required` value in that plan rather
-than a hard-coded Skill rule. Never call the packaged analysis runner directly or bypass
-Adapter `validate/plan/execute/check/collect`. Success requires final plugin `OK`.
+For the existing local inputs, the shortest execution is:
+
+```bash
+mlipflow --project PROJECT init
+mlipflow --project PROJECT --format json run NODE
+```
+
+Use `run NODE --dry-run` when reviewing changed inputs or execution scope; it reports
+the effective `approval_required` value. `mlipflow --project PROJECT json NODE`
+reads the saved result later.
+
+Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
+Require final plugin `OK` before using outputs. On failure start with `reason`,
+`check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
+shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
+installed environment's `share/mlipflow/examples/`.
 
 Report source type, temperatures, mobile species, window, formal analysis mode, direct
 versus extrapolated results, and unavailable quantities. `OK` establishes internal

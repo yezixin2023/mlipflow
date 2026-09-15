@@ -7,6 +7,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mlipflow.services import initialize
+from mlipflow.config import load_project
+from mlipflow.services.paths import state_path
+from mlipflow.state import StateStore, RunState
 from .helpers import project_config, run_cli, snapshot, write_json
 
 
@@ -121,6 +124,47 @@ class ReadOnlyCliTests(unittest.TestCase):
         self.assertNotIn("adapter_plan", compact)
 
         self.assertEqual(snapshot(self.root), before)
+
+    def test_queries_never_advance_pending_or_failed_scheduler_jobs(self) -> None:
+        config = project_config([{
+            "id": "benchmark", "uses": "dft-labeling", "backend": "ssh-slurm",
+            "backend_profile": "configured", "parameters": {"operation": "label"},
+            "resources": {"cpus": 1, "gpus": 0, "memory": "1G", "walltime": "00:01:00"},
+        }])
+        write_json(self.root / "project.yaml", config)
+        site = self.root / "site.yaml"
+        write_json(site, {"schema_version": 1, "clusters": {"configured": {
+            "backend": "ssh-slurm", "ssh_profile": "test-login",
+            "remote_template_root": "/templates", "work_root": "/work",
+        }}})
+        initialize(self.root)
+        project = load_project(self.root)
+        with StateStore(state_path(project), readonly=False) as store:
+            step = store.latest_step(project.project_id, "benchmark")
+            store.bind_attempt(step.run_id, "ssh-slurm")
+            store.transition(step.run_id, RunState.SUBMITTED, job_id="123")
+            store.transition(step.run_id, RunState.PENDING)
+        commands = [["list"], ["status"], ["json"], ["inspect", "benchmark"],
+                    ["logs", "benchmark"], ["doctor"],
+                    ["route", "--task", "ionic-transport", "--elements", "Li", "P", "S",
+                     "--scenario", "fixture"]]
+        for state in (RunState.PENDING, RunState.FAIL):
+            if state == RunState.FAIL:
+                with StateStore(state_path(project), readonly=False) as store:
+                    store.transition(step.run_id, RunState.FAIL, diagnostic="fixture failure")
+            before = snapshot(self.root)
+            mtimes = {p: p.stat().st_mtime_ns for p in self.root.rglob("*")}
+            with patch("mlipflow.backends.subprocess.run", side_effect=AssertionError("backend invoked")), patch.object(
+                StateStore, "transition", side_effect=AssertionError("state mutation")
+            ), patch.object(StateStore, "initialize_project", side_effect=AssertionError("initialization")):
+                for command in commands:
+                    code, out, err = run_cli(["--project", str(self.root), "--site", str(site),
+                                               "--format", "json", *command])
+                    self.assertEqual(code, 0, err)
+                    if command[0] in {"status", "json"}:
+                        self.assertEqual(state.value, json.loads(out)["data"]["nodes"][0]["state"])
+            self.assertEqual(snapshot(self.root), before)
+            self.assertEqual({p: p.stat().st_mtime_ns for p in self.root.rglob("*")}, mtimes)
 
 
 if __name__ == "__main__":

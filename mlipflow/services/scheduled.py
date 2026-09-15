@@ -12,6 +12,7 @@ from typing import Any
 from ..artifacts import artifact as artifact_record
 from ..config import Project
 from ..errors import ApprovalError, BackendError, ConfigError, StateError
+from ..manifests import result_summary
 from ..io import load_mapping, write_json_atomic, write_text_atomic
 from ..plugins import capability, load_adapter
 from ..state import RunState, StateStore, StepRun, utc_now
@@ -855,6 +856,8 @@ def _finalize_independent_jobs(
     )
     if completion is not None:
         fetched.append(artifact_record(completion) | {"role": "scheduler-completion"})
+    checked: dict[str, Any] | None = None
+    collected: dict[str, Any] | None = None
     if failure_salvage:
         raw_target = details.get("terminal_target")
         if raw_target not in {RunState.FAIL.value, RunState.STOPPED.value}:
@@ -933,6 +936,7 @@ def _finalize_independent_jobs(
         reason,
         str(change.get("scheduler_state", "MIXED")),
         artifacts,
+        result={"check": checked, "collection": collected},
     )
     return store.transition(
         step.run_id,
@@ -1020,6 +1024,8 @@ def _finalize_scheduled_adapter(
         )
 
     reason: str
+    checked: dict[str, Any] | None = None
+    collected: dict[str, Any] | None = None
     if failure_salvage:
         raw_target = details.get("terminal_target")
         if raw_target not in {RunState.FAIL.value, RunState.STOPPED.value}:
@@ -1040,8 +1046,6 @@ def _finalize_scheduled_adapter(
             "hpc_execution": hpc_execution,
         }
         adapter = load_adapter(capability_id)
-        collected: dict[str, Any] | None = None
-        checked: dict[str, Any] | None = None
         completion_error = _validate_hpc_completion(attempt_dir / "completion.json", step)
         if fetch_errors:
             final = RunState.FAIL
@@ -1091,6 +1095,7 @@ def _finalize_scheduled_adapter(
         reason,
         scheduler_state,
         artifacts,
+        result={"check": checked, "collection": collected},
     )
     return store.transition(
         step.run_id,
@@ -1106,11 +1111,15 @@ def _finalize_scheduler_manifest(
     reason: str,
     scheduler_state: str,
     artifacts: list[dict[str, Any]],
+    *,
+    result: dict[str, Any] | None = None,
 ) -> Path | None:
     initial = attempt_directory(project, step.node_id, step.attempt) / "run-manifest.json"
     if not initial.is_file():
         return None
     manifest = load_mapping(initial)
+    if result is not None:
+        manifest["result"] = result_summary(result)
     manifest["state"] = target.value
     manifest["state_reason"] = reason
     manifest["artifacts"] = artifacts or manifest.get("artifacts", [])

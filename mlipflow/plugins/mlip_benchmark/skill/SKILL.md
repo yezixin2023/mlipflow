@@ -26,13 +26,15 @@ Read [references/benchmark-contract.md](references/benchmark-contract.md) only w
 historical or legacy evidence has ambiguous provenance, units, conventions, or missing
 source support. It is not required for an ordinary fresh or metric-only benchmark.
 
-## Artifact first
+## Inputs and example
 
-Reuse verified prediction evidence or a completed normalized benchmark when its model,
-dataset, task, scenario, split, targets, units, and conventions match. Do not rerun a
-model merely to normalize already available prediction pairs. For a multi-model
-comparison, use one shared labeled test set and normalize the collected evidence
-together.
+Reuse verified prediction evidence for the same dataset/scenario/split and targets.
+Fresh evaluation requires an explicit model reference and labeled test dataset;
+normalization requires the existing evidence manifest, declared units and metric policy.
+`examples/high_entropy_sulfide_reproduction/project.yaml` contains complete historical
+normalization nodes and adjacent small evidence files. It demonstrates replay only;
+use `evaluate-fresh` with the actual model/dataset for new inference. The dry-run
+reports the resolved evidence mode and expected metrics/model-ranking artifacts.
 
 ## Scientific judgment
 
@@ -45,16 +47,26 @@ use a one-model metric to declare a winner.
 Keep fresh inference, metric recomputation, replay, manuscript parity, and external
 validation as separate claims.
 
-## Execute and report
+## Run and read the result
 
-Use `mlipflow inspect` and the dry-run to review the exact model/evidence and dataset
-bindings, targets, conventions, backend/resources, and expected artifacts. Follow the
-plan's effective `approval_required` value rather than hard-coding approval by
-operation or backend in this Skill.
+Preview the actual task and effective `approval_required` value. Reuse explicit
+user authorization for this task and scale; use `--approve` when the plan requires it.
 
-Never invoke a model, historical script, benchmark runner, or scheduler outside
-MLIPFlow, and never bypass Adapter `validate/plan/execute/check/collect`. Require final
-plugin `OK`; scheduler `COMPLETED` or process exit zero is insufficient.
+```bash
+mlipflow --project PROJECT init
+mlipflow --project PROJECT --format json run NODE --dry-run
+mlipflow --project PROJECT --format json run NODE --approve
+```
+
+For a plan without an approval requirement, `run NODE` suffices. For scheduled
+execution, use `mlipflow --project PROJECT --format json advance` when the job
+progresses; `mlipflow --project PROJECT json NODE` reads the saved result.
+
+Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
+Require final plugin `OK` before using outputs. On failure start with `reason`,
+`check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
+shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
+installed environment's `share/mlipflow/examples/`.
 
 Report the selected mode, whether a model actually ran, exact family, dataset/scenario/
 split, comparable metrics and direction, units/conventions, evidence paths, and

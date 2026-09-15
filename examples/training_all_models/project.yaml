@@ -1,0 +1,23 @@
+schema_version: 1
+project:
+  id: single-training
+workflow:
+  nodes:
+  - id: train-mace
+    uses: mlip-training
+    backend: ssh-slurm
+    backend_profile: cluster-a
+    inputs:
+      training_config: mace.json
+      dataset_reference: cluster/dataset-reference.json.example
+    parameters:
+      framework: mace
+      operation: train
+      seed: 23
+      device: gpu
+      precision: float64
+    resources:
+      cpus: 8
+      gpus: 1
+      memory: 32G
+      walltime: '12:00:00'

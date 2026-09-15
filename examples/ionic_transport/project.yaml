@@ -1,0 +1,32 @@
+schema_version: 1
+project:
+  id: single-transport
+workflow:
+  nodes:
+  - id: transport
+    uses: ionic-transport
+    backend: local
+    inputs:
+      input_paths:
+      - inputs/msd.csv
+    parameters:
+      operation: analyze-existing
+      source: msd
+      specie: Li
+      msd_time_unit: ps
+      msd_unit: A2
+      msd_temperature_k: 800.0
+      fit_start_ps: 20.0
+      fit_end_ps: 100.0
+      min_msd_fit_points: 3
+      fit_smoothed_msd: false
+      trajectory_msd_engine: diffusion-analyzer
+      diffusion_analyzer_smoothed: max
+      diffusion_analyzer_min_obs: 30
+      diffusion_analyzer_avg_nsteps: 1000
+      diffusion_analyzer_step_skip: 1
+      fit_scope: dataset
+      target_temperature_k: 800.0
+      piecewise: never
+      min_segment_points: 3
+      allow_partial_results: false

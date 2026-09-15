@@ -68,9 +68,9 @@ def test_skill_uses_artifacts_effective_plan_and_adapter_lifecycle() -> None:
 
     assert "Reuse verified prediction evidence" in normalized
     assert "effective `approval_required`" in normalized
-    assert "validate/plan/execute/check/collect" in normalized
+    assert "mlipflow --project PROJECT" in normalized
     assert "Require final plugin `OK`" in normalized
-    assert "scheduler `COMPLETED` or process exit zero is insufficient" in normalized
+    assert "`check.diagnostics`" in normalized
 
 
 def test_all_skill_files_are_declared_for_wheel_packaging() -> None:

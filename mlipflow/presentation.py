@@ -10,6 +10,74 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .manifests import result_summary
+
+
+def structured_output(command: str, data: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
+    """Expose actionable CLI data with full paths, commands and diagnostics.
+
+    Preserve the existing node-oriented public shape. Large rendered scheduler
+    scripts stay in the approved plan; JSON retains their templates, variables,
+    inputs and exact workspaces for review.
+    """
+    if command in {"status", "json"}:
+        project = data.get("project", {})
+        return {
+            "project_id": project.get("id"),
+            "initialized": data.get("initialized", False),
+            "counts": data.get("counts", {}),
+            "nodes": [_result_node(step) for step in data.get("steps", [])],
+        }
+    if command == "run" and not dry_run:
+        return {"action": "run", **_result_node(data.get("step", {})),
+                **result_summary(data.get("result", {}))}
+    if command == "run":
+        result = dict(data)
+        result["action"] = "run-plan"
+        for key in ("hpc_execution", "hpc_executions"):
+            if key == "hpc_execution" and isinstance(result.get(key), dict):
+                result[key] = _hpc_summary(result[key])
+            elif isinstance(result.get(key), list):
+                result[key] = [{**item, "hpc_execution": _hpc_summary(item["hpc_execution"])}
+                               for item in result[key]]
+        adapter = data.get("adapter_plan", {})
+        result["state"] = adapter.get("status", "READY")
+        result["will_run"] = _will_run(data, adapter)
+        if isinstance(adapter.get("argv"), list):
+            result["will_run"]["command"] = adapter["argv"]
+        return result
+    if command == "advance" and not dry_run:
+        return {"action": command, "changed": [_result_node(item) for item in data.get("changed", [])]}
+    if command == "inspect":
+        result = _compact_inspect(data)
+        details = _result_node(data.get("state", {}))
+        details.pop("capability", None)
+        result.update(details)
+        return result
+    if command == "route":
+        return {**data, "rejected": [
+            {**item, "reason": "; ".join(item.get("reasons", []))}
+            for item in data.get("rejected", [])
+        ]}
+    if dry_run:
+        return data
+    return compact_output(command, data)
+
+
+def _hpc_summary(execution: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in execution.items() if key != "rendered_scripts"}
+
+
+def _result_node(step: dict[str, Any]) -> dict[str, Any]:
+    node = {key: step[key] for key in (
+        "node_id", "capability", "state", "attempt", "backend", "job_id",
+        "remote_dir", "artifacts", "manifest_path", "logs", "returncode",
+        "metrics", "check", "collection", "status", "diagnostics", "summary",
+    ) if key in step}
+    if step.get("diagnostic"):
+        node["reason"] = step["diagnostic"]
+    return node
+
 
 def compact_output(command: str, data: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
     """Return the compact semantic view for one detailed service payload."""
@@ -99,6 +167,7 @@ def _compact_list(data: dict[str, Any]) -> dict[str, Any]:
                 "capability": item.get("capability"),
                 "state": item.get("state"),
                 "attempt": item.get("attempt"),
+                **({"job_id": item["job_id"]} if item.get("job_id") else {}),
             }
             for item in data.get("nodes", [])
             if isinstance(item, dict)
@@ -228,9 +297,13 @@ def _compact_run_result(data: dict[str, Any]) -> dict[str, Any]:
     }
     if step.get("job_id"):
         result["job_id"] = step["job_id"]
-    metrics = result_data.get("metrics")
-    if isinstance(metrics, dict) and metrics:
+    summary = result_summary(result_data)
+    metrics = summary.get("metrics", step.get("metrics"))
+    if metrics:
         result["metrics"] = metrics
+    for key in ("artifacts", "manifest_path", "logs"):
+        if step.get(key):
+            result[key] = step[key]
     reason = _concise_reason(step.get("diagnostic"))
     if reason:
         result["reason"] = reason
@@ -243,11 +316,7 @@ def _compact_mutation_result(command: str, data: dict[str, Any]) -> dict[str, An
         return {
             "action": "advance",
             "changed": [
-                {
-                    key: item.get(key)
-                    for key in ("node_id", "state", "attempt", "backend", "job_id", "diagnostic")
-                    if item.get(key) is not None
-                }
+                _compact_run_result({"step": item})
                 for item in changed
                 if isinstance(item, dict)
             ],

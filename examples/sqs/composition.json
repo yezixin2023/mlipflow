@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "alloy_sublattice": {
+    "prototype_species": "Zn",
+    "allowed_species": [
+      "Zn",
+      "Fe"
+    ]
+  },
+  "cluster_cutoffs_angstrom": [
+    3.5
+  ],
+  "supercell_repeat": [
+    1,
+    1,
+    1
+  ],
+  "n_steps": 100,
+  "output_format": "vasp",
+  "candidates": [
+    {
+      "id": "binary-demo",
+      "counts": {
+        "Zn": 1,
+        "Fe": 1
+      }
+    }
+  ]
+}

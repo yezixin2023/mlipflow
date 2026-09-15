@@ -143,7 +143,7 @@ class AdapterExecutionTests(unittest.TestCase):
                 "mlipflow.services.commands.load_adapter", return_value=adapter
             ), patch(
                 "mlipflow.services.execution.load_adapter", return_value=adapter
-            ), patch("mlipflow.services.LocalBackend.run", side_effect=execute):
+            ), patch("mlipflow.backends.LocalBackend.run", side_effect=execute):
                 result = run_node(project, "ordered")
 
             self.assertEqual("OK", result["step"]["state"])
@@ -175,6 +175,7 @@ class AdapterExecutionTests(unittest.TestCase):
                     "timestamps",
                     "command",
                     "artifacts",
+                    "result",
                 },
                 set(manifest),
             )

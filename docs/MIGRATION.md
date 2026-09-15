@@ -1,6 +1,23 @@
 # Source layout migration
 
-## User interfaces
+## Current simplification changes
+
+Normal execution uses [USAGE.md](USAGE.md); this section is for updating older callers.
+
+- JSON retains output paths and result evidence; `run` failures now return 1 with
+  `ok: false`. Queries can succeed while reporting node `FAIL`.
+- Set `default_profile` in the existing site config, select a node profile explicitly,
+  or use `backend_profile: auto` for intentional cross-cluster selection.
+- Scheduled training uses `mlip-<framework>` for all reference shapes. See
+  [the short DeepMD replacement example](../examples/training_all_models/USAGE.md#earlier-deepmd-configurations).
+  Historical attempts remain readable. Pre-change, unfinished DeepMD jobs using the
+  removed `deepmd` launcher should be collected with their original installed version;
+  new attempts use the current bundled contract.
+- Import backend classes and private helpers from their defining modules. Public
+  services such as `run_node`, `make_run_plan`, `query_workflow`, `advance` and `retry`
+  remain available from `mlipflow.services`.
+
+## Earlier source relocation interfaces
 
 The CLI, project and site configuration, capability IDs, operation names, approval
 rules, state database and scientific result formats retain their existing behavior.

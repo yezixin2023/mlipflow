@@ -227,8 +227,8 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
         def stage(remote_dir, files):
             return remote_dir
 
-        with patch("mlipflow.services.SshSlurmBackend.stage_workspace", side_effect=stage), patch(
-            "mlipflow.services.SshSlurmBackend.submit",
+        with patch("mlipflow.backends.SshSlurmBackend.stage_workspace", side_effect=stage), patch(
+            "mlipflow.backends.SshSlurmBackend.submit",
             return_value=ExecutionResult(0, "Submitted batch job 91\n", "", "91"),
         ):
             run_node(
@@ -243,10 +243,10 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
         self.assertFalse((attempt / "lammps-execution-result.json").exists())
 
         with patch(
-            "mlipflow.services.SshSlurmBackend.status",
+            "mlipflow.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.services.SshSlurmBackend.inspect_file",
+            "mlipflow.backends.SshSlurmBackend.inspect_file",
             autospec=True,
             side_effect=self._inspect,
         ):
@@ -255,14 +255,14 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
         self.assertFalse((attempt / "lammps-execution-result.json").exists())
 
         with patch(
-            "mlipflow.services.SshSlurmBackend.status",
+            "mlipflow.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.services.SshSlurmBackend.inspect_file",
+            "mlipflow.backends.SshSlurmBackend.inspect_file",
             autospec=True,
             side_effect=self._inspect,
         ), patch(
-            "mlipflow.services.SshSlurmBackend.fetch_from",
+            "mlipflow.backends.SshSlurmBackend.fetch_from",
             autospec=True,
             side_effect=self._fetch,
         ):

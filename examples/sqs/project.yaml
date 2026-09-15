@@ -1,0 +1,14 @@
+schema_version: 1
+project:
+  id: sqs-example
+workflow:
+  nodes:
+  - id: generate
+    uses: high-entropy-structure
+    backend: local
+    inputs:
+      prototype_structure: prototype.vasp
+      composition_manifest: composition.json
+    parameters:
+      seed: 17
+      max_candidates: 1

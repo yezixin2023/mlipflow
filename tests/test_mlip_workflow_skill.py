@@ -68,8 +68,8 @@ def test_workflow_starts_at_the_earliest_missing_stage_and_continues_safely() ->
     assert "Continue through deterministic downstream work" in normalized
     assert "Stop on a real scientific failure, unresolved information" in normalized
     assert "effective `approval_required`" in normalized
-    assert "validate/plan/execute/check/collect" in normalized
-    assert "without final plugin `OK`" in normalized
+    assert "mlipflow --project PROJECT" in normalized
+    assert "After final plugin `OK`" in normalized
 
 
 def test_workflow_reference_is_exceptional_not_a_normal_prerequisite() -> None:

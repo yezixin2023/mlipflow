@@ -1,9 +1,7 @@
 """Read-only query services.
 
-These functions only open SQLite in read-only mode and never call execution
-backends.  The absence of a ``..backends`` import in this module is the
-machine-checkable form of that guarantee; ``tests/test_module_boundaries.py``
-asserts it statically.
+These functions open SQLite read-only and read saved manifests and local logs.
+They never observe a scheduler, fetch outputs, run checks, or advance state.
 
 ``query_doctor`` is the single documented exception to the "queries never touch
 site knowledge" rule: diagnosing an ``ssh-slurm`` project requires validating the
@@ -15,9 +13,12 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import unquote, urlparse
 
 from ..config import Project, load_project
-from ..errors import ConfigError, StateError
+from ..errors import CapabilityError, ConfigError, StateError
+from ..io import load_mapping
+from ..manifests import result_summary
 from ..planning import approval_required, resolve_reference
 from ..plugins import (
     BUILTIN_CAPABILITIES,
@@ -28,11 +29,15 @@ from ..plugins import (
 from ..routing import load_registry, route_models
 from ..site import load_site_config
 from ..state import RunState, StateStore
-from .contracts import _attempt_artifacts
 from .paths import attempt_directory, state_path
 
 
 def query_workflow(project: Project, node_id: str | None = None) -> dict[str, Any]:
+    """Return saved steps for one node or the project, including result locations.
+
+    An uninitialized project returns a configuration preview. Metrics retain the
+    producing capability's names and units; this query never recomputes them.
+    """
     database = state_path(project)
     if database.is_file():
         with StateStore(database, readonly=True) as store:
@@ -41,13 +46,8 @@ def query_workflow(project: Project, node_id: str | None = None) -> dict[str, An
             for node in project.nodes:
                 record = store.latest_step(project.project_id, str(node["id"]))
                 step = record.to_dict()
-                directory = attempt_directory(project, record.node_id, record.attempt)
-                final = directory / "run-manifest.final.json"
-                initial = directory / "run-manifest.json"
-                manifest = final if final.is_file() else initial
                 step["capability"] = node["uses"]
-                step["manifest_path"] = str(manifest) if manifest.is_file() else None
-                step["artifacts"] = _attempt_artifacts(project, record)
+                step.update(attempt_details(project, record.node_id, record.attempt))
                 step["persisted"] = True
                 steps.append(step)
     else:
@@ -90,7 +90,39 @@ def query_workflow(project: Project, node_id: str | None = None) -> dict[str, An
     }
 
 
+def attempt_details(project: Project, node_id: str, attempt: int) -> dict[str, Any]:
+    """Read one attempt's saved outputs and checks; never collect or run a check."""
+    directory = attempt_directory(project, node_id, attempt)
+    final = directory / "run-manifest.final.json"
+    initial = directory / "run-manifest.json"
+    path = final if final.is_file() else initial
+    manifest = load_mapping(path) if path.is_file() else {}
+    raw_artifacts = manifest.get("artifacts", [])
+    if not isinstance(raw_artifacts, list):
+        raise CapabilityError(f"attempt artifact list is invalid: {path}")
+    artifacts = []
+    for item in raw_artifacts:
+        if not isinstance(item, dict):
+            continue
+        record = dict(item)
+        uri = urlparse(str(record.get("uri", "")))
+        if uri.scheme == "file":
+            record["path"] = unquote(uri.path)
+        artifacts.append(record)
+    result = manifest.get("result", {})
+    return {
+        "manifest_path": str(path) if path.is_file() else None,
+        "artifacts": artifacts,
+        "logs": {
+            name: str(directory / f"{name}.log")
+            for name in ("stdout", "stderr") if (directory / f"{name}.log").is_file()
+        },
+        **(result_summary(result) if isinstance(result, dict) else {}),
+    }
+
+
 def query_inspect(project: Project, node_id: str) -> dict[str, Any]:
+    """Return the node's inputs, operation, capability contract, and saved state."""
     node = project.node(node_id)
     capability_id = str(node["uses"])
     spec = capability(capability_id)
@@ -116,6 +148,7 @@ def query_inspect(project: Project, node_id: str) -> dict[str, Any]:
 
 
 def query_logs(project: Project, node_id: str, tail: int = 80) -> dict[str, Any]:
+    """Return local log paths and up to ``tail`` lines for the latest attempt."""
     if tail < 1 or tail > 10000:
         raise ConfigError("--tail must be between 1 and 10000")
     database = state_path(project)
@@ -203,12 +236,12 @@ def query_doctor(project_path: Path, site_path: Path | None = None) -> dict[str,
                     site.cluster(node.get("backend_profile")).name
                     for node in project.nodes
                     if node.get("backend") == "ssh-slurm"
-                    and node.get("backend_profile") is not None
+                    and node.get("backend_profile") != "auto"
                 }
             )
             automatic = any(
                 node.get("backend") == "ssh-slurm"
-                and node.get("backend_profile") is None
+                and node.get("backend_profile") == "auto"
                 for node in project.nodes
             )
             detail = f"{site.path}; selected profiles: {', '.join(selected) or 'none'}"

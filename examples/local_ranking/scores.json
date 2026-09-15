@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "description": "Dimensionless illustrative scores, not predictions or measurements.",
+  "units": {"demo_score": "dimensionless"},
+  "results": [
+    {"candidate_id": "a", "metrics": {"demo_score": 0.2}},
+    {"candidate_id": "b", "metrics": {"demo_score": 0.8}},
+    {"candidate_id": "c", "metrics": {"demo_score": 0.5}}
+  ]
+}

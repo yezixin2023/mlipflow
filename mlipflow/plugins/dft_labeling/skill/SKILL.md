@@ -19,16 +19,15 @@ Adapter and VASP.
 Keep preparation, DFT execution, and dataset serialization as distinct operations. Do
 not use a custom preparation hook to collapse them.
 
-## Artifact first
+## Inputs and example
 
-Reuse a verified `dft-input-manifest.json`, canonical labeled dataset, shared split, or
-framework dataset reference when it matches the objective. Do not rerun VASP or
-reconvert a dataset merely to reconstruct an end-to-end workflow. A final `OK` AIMD
-node supplies its collected trajectory directly to `$ionic-transport`.
-
-For model comparisons, preserve one framework-independent split and its held-out
-benchmark records across all requested framework views. Do not create a new split for
-each framework or derive benchmark labels from a framework-specific view.
+Reuse a verified `dft_input_manifest`, canonical dataset and shared split when they
+match. Preparation needs `structures_manifest` and `labeling_config`; label adds the
+prepared `dft_input_manifest`. `dataset-assemble` consumes `canonical_dataset` and
+an explicit shared split policy. `examples/aimd_reference_validation/project.yaml`
+contains the AIMD path; `examples/training_all_models/dft-to-all-training.yaml`
+shows static labels and assembly into framework-specific training data.
+Pseudopotential functional/symbols and convergence settings must already be chosen.
 
 ## Scientific judgment
 
@@ -45,18 +44,26 @@ Treat the optional manuscript preset as evidence-bound. Preserve disclosed diffe
 between reported manuscript wording and VASP semantics rather than silently
 normalizing them.
 
-## Execute and interpret
+## Run and read the result
 
-Use `mlipflow inspect` and the dry-run to review the actual structures, calculation
-type, inputs, backend, abstract resources, staged plan, and expected artifacts. DFT
-execution requires explicit user intent. Follow the plan's effective
-`approval_required` value rather than duplicating operation/backend approval rules in
-this Skill.
+Preview the actual task and effective `approval_required` value. Reuse explicit
+user authorization for this task and scale; use `--approve` when the plan requires it.
 
-Never launch VASP or a scheduler directly, guess site-owned cluster details, or bypass
-Adapter `validate/plan/execute/check/collect`. Scheduler `COMPLETED` and process exit
-zero are not scientific success; require final plugin `OK`. Diagnose calculation-level
-failure before proposing a fresh retry, and preserve prior attempts.
+```bash
+mlipflow --project PROJECT init
+mlipflow --project PROJECT --format json run NODE --dry-run
+mlipflow --project PROJECT --format json run NODE --approve
+```
+
+For a plan without an approval requirement, `run NODE` suffices. For scheduled
+execution, use `mlipflow --project PROJECT --format json advance` when the job
+progresses; `mlipflow --project PROJECT json NODE` reads the saved result.
+
+Read `state`, `metrics`, `artifacts[].role` and the full `artifacts[].path` from JSON.
+Require final plugin `OK` before using outputs. On failure start with `reason`,
+`check.diagnostics`, `manifest_path` and `logs`; `mlipflow --project PROJECT logs NODE`
+shows saved stdout/stderr. Examples are in the checkout's `examples/` or the
+installed environment's `share/mlipflow/examples/`.
 
 Report what actually occurred: input preparation, fresh DFT, dataset assembly, or
 replay. Preparation `OK` does not establish that VASP ran. Label `OK` establishes the

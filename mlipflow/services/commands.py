@@ -28,6 +28,7 @@ from .contracts import (
 )
 from .execution import _execute_ready
 from .paths import attempt_directory, state_path
+from .queries import attempt_details
 from .scheduled import (
     _finalize_scheduled_adapter,
     _finalize_scheduler_manifest,
@@ -111,7 +112,7 @@ def _run_cluster(
     site: SiteConfig, node: dict[str, Any]
 ) -> tuple[ClusterProfile, dict[str, str] | None]:
     requested = node.get("backend_profile")
-    if requested is not None:
+    if requested != "auto":
         return site.cluster(requested), None
     profile = _automatic_cluster(site, node.get("resources"))
     return profile, {
@@ -122,6 +123,7 @@ def _run_cluster(
 
 
 def initialize(target: Path) -> dict[str, Any]:
+    """Initialize a project file or directory and return its config/state paths."""
     target = target.resolve()
     if target.suffix in {".yaml", ".yml", ".json"}:
         project_file = target
@@ -152,6 +154,12 @@ def make_run_plan(
     site_path: Path | None = None,
     template_library: TemplateLibrary | None = None,
 ) -> dict[str, Any]:
+    """Preview one node's next attempt without writing workflow state.
+
+    ``site_path`` selects local site configuration; ``template_library`` can
+    supply site templates. The plan includes resolved inputs, execution details,
+    resources, expected outputs, and approval requirements.
+    """
     database = state_path(project)
     if database.is_file():
         with StateStore(database, readonly=True) as store:
@@ -249,11 +257,21 @@ def run_node(
     *,
     factory: SchedulerFactory | None = None,
 ) -> dict[str, Any]:
+    """Plan once and execute one READY node using the supplied approval decision.
+
+    Return the saved step with artifact paths, checks, logs, and execution data.
+    A local run finishes synchronously; scheduler submission returns PENDING.
+    Scientific metrics retain the capability's units and conventions.
+    """
     node = project.node(node_id)
     capability_id = str(node["uses"])
     capability(capability_id)
     plan = make_run_plan(project, node_id, site_path, template_library)
-    _require_approval(plan, approval)
+    if plan.get("approval_required") is True and approval is not True:
+        raise ApprovalError(
+            "approval is required for expensive or scheduled execution; "
+            "review --dry-run, then use --approve"
+        )
     adapter_plan = plan.get("adapter_plan")
     has_adapter = isinstance(adapter_plan, dict)
     if has_adapter and (
@@ -308,7 +326,6 @@ def run_node(
         execution_node = node
         if (
             node.get("backend") == "ssh-slurm"
-            and node.get("backend_profile") is None
             and isinstance(plan.get("backend_profile"), str)
         ):
             execution_node = {**node, "backend_profile": plan["backend_profile"]}
@@ -322,6 +339,7 @@ def run_node(
             step.attempt,
             factory=factory,
         )
+    result["step"].update(attempt_details(project, node_id, step.attempt))
     return result
 
 
@@ -452,6 +470,8 @@ def advance(
                 diagnostic=str(change.get("reason", "scheduler reconciliation")),
             )
             changed.append(updated.to_dict())
+    for item in changed:
+        item.update(attempt_details(project, item["node_id"], item["attempt"]))
     return {"changed": changed}
 
 
@@ -500,7 +520,7 @@ def make_stop_plan(
     scheduler_target: dict[str, Any] | None = None
     backend_profile = node.get("backend_profile")
     if step.backend == "ssh-slurm":
-        if backend_profile is None and step.job_id:
+        if backend_profile in (None, "auto") and step.job_id:
             scheduler_target = _approved_cluster_record(project, node_id, step.attempt)
             backend_profile = scheduler_target.get("name")
         elif backend_profile is not None:
@@ -541,7 +561,7 @@ def stop(
         if state in {RunState.OK, RunState.FAIL, RunState.STOPPED}:
             raise StateError(f"cannot stop node in terminal state {state.value}")
         if step.job_id:
-            if step.backend == "ssh-slurm" and node.get("backend_profile") is None:
+            if step.backend == "ssh-slurm" and node.get("backend_profile") in (None, "auto"):
                 scheduler = scheduler_from_cluster_record(
                     _approved_cluster_record(project, node_id, step.attempt),
                     factory=factory,
@@ -586,11 +606,3 @@ def _approved_cluster_record(
     if not records or len(names) != 1:
         raise StateError("approved scheduled plan lacks one unambiguous cluster profile")
     return records[0]
-
-
-def _require_approval(plan: dict[str, Any], approval: bool) -> None:
-    if plan.get("approval_required") is True and approval is not True:
-        raise ApprovalError(
-            "approval is required for expensive or scheduled execution; "
-            "review --dry-run, then use --approve"
-        )

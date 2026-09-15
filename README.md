@@ -5,7 +5,7 @@
 
 <p align="center">
   <a href="https://github.com/yezixin2023/mlipflow/actions/workflows/tests.yml?query=branch%3Apublic"><img src="https://github.com/yezixin2023/mlipflow/actions/workflows/tests.yml/badge.svg?branch=public&amp;event=push" alt="Tests on public branch"></a>
-  <a href="#install"><img src="https://img.shields.io/badge/Python_core-3.9%2B-3776AB?logo=python&amp;logoColor=white" alt="Python core: 3.9 or newer"></a>
+  <a href="#install"><img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&amp;logoColor=white" alt="Python: 3.12 or newer"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue" alt="License: Apache-2.0"></a>
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-guide-0A7EA4" alt="Documentation guide"></a>
 </p>
@@ -14,7 +14,7 @@ MLIPFlow connects structure generation, sampling, DFT labeling, dataset assembly
 
 MLIPFlow is a **workflow layer**, not a new interatomic-potential framework. Researchers choose the scientific codes, models, datasets, and numerical settings; MLIPFlow coordinates them without hiding execution boundaries or evidence.
 
-**Python:** core `>=3.9`; complete local environment `>=3.10` · **License:** Apache-2.0
+**Python:** `>=3.12` for the core and all extras · **License:** Apache-2.0
 
 ## What MLIPFlow provides
 
@@ -41,7 +41,7 @@ python -m pip install ".[local]"
 mlipflow --version
 ```
 
-`.[local]` includes the workflow core, scientific helpers, VASP input preparation, dataset conversion, and formal transport analysis. It requires Python 3.10 or newer because `pymatgen-analysis-diffusion` does. Python 3.9 remains supported for the core and selected extras. Selective dependency extras (`science`, `dft`, `transport`) are available for lightweight or specialized installations.
+`.[local]` includes the workflow core, scientific helpers, VASP input preparation, dataset conversion, and formal transport analysis. The core and all extras require Python 3.12 or newer. Selective dependency extras (`science`, `dft`, `transport`) are available for lightweight or specialized installations.
 
 DeepMD-kit, MACE, CHGNet, and MatGL/M3GNet are not installed automatically. Install only the frameworks you execute, preferably in isolated local or site-owned cluster environments.
 
@@ -96,7 +96,7 @@ The voltage capability is orchestrated directly or through `$mlip-workflow`; it 
 
 ## Environments and HPC
 
-Projects declare an optional backend profile and abstract resources such as CPUs, GPUs, memory, and wall time. If the profile is omitted, MLIPFlow selects a suitable configured cluster. SSH aliases, partitions, accounts, modules, executables, launchers, canonical data/model roots, and remote work roots belong in the user-local site configuration, normally `~/.mlipflow/site.yaml`, and site-owned templates. This keeps private infrastructure out of research repositories.
+Projects declare an optional backend profile and abstract resources such as CPUs, GPUs, memory, and wall time. If the profile is omitted, MLIPFlow uses the configured default or sole cluster profile; set `backend_profile: auto` to request cross-cluster selection. SSH aliases, partitions, accounts, modules, executables, launchers, canonical data/model roots, and remote work roots belong in the user-local site configuration, normally `~/.mlipflow/site.yaml`, and site-owned templates. This keeps private infrastructure out of research repositories.
 
 Review [`docs/CLUSTER_ENVIRONMENTS.md`](docs/CLUSTER_ENVIRONMENTS.md) and [`examples/site_templates/`](examples/site_templates/) before using a new cluster. Start with `mlipflow doctor`, inspect the dry-run plan, and validate a replay or bounded smoke case before scaling the same contract.
 

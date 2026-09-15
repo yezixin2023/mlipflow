@@ -1,16 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tomllib
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.9 compatibility
-    import tomli as tomllib
-
 
 ROOT = Path(__file__).resolve().parents[1]
 

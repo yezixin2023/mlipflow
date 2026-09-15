@@ -1,0 +1,16 @@
+schema_version: 1
+project:
+  id: local-ranking
+workflow:
+  nodes:
+    - id: rank
+      uses: candidate-ranking
+      backend: local
+      inputs:
+        candidate_manifest: candidates.json
+        metric_results_manifest: scores.json
+      parameters:
+        metric: demo_score
+        direction: maximize
+        top_k: 2
+        missing_metric_policy: reject

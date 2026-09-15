@@ -1,4 +1,4 @@
-"""mlip training: scheduled."""
+"""Plan and verify bundled MLIP training through the shared SSH-SLURM contract."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from mlipflow.plugins import model_runtime
+from . import deepmd_curve
 
 HERE = Path(__file__).resolve().parent
 
@@ -19,6 +20,7 @@ BUNDLED_FILES = (
     "training_wrapper.py",
     "mlip_common.py",
     "mlip_deepmd.py",
+    "deepmd_curve.py",
     "mlip_m3gnet.py",
     "mlip_chgnet.py",
     "mlip_mace.py",
@@ -123,7 +125,7 @@ def _artifact_reference(
             "kind": str(kind),
         }, None
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-        return None, str(exc)
+        return None, f"{path}: {exc}"
 
 
 def _framework_dataset_kind(framework: str) -> str:
@@ -138,34 +140,6 @@ def _framework_dataset_kinds(framework: str) -> set[str]:
 
 def _framework_foundation_kind(framework: str) -> str:
     return "directory" if framework == "m3gnet" else "file"
-
-
-def _legacy_scheduled(context: Mapping[str, Any]) -> bool:
-    if context.get("backend") != "ssh-slurm":
-        return False
-    parameters = context.get("parameters", {})
-    inputs = context.get("inputs", {})
-    if not isinstance(parameters, Mapping) or not isinstance(inputs, Mapping):
-        return False
-    if parameters.get("framework") != "deepmd" or parameters.get("operation", "train") != "train":
-        return False
-    root = Path(str(context.get("project_root", ""))).expanduser().absolute()
-    reference = _resolve_project_file(root, inputs.get("dataset_reference"))
-    if reference is None:
-        return True
-    try:
-        raw = _json(reference)
-    except Exception:
-        return True
-    return "relative_path" not in raw and "kind" not in raw
-
-
-def _generic_plan(context: Any) -> bool:
-    if not isinstance(context, Mapping) or context.get("backend") != "ssh-slurm":
-        return False
-    execution = context.get("execution")
-    plan = execution.get("plan") if isinstance(execution, Mapping) else None
-    return isinstance(plan, Mapping) and plan.get("scheduler_contract") == GENERIC_CONTRACT
 
 
 def _staged(path: Path, remote_name: str) -> dict[str, Any]:
@@ -187,7 +161,7 @@ def _fetch(
     }
 
 
-def _validate_generic(context: Any) -> list[dict[str, str]]:
+def validate(context: Any) -> list[dict[str, str]]:
     diagnostics: list[dict[str, str]] = []
     if not isinstance(context, Mapping):
         return [_diag("error", "context.type", "context must be an object")]
@@ -260,17 +234,17 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
             _diag(
                 "error",
                 "training.training_config",
-                "training_config must be a project-scoped JSON file",
+                f"training_config must be a project-scoped JSON file: {inputs.get('training_config')}",
             )
         )
     else:
         try:
             _json(config)
-        except Exception as exc:
-            diagnostics.append(_diag("error", "training.config_unreadable", str(exc)))
+        except (OSError, UnicodeError, ValueError) as exc:
+            diagnostics.append(_diag("error", "training.config_unreadable", f"{config}: {exc}"))
     if dataset_path is None:
         diagnostics.append(
-            _diag("error", "training.dataset_reference", "dataset_reference is required")
+            _diag("error", "training.dataset_reference", f"dataset_reference must be an existing project file: {root / str(inputs.get('dataset_reference', ''))}")
         )
     else:
         dataset, error = _artifact_reference(
@@ -387,11 +361,19 @@ def _validate_generic(context: Any) -> list[dict[str, str]]:
                 "missing shared model runtime: model_runtime.py",
             )
         )
+    profile = parameters.get("validation_profile")
+    if profile is not None:
+        if profile != "deepmd-curve" or framework != "deepmd" or operation != "train":
+            diagnostics.append(_diag("error", "training.validation_profile",
+                                     "validation_profile deepmd-curve requires DeepMD fresh train"))
+        elif config is not None and dataset_path is not None and not _errors(diagnostics):
+            curve_diagnostics, _ = deepmd_curve.calculation(context, config, dataset_path)
+            diagnostics.extend(curve_diagnostics)
     return diagnostics
 
 
-def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
-    diagnostics = _validate_generic(context)
+def plan(context: Mapping[str, Any]) -> dict[str, Any]:
+    diagnostics = validate(context)
     if _errors(diagnostics):
         return _blocked(diagnostics)
     root = Path(str(context["project_root"])).expanduser().absolute().resolve()
@@ -493,6 +475,16 @@ def _plan_generic(context: Mapping[str, Any]) -> dict[str, Any]:
         "foundation_model": foundation,
         "publish_model": publish_model,
     }
+    if parameters.get("validation_profile") == "deepmd-curve":
+        _, curve = deepmd_curve.calculation(context, config, dataset_path)
+        calculation.update(curve)
+        calculation["validation_profile"] = "deepmd-curve"
+        for name, role in (
+            ("lcurve.out", "training-curve"), ("training-report.json", "training-report"),
+            ("checkpoint", "model-checkpoint-state"), ("model.ckpt.index", "model-checkpoint-index"),
+            ("train.stderr", "training-log"),
+        ):
+            fetch_outputs.append(_fetch(name, f"output/{name}", name, True, role))
     template_family = _template_family(framework, publishes_model=publish_model is not None)
     return {
         "plugin_id": PLUGIN_ID,
@@ -547,7 +539,7 @@ def _read_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
             raise ValueError("top-level JSON value must be an object")
         return value, None
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-        return None, str(exc)
+        return None, f"{path}: {exc}"
 
 
 def _mace_completion_diagnostics(
@@ -903,7 +895,7 @@ def _m3gnet_completion_diagnostics(
     return diagnostics
 
 
-def _check_generic(
+def _check_training(
     context: Mapping[str, Any],
 ) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
     diagnostics: list[dict[str, str]] = []
@@ -1098,6 +1090,9 @@ def _check_generic(
         diagnostics.extend(_chgnet_completion_diagnostics(context, result))
     if calculation.get("framework") == "m3gnet":
         diagnostics.extend(_m3gnet_completion_diagnostics(context, result))
+    if calculation.get("validation_profile") == "deepmd-curve":
+        curve_diagnostics, _ = deepmd_curve._check_scheduled_training(context)
+        diagnostics.extend(curve_diagnostics)
     if diagnostics:
         return diagnostics, None
     return [], {
@@ -1109,8 +1104,17 @@ def _check_generic(
     }
 
 
-def _collect_generic(context: Mapping[str, Any]) -> dict[str, Any]:
-    diagnostics, analysis = _check_generic(context)
+def check(context: Mapping[str, Any]) -> dict[str, Any]:
+    """Require model, report, metrics, and framework completion evidence to agree."""
+    diagnostics, analysis = _check_training(context)
+    if diagnostics or analysis is None:
+        return {"plugin_id": PLUGIN_ID, "status": "FAIL", "diagnostics": diagnostics}
+    return {"plugin_id": PLUGIN_ID, "status": "OK", "diagnostics": [],
+            "metrics": analysis["metrics"], "artifacts": []}
+
+
+def collect(context: Mapping[str, Any]) -> dict[str, Any]:
+    diagnostics, analysis = _check_training(context)
     if diagnostics or analysis is None:
         return {
             "plugin_id": PLUGIN_ID,
@@ -1159,6 +1163,12 @@ def _collect_generic(context: Mapping[str, Any]) -> dict[str, Any]:
             artifacts.append(
                 {"path": str(path), "role": "training-log", "media_type": "text/plain"}
             )
+    if parameters.get("validation_profile") == "deepmd-curve":
+        curve = deepmd_curve._collect_scheduled_training(context)
+        if curve["status"] != "OK":
+            return curve
+        artifacts.extend(curve["artifacts"])
+        analysis["metrics"].update(curve["metrics"])
     return {
         "plugin_id": PLUGIN_ID,
         "status": "OK",

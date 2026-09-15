@@ -70,9 +70,9 @@ def test_priority_skills_route_operations_without_duplicating_adapter_contracts(
         skill = _normalized_skill(name)
         for operation in operations:
             assert f"`{operation}`" in skill, (name, operation)
-        assert "Reuse" in skill, name
+        assert "reuse" in skill.lower(), name
         assert "effective `approval_required`" in skill, name
-        assert "validate/plan/execute/check/collect" in skill, name
+        assert "mlipflow --project PROJECT" in skill, name
         assert "final plugin `ok`" in skill.lower(), name
         assert not hard_coded_approval.search(skill), name
         assert "plugin manifest" not in skill.lower(), name

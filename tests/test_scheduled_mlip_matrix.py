@@ -271,3 +271,32 @@ def test_cluster_runner_accepts_separate_foundation_and_publication_roots() -> N
     )
     assert args.model_root == "/site/models"
     assert args.foundation_model_root == "/site/foundations"
+
+@pytest.mark.parametrize('content', [None, '{invalid json', '[]'])
+def test_bad_deepmd_reference_is_reported_without_legacy_fallback(tmp_path, content):
+    from mlipflow.plugins.mlip_training.adapter import Adapter
+    context = _context(tmp_path, 'deepmd', 'train')
+    reference = tmp_path / context['inputs']['dataset_reference']
+    if content is None:
+        reference.unlink()
+    else:
+        reference.write_text(content)
+    diagnostics = Adapter().validate(context)
+    assert any(item['level'] == 'error' and 'dataset' in item['code']
+               for item in diagnostics), diagnostics
+    plan = Adapter().plan(context)
+    assert plan['status'] == 'BLOCKED'
+    assert any(str(reference) in item['message'] for item in plan['diagnostics'])
+
+
+def test_id_only_dataset_uses_the_same_bundled_training_contract(tmp_path):
+    from mlipflow.plugins.mlip_training.adapter import Adapter
+    context = _context(tmp_path, 'deepmd', 'train')
+    _write_json(tmp_path / context['inputs']['dataset_reference'],
+                {'schema_version': 1, 'dataset_id': 'existing-data'})
+    plan = Adapter().plan(context)
+    assert plan['status'] == 'READY', plan['diagnostics']
+    assert plan['scheduler_contract'] == 'bundled-mlip-v1'
+    assert plan['training_calculation']['dataset'] == {
+        'id': 'existing-data', 'relative_path': 'existing-data', 'kind': 'directory'
+    }

@@ -431,7 +431,7 @@ class ScheduledDftTests(unittest.TestCase):
             root = Path(temporary)
             _, site = prepared_fixture(root)
             project_value = json.loads((root / "project.yaml").read_text(encoding="utf-8"))
-            project_value["workflow"]["nodes"][0].pop("backend_profile")
+            project_value["workflow"]["nodes"][0]["backend_profile"] = "auto"
             write_json(root / "project.yaml", project_value)
             site_value = json.loads(site.read_text(encoding="utf-8"))
             site_value["clusters"]["cluster-a"]["scheduler"] = {
@@ -527,10 +527,10 @@ class ScheduledDftTests(unittest.TestCase):
         plan = make_run_plan(project, "label-li", site, library)
         remote_dir = plan["hpc_execution"]["workspace"]["run_dir"]
         with patch(
-            "mlipflow.services.SshSlurmBackend.stage_workspace",
+            "mlipflow.backends.SshSlurmBackend.stage_workspace",
             return_value=remote_dir,
         ) as staged, patch(
-            "mlipflow.services.SshSlurmBackend.submit",
+            "mlipflow.backends.SshSlurmBackend.submit",
             return_value=ExecutionResult(0, "Submitted batch job 77\n", "", "77"),
         ):
             run_node(project, "label-li", True, site, library)
@@ -611,10 +611,10 @@ class ScheduledDftTests(unittest.TestCase):
                 ),
             }
             with patch(
-                "mlipflow.services.SshSlurmBackend.stage_workspace",
+                "mlipflow.backends.SshSlurmBackend.stage_workspace",
                 return_value=remote_dir,
             ), patch(
-                "mlipflow.services.SshSlurmBackend.submit",
+                "mlipflow.backends.SshSlurmBackend.submit",
                 return_value=ExecutionResult(
                     0,
                     "Submitted batch job 77\n",
@@ -665,10 +665,10 @@ class ScheduledDftTests(unittest.TestCase):
             plan = make_run_plan(project, "label-li", site, library)
             remote_dir = plan["hpc_execution"]["workspace"]["run_dir"]
             with patch(
-                "mlipflow.services.SshSlurmBackend.stage_workspace",
+                "mlipflow.backends.SshSlurmBackend.stage_workspace",
                 return_value=remote_dir,
             ), patch(
-                "mlipflow.services.SshSlurmBackend.submit",
+                "mlipflow.backends.SshSlurmBackend.submit",
                 return_value=ExecutionResult(0, "Submitted batch job 78\n", "", "78"),
             ) as submitted:
                 run_node(
@@ -700,10 +700,10 @@ class ScheduledDftTests(unittest.TestCase):
             write_completion(remote, project.project_id, "label-li", 1)
             inspect, fetch = self._inventory_hooks(remote)
             with patch(
-                "mlipflow.services.SshSlurmBackend.status",
+                "mlipflow.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.services.SshSlurmBackend.inspect_file",
+                "mlipflow.backends.SshSlurmBackend.inspect_file",
                 autospec=True,
                 side_effect=inspect,
             ):
@@ -712,14 +712,14 @@ class ScheduledDftTests(unittest.TestCase):
                 "adapter-finalize", approved["details"]["transitions"][0]["action"]
             )
             with patch(
-                "mlipflow.services.SshSlurmBackend.status",
+                "mlipflow.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.services.SshSlurmBackend.inspect_file",
+                "mlipflow.backends.SshSlurmBackend.inspect_file",
                 autospec=True,
                 side_effect=inspect,
             ), patch(
-                "mlipflow.services.SshSlurmBackend.fetch_from",
+                "mlipflow.backends.SshSlurmBackend.fetch_from",
                 autospec=True,
                 side_effect=fetch,
             ):
@@ -750,13 +750,13 @@ class ScheduledDftTests(unittest.TestCase):
             write_completion(remote, project.project_id, "label-li", 1)
             inspect, fetch = self._inventory_hooks(remote)
             with patch(
-                "mlipflow.services.SshSlurmBackend.status",
+                "mlipflow.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.services.SshSlurmBackend.inspect_file",
+                "mlipflow.backends.SshSlurmBackend.inspect_file",
                 autospec=True, side_effect=inspect,
             ), patch(
-                "mlipflow.services.SshSlurmBackend.fetch_from",
+                "mlipflow.backends.SshSlurmBackend.fetch_from",
                 autospec=True, side_effect=fetch,
             ):
                 finished = advance(project)
@@ -774,11 +774,11 @@ class ScheduledDftTests(unittest.TestCase):
             inspect, fetch = self._inventory_hooks(remote)
             patches = (
                 patch(
-                    "mlipflow.services.SshSlurmBackend.status",
+                    "mlipflow.backends.SshSlurmBackend.status",
                     return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
                 ),
                 patch(
-                    "mlipflow.services.SshSlurmBackend.inspect_file",
+                    "mlipflow.backends.SshSlurmBackend.inspect_file",
                     autospec=True,
                     side_effect=inspect,
                 ),
@@ -786,14 +786,14 @@ class ScheduledDftTests(unittest.TestCase):
             with patches[0], patches[1]:
                 make_advance_plan(project)
             with patch(
-                "mlipflow.services.SshSlurmBackend.status",
+                "mlipflow.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.services.SshSlurmBackend.inspect_file",
+                "mlipflow.backends.SshSlurmBackend.inspect_file",
                 autospec=True,
                 side_effect=inspect,
             ), patch(
-                "mlipflow.services.SshSlurmBackend.fetch_from",
+                "mlipflow.backends.SshSlurmBackend.fetch_from",
                 autospec=True,
                 side_effect=fetch,
             ):
@@ -827,23 +827,23 @@ class ScheduledDftTests(unittest.TestCase):
             write_completion(remote, project.project_id, "label-li", 999)
             inspect, fetch = self._inventory_hooks(remote)
             with patch(
-                "mlipflow.services.SshSlurmBackend.status",
+                "mlipflow.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.services.SshSlurmBackend.inspect_file",
+                "mlipflow.backends.SshSlurmBackend.inspect_file",
                 autospec=True,
                 side_effect=inspect,
             ):
                 make_advance_plan(project)
             with patch(
-                "mlipflow.services.SshSlurmBackend.status",
+                "mlipflow.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.services.SshSlurmBackend.inspect_file",
+                "mlipflow.backends.SshSlurmBackend.inspect_file",
                 autospec=True,
                 side_effect=inspect,
             ), patch(
-                "mlipflow.services.SshSlurmBackend.fetch_from",
+                "mlipflow.backends.SshSlurmBackend.fetch_from",
                 autospec=True,
                 side_effect=fetch,
             ):

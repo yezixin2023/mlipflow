@@ -61,7 +61,13 @@ def _execute_ready(
     try:
         if mode == "replay":
             store.transition(run_id, RunState.RUNNING)
-            result_data, artifacts = _replay(project, node)
+            reference = node.get("inputs", {}).get("result_manifest")
+            if reference is None:
+                raise ConfigError(f"replay node {node_id} requires inputs.result_manifest")
+            result_path = _project_scoped_result_path(
+                project, resolve_reference(reference, project.root)
+            )
+            result_data, artifacts = _load_result(result_path)
             manifest = run_manifest(
                 project_id=project.project_id,
                 node_id=node_id,
@@ -74,6 +80,7 @@ def _execute_ready(
                 command=None,
                 state=RunState.OK.value,
                 state_reason="replay collected",
+                result=result_data,
                 **_manifest_context(node, store, run_id, finished=True),
             )
             write_json_atomic(manifest_path, manifest)
@@ -155,6 +162,7 @@ def _execute_ready(
                 command=argv,
                 state=final.value,
                 state_reason=reason,
+                result=result_data,
                 **_manifest_context(node, store, run_id, finished=True),
             )
             write_json_atomic(manifest_path, manifest)
@@ -338,13 +346,3 @@ def _execute_ready(
         except Exception:
             pass
         raise
-
-
-def _replay(project: Project, node: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    reference = node.get("inputs", {}).get("result_manifest")
-    if reference is None:
-        raise ConfigError(f"replay node {node['id']} requires inputs.result_manifest")
-    result_path = _project_scoped_result_path(
-        project, resolve_reference(reference, project.root)
-    )
-    return _load_result(result_path)
