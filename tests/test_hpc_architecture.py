@@ -574,8 +574,8 @@ class HpcArchitectureTests(unittest.TestCase):
 
     def test_execution_implementation_has_no_cluster_specific_launch_knowledge(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        sources = list((root / "src/mlipflow").glob("*.py")) + [
-            root / "plugins/dft-labeling/adapter.py"
+        sources = list((root / "mlipflow").glob("*.py")) + [
+            root / "mlipflow/plugins/dft_labeling/adapter.py"
         ]
         forbidden = (
             "/public/software",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import csv
-import importlib.util
+from tests.helpers import load_module as import_test_module
 import io
 import json
 import subprocess
@@ -21,17 +21,13 @@ from pymatgen.io.vasp.inputs import Poscar
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = ROOT / "plugins" / "pes-sampling"
+PLUGIN_ROOT = ROOT / "mlipflow" / "plugins" / "pes_sampling"
 ADAPTER_PATH = PLUGIN_ROOT / "adapter.py"
-DFT_PREPARE_PATH = ROOT / "plugins" / "dft-labeling" / "vasp_prepare.py"
+DFT_PREPARE_PATH = ROOT / "mlipflow" / "plugins" / "dft_labeling" / "vasp_prepare.py"
 
 
 def load_module(name: str, path: Path) -> Any:
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = import_test_module(path, name)
     return module
 
 

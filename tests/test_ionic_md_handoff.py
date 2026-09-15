@@ -7,7 +7,7 @@ for scientific numerical parity.
 
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 import subprocess
 import sys
@@ -17,14 +17,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ADAPTER_PATH = ROOT / "plugins" / "ionic-transport" / "adapter.py"
+ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "ionic_transport" / "adapter.py"
 
 
 def load_adapter():
-    spec = importlib.util.spec_from_file_location("ionic_md_handoff_adapter", ADAPTER_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(ADAPTER_PATH, 'ionic_md_handoff_adapter')
     return module.Adapter()
 
 

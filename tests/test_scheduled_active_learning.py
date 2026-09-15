@@ -21,8 +21,8 @@ from .test_scheduled_dft import FakeTemplateLibrary, write_site
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CLUSTER_RUNNER = ROOT / "plugins" / "active-learning" / "committee_inference_cluster.py"
-ACTIVE_SCIENCE = ROOT / "src" / "mlipflow" / "science" / "active_learning.py"
+CLUSTER_RUNNER = ROOT / "mlipflow" / "plugins" / "active_learning" / "committee_inference_cluster.py"
+ACTIVE_SCIENCE = ROOT / "mlipflow" / "plugins" / "active_learning" / "science.py"
 def evaluation_dataset() -> dict:
     samples = []
     calibration_ids = []

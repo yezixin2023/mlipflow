@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import csv
-import importlib.util
+from tests.helpers import load_module
 import json
 import math
 import subprocess
@@ -14,23 +14,15 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REPLAY_PATH = ROOT / "plugins" / "electrochemical-voltage" / "manuscript_replay.py"
-ADAPTER_PATH = ROOT / "plugins" / "electrochemical-voltage" / "adapter.py"
+REPLAY_PATH = ROOT / "mlipflow" / "plugins" / "electrochemical_voltage" / "manuscript_replay.py"
+ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "electrochemical_voltage" / "adapter.py"
 def load_replay():
-    spec = importlib.util.spec_from_file_location("test_manuscript_voltage_replay", REPLAY_PATH)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {REPLAY_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(REPLAY_PATH, 'test_manuscript_voltage_replay')
     return module
 
 
 def load_adapter():
-    spec = importlib.util.spec_from_file_location("test_manuscript_voltage_adapter", ADAPTER_PATH)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {ADAPTER_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(ADAPTER_PATH, 'test_manuscript_voltage_adapter')
     return module.Adapter()
 
 

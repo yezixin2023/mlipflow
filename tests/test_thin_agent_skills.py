@@ -114,7 +114,7 @@ def test_conditional_references_no_longer_copy_execution_contracts() -> None:
         "approval_required:",
         "shell: false",
         "schema_version:",
-        "src/mlipflow/",
+        "mlipflow/",
         "adapter.py",
         "run.sh",
         "output_subdir",

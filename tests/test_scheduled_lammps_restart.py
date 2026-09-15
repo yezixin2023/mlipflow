@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,14 +8,11 @@ from types import SimpleNamespace
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "lammps-md"
+PLUGIN = ROOT / "mlipflow" / "plugins" / "lammps_md"
 
 
 def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, name)
     return module
 
 
@@ -198,7 +195,7 @@ def _previous_runtime(context: dict, scheduler_state: str = "TIMEOUT", checkpoin
 
 
 def test_attempt_one_declares_periodic_failure_salvage(tmp_path: Path) -> None:
-    module = _load("lammps_restart_adapter_first", PLUGIN / "adapter_restart.py")
+    module = _load("lammps_restart_adapter_first", PLUGIN / "adapter.py")
     plan = module.Adapter().plan(_context(tmp_path))
     assert plan["status"] == "READY", plan.get("diagnostics")
     calculation = plan["lammps_calculation"]
@@ -212,7 +209,7 @@ def test_attempt_one_declares_periodic_failure_salvage(tmp_path: Path) -> None:
 
 
 def test_attempt_two_binds_immediately_previous_salvaged_candidates(tmp_path: Path) -> None:
-    module = _load("lammps_restart_adapter_second", PLUGIN / "adapter_restart.py")
+    module = _load("lammps_restart_adapter_second", PLUGIN / "adapter.py")
     context = _context(tmp_path, attempt=2)
     _previous_runtime(context, "TIMEOUT")
     plan = module.Adapter().plan(context)
@@ -231,7 +228,7 @@ def test_attempt_two_binds_immediately_previous_salvaged_candidates(tmp_path: Pa
 
 @pytest.mark.parametrize("scheduler_state", ["TIMEOUT", "PREEMPTED", "NODE_FAIL", "OUT_OF_MEMORY"])
 def test_scheduler_terminal_states_are_restart_eligible(tmp_path: Path, scheduler_state: str) -> None:
-    module = _load(f"lammps_restart_state_{scheduler_state}", PLUGIN / "adapter_restart.py")
+    module = _load(f"lammps_restart_state_{scheduler_state}", PLUGIN / "adapter.py")
     context = _context(tmp_path, attempt=2)
     _previous_runtime(context, scheduler_state)
     plan = module.Adapter().plan(context)
@@ -239,7 +236,7 @@ def test_scheduler_terminal_states_are_restart_eligible(tmp_path: Path, schedule
 
 
 def test_scientific_fail_after_scheduler_completed_is_not_auto_resumed(tmp_path: Path) -> None:
-    module = _load("lammps_restart_science_fail", PLUGIN / "adapter_restart.py")
+    module = _load("lammps_restart_science_fail", PLUGIN / "adapter.py")
     context = _context(tmp_path, attempt=2)
     _previous_runtime(context, "COMPLETED")
     plan = module.Adapter().plan(context)
@@ -248,7 +245,7 @@ def test_scientific_fail_after_scheduler_completed_is_not_auto_resumed(tmp_path:
 
 
 def test_missing_salvaged_checkpoint_blocks_retry(tmp_path: Path) -> None:
-    module = _load("lammps_restart_missing", PLUGIN / "adapter_restart.py")
+    module = _load("lammps_restart_missing", PLUGIN / "adapter.py")
     context = _context(tmp_path, attempt=2)
     _previous_runtime(context, "TIMEOUT", checkpoint=False)
     plan = module.Adapter().plan(context)
@@ -257,7 +254,7 @@ def test_missing_salvaged_checkpoint_blocks_retry(tmp_path: Path) -> None:
 
 
 def test_auto_restart_requires_checkpoint_interval(tmp_path: Path) -> None:
-    module = _load("lammps_restart_interval", PLUGIN / "adapter_restart.py")
+    module = _load("lammps_restart_interval", PLUGIN / "adapter.py")
     context = _context(tmp_path)
     del context["parameters"]["checkpoint_interval"]
     project = json.loads((tmp_path / "project.yaml").read_text())

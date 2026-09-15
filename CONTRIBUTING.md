@@ -70,11 +70,11 @@ Changes to these contracts are possible, but they should be explicit, documented
 Scientific implementations live under:
 
 ```text
-plugins/<capability-id>/
+mlipflow/plugins/<capability_id>/
   adapter.py
 ```
 
-MLIPFlow does not discover third-party plugins. Add the capability ID, adapter entrypoint, supported backends, operations, and approval requirement to the literal built-in mapping in `src/mlipflow/plugins.py`. Keep that entry small; scientific validation and completion logic belong in the adapter and its scientific runner. Core owns generic replay and fresh-attempt retry behavior.
+MLIPFlow does not discover third-party plugins. Add the capability ID, adapter entrypoint, supported backends, operations, and approval requirement to the literal built-in mapping in `mlipflow/plugins/__init__.py`. Use the capability's standard `adapter.py` entrypoint and ordinary package imports. Keep capability modules flat. Keep that entry small; scientific validation and completion logic belong in the adapter and its scientific runner. Core owns generic replay and fresh-attempt retry behavior.
 
 Adapter execution should use explicit argv lists and controlled working directories/environment. When an external program is involved, a zero process exit code is not by itself a scientific completion criterion.
 
@@ -128,7 +128,7 @@ The top-level README is the user entry point. Keep it concise, capability-orient
 When behavior changes, update the closest source of truth as needed:
 
 - schemas for configuration contracts;
-- `src/mlipflow/plugins.py` for the built-in capability lookup;
+- `mlipflow/plugins/__init__.py` for the built-in capability lookup;
 - `.agents/skills/<skill-name>/SKILL.md` for Agent Skill contracts;
 - the closest adapter and deterministic tests for implementation state;
 - `CHANGELOG.md` for notable user-facing changes.

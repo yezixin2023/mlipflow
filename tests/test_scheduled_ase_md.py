@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-import importlib.util
+from tests.helpers import load_module
 import json
 import shutil
 import sys
@@ -14,14 +14,11 @@ from ase.constraints import FixCom
 from ase.io import read, write
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "ase-md"
+PLUGIN = ROOT / "mlipflow" / "plugins" / "ase_md"
 
 
 def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, name)
     return module
 
 
@@ -93,8 +90,8 @@ def _context(tmp_path: Path, calculator: str) -> dict:
 
 @pytest.mark.parametrize("calculator", ["deepmd", "m3gnet", "chgnet", "mace"])
 def test_scheduler_matrix_is_ready(tmp_path: Path, calculator: str) -> None:
-    module = _load("ase_md_adapter", PLUGIN / "adapter.py")
-    plan = module.Adapter().plan(_context(tmp_path, calculator))
+    module = _load("ase_md_adapter", PLUGIN / "nvt.py")
+    plan = module.plan(_context(tmp_path, calculator))
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["md_parameters"]["calculator"] == calculator
     scheduled = plan["scheduled_execution"]
@@ -139,7 +136,7 @@ def test_structure_path_runs_adapter_staging_and_cluster_chain(
     project_data["workflow"]["nodes"][0]["inputs"]["structure"] = value
     _write_json(project_root / "project.yaml", project_data)
 
-    adapter = _load(f"ase_md_adapter_structure_{path_kind}", PLUGIN / "adapter.py").Adapter()
+    adapter = _load(f"ase_md_adapter_structure_{path_kind}", PLUGIN / "nvt.py")
     plan = adapter.plan(context)
 
     assert plan["status"] == "READY", plan.get("diagnostics")
@@ -232,7 +229,7 @@ def test_missing_structure_path_is_blocked(tmp_path: Path, path_kind: str) -> No
     context["inputs"]["structure"] = (
         "../shared/missing.extxyz" if path_kind == "parent-relative" else str(missing)
     )
-    adapter = _load(f"ase_md_adapter_missing_{path_kind}", PLUGIN / "adapter.py").Adapter()
+    adapter = _load(f"ase_md_adapter_missing_{path_kind}", PLUGIN / "nvt.py")
 
     plan = adapter.plan(context)
 
@@ -243,30 +240,30 @@ def test_missing_structure_path_is_blocked(tmp_path: Path, path_kind: str) -> No
 
 
 def test_cuda_requires_scheduled_gpu(tmp_path: Path) -> None:
-    module = _load("ase_md_adapter_cuda", PLUGIN / "adapter.py")
+    module = _load("ase_md_adapter_cuda", PLUGIN / "nvt.py")
     context = _context(tmp_path, "mace")
     context["parameters"]["device"] = "cuda"
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "ase_md.cuda_resource" for item in plan["diagnostics"])
 
 
 def test_chgnet_requires_float32(tmp_path: Path) -> None:
-    module = _load("ase_md_adapter_chgnet", PLUGIN / "adapter.py")
+    module = _load("ase_md_adapter_chgnet", PLUGIN / "nvt.py")
     context = _context(tmp_path, "chgnet")
     context["parameters"]["default_dtype"] = "float64"
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "ase_md.chgnet_dtype" for item in plan["diagnostics"])
 
 
 def test_upstream_model_reference_path_is_authoritative(tmp_path: Path) -> None:
-    module = _load("ase_md_adapter_upstream_binding", PLUGIN / "adapter_restart.py")
+    module = _load("ase_md_adapter_upstream_binding", PLUGIN / "adapter.py").Adapter()
     context = _context(tmp_path, "m3gnet")
     reference = tmp_path / "inputs" / "m3gnet-model.json"
     context["inputs"]["model_reference"] = str(reference)
 
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
 
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["md_parameters"]["model_id"] == "m3gnet-model-v1"
@@ -464,7 +461,7 @@ def test_explicit_sampling_supercell_enforces_strict_cell_bound(tmp_path: Path) 
 
 
 def test_plan_binds_explicit_supercell_and_cell_bound(tmp_path: Path) -> None:
-    module = _load("ase_md_adapter_supercell", PLUGIN / "adapter.py")
+    module = _load("ase_md_adapter_supercell", PLUGIN / "nvt.py")
     context = _context(tmp_path, "mace")
     context["parameters"].update(
         {
@@ -473,7 +470,7 @@ def test_plan_binds_explicit_supercell_and_cell_bound(tmp_path: Path) -> None:
         }
     )
 
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
 
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["md_parameters"]["supercell_repeat"] == [2, 1, 1]
@@ -510,19 +507,19 @@ def test_mace_calculator_uses_supported_model_paths_keyword(
 
 
 def test_m3gnet_reference_must_be_directory(tmp_path: Path) -> None:
-    module = _load("ase_md_adapter_kind", PLUGIN / "adapter.py")
+    module = _load("ase_md_adapter_kind", PLUGIN / "nvt.py")
     context = _context(tmp_path, "m3gnet")
     reference = tmp_path / "inputs" / "m3gnet-model.json"
     raw = json.loads(reference.read_text(encoding="utf-8"))
     raw["kind"] = "file"
     _write_json(reference, raw)
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "ase_md.model_reference" for item in plan["diagnostics"])
 
 
 def test_checker_verifies_schedule_and_scientific_outputs(tmp_path: Path) -> None:
-    module = _load("ase_md_checker", PLUGIN / "adapter.py")
+    module = _load("ase_md_checker", PLUGIN / "nvt.py")
     attempt = tmp_path / "attempt"
     attempt.mkdir()
     settings = {
@@ -635,6 +632,6 @@ def test_checker_verifies_schedule_and_scientific_outputs(tmp_path: Path) -> Non
         "attempt_dir": str(attempt),
         "execution": {"plan": {"md_parameters": settings}},
     }
-    checked = module.Adapter().check(context)
+    checked = module.check(context)
     assert checked["status"] == "OK", checked.get("diagnostics")
     assert checked["metrics"]["steps_completed"] == 5.0

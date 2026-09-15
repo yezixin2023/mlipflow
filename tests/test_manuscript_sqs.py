@@ -2,22 +2,19 @@
 
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import tempfile
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "high-entropy-structure"
+PLUGIN = ROOT / "mlipflow" / "plugins" / "high_entropy_structure"
 
 
 def _module(filename: str):
     path = PLUGIN / filename
-    spec = importlib.util.spec_from_file_location(f"test_{path.stem}", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, f'test_{path.stem}')
     return module
 
 

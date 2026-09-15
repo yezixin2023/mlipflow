@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-HELPER = ROOT / "plugins" / "lammps-md" / "lammps_restart.py"
+HELPER = ROOT / "mlipflow" / "plugins" / "lammps_md" / "lammps_restart.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("lammps_restart_deck_contract", HELPER)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(HELPER, 'lammps_restart_deck_contract')
     return module
 
 

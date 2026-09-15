@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 import math
 import tempfile
@@ -10,15 +10,11 @@ from types import ModuleType
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-ADAPTER_PATH = PROJECT_ROOT / "plugins" / "ionic-transport" / "adapter.py"
+ADAPTER_PATH = PROJECT_ROOT / "mlipflow" / "plugins" / "ionic_transport" / "manuscript.py"
 
 
 def load_transport_module() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("mlipflow_ionic_transport_parity", ADAPTER_PATH)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("cannot load ionic-transport adapter")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(ADAPTER_PATH, 'mlipflow_ionic_transport_parity')
     return module
 
 

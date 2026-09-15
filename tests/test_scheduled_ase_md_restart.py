@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 from pathlib import Path
 
@@ -10,14 +10,11 @@ from mlipflow.errors import ConfigError
 from mlipflow.services.scheduled import _failure_salvage_outputs
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "ase-md"
+PLUGIN = ROOT / "mlipflow" / "plugins" / "ase_md"
 
 
 def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, name)
     return module
 
 
@@ -148,7 +145,7 @@ def _checkpoint(settings: dict, *, completed_steps: int, ase_version: str = "tes
 def test_first_attempt_declares_checkpoint_and_failure_salvage(
     tmp_path: Path, ensemble: str
 ) -> None:
-    module = _load("ase_md_restart_adapter_first", PLUGIN / "adapter_restart.py")
+    module = _load("ase_md_restart_adapter_first", PLUGIN / "adapter.py")
     plan = module.Adapter().plan(_context(tmp_path, ensemble=ensemble, attempt=1))
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["md_parameters"]["segment_start_step"] == 0
@@ -172,14 +169,15 @@ def test_first_attempt_declares_checkpoint_and_failure_salvage(
         item["remote_name"] for item in plan["scheduled_execution"]["staged_files"]
     }
     assert "restart/md-checkpoint.json" not in staged
-    assert {"adapter-npt.py", "adapter-legacy.py"} <= staged
+    assert {"ase_md.py", "ase_md_cluster.py"} <= staged
+    assert not any(name.startswith("adapter-") for name in staged)
 
 
 @pytest.mark.parametrize("ensemble", ["nvt-langevin", "npt-isotropic-mtk"])
 def test_retry_stages_immediately_previous_salvaged_checkpoint(
     tmp_path: Path, ensemble: str
 ) -> None:
-    module = _load("ase_md_restart_adapter_retry", PLUGIN / "adapter_restart.py")
+    module = _load("ase_md_restart_adapter_retry", PLUGIN / "adapter.py")
     first_context = _context(tmp_path, ensemble=ensemble, attempt=1)
     first = module.Adapter().plan(first_context)
     assert first["status"] == "READY", first.get("diagnostics")
@@ -214,7 +212,7 @@ def test_retry_stages_immediately_previous_salvaged_checkpoint(
 
 
 def test_retry_does_not_resume_scientific_fail_after_completed_scheduler(tmp_path: Path) -> None:
-    module = _load("ase_md_restart_adapter_completed_fail", PLUGIN / "adapter_restart.py")
+    module = _load("ase_md_restart_adapter_completed_fail", PLUGIN / "adapter.py")
     first = module.Adapter().plan(_context(tmp_path, attempt=1))
     assert first["status"] == "READY"
     previous_dir = tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1"
@@ -232,7 +230,7 @@ def test_retry_does_not_resume_scientific_fail_after_completed_scheduler(tmp_pat
 
 
 def test_retry_requires_locally_salvaged_checkpoint(tmp_path: Path) -> None:
-    module = _load("ase_md_restart_adapter_no_checkpoint", PLUGIN / "adapter_restart.py")
+    module = _load("ase_md_restart_adapter_no_checkpoint", PLUGIN / "adapter.py")
     _context(tmp_path, attempt=1)
     previous_dir = tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1"
     _write_json(

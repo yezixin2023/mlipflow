@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import builtins
-import importlib.util
+from tests.helpers import load_module as import_test_module
 import io
 import json
 import os
@@ -18,16 +18,12 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = ROOT / "plugins" / "dft-labeling"
+PLUGIN_ROOT = ROOT / "mlipflow" / "plugins" / "dft_labeling"
 PYTHON_EXECUTABLE = str(Path(sys.executable).resolve())
 
 
 def load_module(name: str, path: Path) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = import_test_module(path, name)
     return module
 
 

@@ -16,6 +16,13 @@ MLIPFlow follows semantic versioning for the Python package. Scientific validati
 
 ### Changed
 
+- Consolidate Python implementation into the top-level `mlipflow` package with
+  standard imports and one adapter entrypoint per built-in capability.
+- Separate DFT, PES and transport operations and isolate scheduled/restart helpers.
+- Remove nested adapters, lifecycle mixins, duplicate MD collectors and unused
+  controller uploads; generate LAMMPS v2 inputs directly from one runner.
+- Ship complete replay example inputs and verify installed and standalone execution.
+- Add source migration, example navigation and a focused Agent usage guide.
 - Simplified active-learning convergence to declared-domain coverage, immutable-audit accuracy,
   and consecutive stability; new-label marginal gain is no longer a stopping gate.
 - Reworked the top-level README around researcher tasks, a shorter quick start, direct artifact handoff, environment boundaries, and scientific validation.

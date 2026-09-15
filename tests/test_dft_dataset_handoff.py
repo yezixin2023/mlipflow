@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import builtins
-import importlib.util
+from tests.helpers import load_module
 import json
 import sys
 from pathlib import Path
@@ -18,14 +18,11 @@ from tests.helpers import write_json
 from tests.test_scheduled_multi_calculation import ScheduledLifecycle
 
 ROOT = Path(__file__).resolve().parents[1]
-DFT_PLUGIN = ROOT / "plugins" / "dft-labeling"
+DFT_PLUGIN = ROOT / "mlipflow" / "plugins" / "dft_labeling"
 
 
 def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, name)
     return module
 
 
@@ -243,7 +240,7 @@ def test_four_views_share_exact_record_ids_and_scientific_conventions(tmp_path: 
     assert benchmark_reference["relative_path"] == f"{root.name}/benchmark/test.json"
     fresh = _load(
         "dft_benchmark_dataset_reader",
-        ROOT / "plugins" / "mlip-benchmark" / "fresh_benchmark.py",
+        ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "fresh_benchmark.py",
     )
     _, loaded_samples = fresh._load_dataset(benchmark_path)
     assert [sample["id"] for sample in loaded_samples] == split["test_record_ids"]
@@ -474,11 +471,11 @@ def test_missing_dpdata_blocks_only_deepmd_conversion(tmp_path: Path, monkeypatc
 
 def test_training_runners_consume_predefined_split_directories(tmp_path: Path) -> None:
     _, _, _, root, _ = _convert(tmp_path, _canonical(10), "m3gnet,chgnet,mace")
-    sys.path.insert(0, str(ROOT / "plugins" / "mlip-training"))
+    sys.path.insert(0, str(ROOT / "mlipflow" / "plugins" / "mlip_training"))
     try:
-        m3gnet = _load("m3gnet_predefined_test", ROOT / "plugins/mlip-training/mlip_m3gnet.py")
-        chgnet = _load("chgnet_predefined_test", ROOT / "plugins/mlip-training/mlip_chgnet.py")
-        mace = _load("mace_predefined_test", ROOT / "plugins/mlip-training/mlip_mace.py")
+        m3gnet = _load("m3gnet_predefined_test", ROOT / "mlipflow/plugins/mlip_training/mlip_m3gnet.py")
+        chgnet = _load("chgnet_predefined_test", ROOT / "mlipflow/plugins/mlip_training/mlip_chgnet.py")
+        mace = _load("mace_predefined_test", ROOT / "mlipflow/plugins/mlip_training/mlip_mace.py")
     finally:
         sys.path.pop(0)
     m3_contract = m3gnet._dataset_contract({})

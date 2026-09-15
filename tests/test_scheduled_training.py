@@ -13,7 +13,7 @@ have to hold independently.
 
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 import shutil
 import tempfile
@@ -551,12 +551,7 @@ class ScheduledTrainingRefusalTests(TemporaryProjectTest):
 
 
 def training_module():
-    spec = importlib.util.spec_from_file_location(
-        "scheduled_training_adapter_under_test", PLUGINS / "mlip-training" / "adapter.py"
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(PLUGINS / 'mlip_training' / 'local.py', 'scheduled_training_adapter_under_test')
     return module
 
 

@@ -186,7 +186,7 @@ They must not be described as:
 
   Skills do not contain the primary numerical implementation.
 
-- `plugins/` defines deterministic computational units, including:
+- `mlipflow/plugins/` defines deterministic computational units, including:
   - dependencies;
   - execution backends;
   - executable operations;

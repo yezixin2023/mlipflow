@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 import subprocess
 import sys
@@ -12,24 +12,18 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "candidate-ranking"
+PLUGIN = ROOT / "mlipflow" / "plugins" / "candidate_ranking"
 
 
 def _adapter():
     path = PLUGIN / "adapter.py"
-    spec = importlib.util.spec_from_file_location("candidate_ranking_adapter", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, 'candidate_ranking_adapter')
     return module.Adapter()
 
 
 def _ranker():
     path = PLUGIN / "rank.py"
-    spec = importlib.util.spec_from_file_location("candidate_ranking_runner", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, 'candidate_ranking_runner')
     return module
 
 

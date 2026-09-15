@@ -38,7 +38,7 @@ Issues = "https://github.com/yezixin2023/mlipflow/issues"
 Changelog = "https://github.com/yezixin2023/mlipflow/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "jsonschema>=4", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22", "dpdata>=0.2.18"]
+dev = ["build>=1", "setuptools>=77", "pytest>=7", "jsonschema>=4", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22", "dpdata>=0.2.18"]
 science = ["numpy>=1.23", "ase>=3.22", "icet>=2.0", "pandas>=1.5", "plotly>=5"]
 dft = ["pymatgen>=2024.5", "dpdata>=0.2.18", "ase>=3.22"]
 transport = [
@@ -62,13 +62,15 @@ local = [
 [project.scripts]
 mlipflow = "mlipflow.cli:main"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["mlipflow", "mlipflow.*"]
+namespaces = false
 
 [tool.setuptools.data-files]
+"share/mlipflow/examples" = ["examples/README.md"]
+"share/mlipflow/examples/high_entropy_sulfide/data" = ["examples/high_entropy_sulfide/data/*.md"]
+"share/mlipflow/examples/high_entropy_sulfide/replay" = ["examples/high_entropy_sulfide/replay/*.json", "examples/high_entropy_sulfide/replay/*.csv"]
 "share/mlipflow/schemas" = ["schemas/*.json"]
 "share/mlipflow/docs" = ["docs/*.md"]
 "share/mlipflow/docs/assets" = ["docs/assets/*.png"]
@@ -90,17 +92,6 @@ where = ["src"]
 "share/mlipflow/examples/site_templates/slurm/single-python" = ["examples/site_templates/slurm/single-python/*.example"]
 "share/mlipflow/examples/site_templates" = ["examples/site_templates/*.md", "examples/site_templates/*.yaml.example"]
 "share/mlipflow/examples/site_templates/vasp" = ["examples/site_templates/vasp/*.example"]
-"share/mlipflow/plugins/high-entropy-structure" = ["plugins/high-entropy-structure/*.py"]
-"share/mlipflow/plugins/pes-sampling" = ["plugins/pes-sampling/*.py"]
-"share/mlipflow/plugins/dft-labeling" = ["plugins/dft-labeling/*.py"]
-"share/mlipflow/plugins/mlip-training" = ["plugins/mlip-training/*.py"]
-"share/mlipflow/plugins/ase-md" = ["plugins/ase-md/*.py"]
-"share/mlipflow/plugins/lammps-md" = ["plugins/lammps-md/*.py"]
-"share/mlipflow/plugins/mlip-benchmark" = ["plugins/mlip-benchmark/*.py"]
-"share/mlipflow/plugins/ionic-transport" = ["plugins/ionic-transport/*.py"]
-"share/mlipflow/plugins/candidate-ranking" = ["plugins/candidate-ranking/*.py"]
-"share/mlipflow/plugins/electrochemical-voltage" = ["plugins/electrochemical-voltage/*.py"]
-"share/mlipflow/plugins/active-learning" = ["plugins/active-learning/*.py"]
 "share/mlipflow/agent-skills/pes-sampling" = [".agents/skills/pes-sampling/SKILL.md"]
 "share/mlipflow/agent-skills/pes-sampling/agents" = [".agents/skills/pes-sampling/agents/openai.yaml"]
 "share/mlipflow/agent-skills/dft-labeling" = [".agents/skills/dft-labeling/SKILL.md"]

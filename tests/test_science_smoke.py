@@ -3,9 +3,9 @@ from __future__ import annotations
 import math
 import unittest
 
-from mlipflow.science import (
+from mlipflow.plugins.electrochemical_voltage.science import average_intercalation_voltage
+from mlipflow.plugins.ionic_transport.manuscript import (
     arrhenius_from_diffusivities,
-    average_intercalation_voltage,
     linear_diffusion_from_msd,
     nernst_einstein_conductivity,
 )

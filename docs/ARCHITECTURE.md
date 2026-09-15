@@ -29,7 +29,7 @@ SQLite does not copy workflow nodes or dependency edges. It has no artifact inde
 
 ## Built-in capabilities
 
-`src/mlipflow/plugins.py` contains a literal `BUILTIN_CAPABILITIES` mapping. Core uses only the adapter filename, supported execution backends, operation names, approval-operation list, and a short description.
+`mlipflow/plugins/__init__.py` contains a literal `BUILTIN_CAPABILITIES` mapping. Core uses only the adapter module, supported execution backends, operation names, approval-operation list, and a short description.
 
 There is no filesystem discovery, manifest loading, semantic-version selection, plugin API version, or user-supplied plugin path. A project names a capability directly:
 
@@ -51,7 +51,7 @@ The current IDs are:
 - `mlip-training`
 - `pes-sampling`
 
-Adapters remain ordinary Python implementations with one operation resolver and four lifecycle methods where the execution path needs them:
+Adapters are ordinary importable Python implementations with one operation resolver and four lifecycle methods where the execution path needs them:
 
 - `operation(context)` resolves the current operation with the same defaults used by the adapter;
 - `validate(context)` checks scientific inputs and prerequisites;
@@ -60,6 +60,28 @@ Adapters remain ordinary Python implementations with one operation resolver and 
 - `collect(context)` returns the scientific outputs available to downstream work.
 
 Missing framework or external-program dependencies are reported by the relevant adapter while planning. `doctor` only checks global project, built-in capability, state, site, and SSH configuration.
+
+## Source organization
+
+The top-level `mlipflow` package contains all executable Python code. Core modules
+and `services` own state and execution. Built-in capabilities live in flat
+`mlipflow/plugins/<underscored_id>/` packages, each exposing `adapter.Adapter`.
+The registry imports these modules lazily with normal Python imports; it neither
+scans plugin directories nor searches installation data directories for code.
+
+Each capability has one `Adapter`, which calls operation functions directly.
+Operation modules own validation, planning and scientific completion checks;
+runners own computation. PES uses one operation dispatch table. MD restart modules
+extend the plan and verify checkpoint metadata; they do not wrap another Adapter.
+Shared helpers stay inside that capability. The sole shared model runtime lives in
+`mlipflow/plugins/model_runtime.py` and imports MLIP frameworks only on demand.
+Historical transport formulas remain isolated from formal diffusion analysis.
+
+Scheduled and standalone runners explicitly load the files distributed with their
+execution bundle. This boundary permits scientific environments without a full
+MLIPFlow installation. Source locations and remote filenames are separate: moving
+a module need not change an existing remote plan's filename or output contract.
+See [source migration](MIGRATION.md) for the old-to-new mapping.
 
 ## Commands and mutation boundaries
 

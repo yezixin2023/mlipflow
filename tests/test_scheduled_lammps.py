@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "lammps-md"
+PLUGIN = ROOT / "mlipflow" / "plugins" / "lammps_md"
 
 
 def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, name)
     return module
 
 
@@ -154,8 +151,8 @@ def _context(tmp_path: Path, framework: str, target: str, gpus: int | None = Non
     ],
 )
 def test_execute_plan_matrix(tmp_path: Path, framework: str, target: str) -> None:
-    module = _load(f"lammps_execute_{framework}_{target}", PLUGIN / "adapter_execute.py")
-    plan = module.Adapter().plan(_context(tmp_path, framework, target))
+    module = _load(f"lammps_execute_{framework}_{target}", PLUGIN / "execute.py")
+    plan = module.plan(_context(tmp_path, framework, target))
     assert plan["status"] == "READY", plan.get("diagnostics")
     scheduled = plan["scheduled_execution"]
     assert scheduled["schema_version"] == 3
@@ -180,19 +177,19 @@ def test_execute_plan_matrix(tmp_path: Path, framework: str, target: str) -> Non
 
 
 def test_cpu_rejects_gpu_allocation(tmp_path: Path) -> None:
-    module = _load("lammps_cpu_resource", PLUGIN / "adapter_execute.py")
-    plan = module.Adapter().plan(_context(tmp_path, "deepmd", "cpu", gpus=1))
+    module = _load("lammps_cpu_resource", PLUGIN / "execute.py")
+    plan = module.plan(_context(tmp_path, "deepmd", "cpu", gpus=1))
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "lammps.cpu_gpus" for item in plan["diagnostics"])
 
 
 def test_execute_accepts_resolved_project_scoped_manifest(tmp_path: Path) -> None:
-    module = _load("lammps_resolved_manifest", PLUGIN / "adapter_execute.py")
+    module = _load("lammps_resolved_manifest", PLUGIN / "execute.py")
     context = _context(tmp_path, "deepmd", "cpu")
     context["inputs"]["lammps_input_manifest"] = str(
         (tmp_path / "prepared" / "lammps-input-manifest.json").resolve()
     )
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["lammps_calculation"]["input_manifest_path"] == (
         "lammps-input-manifest.json"
@@ -200,12 +197,12 @@ def test_execute_accepts_resolved_project_scoped_manifest(tmp_path: Path) -> Non
 
 
 def test_execute_rejects_resolved_manifest_outside_project(tmp_path: Path) -> None:
-    module = _load("lammps_external_manifest", PLUGIN / "adapter_execute.py")
+    module = _load("lammps_external_manifest", PLUGIN / "execute.py")
     context = _context(tmp_path, "deepmd", "cpu")
     outside = tmp_path.parent / "outside-lammps-input-manifest.json"
     outside.write_text("{}\n", encoding="utf-8")
     context["inputs"]["lammps_input_manifest"] = str(outside.resolve())
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "lammps.project_inputs" for item in plan["diagnostics"])
 
@@ -223,23 +220,23 @@ def test_remote_runner_accepts_collected_artifact_binding() -> None:
 
 @pytest.mark.parametrize("framework", ["mace", "m3gnet"])
 def test_single_gpu_frameworks_reject_two_gpus(tmp_path: Path, framework: str) -> None:
-    module = _load(f"lammps_gpu_bound_{framework}", PLUGIN / "adapter_execute.py")
-    plan = module.Adapter().plan(_context(tmp_path, framework, "gpu", gpus=2))
+    module = _load(f"lammps_gpu_bound_{framework}", PLUGIN / "execute.py")
+    plan = module.plan(_context(tmp_path, framework, "gpu", gpus=2))
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "lammps.single_gpu" for item in plan["diagnostics"])
 
 
 def test_changed_prepared_deck_blocks_execution(tmp_path: Path) -> None:
-    module = _load("lammps_changed_deck", PLUGIN / "adapter_execute.py")
+    module = _load("lammps_changed_deck", PLUGIN / "execute.py")
     context = _context(tmp_path, "mace", "gpu")
     (tmp_path / "prepared" / "in.gpu.lammps").write_text("tampered\n", encoding="utf-8")
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "lammps.deck_portability" for item in plan["diagnostics"])
 
 
 def test_gnnp_execute_plan_binds_directory_interface_and_family(tmp_path: Path) -> None:
-    module = _load("lammps_execute_gnnp_cpu", PLUGIN / "adapter_execute.py")
+    module = _load("lammps_execute_gnnp_cpu", PLUGIN / "execute.py")
     context = _context(tmp_path, "m3gnet", "cpu")
     manifest_path = tmp_path / "prepared" / "lammps-input-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -273,7 +270,7 @@ def test_gnnp_execute_plan_binds_directory_interface_and_family(tmp_path: Path) 
     manifest["launchers"] = [cpu_launcher]
     _write_json(manifest_path, manifest)
 
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
 
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["scheduled_execution"]["template_family"] == "lammps-m3gnet-gnnp-cpu"
@@ -317,7 +314,7 @@ def test_cluster_directory_model_resolution_and_interface_replacement(tmp_path: 
 
 
 def test_prepare_plan_uses_execution_ready_wrapper(tmp_path: Path) -> None:
-    module = _load("lammps_prepare_v2_adapter", PLUGIN / "adapter_execute.py")
+    module = _load("lammps_prepare_adapter", PLUGIN / "adapter.py").Adapter()
     structure = tmp_path / "start.extxyz"
     structure.write_text(
         '1\nLattice="10 0 0 0 10 0 0 0 10" Properties=species:S:1:pos:R:3 pbc="T T T"\nLi 0 0 0\n',
@@ -362,14 +359,14 @@ def test_prepare_plan_uses_execution_ready_wrapper(tmp_path: Path) -> None:
         "parameters": {"operation": "lammps-prepare", "output_dir": "lammps-inputs"},
         "resources": {},
     }
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
     assert plan["status"] == "READY", plan.get("diagnostics")
-    assert Path(plan["argv"][1]).name == "lammps_prepare_v2.py"
+    assert Path(plan["argv"][1]).name == "lammps_prepare.py"
     assert plan["approval_summary"]["preparation_contract"] == "lammps-md-input-v2"
 
 
 def test_execution_checker_rebinds_outputs(tmp_path: Path) -> None:
-    module = _load("lammps_checker", PLUGIN / "adapter_execute.py")
+    module = _load("lammps_checker", PLUGIN / "execute.py")
     attempt = tmp_path / "attempt"
     attempt.mkdir()
     marker = "MLIPFLOW_LAMMPS_COMPLETED step=1000"
@@ -450,6 +447,6 @@ def test_execution_checker_rebinds_outputs(tmp_path: Path) -> None:
         "parameters": {"operation": "execute"},
         "execution": {"plan": {"lammps_calculation": calculation}},
     }
-    checked = module.Adapter().check(context)
+    checked = module.check(context)
     assert checked["status"] == "OK", checked.get("diagnostics")
     assert checked["metrics"]["steps_completed"] == 1000.0

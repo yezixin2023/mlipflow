@@ -5,7 +5,7 @@ description: Prepare, submit, verify, and restart portable LAMMPS MLIP workflows
 
 # LAMMPS MLIP molecular dynamics
 
-Use `plugins/lammps-md` through MLIPFlow. Keep input generation and numerical execution
+Use `mlipflow/plugins/lammps_md` through MLIPFlow. Keep input generation and numerical execution
 as separate operations; the Skill reviews MD intent while the plugin owns deck
 generation, execution, restart, checking, and collection.
 

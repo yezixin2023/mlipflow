@@ -26,7 +26,7 @@ from .helpers import project_config, write_json
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "plugins"
+PLUGINS = ROOT / "mlipflow" / "plugins"
 MPI_SUBMIT_TEMPLATE = """#!/bin/bash
 # {{PROJECT_ID}} {{NODE_ID}} attempt {{ATTEMPT}}
 #SBATCH --ntasks={{CPUS}}
@@ -347,14 +347,9 @@ class RealVasprunParsingTests(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        import importlib.util
+        from tests.helpers import load_module
 
-        spec = importlib.util.spec_from_file_location(
-            "dft_labeling_probe", PLUGINS / "dft-labeling" / "adapter.py"
-        )
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = load_module(PLUGINS / 'dft_labeling' / 'label.py', 'dft_labeling_probe')
         self.parse = module._parse_scheduled_vasprun
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
@@ -392,14 +387,9 @@ class RealVasprunParsingTests(unittest.TestCase):
         file twice rejects that, so the cross-format comparison has its own bound.
         """
 
-        import importlib.util
+        from tests.helpers import load_module
 
-        spec = importlib.util.spec_from_file_location(
-            "dft_labeling_lattice", PLUGINS / "dft-labeling" / "adapter.py"
-        )
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = load_module(PLUGINS / 'dft_labeling' / 'label.py', 'dft_labeling_lattice')
 
         contcar = [[-1.7141491381523322, 1.7141491381523322, 1.7141491381523322]]
         vasprun = [[-1.71414914, 1.71414914, 1.71414914]]
@@ -739,6 +729,40 @@ class ScheduledDftTests(unittest.TestCase):
             self.assertTrue((attempt / "dft-labeling-result.json").is_file())
             self.assertTrue((attempt / "labels.json").is_file())
             self.assertFalse((attempt / "calc-0001" / "POTCAR").is_file())
+
+    def test_collection_survives_retired_local_staging_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project, _, _, _ = self._submit(root)
+            attempt = root / ".mlipflow/runs/label-li/attempt-1"
+            approved_path = attempt / "approved-plan.json"
+            approved = json.loads(approved_path.read_text())
+            staged = approved["adapter_plan"]["scheduled_execution"]["staged_files"]
+            self.assertTrue(staged)
+            for item in staged:
+                item["source"] = str(root / "retired-checkout" / Path(item["source"]).name)
+                self.assertFalse(Path(item["source"]).exists())
+            write_json(approved_path, approved)
+            pinned_bytes = approved_path.read_bytes()
+
+            remote = root / "fake-remote"
+            write_vasp_outputs(remote)
+            write_completion(remote, project.project_id, "label-li", 1)
+            inspect, fetch = self._inventory_hooks(remote)
+            with patch(
+                "mlipflow.services.SshSlurmBackend.status",
+                return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.inspect_file",
+                autospec=True, side_effect=inspect,
+            ), patch(
+                "mlipflow.services.SshSlurmBackend.fetch_from",
+                autospec=True, side_effect=fetch,
+            ):
+                finished = advance(project)
+            self.assertEqual("OK", finished["changed"][0]["state"])
+            self.assertTrue((attempt / "labels.json").is_file())
+            self.assertEqual(pinned_bytes, approved_path.read_bytes())
 
     def test_scheduler_completed_but_scientific_check_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

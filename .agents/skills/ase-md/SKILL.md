@@ -5,7 +5,7 @@ description: Supervise scheduled ASE molecular dynamics with explicit DeepMD, M3
 
 # ASE molecular dynamics
 
-Use `plugins/ase-md` through MLIPFlow for the `run` operation. The Skill chooses and
+Use `mlipflow/plugins/ase_md` through MLIPFlow for the `run` operation. The Skill chooses and
 reviews MD physics; calculator construction, integration, restart, checking, and
 collection belong to the plugin and ASE.
 

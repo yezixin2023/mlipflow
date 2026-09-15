@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 import math
 import subprocess
@@ -15,16 +15,12 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FRESH_PATH = ROOT / "plugins" / "mlip-benchmark" / "fresh_benchmark.py"
-ADAPTER_PATH = ROOT / "plugins" / "mlip-benchmark" / "adapter.py"
+FRESH_PATH = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "fresh_benchmark.py"
+ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "adapter.py"
 
 
 def _load(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, name)
     return module
 
 

@@ -6,7 +6,7 @@ validation, argv planning, and collection of small explicit JSON fixtures.
 
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 import tempfile
 import unittest
@@ -17,12 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_adapter(plugin_id: str):
-    path = ROOT / "plugins" / plugin_id / "adapter.py"
-    spec = importlib.util.spec_from_file_location(f"test_{plugin_id.replace('-', '_')}", path)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    path = ROOT / "mlipflow" / "plugins" / plugin_id.replace("-", "_") / "adapter.py"
+    module = load_module(path, f"test_{plugin_id.replace('-', '_')}")
     return module.Adapter()
 
 

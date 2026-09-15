@@ -46,3 +46,23 @@ def snapshot(root: Path) -> dict[str, bytes | None]:
         relative = path.relative_to(root).as_posix()
         result[relative] = path.read_bytes() if path.is_file() else None
     return result
+
+
+def load_module(path: Path, name: str = "test_script"):
+    """Import installed source normally; load isolated script fixtures by path."""
+    import importlib
+    import importlib.util
+    import sys
+
+    package = Path(__file__).resolve().parents[1] / "mlipflow"
+    try:
+        relative = path.resolve().relative_to(package)
+    except ValueError:
+        spec = importlib.util.spec_from_file_location(name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load test script: {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+        return module
+    return importlib.import_module("mlipflow." + ".".join(relative.with_suffix("").parts))

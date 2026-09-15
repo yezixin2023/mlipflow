@@ -5,7 +5,7 @@ description: Supervise MLIPFlow energy, force, and stress benchmarks and model r
 
 # MLIP benchmark
 
-Use `plugins/mlip-benchmark` through MLIPFlow. The Skill selects the evidence mode and
+Use `mlipflow/plugins/mlip_benchmark` through MLIPFlow. The Skill selects the evidence mode and
 guards comparability and claims; the Adapter and runner own inference, metrics,
 normalization, ranking, and schemas.
 

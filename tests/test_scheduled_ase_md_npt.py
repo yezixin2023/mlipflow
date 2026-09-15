@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import csv
-import importlib.util
+from tests.helpers import load_module
 import json
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "ase-md"
+PLUGIN = ROOT / "mlipflow" / "plugins" / "ase_md"
 
 
 def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, name)
     return module
 
 
@@ -102,8 +99,8 @@ def _context(tmp_path: Path, calculator: str) -> dict:
 
 @pytest.mark.parametrize("calculator", ["deepmd", "m3gnet", "chgnet", "mace"])
 def test_npt_scheduler_matrix_is_ready(tmp_path: Path, calculator: str) -> None:
-    module = _load("ase_md_npt_adapter", PLUGIN / "adapter_npt.py")
-    plan = module.Adapter().plan(_context(tmp_path, calculator))
+    module = _load("ase_md_npt_adapter", PLUGIN / "npt.py")
+    plan = module.plan(_context(tmp_path, calculator))
     assert plan["status"] == "READY", plan.get("diagnostics")
     settings = plan["md_parameters"]
     assert settings["calculator"] == calculator
@@ -118,38 +115,39 @@ def test_npt_scheduler_matrix_is_ready(tmp_path: Path, calculator: str) -> None:
     staged = {
         item["remote_name"] for item in plan["scheduled_execution"]["staged_files"]
     }
-    assert "adapter-legacy.py" in staged
+    assert {"ase_md.py", "ase_md_cluster.py"} <= staged
+    assert not any(name.startswith("adapter-") for name in staged)
 
 
 def test_npt_rejects_langevin_friction(tmp_path: Path) -> None:
-    module = _load("ase_md_npt_adapter_friction", PLUGIN / "adapter_npt.py")
+    module = _load("ase_md_npt_adapter_friction", PLUGIN / "npt.py")
     context = _context(tmp_path, "mace")
     context["parameters"]["friction_per_fs"] = 0.01
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "ase_md.npt_friction" for item in plan["diagnostics"])
 
 
 def test_npt_rejects_fix_com_constraint(tmp_path: Path) -> None:
-    module = _load("ase_md_npt_adapter_constraint", PLUGIN / "adapter_npt.py")
+    module = _load("ase_md_npt_adapter_constraint", PLUGIN / "npt.py")
     context = _context(tmp_path, "deepmd")
     context["parameters"]["fix_com"] = True
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "ase_md.npt_constraints" for item in plan["diagnostics"])
 
 
 def test_npt_requires_explicit_damping_times(tmp_path: Path) -> None:
-    module = _load("ase_md_npt_adapter_damping", PLUGIN / "adapter_npt.py")
+    module = _load("ase_md_npt_adapter_damping", PLUGIN / "npt.py")
     context = _context(tmp_path, "m3gnet")
     context["parameters"].pop("barostat_damping_fs")
-    plan = module.Adapter().plan(context)
+    plan = module.plan(context)
     assert plan["status"] == "BLOCKED"
     assert any(item["code"] == "ase_md.barostat_damping_fs" for item in plan["diagnostics"])
 
 
 def test_npt_checker_verifies_pressure_cell_schedule_and_outputs(tmp_path: Path) -> None:
-    module = _load("ase_md_npt_checker", PLUGIN / "adapter_npt.py")
+    module = _load("ase_md_npt_checker", PLUGIN / "npt.py")
     attempt = tmp_path / "attempt"
     attempt.mkdir()
     settings = {
@@ -286,7 +284,7 @@ def test_npt_checker_verifies_pressure_cell_schedule_and_outputs(tmp_path: Path)
         "attempt_dir": str(attempt),
         "execution": {"plan": {"md_parameters": settings}},
     }
-    checked = module.Adapter().check(context)
+    checked = module.check(context)
     assert checked["status"] == "OK", checked.get("diagnostics")
     assert checked["metrics"]["final_pressure_GPa"] == 0.1
     assert checked["metrics"]["final_volume_A3"] == 1000.0

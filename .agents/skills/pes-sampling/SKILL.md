@@ -5,7 +5,7 @@ description: Supervise MLIPFlow potential-energy-surface sampling with local MAM
 
 # Potential-energy-surface sampling
 
-Use `plugins/pes-sampling` through MLIPFlow. The Skill chooses the sampling intent and
+Use `mlipflow/plugins/pes_sampling` through MLIPFlow. The Skill chooses the sampling intent and
 guards scientific claims; selection, conversion, LASP execution, normalization, and
 checking belong to the plugin.
 

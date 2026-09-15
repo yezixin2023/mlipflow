@@ -5,7 +5,7 @@ description: Supervise deterministic single-metric ranking and top-k selection f
 
 # Candidate ranking
 
-Use `plugins/candidate-ranking` through MLIPFlow for `rank-candidates`. This Skill
+Use `mlipflow/plugins/candidate_ranking` through MLIPFlow for `rank-candidates`. This Skill
 selects the ranking intent; the plugin owns validation, sorting, tie handling, checking,
 and collection.
 

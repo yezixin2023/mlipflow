@@ -5,7 +5,7 @@ description: Supervise local MLIPFlow formal ionic-transport analysis through py
 
 # Ionic transport
 
-Use `plugins/ionic-transport` through MLIPFlow. The Skill selects the analysis and
+Use `mlipflow/plugins/ionic_transport` through MLIPFlow. The Skill selects the analysis and
 guards scientific interpretation; it does not calculate diffusion or conductivity.
 
 ## Route the request

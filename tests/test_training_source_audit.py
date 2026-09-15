@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 import tempfile
 import unittest
@@ -10,14 +10,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-AUDITOR = ROOT / "plugins" / "mlip-training" / "audit_sources.py"
+AUDITOR = ROOT / "mlipflow" / "plugins" / "mlip_training" / "audit_sources.py"
 
 
 def _module():
-    spec = importlib.util.spec_from_file_location("training_source_auditor", AUDITOR)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(AUDITOR, 'training_source_auditor')
     return module
 
 

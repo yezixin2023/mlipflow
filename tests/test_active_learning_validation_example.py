@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ast
-import importlib.util
+from tests.helpers import load_module
 import json
 import re
 from pathlib import Path
@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from mlipflow.science.active_learning import CANDIDATE_CONTRACT
+from mlipflow.plugins.active_learning.science import CANDIDATE_CONTRACT
 
 
 def test_validation_helper_uses_the_plugin_candidate_contract() -> None:
@@ -19,10 +19,7 @@ def test_validation_helper_uses_the_plugin_candidate_contract() -> None:
         / "active_learning_validation"
         / "prepare_round_inputs.py"
     )
-    spec = importlib.util.spec_from_file_location("active_learning_validation_helper", helper)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(helper, 'active_learning_validation_helper')
 
     assert module.ACTIVE_CANDIDATE_CONTRACT == CANDIDATE_CONTRACT
 
@@ -74,10 +71,7 @@ def test_assessment_helper_does_not_fold_test_records_into_training_pool(
         / "active_learning_validation"
         / "prepare_round_inputs.py"
     )
-    spec = importlib.util.spec_from_file_location("active_learning_assessment_helper", helper)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(helper, 'active_learning_assessment_helper')
 
     def write(name: str, value: object) -> str:
         path = tmp_path / name
@@ -159,10 +153,7 @@ def test_assessment_helper_records_partial_query_labeling(tmp_path: Path) -> Non
         / "active_learning_validation"
         / "prepare_round_inputs.py"
     )
-    spec = importlib.util.spec_from_file_location("active_learning_partial_helper", helper)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(helper, 'active_learning_partial_helper')
 
     def write(name: str, value: object) -> str:
         path = tmp_path / name
@@ -280,10 +271,7 @@ def test_evaluation_split_keeps_canonical_test_records_excluded() -> None:
         / "active_learning_validation"
         / "prepare_round_inputs.py"
     )
-    spec = importlib.util.spec_from_file_location("active_learning_split_helper", helper)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(helper, 'active_learning_split_helper')
 
     result = module._active_learning_dataset_split(
         "bootstrap-dataset",
@@ -319,10 +307,7 @@ def test_prediction_split_rebind_preserves_numerical_evidence(tmp_path: Path) ->
         / "active_learning_validation"
         / "prepare_round_inputs.py"
     )
-    spec = importlib.util.spec_from_file_location("active_learning_rebind_helper", helper)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(helper, 'active_learning_rebind_helper')
 
     source = {
         "dataset_split": {
@@ -372,10 +357,7 @@ def test_direct_selection_replay_preserves_exact_candidate_ids(tmp_path: Path) -
         / "active_learning_validation"
         / "prepare_round_inputs.py"
     )
-    spec = importlib.util.spec_from_file_location("active_learning_direct_helper", helper)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(helper, 'active_learning_direct_helper')
 
     source_path = tmp_path / "selection.json"
     output_path = tmp_path / "direct.json"
@@ -410,10 +392,7 @@ def test_explicit_spot_training_policy_defaults_to_excluded(tmp_path: Path) -> N
         / "active_learning_validation"
         / "prepare_round_inputs.py"
     )
-    spec = importlib.util.spec_from_file_location("active_learning_policy_helper", helper)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(helper, 'active_learning_policy_helper')
 
     policy_path = tmp_path / "policy.json"
     selection_path = tmp_path / "selection.json"
@@ -445,10 +424,7 @@ def test_audit_handoff_uses_conservative_committee_maximum(tmp_path: Path) -> No
         / "active_learning_validation"
         / "prepare_round_inputs.py"
     )
-    spec = importlib.util.spec_from_file_location("active_learning_audit_helper", helper)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(helper, 'active_learning_audit_helper')
 
     metric_names = (
         "energy_mae",
@@ -505,12 +481,7 @@ def test_split_seed_review_preserves_prior_training_and_new_queries(
     helper_path = (
         root / "examples" / "active_learning_validation" / "prepare_round_inputs.py"
     )
-    spec = importlib.util.spec_from_file_location(
-        "active_learning_split_seed_helper", helper_path
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(helper_path, 'active_learning_split_seed_helper')
 
     from tests.test_dft_dataset_handoff import _canonical, _contract
 
@@ -533,7 +504,7 @@ def test_split_seed_review_preserves_prior_training_and_new_queries(
     output = tmp_path / "review.json"
     module.split_seed_review(
         SimpleNamespace(
-            dataset_contract=str(root / "plugins/dft-labeling/dataset_contract.py"),
+            dataset_contract=str(root / "mlipflow/plugins/dft_labeling/dataset_contract.py"),
             canonical_source=[
                 write("initial.json", initial),
                 write("query-400k.json", query_400k),
@@ -584,10 +555,7 @@ def test_model_index_records_shared_training_inputs(tmp_path: Path) -> None:
         / "active_learning_validation"
         / "prepare_round_inputs.py"
     )
-    spec = importlib.util.spec_from_file_location("active_learning_model_index_helper", helper)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(helper, 'active_learning_model_index_helper')
 
     from tests.test_dft_dataset_handoff import _canonical
 
@@ -596,8 +564,7 @@ def test_model_index_records_shared_training_inputs(tmp_path: Path) -> None:
     canonical_path.write_text(json.dumps(canonical), encoding="utf-8")
     dataset_contract = (
         Path(__file__).resolve().parents[1]
-        / "plugins"
-        / "dft-labeling"
+        / "mlipflow" / "plugins" / "dft_labeling"
         / "dataset_contract.py"
     )
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 import tempfile
 import unittest
@@ -11,15 +11,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tests" / "fixtures" / "mlip_benchmark_historical_audit.json"
-WRAPPER = ROOT / "plugins" / "mlip-benchmark" / "benchmark_wrapper.py"
+WRAPPER = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "benchmark_wrapper.py"
 
 
 def _wrapper():
-    spec = importlib.util.spec_from_file_location("historical_benchmark_wrapper", WRAPPER)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {WRAPPER}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(WRAPPER, 'historical_benchmark_wrapper')
     return module
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 import subprocess
 import tempfile
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from mlipflow.science import active_learning as al
+from mlipflow.plugins.active_learning import science as al
 from mlipflow.config import load_project
 from mlipflow.services import (
     advance,
@@ -23,14 +23,11 @@ from mlipflow.services import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ADAPTER_PATH = ROOT / "plugins" / "active-learning" / "adapter.py"
+ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "active_learning" / "adapter.py"
 
 
 def load_adapter():
-    spec = importlib.util.spec_from_file_location("test_active_learning_adapter", ADAPTER_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(ADAPTER_PATH, 'test_active_learning_adapter')
     return module.Adapter()
 
 

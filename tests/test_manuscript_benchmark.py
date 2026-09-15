@@ -7,7 +7,7 @@ CHGNet and M3GNet scripts.  No model, network, or scheduler is used.
 from __future__ import annotations
 
 import csv
-import importlib.util
+from tests.helpers import load_module
 import json
 import math
 import subprocess
@@ -19,25 +19,17 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WRAPPER_PATH = ROOT / "plugins" / "mlip-benchmark" / "benchmark_wrapper.py"
-ADAPTER_PATH = ROOT / "plugins" / "mlip-benchmark" / "adapter.py"
+WRAPPER_PATH = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "benchmark_wrapper.py"
+ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "adapter.py"
 
 
 def load_wrapper():
-    spec = importlib.util.spec_from_file_location("test_manuscript_benchmark_wrapper", WRAPPER_PATH)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {WRAPPER_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(WRAPPER_PATH, 'test_manuscript_benchmark_wrapper')
     return module
 
 
 def load_adapter():
-    spec = importlib.util.spec_from_file_location("test_manuscript_benchmark_adapter", ADAPTER_PATH)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {ADAPTER_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(ADAPTER_PATH, 'test_manuscript_benchmark_adapter')
     return module.Adapter()
 
 

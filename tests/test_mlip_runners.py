@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import pytest
 
-PLUGIN = Path(__file__).resolve().parents[1] / "plugins" / "mlip-training"
+PLUGIN = Path(__file__).resolve().parents[1] / "mlipflow" / "plugins" / "mlip_training"
 sys.path.insert(0, str(PLUGIN))
 import mlip_chgnet  # noqa: E402
 import mlip_deepmd  # noqa: E402

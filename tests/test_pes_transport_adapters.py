@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import importlib.metadata
-import importlib.util
+from tests.helpers import load_module
 import json
 import math
 import subprocess
@@ -20,14 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_adapter(plugin_id: str) -> Any:
-    path = ROOT / "plugins" / plugin_id / "adapter.py"
-    spec = importlib.util.spec_from_file_location(
-        "test_%s_adapter" % plugin_id.replace("-", "_"), path
-    )
-    if spec is None or spec.loader is None:
-        raise AssertionError("cannot load %s" % path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    path = ROOT / "mlipflow" / "plugins" / plugin_id.replace("-", "_") / "adapter.py"
+    module = load_module(path, 'test_%s_adapter' % plugin_id.replace('-', '_'))
     return module.Adapter()
 
 
@@ -90,7 +84,7 @@ class DirectAdapterTests(unittest.TestCase):
         self.assertTrue(all(isinstance(value, str) for value in plan["argv"]))
         self.assertEqual("python3", plan["argv"][0])
         self.assertEqual(
-            str(ROOT / "plugins" / "pes-sampling" / "direct_select.py"),
+            str(ROOT / "mlipflow" / "plugins" / "pes_sampling" / "direct_select.py"),
             plan["argv"][1],
         )
         self.assertIn("--no-recursive", plan["argv"])
@@ -101,7 +95,7 @@ class DirectAdapterTests(unittest.TestCase):
             plan["assumptions"]["seed_control"],
         )
         self.assertEqual(
-            str(ROOT / "plugins" / "pes-sampling" / "direct_select.py"),
+            str(ROOT / "mlipflow" / "plugins" / "pes_sampling" / "direct_select.py"),
             plan["input_paths"]["direct_wrapper"],
         )
 
@@ -279,7 +273,7 @@ class IonicTransportAdapterTests(unittest.TestCase):
         self.assertFalse(plan["shell"])
         self.assertIsInstance(plan["argv"], list)
         self.assertEqual(
-            ROOT / "plugins" / "ionic-transport" / "ionic_conductivity.py",
+            ROOT / "mlipflow" / "plugins" / "ionic_transport" / "ionic_conductivity.py",
             Path(plan["argv"][1]),
         )
         self.assertNotIn("--fit-start-ps", plan["argv"])
@@ -371,14 +365,9 @@ class IonicTransportAdapterTests(unittest.TestCase):
 
     def test_missing_pymatgen_diffusion_dependency_blocks_formal_plan(self) -> None:
         context = self.context()
-        with mock.patch.dict(
-            self.adapter.validate.__globals__,
-            {
-                "_formal_runtime_probe": lambda: (
-                    None,
-                    "Formal ionic transport requires pymatgen-analysis-diffusion",
-                )
-            },
+        with mock.patch(
+            "mlipflow.plugins.ionic_transport.contracts._formal_runtime_probe",
+            return_value=(None, "Formal ionic transport requires pymatgen-analysis-diffusion"),
         ):
             plan = self.adapter.plan(context)
         self.assertEqual("BLOCKED", plan["status"])

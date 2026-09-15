@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 import subprocess
 import sys
@@ -13,7 +13,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = ROOT / "plugins" / "pes-sampling"
+PLUGIN_ROOT = ROOT / "mlipflow" / "plugins" / "pes_sampling"
 ADAPTER_PATH = PLUGIN_ROOT / "adapter.py"
 WRAPPER_PATH = PLUGIN_ROOT / "lasp_ssw.py"
 UNKNOWN_SEED = "HISTORICAL_PARAMETER_UNKNOWN"
@@ -22,11 +22,7 @@ PYTHON_EXECUTABLE = str(Path(sys.executable).resolve())
 
 
 def load_adapter() -> Any:
-    spec = importlib.util.spec_from_file_location("test_lasp_ssw_adapter", ADAPTER_PATH)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"cannot load {ADAPTER_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(ADAPTER_PATH, 'test_lasp_ssw_adapter')
     return module.Adapter()
 
 

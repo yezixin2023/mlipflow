@@ -612,7 +612,7 @@ def model_index(args: argparse.Namespace) -> None:
 
 def direct_input(args: argparse.Namespace) -> None:
     from ase.io import read, write
-    from mlipflow.science import active_learning
+    from mlipflow.plugins.active_learning import science as active_learning
 
     evaluation_value = _read_json(Path(args.committee_evaluation).resolve())
     policy = _read_json(Path(args.policy).resolve())
@@ -1043,7 +1043,7 @@ def _audit_handoff(
 
 
 def assessment_inputs(args: argparse.Namespace) -> None:
-    from mlipflow.science.active_learning import committee_mean_force_error
+    from mlipflow.plugins.active_learning.science import committee_mean_force_error
 
     evaluation_value = _read_json(Path(args.committee_evaluation).resolve())
     predictions = _read_json(Path(args.committee_predictions).resolve())

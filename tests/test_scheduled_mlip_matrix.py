@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import io
 import json
 import sys
@@ -12,14 +12,11 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "mlip-training"
+PLUGIN = ROOT / "mlipflow" / "plugins" / "mlip_training"
 
 
 def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, name)
     return module
 
 
@@ -86,7 +83,7 @@ def _context(tmp_path: Path, framework: str, operation: str) -> dict:
 def test_generic_scheduler_matrix_is_ready(
     tmp_path: Path, framework: str, operation: str
 ) -> None:
-    module = _load("mlip_training_cluster_adapter", PLUGIN / "adapter_cluster.py")
+    module = _load("mlip_training_cluster_adapter", PLUGIN / "adapter.py")
     plan = module.Adapter().plan(_context(tmp_path, framework, operation))
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["scheduler_contract"] == "bundled-mlip-v1"
@@ -111,7 +108,7 @@ def test_generic_scheduler_matrix_is_ready(
 
 
 def test_generic_scheduler_stages_the_selected_project_file(tmp_path: Path) -> None:
-    module = _load("mlip_training_selected_project", PLUGIN / "adapter_cluster.py")
+    module = _load("mlip_training_selected_project", PLUGIN / "adapter.py")
     context = _context(tmp_path, "chgnet", "finetune")
     selected = tmp_path / "continuation.project.json"
     _write_json(
@@ -207,7 +204,7 @@ def test_cluster_runner_records_resolved_dataset_path(tmp_path: Path, monkeypatc
 
 
 def test_chgnet_scheduled_float64_is_rejected(tmp_path: Path) -> None:
-    module = _load("mlip_training_cluster_adapter_bad", PLUGIN / "adapter_cluster.py")
+    module = _load("mlip_training_cluster_adapter_bad", PLUGIN / "adapter.py")
     context = _context(tmp_path, "chgnet", "train")
     context["parameters"]["precision"] = "float64"
     plan = module.Adapter().plan(context)

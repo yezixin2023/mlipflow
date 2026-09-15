@@ -1,7 +1,7 @@
 """Lightweight contract tests for scheduled LASP stochastic-surface-walking."""
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import json
 import shutil
 import tempfile
@@ -17,7 +17,7 @@ from .helpers import project_config, write_json
 from .test_scheduled_dft import FakeTemplateLibrary, write_site
 
 ROOT = Path(__file__).resolve().parents[1]
-PES = ROOT / "plugins" / "pes-sampling"
+PES = ROOT / "mlipflow" / "plugins" / "pes_sampling"
 ARC_HEADER = "!BIOSYM archive 2\nPBC=ON\n"
 
 
@@ -134,19 +134,13 @@ def build_project(root: Path) -> Path:
 
 def load_remote_runner():
     path = PES / "lasp_cluster.py"
-    spec = importlib.util.spec_from_file_location("scheduled_lasp_remote_test", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, 'scheduled_lasp_remote_test')
     return module
 
 
 def load_cluster_adapter():
-    path = PES / "adapter_cluster.py"
-    spec = importlib.util.spec_from_file_location("scheduled_lasp_adapter_test", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    path = PES / "adapter.py"
+    module = load_module(path, 'scheduled_lasp_adapter_test')
     return module
 
 
@@ -206,7 +200,7 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         reported["reference_path"] = "/remote/input/pseudopotentials.json"
         reported["manifest_path"] = "/remote/input/lasp-input-manifest.json"
         reported["potcar_path"] = "/remote/input/POTCAR"
-        adapter = load_cluster_adapter()
+        from mlipflow.plugins.pes_sampling import scheduled as adapter
         self.assertEqual(
             adapter._pseudopotential_settings(approved),
             adapter._pseudopotential_settings(reported),

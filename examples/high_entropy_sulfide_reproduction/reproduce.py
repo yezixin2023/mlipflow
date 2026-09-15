@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import importlib.util
 import json
 import math
 import os
@@ -33,18 +32,36 @@ REPORT_OUTPUTS = (
     "manuscript_reproduction_summary.json",
     "manuscript_reproduction_summary.md",
 )
-BENCHMARK_WRAPPER_LOCATOR = "plugins/mlip-benchmark/benchmark_wrapper.py"
-BENCHMARK_NORMALIZATION_LOCATOR = "plugins/mlip-benchmark/benchmark_normalization.py"
-MODEL_RUNTIME_LOCATOR = "src/mlipflow/science/model_runtime.py"
-BENCHMARK_ADAPTER_LOCATOR = "plugins/mlip-benchmark/adapter.py"
+BENCHMARK_WRAPPER_LOCATOR = "mlipflow/plugins/mlip_benchmark/benchmark_wrapper.py"
+BENCHMARK_NORMALIZATION_LOCATOR = "mlipflow/plugins/mlip_benchmark/benchmark_normalization.py"
+MODEL_RUNTIME_LOCATOR = "mlipflow/plugins/model_runtime.py"
+BENCHMARK_ADAPTER_LOCATOR = "mlipflow/plugins/mlip_benchmark/adapter.py"
 LEGACY_RANKING_IMPLEMENTATION = (
     "plugins/composition-screening/screen.py",
     "plugins/composition-screening/normalize_legacy.py",
     "plugins/composition-screening/adapter.py",
     "plugins/composition-screening/plugin.yaml",
 )
-CURRENT_RANKING_ADAPTER_LOCATOR = "plugins/candidate-ranking/adapter.py"
-CURRENT_RANKER_LOCATOR = "plugins/candidate-ranking/rank.py"
+CURRENT_RANKING_ADAPTER_LOCATOR = "mlipflow/plugins/candidate_ranking/adapter.py"
+CURRENT_RANKER_LOCATOR = "mlipflow/plugins/candidate_ranking/rank.py"
+
+
+# Historical evidence stores the source names from its original revision.
+# Resolve those names without rewriting the evidence or changing its provenance.
+SOURCE_RELOCATIONS = {
+    "plugins/ionic-transport/adapter.py": "mlipflow/plugins/ionic_transport/manuscript.py",
+    "plugins/mlip-benchmark/benchmark_wrapper.py": BENCHMARK_WRAPPER_LOCATOR,
+    "plugins/mlip-benchmark/benchmark_normalization.py": BENCHMARK_NORMALIZATION_LOCATOR,
+    "plugins/mlip-benchmark/adapter.py": BENCHMARK_ADAPTER_LOCATOR,
+    "src/mlipflow/science/model_runtime.py": MODEL_RUNTIME_LOCATOR,
+}
+
+
+def _relocated_source_bytes(payload: bytes) -> bytes:
+    """Compare historical reports while allowing only known source relocations."""
+    for old, new in SOURCE_RELOCATIONS.items():
+        payload = payload.replace(old.encode("utf-8"), new.encode("utf-8"))
+    return payload
 
 
 class ReproductionEvidenceError(ValueError):
@@ -65,7 +82,7 @@ def _repository_file(repository_root: Path, locator: Any, label: str) -> Path:
 
     if not isinstance(locator, str) or not locator:
         raise ReproductionEvidenceError("{} locator is missing".format(label))
-    relative = Path(locator)
+    relative = Path(SOURCE_RELOCATIONS.get(locator, locator))
     if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
         raise ReproductionEvidenceError("{} locator is not portable: {}".format(label, locator))
     repository_root = repository_root.resolve()
@@ -472,13 +489,10 @@ def _verify_screening_evidence(
         CURRENT_RANKER_LOCATOR,
         "current candidate-ranking implementation",
     )
-    ranker_spec = importlib.util.spec_from_file_location(
-        "mlipflow_manuscript_candidate_ranking_compatibility", ranker_path
-    )
-    if ranker_spec is None or ranker_spec.loader is None:
-        raise ReproductionEvidenceError("cannot load current candidate-ranking implementation")
-    ranker = importlib.util.module_from_spec(ranker_spec)
-    ranker_spec.loader.exec_module(ranker)
+    from mlipflow.plugins.candidate_ranking import rank as ranker
+
+    if Path(ranker.__file__).read_bytes() != ranker_path.read_bytes():
+        raise ReproductionEvidenceError("candidate-ranking source differs from installed package")
     compatibility_result = ranker.build_result(
         {
             "schema_version": 1,
@@ -679,12 +693,11 @@ def _verify_screening_evidence(
 
 
 def _load_benchmark_wrapper(path: Path) -> Any:
-    spec = importlib.util.spec_from_file_location("mlipflow_manuscript_benchmark_wrapper", path)
-    if spec is None or spec.loader is None:
-        raise ReproductionEvidenceError("cannot load benchmark wrapper: {}".format(path))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from mlipflow.plugins.mlip_benchmark import benchmark_wrapper
+
+    if Path(benchmark_wrapper.__file__).read_bytes() != path.read_bytes():
+        raise ReproductionEvidenceError("benchmark wrapper differs from installed package")
+    return benchmark_wrapper
 
 
 def _normalize_to_temporary(root: Path, wrapper_path: Path, temporary: Path) -> Dict[str, Path]:
@@ -1120,7 +1133,7 @@ def reproduce(
         raise ReproductionEvidenceError("not a reproduction example root: {}".format(root))
     if benchmark_wrapper_path is None:
         benchmark_wrapper_path = (
-            root.parents[1] / "plugins" / "mlip-benchmark" / "benchmark_wrapper.py"
+            root.parents[1] / "mlipflow" / "plugins" / "mlip_benchmark" / "benchmark_wrapper.py"
         )
     benchmark_wrapper_path = Path(benchmark_wrapper_path).resolve()
     repository_root = _repository_root_from_benchmark_wrapper(benchmark_wrapper_path)
@@ -1162,7 +1175,7 @@ def reproduce(
             for path, payload in expected.items():
                 if not path.is_file():
                     raise ReproductionEvidenceError("missing generated artifact: {}".format(path))
-                if path.read_bytes() != payload:
+                if _relocated_source_bytes(path.read_bytes()) != _relocated_source_bytes(payload):
                     raise ReproductionEvidenceError(
                         "generated artifact drift; run reproduce.py --write: {}".format(path)
                     )
@@ -1182,7 +1195,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--benchmark-wrapper",
         type=Path,
-        help="path to plugins/mlip-benchmark/benchmark_wrapper.py",
+        help="path to mlipflow/plugins/mlip_benchmark/benchmark_wrapper.py",
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="verify committed outputs (default)")

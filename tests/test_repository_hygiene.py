@@ -12,6 +12,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def tracked_files() -> list[Path]:
+    """Inspect public source files without scanning ignored research workspaces."""
+    output = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT, text=True)
+    return [ROOT / name for name in output.split("\0") if name and (ROOT / name).is_file()]
+
+
 def declared_agent_skill_files() -> dict[str, set[Path]]:
     """Return every source file named by an agent-skill data-files declaration."""
 
@@ -85,13 +91,6 @@ class RepositoryHygieneTests(unittest.TestCase):
                 )
 
         publishable: set[str] = set()
-        for plugin_dir in (ROOT / "plugins").iterdir():
-            if plugin_dir.is_dir():
-                publishable.update(
-                    path.relative_to(ROOT).as_posix()
-                    for path in plugin_dir.iterdir()
-                    if path.is_file() and path.suffix in {".py", ".yaml"}
-                )
         for directory, suffixes in (
             (ROOT / "schemas", {".json"}),
             (ROOT / ".agents" / "skills", {".md", ".yaml"}),
@@ -137,19 +136,14 @@ class RepositoryHygieneTests(unittest.TestCase):
             )
 
     def test_no_finder_metadata(self) -> None:
-        found = {
-            path.relative_to(ROOT).as_posix()
-            for path in ROOT.rglob(".DS_Store")
-            if path.is_file()
-        }
+        tracked = subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True)
+        found = {path for path in tracked.splitlines() if Path(path).name == ".DS_Store"}
         self.assertEqual(set(), found)
 
     def test_no_large_or_proprietary_artifacts(self) -> None:
         forbidden_names = {"POTCAR", "WAVECAR", "CHGCAR", "OUTCAR", "vasprun.xml"}
         forbidden_suffixes = {".model", ".pt", ".pth", ".pb", ".ckpt", ".traj", ".zip"}
-        for path in ROOT.rglob("*"):
-            if not path.is_file() or any(part.startswith(".") and part != ".agents" for part in path.parts):
-                continue
+        for path in tracked_files():
             with self.subTest(path=path.relative_to(ROOT)):
                 self.assertNotIn(path.name, forbidden_names)
                 self.assertNotIn(path.suffix, forbidden_suffixes)
@@ -163,7 +157,7 @@ class RepositoryHygieneTests(unittest.TestCase):
             r"|IdentityFile\s+|hfeshell|lihr1008",
             re.I,
         )
-        for path in ROOT.rglob("*"):
+        for path in tracked_files():
             if (
                 not path.is_file()
                 or path.resolve() == Path(__file__).resolve()

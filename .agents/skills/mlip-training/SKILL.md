@@ -5,7 +5,7 @@ description: Supervise MLIPFlow training and fine-tuning for DeepMD, M3GNet/MatG
 
 # MLIP training and fine-tuning
 
-Use `plugins/mlip-training` through MLIPFlow. The Skill selects and reviews training
+Use `mlipflow/plugins/mlip_training` through MLIPFlow. The Skill selects and reviews training
 intent; the framework runner and Adapter own deterministic configuration validation,
 execution, checking, and collection.
 

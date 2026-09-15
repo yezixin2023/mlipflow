@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import builtins
-import importlib.util
+from tests.helpers import load_module
 import json
 import subprocess
 from pathlib import Path
@@ -10,14 +10,11 @@ import pytest
 from ase.io import read
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "lammps-md"
+PLUGIN = ROOT / "mlipflow" / "plugins" / "lammps_md"
 
 
 def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, name)
     return module
 
 
@@ -91,30 +88,79 @@ def _context(tmp_path: Path, framework: str, ensemble: str = "nvt") -> dict:
 
 @pytest.mark.parametrize("framework", ["deepmd", "mace", "m3gnet"])
 def test_prepare_plan_is_ready_for_supported_frameworks(tmp_path: Path, framework: str) -> None:
-    adapter = _load(f"lammps_adapter_{framework}", PLUGIN / "adapter.py")
-    plan = adapter.Adapter().plan(_context(tmp_path, framework))
+    adapter = _load(f"lammps_adapter_{framework}", PLUGIN / "adapter.py").Adapter()
+    context = _context(tmp_path, framework)
+    plan = adapter.plan(context)
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["approval_summary"]["framework"] == framework
     assert plan["approval_summary"]["targets"] == ["cpu", "gpu"]
     assert plan["approval_summary"]["executes_lammps"] is False
     assert str(PLUGIN / "lammps_prepare.py") in plan["argv"]
 
+    # The one preparation entry must produce a bundle accepted by execution.
+    Path(plan["cwd"]).mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run(plan["argv"], cwd=plan["cwd"], capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    assert adapter.check(context)["status"] == "OK"
+    output = Path(context["attempt_dir"]) / "lammps-inputs"
+    manifest_path = output / "lammps-input-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["preparation_contract"] == "lammps-md-input-v2"
+    marker = f"MLIPFLOW_LAMMPS_COMPLETED step={manifest['md']['steps']}"
+    assert manifest["completion_marker"] == marker
+    for target in manifest["md"]["targets"]:
+        deck = (output / f"in.{target}.lammps").read_text()
+        assert deck.count(marker) == 1
+        assert deck.index("write_restart") < deck.index(marker)
+        execution = {
+            **context,
+            "attempt_dir": str(tmp_path / "execute" / "attempt-1"),
+            "backend": "ssh-slurm",
+            "inputs": {"lammps_input_manifest": str(manifest_path)},
+            "parameters": {"operation": "execute", "target": target},
+            "resources": {
+                "cpus": 2,
+                "gpus": int(target == "gpu"),
+                "memory": "2G",
+                "walltime": "00:10:00",
+            },
+        }
+        _write_json(
+            tmp_path / "project.json",
+            {
+                "workflow": {
+                    "nodes": [
+                        {
+                            "id": "execute",
+                            "uses": "lammps-md",
+                            "backend": execution["backend"],
+                            "inputs": execution["inputs"],
+                            "parameters": execution["parameters"],
+                            "resources": execution["resources"],
+                        }
+                    ]
+                }
+            },
+        )
+        execution_plan = adapter.plan(execution)
+        assert execution_plan["status"] == "READY", execution_plan.get("diagnostics")
+
 
 def test_chgnet_is_explicitly_blocked(tmp_path: Path) -> None:
-    adapter = _load("lammps_adapter_chgnet", PLUGIN / "adapter.py")
-    plan = adapter.Adapter().plan(_context(tmp_path, "chgnet"))
+    adapter = _load("lammps_adapter_chgnet", PLUGIN / "prepare.py")
+    plan = adapter.plan(_context(tmp_path, "chgnet"))
     assert plan["status"] == "BLOCKED"
     assert any("CHGNet" in item["message"] for item in plan["diagnostics"])
 
 
 def test_wrong_export_format_is_blocked(tmp_path: Path) -> None:
-    adapter = _load("lammps_adapter_format", PLUGIN / "adapter.py")
+    adapter = _load("lammps_adapter_format", PLUGIN / "prepare.py")
     context = _context(tmp_path, "mace")
     model_path = tmp_path / "inputs" / "model.json"
     model = json.loads(model_path.read_text(encoding="utf-8"))
     model["artifact_format"] = "raw-training-checkpoint"
     _write_json(model_path, model)
-    plan = adapter.Adapter().plan(context)
+    plan = adapter.plan(context)
     assert plan["status"] == "BLOCKED"
     assert any("artifact_format" in item["message"] for item in plan["diagnostics"])
 
@@ -151,7 +197,7 @@ def test_matgl_cpu_gpu_pair_styles() -> None:
 
 
 def test_gnnp_directory_interface_is_explicit_and_cpu_only(tmp_path: Path) -> None:
-    adapter = _load("lammps_adapter_gnnp", PLUGIN / "adapter.py")
+    adapter = _load("lammps_adapter_gnnp", PLUGIN / "prepare.py")
     context = _context(tmp_path, "m3gnet")
     model_path = tmp_path / "inputs" / "model.json"
     model = json.loads(model_path.read_text(encoding="utf-8"))
@@ -169,7 +215,7 @@ def test_gnnp_directory_interface_is_explicit_and_cpu_only(tmp_path: Path) -> No
     config["targets"] = ["cpu"]
     _write_json(config_path, config)
 
-    plan = adapter.Adapter().plan(context)
+    plan = adapter.plan(context)
 
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["approval_summary"]["model_kind"] == "directory"
@@ -183,13 +229,13 @@ def test_gnnp_directory_interface_is_explicit_and_cpu_only(tmp_path: Path) -> No
 
 
 def test_gnnp_interface_rejects_torchscript_file_and_gpu(tmp_path: Path) -> None:
-    adapter = _load("lammps_adapter_gnnp_invalid", PLUGIN / "adapter.py")
+    adapter = _load("lammps_adapter_gnnp_invalid", PLUGIN / "prepare.py")
     context = _context(tmp_path, "m3gnet")
     model_path = tmp_path / "inputs" / "model.json"
     model = json.loads(model_path.read_text(encoding="utf-8"))
     model["lammps_interface"] = "gnnp"
     _write_json(model_path, model)
-    blocked_kind = adapter.Adapter().plan(context)
+    blocked_kind = adapter.plan(context)
     assert blocked_kind["status"] == "BLOCKED"
     assert any("kind must be directory" in item["message"] for item in blocked_kind["diagnostics"])
 
@@ -200,9 +246,11 @@ def test_gnnp_interface_rejects_torchscript_file_and_gpu(tmp_path: Path) -> None
         }
     )
     _write_json(model_path, model)
-    blocked_gpu = adapter.Adapter().plan(context)
+    blocked_gpu = adapter.plan(context)
     assert blocked_gpu["status"] == "BLOCKED"
-    assert any("does not support target(s): gpu" in item["message"] for item in blocked_gpu["diagnostics"])
+    assert any(
+        "does not support target(s): gpu" in item["message"] for item in blocked_gpu["diagnostics"]
+    )
 
 
 def test_nvt_converts_femtoseconds_to_metal_picoseconds() -> None:
@@ -227,19 +275,17 @@ def test_model_path_is_runtime_variable_not_registry_path() -> None:
 
 
 def test_prepare_plan_binds_explicit_structure_format(tmp_path: Path) -> None:
-    adapter = _load("lammps_adapter_explicit_format", PLUGIN / "adapter.py")
+    adapter = _load("lammps_adapter_explicit_format", PLUGIN / "prepare.py")
     context = _context(tmp_path, "deepmd")
     context["parameters"]["structure_format"] = "lammps-data"
-    plan = adapter.Adapter().plan(context)
+    plan = adapter.plan(context)
     assert plan["status"] == "READY", plan.get("diagnostics")
     assert plan["approval_summary"]["structure_format"] == "lammps-data"
     assert plan["argv"][-2:] == ["--structure-format", "lammps-data"]
 
 
 @pytest.mark.parametrize("path_kind", ["project-relative", "parent-relative", "absolute"])
-def test_structure_path_contract_runs_full_prepare_chain(
-    tmp_path: Path, path_kind: str
-) -> None:
+def test_structure_path_contract_runs_full_prepare_chain(tmp_path: Path, path_kind: str) -> None:
     project = tmp_path / "project"
     project.mkdir()
     context = _context(project, "mace")
@@ -248,12 +294,14 @@ def test_structure_path_contract_runs_full_prepare_chain(
         source = local_source
         value = "inputs/start.extxyz"
     else:
-        source = tmp_path / ("shared" if path_kind == "parent-relative" else "external") / "A.extxyz"
+        source = (
+            tmp_path / ("shared" if path_kind == "parent-relative" else "external") / "A.extxyz"
+        )
         source.parent.mkdir()
         source.write_text(local_source.read_text(encoding="utf-8"), encoding="utf-8")
         value = "../shared/A.extxyz" if path_kind == "parent-relative" else str(source)
     context["inputs"]["structure"] = value
-    adapter = _load(f"lammps_adapter_structure_{path_kind}", PLUGIN / "adapter.py").Adapter()
+    adapter = _load(f"lammps_adapter_structure_{path_kind}", PLUGIN / "prepare.py")
 
     plan = adapter.plan(context)
 
@@ -287,7 +335,7 @@ def test_missing_structure_path_is_blocked(tmp_path: Path, path_kind: str) -> No
     context["inputs"]["structure"] = (
         "../shared/missing.extxyz" if path_kind == "parent-relative" else str(missing)
     )
-    adapter = _load(f"lammps_adapter_missing_{path_kind}", PLUGIN / "adapter.py").Adapter()
+    adapter = _load(f"lammps_adapter_missing_{path_kind}", PLUGIN / "prepare.py")
 
     plan = adapter.plan(context)
 

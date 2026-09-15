@@ -20,10 +20,15 @@ This index separates the main user path from implementation references and proje
 | Run ASE or LAMMPS MD | `ase-md` and `lammps-md` adapters | [`examples/ase_md_cluster/`](../examples/ase_md_cluster/), [`examples/lammps_mlip_inputs/`](../examples/lammps_mlip_inputs/) |
 | Analyze transport or compare AIMD and MLIP dynamics | `ionic-transport` and `mlip-benchmark` adapters | [`examples/aimd_reference_validation/`](../examples/aimd_reference_validation/) |
 | Run an offline active-learning campaign | `active-learning`, `$mlip-active-learning` | [`examples/active_learning_validation/`](../examples/active_learning_validation/) |
-| Change a built-in scientific capability | [`ARCHITECTURE.md`](ARCHITECTURE.md), adapter tests | [`plugins/`](../plugins/), [`CONTRIBUTING.md`](../CONTRIBUTING.md) |
+| Change a built-in scientific capability | [`ARCHITECTURE.md`](ARCHITECTURE.md), adapter tests | [`mlipflow/plugins/`](../mlipflow/plugins/), [`CONTRIBUTING.md`](../CONTRIBUTING.md) |
 | Contribute to the repository | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | [`SECURITY.md`](../SECURITY.md), [`CHANGELOG.md`](../CHANGELOG.md) |
 
 ## Reference documentation
+
+- [Source migration](MIGRATION.md) maps previous source and script locations.
+- [Agent request examples](AGENT_USAGE.md) provides prompts for each scientific capability.
+- [Example index](../examples/README.md) lists all bundled scenarios.
+
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) describes core services, execution boundaries, trust assumptions, and artifact flow.
 - The installed `mlipflow --help` output is the authoritative command reference; [`ARCHITECTURE.md`](ARCHITECTURE.md) explains state transitions, approvals, retries, and reconciliation boundaries.

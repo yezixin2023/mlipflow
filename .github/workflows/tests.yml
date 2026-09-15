@@ -30,13 +30,4 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install '.[dev,transport]'
       - run: pytest -q
-      - run: >-
-          ruff check
-          src/mlipflow/science/transport.py
-          plugins/ionic-transport/adapter.py
-          plugins/ionic-transport/ionic_conductivity.py
-          plugins/ionic-transport/md_smoke_handoff.py
-          tests/test_ionic_transport_analysis.py
-          tests/test_ionic_md_handoff.py
-          tests/test_manuscript_transport.py
-          tests/test_pes_transport_adapters.py
+      - run: ruff check mlipflow tests examples

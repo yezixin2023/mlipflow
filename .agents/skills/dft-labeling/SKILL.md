@@ -5,7 +5,7 @@ description: Supervise MLIPFlow DFT input preparation and labeling. Use for gene
 
 # DFT labeling
 
-Use `plugins/dft-labeling` through MLIPFlow. The Skill chooses the scientific task and
+Use `mlipflow/plugins/dft_labeling` through MLIPFlow. The Skill chooses the scientific task and
 reviews it; input generation, DFT execution, validation, and collection belong to the
 Adapter and VASP.
 

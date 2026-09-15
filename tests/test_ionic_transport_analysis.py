@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-import importlib.util
+from tests.helpers import load_module
 import json
 import math
 import subprocess
@@ -14,8 +14,8 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ADAPTER_PATH = ROOT / "plugins" / "ionic-transport" / "adapter.py"
-RUNNER_PATH = ROOT / "plugins" / "ionic-transport" / "ionic_conductivity.py"
+ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "ionic_transport" / "adapter.py"
+RUNNER_PATH = ROOT / "mlipflow" / "plugins" / "ionic_transport" / "ionic_conductivity.py"
 
 
 def load_adapter():
@@ -24,20 +24,13 @@ def load_adapter():
 
 
 def load_adapter_module():
-    spec = importlib.util.spec_from_file_location("ionic_transport_analysis_adapter", ADAPTER_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(ADAPTER_PATH, 'ionic_transport_analysis_adapter')
     return module
 
 
 def load_runner():
     name = "test_ionic_transport_formal_runner"
-    spec = importlib.util.spec_from_file_location(name, RUNNER_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
+    module = load_module(RUNNER_PATH, name)
     return module
 
 
@@ -263,13 +256,8 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
                 all("relative_error" in item for item in comparison["transport_errors"])
             )
 
-            benchmark_path = ROOT / "plugins" / "mlip-benchmark" / "adapter.py"
-            spec = importlib.util.spec_from_file_location(
-                "aimd_comparison_benchmark_adapter", benchmark_path
-            )
-            assert spec is not None and spec.loader is not None
-            benchmark_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(benchmark_module)
+            benchmark_path = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "adapter.py"
+            benchmark_module = load_module(benchmark_path, 'aimd_comparison_benchmark_adapter')
             benchmark_attempt = project / ".mlipflow" / "runs" / "benchmark" / "attempt-1"
             benchmark_attempt.mkdir(parents=True)
             benchmark_context = {
@@ -715,7 +703,7 @@ class IonicTransportArrheniusBreakpointTests(unittest.TestCase):
             (output_dir / "analysis_manifest.json").write_text(
                 json.dumps({"parameters": vars(args)}), encoding="utf-8"
             )
-            adapter_module = load_adapter_module()
+            from mlipflow.plugins.ionic_transport import analysis as adapter_module
             rows = frame.to_dict(orient="records")
             self.assertEqual(
                 [],

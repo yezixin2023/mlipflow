@@ -8,7 +8,7 @@ supplied manuscript document.
 from __future__ import annotations
 
 import csv
-import importlib.util
+from tests.helpers import load_module
 import json
 import math
 import shutil
@@ -23,16 +23,10 @@ from mlipflow.routing import load_registry
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "high_entropy_sulfide_reproduction"
 REPRODUCE_PATH = EXAMPLE / "reproduce.py"
-BENCHMARK_WRAPPER = ROOT / "plugins" / "mlip-benchmark" / "benchmark_wrapper.py"
+BENCHMARK_WRAPPER = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "benchmark_wrapper.py"
 SCHEMAS = ROOT / "schemas"
 def _load_reproduce():
-    spec = importlib.util.spec_from_file_location(
-        "test_high_entropy_sulfide_reproduce", REPRODUCE_PATH
-    )
-    if spec is None or spec.loader is None:
-        raise AssertionError("cannot load {}".format(REPRODUCE_PATH))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(REPRODUCE_PATH, 'test_high_entropy_sulfide_reproduce')
     return module
 
 
@@ -106,10 +100,10 @@ class ManuscriptReproductionTests(unittest.TestCase):
         implementation_files = normalization["implementation_files"]
         self.assertEqual(
             {
-                "plugins/mlip-benchmark/benchmark_wrapper.py",
-                "plugins/mlip-benchmark/benchmark_normalization.py",
-                "plugins/mlip-benchmark/adapter.py",
-                "src/mlipflow/science/model_runtime.py",
+                "mlipflow/plugins/mlip_benchmark/benchmark_wrapper.py",
+                "mlipflow/plugins/mlip_benchmark/benchmark_normalization.py",
+                "mlipflow/plugins/mlip_benchmark/adapter.py",
+                "mlipflow/plugins/model_runtime.py",
             },
             {item["locator"] for item in implementation_files},
         )
@@ -333,7 +327,9 @@ class ManuscriptReproductionTests(unittest.TestCase):
         )
         implementation = parity["implementation_provenance"]
         self.assertEqual("1.0", implementation["wrapper_version"])
-        self.assertTrue((ROOT / implementation["wrapper_locator"]).is_file())
+        self.assertTrue(self.reproduce._repository_file(
+            ROOT, implementation["wrapper_locator"], "historical transport wrapper"
+        ).is_file())
         self.assertEqual(2, len(implementation["historical_scripts"]))
         for name in (
             "model_executed",
@@ -409,8 +405,8 @@ class ManuscriptReproductionTests(unittest.TestCase):
             ):
                 for name in names:
                     self.assertEqual(
-                        (EXAMPLE / folder / name).read_bytes(),
-                        (relocated / folder / name).read_bytes(),
+                        self.reproduce._relocated_source_bytes((EXAMPLE / folder / name).read_bytes()),
+                        self.reproduce._relocated_source_bytes((relocated / folder / name).read_bytes()),
                     )
             rendered = b"".join(
                 (relocated / "benchmark" / name).read_bytes()
@@ -438,14 +434,14 @@ class ManuscriptReproductionTests(unittest.TestCase):
             relocated = checkout / "examples" / "high_entropy_sulfide_reproduction"
             shutil.copytree(EXAMPLE, relocated)
             locators = (
-                "plugins/mlip-benchmark/benchmark_wrapper.py",
-                "plugins/mlip-benchmark/benchmark_normalization.py",
-                "plugins/mlip-benchmark/adapter.py",
-                "src/mlipflow/science/model_runtime.py",
-                "plugins/candidate-ranking/rank.py",
-                "plugins/candidate-ranking/normalize_legacy.py",
-                "plugins/candidate-ranking/adapter.py",
-                "plugins/ionic-transport/adapter.py",
+                "mlipflow/plugins/mlip_benchmark/benchmark_wrapper.py",
+                "mlipflow/plugins/mlip_benchmark/benchmark_normalization.py",
+                "mlipflow/plugins/mlip_benchmark/adapter.py",
+                "mlipflow/plugins/model_runtime.py",
+                "mlipflow/plugins/candidate_ranking/rank.py",
+                "mlipflow/plugins/candidate_ranking/normalize_legacy.py",
+                "mlipflow/plugins/candidate_ranking/adapter.py",
+                "mlipflow/plugins/ionic_transport/manuscript.py",
             )
             for locator in locators:
                 target = checkout / locator
@@ -458,7 +454,7 @@ class ManuscriptReproductionTests(unittest.TestCase):
                 benchmark_wrapper_path=copied_wrapper,
                 write=True,
             )
-            (checkout / "plugins" / "candidate-ranking" / "adapter.py").unlink()
+            (checkout / "mlipflow" / "plugins" / "candidate_ranking" / "adapter.py").unlink()
             with self.assertRaisesRegex(
                 self.reproduce.ReproductionEvidenceError,
                 "current candidate-ranking adapter locator does not resolve",

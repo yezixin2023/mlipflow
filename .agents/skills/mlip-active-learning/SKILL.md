@@ -5,7 +5,7 @@ description: Supervise finite, offline, round-based MLIP active-learning campaig
 
 # MLIP active learning
 
-Use `plugins/active-learning` as the deterministic decision layer. Keep campaigns
+Use `mlipflow/plugins/active_learning` as the deterministic decision layer. Keep campaigns
 finite, offline, and divided into immutable round projects; do not turn MLIPFlow into
 an on-the-fly or open-ended dynamic loop.
 

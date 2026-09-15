@@ -5,7 +5,7 @@ description: Supervise reproducible, auditable high-entropy or SQS disordered-st
 
 # High-entropy structure
 
-Use `plugins/high-entropy-structure` through MLIPFlow for `generate-sqs`. The Skill
+Use `mlipflow/plugins/high_entropy_structure` through MLIPFlow for `generate-sqs`. The Skill
 reviews the requested search space and scientific claims; the plugin owns composition
 validation, seeded generation, checking, and collection.
 

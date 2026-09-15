@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import importlib.util
+from tests.helpers import load_module
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins" / "pes-sampling"
+PLUGIN = ROOT / "mlipflow" / "plugins" / "pes_sampling"
 WRAPPER = PLUGIN / "lasp_ssw.py"
 ALIAS = PLUGIN / "lasp_random_walk.py"
 EXAMPLE = ROOT / "examples" / "lasp_random_walk" / "lasp.in"
@@ -13,10 +13,7 @@ RERUN_EXAMPLE = ROOT / "examples" / "lasp_random_walk" / "lasp-rerun.in"
 
 
 def _load(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_module(path, name)
     return module
 
 
