@@ -1,10 +1,10 @@
 <p align="center">
   <img src="docs/assets/mlipflow-logo.png" alt="MLIPipe logo" width="500">
 </p>
-<p align="center"><strong>Deterministic workflows for machine-learned interatomic-potential research.</strong></p>
+<p align="center"><strong>An end-to-end pipeline for sampling, fine-tuning, and validation of machine-learning interatomic potentials.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/yezixin2023/mlipipe/actions/workflows/tests.yml?query=branch%3Apublic"><img src="https://github.com/yezixin2023/mlipipe/actions/workflows/tests.yml/badge.svg?branch=public&amp;event=push" alt="Tests on public branch"></a>
+  <a href="https://github.com/yezixin2023/mlipflow/actions/workflows/tests.yml?query=branch%3Apublic"><img src="https://github.com/yezixin2023/mlipflow/actions/workflows/tests.yml/badge.svg?branch=public&amp;event=push" alt="Tests on public branch"></a>
   <a href="#install"><img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&amp;logoColor=white" alt="Python: 3.12 or newer"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue" alt="License: Apache-2.0"></a>
   <a href="#validation-and-documentation"><img src="https://img.shields.io/badge/docs-guide-0A7EA4" alt="Documentation guide"></a>
@@ -15,8 +15,6 @@ MLIPipe connects structure generation, sampling, DFT labeling, dataset assembly,
 MLIPipe is a **workflow layer**, not a new interatomic-potential framework. Researchers choose the scientific codes, models, datasets, and numerical settings; MLIPipe coordinates them without hiding execution boundaries or evidence.
 
 **Python:** `>=3.12` for the core and all extras · **License:** Apache-2.0
-
-**Project status:** pre-release development (0.1.x). CLI and configuration contracts may change before 1.0; scientific validation is capability-specific.
 
 ## What MLIPipe provides
 

@@ -1,7 +1,7 @@
 # MLIPipe Agent Operating Guidelines
 
 These instructions apply to this repository. The agent supervises scientific intent;
-MLIPFlow plugins and the named scientific programs calculate, execute and check results.
+MLIPipe plugins and the named scientific programs calculate, execute and check results.
 Prefer an existing suitable conda environment for development and execution.
 
 ## Normal use
