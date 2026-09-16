@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "mlipflow" / "plugins" / "ase_md"
+PLUGIN = ROOT / "mlipipe" / "plugins" / "ase_md"
 
 
 def _load(name: str, path: Path):
@@ -87,7 +87,7 @@ def _context(tmp_path: Path, calculator: str) -> dict:
     _write_json(tmp_path / "project.yaml", project)
     return {
         "project_root": str(tmp_path),
-        "attempt_dir": str(tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1"),
+        "attempt_dir": str(tmp_path / ".mlipipe" / "runs" / "md" / "attempt-1"),
         "backend": "ssh-slurm",
         "inputs": {
             "structure": "inputs/start.extxyz",
@@ -289,7 +289,7 @@ def test_npt_checker_verifies_pressure_cell_schedule_and_outputs(tmp_path: Path)
     assert checked["status"] == "OK", checked.get("diagnostics")
     assert checked["metrics"]["final_pressure_GPa"] == 0.1
     assert checked["metrics"]["final_volume_A3"] == 1000.0
-    from mlipflow.plugins.ase_md.adapter import Adapter
+    from mlipipe.plugins.ase_md.adapter import Adapter
 
     with patch.object(Adapter, "check", side_effect=AssertionError("collect repeated check")):
         collected = Adapter().collect(context)

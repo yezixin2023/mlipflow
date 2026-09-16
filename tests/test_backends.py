@@ -6,13 +6,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mlipflow.backends import LocalBackend, SshSlurmBackend
-from mlipflow.errors import BackendError
+from mlipipe.backends import LocalBackend, SshSlurmBackend
+from mlipipe.errors import BackendError
 
 
 def slurm_snapshot(partitions: list[str], nodes: list[str]) -> str:
     return "\n".join(
-        partitions + ["__MLIPFLOW_SCONTROL_NODES__"] + nodes
+        partitions + ["__MLIPIPE_SCONTROL_NODES__"] + nodes
     ) + "\n"
 
 
@@ -48,10 +48,10 @@ class BackendTests(unittest.TestCase):
     def test_local_uses_argv_and_shell_false(self) -> None:
         completed = subprocess.CompletedProcess(["tool", "a;touch bad"], 0, "ok", "")
         with tempfile.TemporaryDirectory() as temporary, patch(
-            "mlipflow.backends.subprocess.run", return_value=completed
+            "mlipipe.backends.subprocess.run", return_value=completed
         ) as mocked:
             with patch.dict(
-                "mlipflow.backends.os.environ",
+                "mlipipe.backends.os.environ",
                 {"PATH": "/usr/bin", "OPENAI_API_KEY": "must-not-leak"},
                 clear=True,
             ):
@@ -67,13 +67,13 @@ class BackendTests(unittest.TestCase):
         backend = SshSlurmBackend("safe-profile")
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaises(BackendError), patch(
-                "mlipflow.backends.subprocess.run", side_effect=AssertionError("scp invoked")
+                "mlipipe.backends.subprocess.run", side_effect=AssertionError("scp invoked")
             ):
                 backend.fetch("/safe/path;touch-pwned", Path(temporary) / "file")
 
     def test_local_backend_cannot_bypass_transport_or_embed_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, patch(
-            "mlipflow.backends.subprocess.run", side_effect=AssertionError("process invoked")
+            "mlipipe.backends.subprocess.run", side_effect=AssertionError("process invoked")
         ):
             with self.assertRaises(BackendError):
                 LocalBackend().run(["ssh", "cluster", "hostname"], Path(temporary))
@@ -97,7 +97,7 @@ class BackendTests(unittest.TestCase):
                 subprocess.CompletedProcess(["ssh"], 0, "", ""),
                 subprocess.CompletedProcess(["scp"], 0, "", ""),
             ]
-            with patch("mlipflow.backends.subprocess.run", side_effect=responses) as invoked:
+            with patch("mlipipe.backends.subprocess.run", side_effect=responses) as invoked:
                 remote = backend.stage_workspace(
                     "/work/project/node/attempt-0001",
                     [(source, "input/POSCAR")],
@@ -115,9 +115,9 @@ class BackendTests(unittest.TestCase):
             destination = Path(temporary) / "OUTCAR"
             destination.write_text("existing", encoding="utf-8")
             with self.assertRaisesRegex(BackendError, "fresh"), patch(
-                "mlipflow.backends.subprocess.run", side_effect=AssertionError("scp invoked")
+                "mlipipe.backends.subprocess.run", side_effect=AssertionError("scp invoked")
             ):
-                backend.fetch_from("mlipflow-run-1", "OUTCAR", destination)
+                backend.fetch_from("mlipipe-run-1", "OUTCAR", destination)
             with self.assertRaises(BackendError):
                 backend.inspect_file("../escape", "OUTCAR")
 
@@ -130,7 +130,7 @@ class BackendTests(unittest.TestCase):
             f"OK\n{content}",
             "",
         )
-        with patch("mlipflow.backends.subprocess.run", return_value=completed) as invoked:
+        with patch("mlipipe.backends.subprocess.run", return_value=completed) as invoked:
             observed = backend.read_template(
                 "/remote/templates", "slurm/cpu.sbatch"
             )
@@ -138,7 +138,7 @@ class BackendTests(unittest.TestCase):
         self.assertTrue(observed["root_exists"])
         self.assertFalse(invoked.call_args.kwargs["shell"])
         with self.assertRaises(BackendError), patch(
-            "mlipflow.backends.subprocess.run", side_effect=AssertionError("ssh invoked")
+            "mlipipe.backends.subprocess.run", side_effect=AssertionError("ssh invoked")
         ):
             backend.read_template("/remote/templates", "../escape")
 
@@ -147,7 +147,7 @@ class BackendTests(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             ["ssh"], 0, "FAILED|NonZeroExitCode\n", ""
         )
-        with patch("mlipflow.backends.subprocess.run", return_value=completed) as invoked:
+        with patch("mlipipe.backends.subprocess.run", return_value=completed) as invoked:
             status = backend.status("3704996")
         self.assertEqual("FAILED", status["state"])
         remote_command = invoked.call_args.args[0][-1]
@@ -160,7 +160,7 @@ class BackendTests(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             ["ssh"], 0, "FAILED|NonZeroExitCode\n", ""
         )
-        with patch("mlipflow.backends.subprocess.run", return_value=completed) as invoked:
+        with patch("mlipipe.backends.subprocess.run", return_value=completed) as invoked:
             status = backend.status("893999")
 
         self.assertEqual(
@@ -188,7 +188,7 @@ class BackendTests(unittest.TestCase):
                 ["ssh"], 0, "Submitted batch job 12345\n", ""
             ),
         ]
-        with patch("mlipflow.backends.subprocess.run", side_effect=responses) as invoked:
+        with patch("mlipipe.backends.subprocess.run", side_effect=responses) as invoked:
             result = backend.submit(
                 "submit.sbatch",
                 "/work/project/node/attempt-0001",
@@ -215,7 +215,7 @@ class BackendTests(unittest.TestCase):
             ],
         )
         completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
-        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+        with patch("mlipipe.backends.subprocess.run", return_value=completed):
             routing = backend.select_partition(["preferred", "fallback"], REQUEST)
         self.assertEqual("fallback", routing["selected_partition"])
 
@@ -234,7 +234,7 @@ class BackendTests(unittest.TestCase):
                     ],
                 )
                 completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
-                with patch("mlipflow.backends.subprocess.run", return_value=completed):
+                with patch("mlipipe.backends.subprocess.run", return_value=completed):
                     routing = backend.select_partition(
                         ["preferred", "fallback"], REQUEST
                     )
@@ -250,7 +250,7 @@ class BackendTests(unittest.TestCase):
             ],
         )
         completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
-        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+        with patch("mlipipe.backends.subprocess.run", return_value=completed):
             routing = backend.select_partition(["preferred", "fallback"], REQUEST)
         self.assertEqual("preferred", routing["selected_partition"])
         self.assertEqual("healthy-queue", routing["selection_mode"])
@@ -263,7 +263,7 @@ class BackendTests(unittest.TestCase):
             [slurm_node("node-a", "down", state="DOWN")],
         )
         completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
-        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+        with patch("mlipipe.backends.subprocess.run", return_value=completed):
             with self.assertRaisesRegex(BackendError, "missing: partition does not exist"):
                 backend.select_partition(["missing", "down"], REQUEST)
 
@@ -278,7 +278,7 @@ class BackendTests(unittest.TestCase):
         )
         requested = {**REQUEST, "gpus": 1}
         completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
-        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+        with patch("mlipipe.backends.subprocess.run", return_value=completed):
             routing = backend.select_partition(["cpu", "gpu"], requested)
         self.assertEqual("gpu", routing["selected_partition"])
 
@@ -293,7 +293,7 @@ class BackendTests(unittest.TestCase):
         )
         requested = {**REQUEST, "cpus": 32}
         completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
-        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+        with patch("mlipipe.backends.subprocess.run", return_value=completed):
             routing = backend.select_partition(["small", "large"], requested)
         self.assertEqual("large", routing["selected_partition"])
         first = routing["observed_partition_availability"][0]
@@ -307,10 +307,10 @@ class BackendTests(unittest.TestCase):
         )
         requested = {**REQUEST, "cpus": 128, "memory": "128G"}
         completed = subprocess.CompletedProcess(["ssh"], 0, snapshot, "")
-        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+        with patch("mlipipe.backends.subprocess.run", return_value=completed):
             with self.assertRaisesRegex(BackendError, "no candidate Slurm partition"):
                 backend.select_partition(["cpu-large"], requested)
-        with patch("mlipflow.backends.subprocess.run", return_value=completed):
+        with patch("mlipipe.backends.subprocess.run", return_value=completed):
             routing = backend.select_partition(
                 ["cpu-large"], requested, memory_constraint="unreported"
             )

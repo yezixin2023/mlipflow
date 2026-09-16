@@ -4,7 +4,7 @@ LASP stochastic-surface-walking belongs to `pes-sampling`.  The project declares
 
 ## 1. Site profile
 
-Example `~/.mlipflow/site.yaml`:
+Example `~/.mlipipe/site.yaml`:
 
 ```yaml
 schema_version: 1
@@ -13,7 +13,7 @@ clusters:
     backend: ssh-slurm
     ssh_profile: cluster-a
     remote_template_root: /templates/cluster-a
-    work_root: /work/mlipflow
+    work_root: /work/mlipipe
 ```
 
 LASP declares `execution_model: mpi`. The remote template root must contain `slurm/mpi/cpu.sbatch` and/or `slurm/mpi/gpu.sbatch` plus a LASP family template at `lasp-ssw/run.sh`.
@@ -56,7 +56,7 @@ A scheduled LASP node has no `lasp_executable` input.  The licensed binary is re
 
 `resources.cpus` is available as `{{CPUS}}` and means the MPI task/rank count. The submit template must use `--ntasks={{CPUS}}`; it must not also map `CPUS` to `cpus-per-task`. Do not set `mpi_processes` on an ssh-slurm LASP node because launcher/process topology is site-owned in scheduled mode.
 
-## 3. What MLIPFlow stages
+## 3. What MLIPipe stages
 
 The approved scheduled plan stages only the declared project and capability files: the project configuration, `input.arc`, `lasp.in`, declared auxiliary files, `lasp_ssw.py`, and `lasp_cluster.py`. The cluster run template invokes the staged helper inside the Slurm allocation.
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-HELPER = ROOT / "mlipflow" / "plugins" / "lammps_md" / "lammps_restart.py"
+HELPER = ROOT / "mlipipe" / "plugins" / "lammps_md" / "lammps_restart.py"
 
 
 def _load():
@@ -28,21 +28,21 @@ def _fresh(fix_line: str) -> str:
         "thermo          10\n"
         "thermo_style    custom step temp pe press vol\n"
         "velocity        all create 900 7 mom yes rot yes dist gaussian\n"
-        "dump            mlipflow all custom 10 trajectory.lammpstrj id type x y z\n"
-        "dump_modify     mlipflow sort id\n"
+        "dump            mlipipe all custom 10 trajectory.lammpstrj id type x y z\n"
+        "dump_modify     mlipipe sort id\n"
         f"{fix_line}\n"
         "run             1000\n"
         "write_data      final.data\n"
         "write_restart   final.restart\n"
-        'print           "MLIPFLOW_LAMMPS_COMPLETED step=1000"\n'
+        'print           "MLIPIPE_LAMMPS_COMPLETED step=1000"\n'
     )
 
 
 @pytest.mark.parametrize(
     "fix_line",
     [
-        "fix             mlipflow all nvt temp 900 900 0.1",
-        "fix             mlipflow all npt temp 900 900 0.1 iso 0 0 1",
+        "fix             mlipipe all nvt temp 900 900 0.1",
+        "fix             mlipipe all npt temp 900 900 0.1 iso 0 0 1",
     ],
 )
 def test_resume_preserves_nose_hoover_fix_without_fresh_initialization(fix_line: str) -> None:

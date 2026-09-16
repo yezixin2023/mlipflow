@@ -38,7 +38,7 @@ workflow:
       backend: ssh-slurm
       backend_profile: cluster-a
       inputs:
-        canonical_dataset: .mlipflow/runs/label-dft/attempt-1/canonical-labeled-dataset.json
+        canonical_dataset: .mlipipe/runs/label-dft/attempt-1/canonical-labeled-dataset.json
       parameters:
         operation: dataset-assemble
         frameworks: [deepmd, m3gnet, chgnet, mace]
@@ -61,7 +61,7 @@ workflow:
       backend_profile: cluster-a
       inputs:
         training_config: deepmd-se_e2_r.json
-        dataset_reference: .mlipflow/runs/assemble-datasets/attempt-1/deepmd-dataset-reference.json
+        dataset_reference: .mlipipe/runs/assemble-datasets/attempt-1/deepmd-dataset-reference.json
       parameters:
         framework: deepmd
         operation: train
@@ -81,7 +81,7 @@ workflow:
       backend_profile: cluster-a
       inputs:
         training_config: m3gnet.json
-        dataset_reference: .mlipflow/runs/assemble-datasets/attempt-1/m3gnet-dataset-reference.json
+        dataset_reference: .mlipipe/runs/assemble-datasets/attempt-1/m3gnet-dataset-reference.json
       parameters:
         framework: m3gnet
         operation: train
@@ -101,7 +101,7 @@ workflow:
       backend_profile: cluster-a
       inputs:
         training_config: chgnet-efs.json
-        dataset_reference: .mlipflow/runs/assemble-datasets/attempt-1/chgnet-dataset-reference.json
+        dataset_reference: .mlipipe/runs/assemble-datasets/attempt-1/chgnet-dataset-reference.json
       parameters:
         framework: chgnet
         operation: train
@@ -121,7 +121,7 @@ workflow:
       backend_profile: cluster-a
       inputs:
         training_config: mace.json
-        dataset_reference: .mlipflow/runs/assemble-datasets/attempt-1/mace-dataset-reference.json
+        dataset_reference: .mlipipe/runs/assemble-datasets/attempt-1/mace-dataset-reference.json
       parameters:
         framework: mace
         operation: train

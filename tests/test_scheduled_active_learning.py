@@ -10,9 +10,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mlipflow.config import load_project
-from mlipflow.services.commands import initialize, make_run_plan
-from mlipflow.services.contracts import _scheduled_contract
+from mlipipe.config import load_project
+from mlipipe.services.commands import initialize, make_run_plan
+from mlipipe.services.contracts import _scheduled_contract
 
 from .helpers import project_config, write_json
 from .test_active_learning import policy
@@ -21,8 +21,8 @@ from .test_scheduled_dft import FakeTemplateLibrary, write_site
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CLUSTER_RUNNER = ROOT / "mlipflow" / "plugins" / "active_learning" / "committee_inference_cluster.py"
-ACTIVE_SCIENCE = ROOT / "mlipflow" / "plugins" / "active_learning" / "science.py"
+CLUSTER_RUNNER = ROOT / "mlipipe" / "plugins" / "active_learning" / "committee_inference_cluster.py"
+ACTIVE_SCIENCE = ROOT / "mlipipe" / "plugins" / "active_learning" / "science.py"
 def evaluation_dataset() -> dict:
     samples = []
     calibration_ids = []
@@ -61,7 +61,7 @@ def evaluation_dataset() -> dict:
         )
     return {
         "schema_version": 1,
-        "contract": "mlipflow/active-learning-evaluation-dataset",
+        "contract": "mlipipe/active-learning-evaluation-dataset",
         "units": {"energy": "eV", "force": "eV/angstrom"},
         "dataset_split": {
             "dataset_id": "scheduled-active-test",
@@ -78,7 +78,7 @@ def evaluation_dataset() -> dict:
 def model_index() -> dict:
     return {
         "schema_version": 1,
-        "contract": "mlipflow/active-learning-committee-model-index",
+        "contract": "mlipipe/active-learning-committee-model-index",
         "strategy": {"mode": "single-model-committee", "primary_model": "model-a"},
         "models": [
             {

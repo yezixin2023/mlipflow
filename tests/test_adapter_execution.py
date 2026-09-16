@@ -7,10 +7,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mlipflow.backends import ExecutionResult
-from mlipflow.config import load_project
-from mlipflow.services.commands import initialize, make_retry_plan, make_run_plan, retry, run_node
-from mlipflow.services.queries import query_workflow
+from mlipipe.backends import ExecutionResult
+from mlipipe.config import load_project
+from mlipipe.services.commands import initialize, make_retry_plan, make_run_plan, retry, run_node
+from mlipipe.services.queries import query_workflow
 
 from .helpers import project_config, snapshot, write_json
 
@@ -61,9 +61,9 @@ class AdapterExecutionTests(unittest.TestCase):
                 [sys.executable, "-c", "raise SystemExit(7)"]
             )
             with patch(
-                "mlipflow.services.commands.load_adapter", return_value=adapter
+                "mlipipe.services.commands.load_adapter", return_value=adapter
             ), patch(
-                "mlipflow.services.execution.load_adapter", return_value=adapter
+                "mlipipe.services.execution.load_adapter", return_value=adapter
             ):
                 first = run_node(project, "fails")
                 first_run_id = first["step"]["run_id"]
@@ -75,7 +75,7 @@ class AdapterExecutionTests(unittest.TestCase):
                 manifest = json.loads(
                     (
                         root
-                        / ".mlipflow/runs/fails/attempt-2/run-manifest.json"
+                        / ".mlipipe/runs/fails/attempt-2/run-manifest.json"
                     ).read_text(encoding="utf-8")
                 )
                 self.assertNotEqual(first_run_id, second["step"]["run_id"])
@@ -86,7 +86,7 @@ class AdapterExecutionTests(unittest.TestCase):
             self.assertEqual(3, third["step"]["attempt"])
             for attempt in (1, 2, 3):
                 self.assertTrue(
-                    (root / f".mlipflow/runs/fails/attempt-{attempt}").is_dir()
+                    (root / f".mlipipe/runs/fails/attempt-{attempt}").is_dir()
                 )
 
     def test_local_four_method_lifecycle_and_small_run_record(self) -> None:
@@ -121,7 +121,7 @@ class AdapterExecutionTests(unittest.TestCase):
 
             adapter = OrderedAdapter(["fixture-tool"])
             with patch(
-                "mlipflow.services.commands.load_adapter", return_value=adapter
+                "mlipipe.services.commands.load_adapter", return_value=adapter
             ):
                 plan = make_run_plan(project, "ordered")
             self.assertEqual("READY", plan["adapter_plan"]["status"])
@@ -137,10 +137,10 @@ class AdapterExecutionTests(unittest.TestCase):
                 return ExecutionResult(0, "fixture stdout\n", "")
 
             with patch(
-                "mlipflow.services.commands.load_adapter", return_value=adapter
+                "mlipipe.services.commands.load_adapter", return_value=adapter
             ), patch(
-                "mlipflow.services.execution.load_adapter", return_value=adapter
-            ), patch("mlipflow.backends.LocalBackend.run", side_effect=execute):
+                "mlipipe.services.execution.load_adapter", return_value=adapter
+            ), patch("mlipipe.backends.LocalBackend.run", side_effect=execute):
                 result = run_node(project, "ordered")
 
             self.assertEqual("OK", result["step"]["state"])

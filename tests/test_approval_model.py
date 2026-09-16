@@ -6,12 +6,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mlipflow.backends import ExecutionResult
-from mlipflow.config import load_project
-from mlipflow.errors import ApprovalError, CapabilityError
-from mlipflow.services.commands import initialize, make_run_plan, retry, run_node
-from mlipflow.services.paths import state_path
-from mlipflow.state import RunState, StateStore
+from mlipipe.backends import ExecutionResult
+from mlipipe.config import load_project
+from mlipipe.errors import ApprovalError, CapabilityError
+from mlipipe.services.commands import initialize, make_run_plan, retry, run_node
+from mlipipe.services.paths import state_path
+from mlipipe.state import RunState, StateStore
 
 from .helpers import project_config, run_cli, write_json
 
@@ -179,11 +179,11 @@ class ApprovalTests(unittest.TestCase):
             project = load_project(root)
             adapter = FixtureAdapter("analyze-existing")
             with patch(
-                "mlipflow.services.commands.load_adapter", return_value=adapter
+                "mlipipe.services.commands.load_adapter", return_value=adapter
             ), patch(
-                "mlipflow.services.execution.load_adapter", return_value=adapter
+                "mlipipe.services.execution.load_adapter", return_value=adapter
             ), patch(
-                "mlipflow.backends.LocalBackend.run",
+                "mlipipe.backends.LocalBackend.run",
                 return_value=ExecutionResult(0, "", ""),
             ):
                 result = run_node(project, "transport")
@@ -273,20 +273,20 @@ class ApprovalTests(unittest.TestCase):
             project = load_project(root)
             adapter = FixtureAdapter("train")
             with patch(
-                "mlipflow.services.commands.load_adapter", return_value=adapter
+                "mlipipe.services.commands.load_adapter", return_value=adapter
             ):
                 plan = make_run_plan(project, "train")
                 self.assertTrue(plan["approval_required"])
                 with self.assertRaises(ApprovalError):
                     run_node(project, "train")
-            self.assertFalse((root / ".mlipflow/runs/train/attempt-1").exists())
+            self.assertFalse((root / ".mlipipe/runs/train/attempt-1").exists())
 
             with patch(
-                "mlipflow.services.commands.load_adapter", return_value=adapter
+                "mlipipe.services.commands.load_adapter", return_value=adapter
             ), patch(
-                "mlipflow.services.execution.load_adapter", return_value=adapter
+                "mlipipe.services.execution.load_adapter", return_value=adapter
             ), patch(
-                "mlipflow.backends.LocalBackend.run",
+                "mlipipe.backends.LocalBackend.run",
                 return_value=ExecutionResult(0, "", ""),
             ):
                 result = run_node(project, "train", approval=True)

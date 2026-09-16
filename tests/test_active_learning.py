@@ -10,20 +10,20 @@ from pathlib import Path
 
 import pytest
 
-from mlipflow.plugins.active_learning import science as al
-from mlipflow.config import load_project
-from mlipflow.services.commands import (
+from mlipipe.plugins.active_learning import science as al
+from mlipipe.config import load_project
+from mlipipe.services.commands import (
     advance,
     initialize,
     make_advance_plan,
     make_run_plan,
     run_node,
 )
-from mlipflow.services.queries import query_workflow
+from mlipipe.services.queries import query_workflow
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "active_learning" / "adapter.py"
+ADAPTER_PATH = ROOT / "mlipipe" / "plugins" / "active_learning" / "adapter.py"
 
 
 def load_adapter():
@@ -1163,7 +1163,7 @@ def test_oracle_full_chain_runs_through_core_and_preserves_prior_round(strategy)
         assessment = json.loads(
             (
                 current_round
-                / ".mlipflow"
+                / ".mlipipe"
                 / "runs"
                 / "assess-round"
                 / "attempt-1"

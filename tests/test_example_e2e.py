@@ -6,16 +6,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mlipflow.config import load_project
-from mlipflow.errors import ConfigError
-from mlipflow.services.commands import (
+from mlipipe.config import load_project
+from mlipipe.errors import ConfigError
+from mlipipe.services.commands import (
     advance,
     initialize,
     make_advance_plan,
     make_run_plan,
     run_node,
 )
-from mlipflow.services.queries import query_route, query_workflow
+from mlipipe.services.queries import query_route, query_workflow
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "mlipflow" / "plugins" / "pes_sampling" / "direct_select.py"
+RUNNER = ROOT / "mlipipe" / "plugins" / "pes_sampling" / "direct_select.py"
 
 
 def load_runner():

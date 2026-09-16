@@ -11,14 +11,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from mlipflow.hpc import resolve_hpc_execution_plan
-from mlipflow.services.contracts import _safe_remote_relative
-from mlipflow.site import ClusterProfile
+from mlipipe.hpc import resolve_hpc_execution_plan
+from mlipipe.services.contracts import _safe_remote_relative
+from mlipipe.site import ClusterProfile
 from tests.helpers import write_json
 from tests.test_scheduled_multi_calculation import ScheduledLifecycle
 
 ROOT = Path(__file__).resolve().parents[1]
-DFT_PLUGIN = ROOT / "mlipflow" / "plugins" / "dft_labeling"
+DFT_PLUGIN = ROOT / "mlipipe" / "plugins" / "dft_labeling"
 
 
 def _load(name: str, path: Path):
@@ -207,7 +207,7 @@ def test_four_views_share_exact_record_ids_and_scientific_conventions(tmp_path: 
             view = json.loads((root / framework / f"{stem}.json").read_text())
             assert [record["record_id"] for record in view["records"]] == expected
         mace = ase_io.read(root / "mace" / f"{stem}.extxyz", index=":")
-        assert [atoms.info["mlipflow_record_id"] for atoms in mace] == expected
+        assert [atoms.info["mlipipe_record_id"] for atoms in mace] == expected
         assert [item["record_id"] for item in deep_index["partitions"][split_name]] == expected
         frame_count = 0
         for system in sorted((root / "deepmd" / stem).glob("system-*")):
@@ -240,7 +240,7 @@ def test_four_views_share_exact_record_ids_and_scientific_conventions(tmp_path: 
     assert benchmark_reference["relative_path"] == f"{root.name}/benchmark/test.json"
     fresh = _load(
         "dft_benchmark_dataset_reader",
-        ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "fresh_benchmark.py",
+        ROOT / "mlipipe" / "plugins" / "mlip_benchmark" / "fresh_benchmark.py",
     )
     _, loaded_samples = fresh._load_dataset(benchmark_path)
     assert [sample["id"] for sample in loaded_samples] == split["test_record_ids"]
@@ -313,15 +313,15 @@ def test_dataset_adapter_stages_and_converter_resolves_canonical_merge_manifest(
 ) -> None:
     old = _canonical(3, project_id="old-labels")
     query = _canonical(3, project_id="round-001", start=10)
-    source_dir = tmp_path / ".mlipflow" / "runs" / "labels" / "attempt-1"
+    source_dir = tmp_path / ".mlipipe" / "runs" / "labels" / "attempt-1"
     write_json(source_dir / "old.json", old)
     write_json(source_dir / "query.json", query)
     merge_manifest = {
         "schema_version": 1,
-        "contract": "mlipflow/canonical-dataset-merge",
+        "contract": "mlipipe/canonical-dataset-merge",
         "sources": [
-            {"path": ".mlipflow/runs/labels/attempt-1/old.json"},
-            {"path": ".mlipflow/runs/labels/attempt-1/query.json"},
+            {"path": ".mlipipe/runs/labels/attempt-1/old.json"},
+            {"path": ".mlipipe/runs/labels/attempt-1/query.json"},
         ],
     }
     merge_path = tmp_path / "merge.json"
@@ -362,8 +362,8 @@ def test_dataset_adapter_stages_and_converter_resolves_canonical_merge_manifest(
     }
     assert staged_names == {
         "canonical.json",
-        ".mlipflow/runs/labels/attempt-1/old.json",
-        ".mlipflow/runs/labels/attempt-1/query.json",
+        ".mlipipe/runs/labels/attempt-1/old.json",
+        ".mlipipe/runs/labels/attempt-1/query.json",
         "dataset_convert.py",
         "dataset_contract.py",
     }
@@ -471,11 +471,11 @@ def test_missing_dpdata_blocks_only_deepmd_conversion(tmp_path: Path, monkeypatc
 
 def test_training_runners_consume_predefined_split_directories(tmp_path: Path) -> None:
     _, _, _, root, _ = _convert(tmp_path, _canonical(10), "m3gnet,chgnet,mace")
-    sys.path.insert(0, str(ROOT / "mlipflow" / "plugins" / "mlip_training"))
+    sys.path.insert(0, str(ROOT / "mlipipe" / "plugins" / "mlip_training"))
     try:
-        m3gnet = _load("m3gnet_predefined_test", ROOT / "mlipflow/plugins/mlip_training/mlip_m3gnet.py")
-        chgnet = _load("chgnet_predefined_test", ROOT / "mlipflow/plugins/mlip_training/mlip_chgnet.py")
-        mace = _load("mace_predefined_test", ROOT / "mlipflow/plugins/mlip_training/mlip_mace.py")
+        m3gnet = _load("m3gnet_predefined_test", ROOT / "mlipipe/plugins/mlip_training/mlip_m3gnet.py")
+        chgnet = _load("chgnet_predefined_test", ROOT / "mlipipe/plugins/mlip_training/mlip_chgnet.py")
+        mace = _load("mace_predefined_test", ROOT / "mlipipe/plugins/mlip_training/mlip_mace.py")
     finally:
         sys.path.pop(0)
     m3_contract = m3gnet._dataset_contract({})

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ionic Transport"
+  short_description: "Local trajectory/MSD transport analysis"
+  default_prompt: "$ionic-transport Analyze existing local trajectories or MSD with explicit scientific parameters and verify the full MLIPipe checker/collect lifecycle."

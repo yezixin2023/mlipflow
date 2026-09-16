@@ -13,7 +13,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = ROOT / "mlipflow" / "plugins" / "pes_sampling"
+PLUGIN_ROOT = ROOT / "mlipipe" / "plugins" / "pes_sampling"
 ADAPTER_PATH = PLUGIN_ROOT / "adapter.py"
 WRAPPER_PATH = PLUGIN_ROOT / "lasp_ssw.py"
 UNKNOWN_SEED = "HISTORICAL_PARAMETER_UNKNOWN"
@@ -247,7 +247,7 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         self.temporary.cleanup()
 
     def normalize_context(self, attempt_name: str = "attempt-1") -> dict[str, Any]:
-        attempt = self.root / ".mlipflow" / "runs" / "lasp-normalize" / attempt_name
+        attempt = self.root / ".mlipipe" / "runs" / "lasp-normalize" / attempt_name
         return {
             "project_root": str(self.root),
             "attempt_dir": str(attempt),
@@ -566,7 +566,7 @@ class LaspAdapterTests(LaspFixtureMixin, unittest.TestCase):
         executable.chmod(0o755)
         input_structure = self.root / "input.arc"
         input_structure.write_bytes(arc_payload([-10.0]))
-        attempt = self.root / ".mlipflow" / "runs" / "lasp-execute" / "attempt-1"
+        attempt = self.root / ".mlipipe" / "runs" / "lasp-execute" / "attempt-1"
         parameters = self.shared_parameters("lasp-ssw-execute", "lasp-executed")
         parameters["lasp_version"] = "fixture-1.0"
         context = {

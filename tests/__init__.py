@@ -1,2 +1,2 @@
-"""MLIPFlow tests."""
+"""MLIPipe tests."""
 

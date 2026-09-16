@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from mlipflow.config import Project
-from mlipflow.errors import CapabilityError
-from mlipflow.io import write_json_atomic
-from mlipflow.services.contracts import _adapter_context
-from mlipflow.services.paths import attempt_directory, state_path
-from mlipflow.services.scheduled import _attempt_node
-from mlipflow.state import RunState, StateStore
+from mlipipe.config import Project
+from mlipipe.errors import CapabilityError
+from mlipipe.io import write_json_atomic
+from mlipipe.services.contracts import _adapter_context
+from mlipipe.services.paths import attempt_directory, state_path
+from mlipipe.services.scheduled import _attempt_node
+from mlipipe.state import RunState, StateStore
 
 
 def _project(tmp_path: Path, binding: object) -> tuple[Project, list[dict[str, object]]]:

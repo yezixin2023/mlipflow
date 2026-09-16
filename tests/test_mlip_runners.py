@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import pytest
 
-PLUGIN = Path(__file__).resolve().parents[1] / "mlipflow" / "plugins" / "mlip_training"
+PLUGIN = Path(__file__).resolve().parents[1] / "mlipipe" / "plugins" / "mlip_training"
 sys.path.insert(0, str(PLUGIN))
 import mlip_chgnet  # noqa: E402
 import mlip_deepmd  # noqa: E402
@@ -31,7 +31,7 @@ def ns(framework, operation="train", precision="float64"):
 
 def test_deepmd_plan():
     cfg = {
-        "_mlipflow": {"backend": "pt"},
+        "_mlipipe": {"backend": "pt"},
         "model": {"descriptor": {"type": "dpa2"}},
         "training": {"seed": 23},
     }
@@ -51,7 +51,7 @@ def test_deepmd_run_expands_portable_system_patterns(tmp_path, monkeypatch):
     args.output = str(output)
     args.result_manifest = str(result)
     config = {
-        "_mlipflow": {"backend": "tf", "link_data_as": "data"},
+        "_mlipipe": {"backend": "tf", "link_data_as": "data"},
         "training": {
             "seed": 23,
             "training_data": {"systems": ["data/train/system-*"]},

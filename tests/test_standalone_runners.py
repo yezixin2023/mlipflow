@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from mlipflow.plugins import capability_directory
+from mlipipe.plugins import capability_directory
 
 
 # These are the small Python dependencies distributed with the corresponding
@@ -86,7 +86,7 @@ from pathlib import Path
 
 class NoController(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "mlipflow" or fullname.startswith("mlipflow."):
+        if fullname == "mlipipe" or fullname.startswith("mlipipe."):
             raise AssertionError("standalone runner imported controller: " + fullname)
 
 sys.meta_path.insert(0, NoController())

@@ -9,15 +9,15 @@ import unittest
 from argparse import Namespace
 from pathlib import Path
 
-from mlipflow.config import load_project
-from mlipflow.services.commands import initialize, make_run_plan
-from mlipflow.services.contracts import _scheduled_contract
+from mlipipe.config import load_project
+from mlipipe.services.commands import initialize, make_run_plan
+from mlipipe.services.contracts import _scheduled_contract
 
 from .helpers import project_config, write_json
 from .test_scheduled_dft import FakeTemplateLibrary, write_site
 
 ROOT = Path(__file__).resolve().parents[1]
-PES = ROOT / "mlipflow" / "plugins" / "pes_sampling"
+PES = ROOT / "mlipipe" / "plugins" / "pes_sampling"
 ARC_HEADER = "!BIOSYM archive 2\nPBC=ON\n"
 
 
@@ -200,7 +200,7 @@ class ScheduledLaspPlanTests(unittest.TestCase):
         reported["reference_path"] = "/remote/input/pseudopotentials.json"
         reported["manifest_path"] = "/remote/input/lasp-input-manifest.json"
         reported["potcar_path"] = "/remote/input/POTCAR"
-        from mlipflow.plugins.pes_sampling import scheduled as adapter
+        from mlipipe.plugins.pes_sampling import scheduled as adapter
         self.assertEqual(
             adapter._pseudopotential_settings(approved),
             adapter._pseudopotential_settings(reported),
@@ -300,7 +300,7 @@ class LaspRemoteRunnerTests(unittest.TestCase):
         # Reproduce the core fetch layout before checking the actual runner outputs.
         for name in ("cluster-run-report.json", "selected-structures.tar.gz"):
             shutil.copy2(self.output_dir / name, self.output_dir / "lasp-ssw" / name)
-        from mlipflow.plugins.pes_sampling import scheduled
+        from mlipipe.plugins.pes_sampling import scheduled
         context = {"attempt_dir": str(self.output_dir), "execution": {"plan": plan["adapter_plan"]}}
         checked = scheduled.check(context)
         self.assertEqual("OK", checked["status"], checked)

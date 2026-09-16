@@ -5,10 +5,10 @@ from unittest.mock import patch
 
 import pytest
 
-from mlipflow.config import load_project
-from mlipflow.errors import ConfigError
-from mlipflow.services.commands import make_run_plan
-from mlipflow.site import load_site_config
+from mlipipe.config import load_project
+from mlipipe.errors import ConfigError
+from mlipipe.services.commands import make_run_plan
+from mlipipe.site import load_site_config
 from .helpers import write_json
 from .test_scheduled_dft import prepared_fixture, FakeTemplateLibrary
 
@@ -28,7 +28,7 @@ def test_ordinary_planning_never_probes_other_clusters(tmp_path, selection):
     if selection == "default":
         settings["default_profile"] = "cluster-a"
     write_json(site, settings)
-    with patch("mlipflow.backends.SshSlurmBackend.select_partition",
+    with patch("mlipipe.backends.SshSlurmBackend.select_partition",
                side_effect=AssertionError("unexpected cross-cluster probe")):
         if selection == "ambiguous":
             with pytest.raises(ConfigError, match="default_profile.*backend_profile"):

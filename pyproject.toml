@@ -3,14 +3,14 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mlipflow"
+name = "mlipipe"
 version = "0.1.0"
 description = "Deterministic workflows for machine-learned interatomic-potential research"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{name = "MLIPFlow contributors"}]
+authors = [{name = "MLIPipe contributors"}]
 keywords = [
   "machine-learned interatomic potentials",
   "materials science",
@@ -31,10 +31,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yezixin2023/mlipflow"
-Repository = "https://github.com/yezixin2023/mlipflow"
-Documentation = "https://github.com/yezixin2023/mlipflow/blob/public/README.md"
-Issues = "https://github.com/yezixin2023/mlipflow/issues"
+Homepage = "https://github.com/yezixin2023/mlipipe"
+Repository = "https://github.com/yezixin2023/mlipipe"
+Documentation = "https://github.com/yezixin2023/mlipipe/blob/public/README.md"
+Issues = "https://github.com/yezixin2023/mlipipe/issues"
 
 [project.optional-dependencies]
 dev = ["build>=1", "setuptools>=77", "pytest>=7", "ruff>=0.5", "pymatgen>=2024.5", "ase>=3.22", "dpdata>=0.2.18"]
@@ -59,23 +59,23 @@ local = [
 ]
 
 [project.scripts]
-mlipflow = "mlipflow.cli:main"
+mlipipe = "mlipipe.cli:main"
 
 [tool.setuptools]
 include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["mlipflow", "mlipflow.*"]
+include = ["mlipipe", "mlipipe.*"]
 namespaces = false
 
 [tool.setuptools.package-data]
 "*" = ["skill/SKILL.md", "skill/agents/*.yaml", "skill/references/*.md"]
 
 [tool.setuptools.data-files]
-"share/mlipflow/agent-skills/mlip-workflow" = [".agents/skills/mlip-workflow/SKILL.md"]
-"share/mlipflow/agent-skills/mlip-workflow/agents" = [".agents/skills/mlip-workflow/agents/openai.yaml"]
-"share/mlipflow/agent-skills/mlip-workflow/references" = [".agents/skills/mlip-workflow/references/workflow-contract.md"]
+"share/mlipipe/agent-skills/mlip-workflow" = [".agents/skills/mlip-workflow/SKILL.md"]
+"share/mlipipe/agent-skills/mlip-workflow/agents" = [".agents/skills/mlip-workflow/agents/openai.yaml"]
+"share/mlipipe/agent-skills/mlip-workflow/references" = [".agents/skills/mlip-workflow/references/workflow-contract.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

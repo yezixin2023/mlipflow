@@ -12,5 +12,5 @@ credentials or private cluster information.
 
 ## Execution boundary and support
 
-MLIPFlow does not sandbox external scientific software, scripts or model files.
+MLIPipe does not sandbox external scientific software, scripts or model files.
 Security fixes target the current supported codebase.

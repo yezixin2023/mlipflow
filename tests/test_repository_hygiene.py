@@ -20,7 +20,7 @@ def tracked_files() -> list[Path]:
 class RepositoryHygieneTests(unittest.TestCase):
     def test_specialist_skills_are_discoverable_through_relative_directory_links(self) -> None:
         discovery = ROOT / ".agents" / "skills"
-        canonical_skills = sorted((ROOT / "mlipflow" / "plugins").glob("*/skill"))
+        canonical_skills = sorted((ROOT / "mlipipe" / "plugins").glob("*/skill"))
         self.assertTrue(canonical_skills)
         names = {"mlip-workflow"}
         for canonical in canonical_skills:
@@ -126,7 +126,7 @@ class RepositoryHygieneTests(unittest.TestCase):
                     ".yaml",
                 }
                 or any(
-                    part in {".mlipflow", ".pytest_cache", "__pycache__"}
+                    part in {".mlipipe", ".pytest_cache", "__pycache__"}
                     or part.endswith(".egg-info")
                     for part in path.parts
                 )

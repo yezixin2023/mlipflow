@@ -1,7 +1,7 @@
 # Cluster MLIP execution environments
 
-MLIPFlow uses one site-owned Python environment per MLIP framework. These are
-execution environments for scheduled training, not the local MLIPFlow
+MLIPipe uses one site-owned Python environment per MLIP framework. These are
+execution environments for scheduled training, not the local MLIPipe
 control/science environment.
 
 ```text
@@ -13,7 +13,7 @@ mlip-m3gnet -> MatGL/M3GNet environment
 
 Create only the environments used by a site. Do not combine the four frameworks
 into one environment. The staged cluster runner needs `PyYAML` and the selected
-framework stack; it does not need MLIPFlow itself or the MLIPFlow `dev` extra.
+framework stack; it does not need MLIPipe itself or the MLIPipe `dev` extra.
 
 Framework, Python, accelerator, driver, CUDA/ROCm, and PyTorch compatibility is a
 site decision. The commands below intentionally do not prescribe one CUDA or
@@ -29,7 +29,7 @@ nodes. Useful upstream references are the [PyTorch installation selector](https:
 
 Before creating an environment, decide and record:
 
-- the framework and MLIPFlow framework id (`deepmd`, `mace`, `chgnet`, or
+- the framework and MLIPipe framework id (`deepmd`, `mace`, `chgnet`, or
   `m3gnet`);
 - CPU-only, NVIDIA CUDA, AMD ROCm, or another supported compute target;
 - the site Python interpreter or module used to create the environment;
@@ -49,8 +49,8 @@ compute node has a working runtime.
 
 ## External scientific executables
 
-Some MLIPFlow capabilities require scientific programs that are installed and
-maintained by the user or cluster site rather than by MLIPFlow itself.
+Some MLIPipe capabilities require scientific programs that are installed and
+maintained by the user or cluster site rather than by MLIPipe itself.
 
 ### LAMMPS for MLIP molecular dynamics
 
@@ -88,7 +88,7 @@ Bind these only in the site-owned `vasp/run.sh` or `vasp-batch/run.sh` template;
 do not place absolute VASP executable paths or cluster-specific launcher settings
 in project files or capability parameters.
 
-MLIPFlow also does not distribute POTCAR data. `dft-labeling` assembles
+MLIPipe also does not distribute POTCAR data. `dft-labeling` assembles
 runtime-only POTCAR inputs from the licensed site/user pseudopotential
 installation and excludes POTCAR files from results, reports, and
 repository content.
@@ -126,7 +126,7 @@ DEEPMD_PYTHON=/ABS/PATH/TO/MLIP_ENVS/mlip-deepmd/bin/python
 For TensorFlow GPU, Paddle, JAX, ROCm, source builds, or offline packages, follow
 the matching upstream DeepMD instructions instead of copying a CUDA-specific
 example from another cluster. The installed backend must agree with
-the DeepMD config field `_mlipflow.backend`.
+the DeepMD config field `_mlipipe.backend`.
 
 Verify the exact backend entry point. Replace `deepmd.pt.entrypoints.main` with
 the module selected by the config when it is not PyTorch:
@@ -156,7 +156,7 @@ MACE_PYTHON=/ABS/PATH/TO/MLIP_ENVS/mlip-mace/bin/python
 ## Create the CHGNet environment
 
 For GPU execution, install the site-compatible PyTorch build before CHGNet.
-MLIPFlow's CHGNet training contract requires `precision: float32`; that scientific
+MLIPipe's CHGNet training contract requires `precision: float32`; that scientific
 constraint is separate from the site's Torch/CUDA choice.
 
 ```bash
@@ -171,7 +171,7 @@ CHGNET_PYTHON=/ABS/PATH/TO/MLIP_ENVS/mlip-chgnet/bin/python
 
 ## Create the MatGL/M3GNet environment
 
-MLIPFlow names this framework `m3gnet`, while its Python distribution and import
+MLIPipe names this framework `m3gnet`, while its Python distribution and import
 package are `matgl`. For GPU execution, install the site-compatible PyTorch build
 before MatGL.
 
@@ -185,7 +185,7 @@ MATGL_PYTHON=/ABS/PATH/TO/MLIP_ENVS/mlip-m3gnet/bin/python
 ```
 
 MatGL has changed graph backends and training APIs across releases. The selected
-version must pass the import path used by the MLIPFlow config. With `api: auto`,
+version must pass the import path used by the MLIPipe config. With `api: auto`,
 the runner uses the high-level API when both high-level classes are present and
 otherwise tries the legacy API:
 
@@ -208,7 +208,7 @@ if not high_level:
     from matgl.utils.training import PotentialLightningModule
 
 print(metadata.version("matgl"), metadata.version("lightning"), torch.__version__)
-print("mlipflow_m3gnet_api=", "high_level" if high_level else "legacy")
+print("mlipipe_m3gnet_api=", "high_level" if high_level else "legacy")
 PY
 ```
 
@@ -250,7 +250,7 @@ Prefer creating a new versioned environment, validating it, and then reviewing a
 Under the cluster profile's one canonical `remote_template_root`, install one
 template family for each enabled framework:
 
-| MLIPFlow framework | Template | `PYTHON_BIN` target |
+| MLIPipe framework | Template | `PYTHON_BIN` target |
 |---|---|---|
 | `deepmd` | `mlip-deepmd/run.sh` | `/ABS/PATH/TO/MLIP_ENVS/mlip-deepmd/bin/python` |
 | `mace` | `mlip-mace/run.sh` | `/ABS/PATH/TO/MLIP_ENVS/mlip-mace/bin/python` |
@@ -275,14 +275,14 @@ rendered script with `bash`, so the library copy of `run.sh` does not need to be
 executable file.
 
 Do not run the template-library `run.sh` directly: its placeholders are rendered
-and the bundled runner is staged only when MLIPFlow creates a fresh attempt.
+and the bundled runner is staged only when MLIPipe creates a fresh attempt.
 
 ## How `site.yaml`, templates, and environments fit together
 
 The three layers have separate ownership:
 
 ```text
-local ~/.mlipflow/site.yaml
+local ~/.mlipipe/site.yaml
   backend_profile -> SSH config alias + remote_template_root + work_root
                                       |
                                       v
@@ -309,7 +309,7 @@ work_root/<project>/<node>/attempt-XXXX/
   family; the project never supplies `PYTHON_BIN`.
 - The Slurm template maps CPU/GPU/memory/walltime according to site policy. The
   framework `run.sh` selects the interpreter and cluster artifact roots. The
-  interpreter then runs MLIPFlow's staged `training_cluster.py`.
+  interpreter then runs MLIPipe's staged `training_cluster.py`.
 
 For example, a node with `backend_profile: cluster-a` and `framework: mace` resolves
 the profile in local `site.yaml`, reads
@@ -328,10 +328,10 @@ Before approving a real training job:
    below them with the expected file/directory kind.
 4. Confirm the canonical template library contains the matching
    `mlip-<framework>/run.sh` and `slurm/single-python/{cpu,gpu}.sbatch`.
-5. Run `mlipflow run NODE --dry-run` locally and review the selected backend profile,
+5. Run `mlipipe run NODE --dry-run` locally and review the selected backend profile,
    template family, execution model, resources, staged inputs, and output allowlist.
 6. Use a short scheduled environment smoke before production-scale training.
 
-Scheduler `COMPLETED` is not enough: MLIPFlow still requires the remote runner,
+Scheduler `COMPLETED` is not enough: MLIPipe still requires the remote runner,
 output schema, declared paths/parameters, and scientific checker to pass before the
 attempt becomes `OK`.

@@ -64,7 +64,7 @@ The literature basis is deliberately limited to scale and committee design:
 `prepare_round_inputs.py` only converts collected ASE trajectories, canonical
 DFT records, split manifests, model references, and capability results into explicit
 handoff files. Model inference, DIRECT, VASP, dataset publication, training, MD,
-benchmarking, and the final decision remain MLIPFlow capability operations. Every
+benchmarking, and the final decision remain MLIPipe capability operations. Every
 utility output is fresh and refuses overwrite.
 
 `historical-chgnet-bootstrap` is the bounded replay alternative when a reviewed

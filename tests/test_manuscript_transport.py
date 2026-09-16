@@ -10,11 +10,11 @@ from types import ModuleType
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-ADAPTER_PATH = PROJECT_ROOT / "mlipflow" / "plugins" / "ionic_transport" / "manuscript.py"
+ADAPTER_PATH = PROJECT_ROOT / "mlipipe" / "plugins" / "ionic_transport" / "manuscript.py"
 
 
 def load_transport_module() -> ModuleType:
-    module = load_module(ADAPTER_PATH, 'mlipflow_ionic_transport_parity')
+    module = load_module(ADAPTER_PATH, 'mlipipe_ionic_transport_parity')
     return module
 
 
@@ -103,7 +103,7 @@ class ManuscriptTransportFixtureTests(unittest.TestCase):
         normalized = json.loads(output.read_text(encoding="utf-8"))
 
         self.assertEqual(0, returncode)
-        self.assertEqual("mlipflow.historical_transport_output", normalized["artifact_type"])
+        self.assertEqual("mlipipe.historical_transport_output", normalized["artifact_type"])
         self.assertEqual(before, history.read_bytes())
 
     def test_legacy_n7_and_corrected_n10_are_separate_and_ratio_is_explicit(self) -> None:

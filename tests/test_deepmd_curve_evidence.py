@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from mlipflow.plugins.mlip_training.deepmd_curve import export_training_evidence
+from mlipipe.plugins.mlip_training.deepmd_curve import export_training_evidence
 
 
 def test_export_preserves_curve_checkpoint_and_log_bytes(tmp_path):

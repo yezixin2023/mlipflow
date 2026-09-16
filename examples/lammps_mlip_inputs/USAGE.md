@@ -16,14 +16,14 @@ Preparation requires ASE locally. Execution needs a site template and LAMMPS bui
 with the declared MLIP interface; `backend_profile` selects that configured site.
 
 ```bash
-mlipflow --project /PATH/TO/lammps-project init
-mlipflow --project /PATH/TO/lammps-project --format json run prepare-lammps-mace --dry-run
-mlipflow --project /PATH/TO/lammps-project --format json run prepare-lammps-mace
-mlipflow --project /PATH/TO/lammps-project --format json advance
-mlipflow --project /PATH/TO/lammps-project --format json run run-lammps-mace-gpu --dry-run
-mlipflow --project /PATH/TO/lammps-project --format json run run-lammps-mace-gpu --approve
-mlipflow --project /PATH/TO/lammps-project --format json advance
-mlipflow --project /PATH/TO/lammps-project json run-lammps-mace-gpu
+mlipipe --project /PATH/TO/lammps-project init
+mlipipe --project /PATH/TO/lammps-project --format json run prepare-lammps-mace --dry-run
+mlipipe --project /PATH/TO/lammps-project --format json run prepare-lammps-mace
+mlipipe --project /PATH/TO/lammps-project --format json advance
+mlipipe --project /PATH/TO/lammps-project --format json run run-lammps-mace-gpu --dry-run
+mlipipe --project /PATH/TO/lammps-project --format json run run-lammps-mace-gpu --approve
+mlipipe --project /PATH/TO/lammps-project --format json advance
+mlipipe --project /PATH/TO/lammps-project json run-lammps-mace-gpu
 ```
 
 Preparation emits the

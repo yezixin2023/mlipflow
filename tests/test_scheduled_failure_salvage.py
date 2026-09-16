@@ -5,9 +5,9 @@ import shutil
 from pathlib import Path
 from unittest.mock import patch
 
-from mlipflow.backends import ExecutionResult
-from mlipflow.config import load_project
-from mlipflow.services.commands import (
+from mlipipe.backends import ExecutionResult
+from mlipipe.config import load_project
+from mlipipe.services.commands import (
     advance,
     initialize,
     make_advance_plan,
@@ -100,9 +100,9 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
         return _remote_dir
 
     with patch(
-        "mlipflow.backends.SshSlurmBackend.stage_workspace", side_effect=stage
+        "mlipipe.backends.SshSlurmBackend.stage_workspace", side_effect=stage
     ), patch(
-        "mlipflow.backends.SshSlurmBackend.submit",
+        "mlipipe.backends.SshSlurmBackend.submit",
         return_value=ExecutionResult(0, "Submitted batch job 91\n", "", "91"),
     ):
         run_node(
@@ -147,9 +147,9 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
 
     timeout = {"state": "TIMEOUT", "detail": "walltime", "source": "fake"}
     with patch(
-        "mlipflow.backends.SshSlurmBackend.status", return_value=timeout
+        "mlipipe.backends.SshSlurmBackend.status", return_value=timeout
     ), patch(
-        "mlipflow.backends.SshSlurmBackend.inspect_file",
+        "mlipipe.backends.SshSlurmBackend.inspect_file",
         autospec=True,
         side_effect=inspect,
     ):
@@ -166,17 +166,17 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
     inventory = {item["remote_name"]: item for item in finalization["outputs"]}
     assert inventory["md-checkpoint.json"]["exists"] is True
     assert not (
-        tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1" / "md-checkpoint.json"
+        tmp_path / ".mlipipe" / "runs" / "md" / "attempt-1" / "md-checkpoint.json"
     ).exists()
 
     with patch(
-        "mlipflow.backends.SshSlurmBackend.status", return_value=timeout
+        "mlipipe.backends.SshSlurmBackend.status", return_value=timeout
     ), patch(
-        "mlipflow.backends.SshSlurmBackend.inspect_file",
+        "mlipipe.backends.SshSlurmBackend.inspect_file",
         autospec=True,
         side_effect=inspect,
     ), patch(
-        "mlipflow.backends.SshSlurmBackend.fetch_from",
+        "mlipipe.backends.SshSlurmBackend.fetch_from",
         autospec=True,
         side_effect=fetch,
     ):
@@ -184,7 +184,7 @@ def test_timeout_checkpoint_is_fetched_only_through_approved_failure_salvage(
 
     assert outcome["changed"][0]["state"] == "FAIL"
     local_checkpoint = (
-        tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1" / "md-checkpoint.json"
+        tmp_path / ".mlipipe" / "runs" / "md" / "attempt-1" / "md-checkpoint.json"
     )
     assert local_checkpoint.is_file()
     assert local_checkpoint.read_bytes() == checkpoint.read_bytes()

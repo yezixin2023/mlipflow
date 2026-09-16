@@ -3,7 +3,7 @@
 
 This utility does no model inference, DFT, training, MD, or DIRECT selection.  It
 only converts already collected ASE/canonical artifacts into the explicit JSON and
-structure inputs consumed by the corresponding MLIPFlow plugins.
+structure inputs consumed by the corresponding MLIPipe plugins.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-ACTIVE_CANDIDATE_CONTRACT = "mlipflow/active-learning-candidates"
+ACTIVE_CANDIDATE_CONTRACT = "mlipipe/active-learning-candidates"
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -269,7 +269,7 @@ def historical_chgnet_bootstrap(args: argparse.Namespace) -> None:
     midpoint = len(calibration_ids) // 2
     capture = {
         "schema_version": 1,
-        "contract": "mlipflow/historical-labeled-capture",
+        "contract": "mlipipe/historical-labeled-capture",
         "dataset_id": dataset_id,
         "record_count": len(records),
         "units": {"energy": "eV", "force": "eV/angstrom"},
@@ -474,7 +474,7 @@ def evaluation(args: argparse.Namespace) -> None:
         evaluation_path,
         {
             "schema_version": 1,
-            "contract": "mlipflow/active-learning-evaluation-dataset",
+            "contract": "mlipipe/active-learning-evaluation-dataset",
             "units": {"energy": "eV", "force": "eV/angstrom"},
             "dataset_split": dataset_split,
             "samples": samples,
@@ -594,7 +594,7 @@ def model_index(args: argparse.Namespace) -> None:
         Path(args.output).resolve(),
         {
             "schema_version": 1,
-            "contract": "mlipflow/active-learning-committee-model-index",
+            "contract": "mlipipe/active-learning-committee-model-index",
             "strategy": policy["strategy"],
             "models": [
                 {
@@ -612,7 +612,7 @@ def model_index(args: argparse.Namespace) -> None:
 
 def direct_input(args: argparse.Namespace) -> None:
     from ase.io import read, write
-    from mlipflow.plugins.active_learning import science as active_learning
+    from mlipipe.plugins.active_learning import science as active_learning
 
     evaluation_value = _read_json(Path(args.committee_evaluation).resolve())
     policy = _read_json(Path(args.policy).resolve())
@@ -681,7 +681,7 @@ def cumulative_merge(args: argparse.Namespace) -> None:
         output,
         {
             "schema_version": 1,
-            "contract": "mlipflow/canonical-dataset-merge",
+            "contract": "mlipipe/canonical-dataset-merge",
             "sources": sources,
         },
     )
@@ -689,7 +689,7 @@ def cumulative_merge(args: argparse.Namespace) -> None:
 
 def _load_dataset_contract(path: Path) -> Any:
     spec = importlib.util.spec_from_file_location(
-        "mlipflow_validation_dataset_contract", path
+        "mlipipe_validation_dataset_contract", path
     )
     if spec is None or spec.loader is None:
         raise ValueError(f"cannot load dataset contract from {path}")
@@ -866,7 +866,7 @@ def split_seed_review(args: argparse.Namespace) -> None:
         Path(args.output).resolve(),
         {
             "schema_version": 1,
-            "contract": "mlipflow/active-learning-split-seed-review",
+            "contract": "mlipipe/active-learning-split-seed-review",
             "selection_rule": (
                 "lowest-nonnegative-seed-preserving-prior-train-validation-and-new-query"
             ),
@@ -1043,7 +1043,7 @@ def _audit_handoff(
 
 
 def assessment_inputs(args: argparse.Namespace) -> None:
-    from mlipflow.plugins.active_learning.science import committee_mean_force_error
+    from mlipipe.plugins.active_learning.science import committee_mean_force_error
 
     evaluation_value = _read_json(Path(args.committee_evaluation).resolve())
     predictions = _read_json(Path(args.committee_predictions).resolve())

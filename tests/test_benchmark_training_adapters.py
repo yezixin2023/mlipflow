@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_adapter(plugin_id: str):
-    path = ROOT / "mlipflow" / "plugins" / plugin_id.replace("-", "_") / "adapter.py"
+    path = ROOT / "mlipipe" / "plugins" / plugin_id.replace("-", "_") / "adapter.py"
     module = load_module(path, f"test_{plugin_id.replace('-', '_')}")
     return module.Adapter()
 

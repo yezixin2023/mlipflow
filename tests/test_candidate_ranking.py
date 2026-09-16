@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "mlipflow" / "plugins" / "candidate_ranking"
+PLUGIN = ROOT / "mlipipe" / "plugins" / "candidate_ranking"
 
 
 def _adapter():

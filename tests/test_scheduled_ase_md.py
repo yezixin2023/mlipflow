@@ -15,7 +15,7 @@ from ase.constraints import FixCom
 from ase.io import read, write
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "mlipflow" / "plugins" / "ase_md"
+PLUGIN = ROOT / "mlipipe" / "plugins" / "ase_md"
 
 
 def _load(name: str, path: Path):
@@ -81,7 +81,7 @@ def _context(tmp_path: Path, calculator: str) -> dict:
     _write_json(tmp_path / "project.yaml", project)
     return {
         "project_root": str(tmp_path),
-        "attempt_dir": str(tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1"),
+        "attempt_dir": str(tmp_path / ".mlipipe" / "runs" / "md" / "attempt-1"),
         "backend": "ssh-slurm",
         "inputs": {"structure": "inputs/start.extxyz", "model_reference": f"inputs/{calculator}-model.json"},
         "parameters": parameters,
@@ -115,10 +115,10 @@ def test_scheduler_matrix_is_ready(tmp_path: Path, calculator: str) -> None:
 def test_structure_path_runs_adapter_staging_and_cluster_chain(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, path_kind: str
 ) -> None:
-    from mlipflow import backends as backend_module
-    from mlipflow.backends import SshSlurmBackend
-    from mlipflow.config import load_project
-    from mlipflow.services.contracts import _scheduled_contract
+    from mlipipe import backends as backend_module
+    from mlipipe.backends import SshSlurmBackend
+    from mlipipe.config import load_project
+    from mlipipe.services.contracts import _scheduled_contract
 
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -636,7 +636,7 @@ def test_checker_verifies_schedule_and_scientific_outputs(tmp_path: Path) -> Non
     checked = module.check(context)
     assert checked["status"] == "OK", checked.get("diagnostics")
     assert checked["metrics"]["steps_completed"] == 5.0
-    from mlipflow.plugins.ase_md.adapter import Adapter
+    from mlipipe.plugins.ase_md.adapter import Adapter
 
     with patch.object(Adapter, "check", side_effect=AssertionError("collect repeated check")):
         collected = Adapter().collect(context)

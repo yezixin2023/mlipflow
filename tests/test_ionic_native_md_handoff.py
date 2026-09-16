@@ -11,7 +11,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER_PATH = ROOT / "mlipflow" / "plugins" / "ionic_transport" / "ionic_conductivity.py"
+RUNNER_PATH = ROOT / "mlipipe" / "plugins" / "ionic_transport" / "ionic_conductivity.py"
 
 
 def _load(path: Path, name: str):
@@ -218,7 +218,7 @@ def _write_native_lammps_attempt(
 
 
 def test_native_lammps_metadata_filename_and_restart_stitch(tmp_path: Path, runner) -> None:
-    node = tmp_path / ".mlipflow" / "runs" / "lammps-600"
+    node = tmp_path / ".mlipipe" / "runs" / "lammps-600"
     _write_native_lammps_attempt(
         node / "attempt-1",
         ["Li 9.8 0 0", "Li 0.2 0 0", "Li 0.6 0 0"],
@@ -314,7 +314,7 @@ def _write_native_ase_attempt(
 
 
 def test_native_ase_metadata_filename_and_restart_stitch(tmp_path: Path, runner) -> None:
-    node = tmp_path / ".mlipflow" / "runs" / "ase-500"
+    node = tmp_path / ".mlipipe" / "runs" / "ase-500"
     _write_native_ase_attempt(node / "attempt-1", [0, 1, 2], [9.8, 10.2, 10.6])
     (node / "attempt-1" / "md-result.json").unlink()
     (node / "attempt-1" / "approved-plan.json").write_text(
@@ -370,10 +370,10 @@ def test_historical_production_traj_remains_supported(tmp_path: Path, runner) ->
 
 
 def test_core_hands_all_preserved_dependency_attempts_to_transport(tmp_path: Path) -> None:
-    from mlipflow.config import Project
-    from mlipflow.services.contracts import _adapter_context
-    from mlipflow.services.paths import attempt_directory, state_path
-    from mlipflow.state import RunState, StateStore
+    from mlipipe.config import Project
+    from mlipipe.services.contracts import _adapter_context
+    from mlipipe.services.paths import attempt_directory, state_path
+    from mlipipe.state import RunState, StateStore
 
     nodes = [
         {"id": "md", "uses": "ase-md", "backend": "local"},
@@ -424,10 +424,10 @@ def test_core_hands_all_preserved_dependency_attempts_to_transport(tmp_path: Pat
 
 
 def test_core_hands_only_final_ok_aimd_attempt_to_transport(tmp_path: Path) -> None:
-    from mlipflow.config import Project
-    from mlipflow.services.contracts import _adapter_context
-    from mlipflow.services.paths import attempt_directory, state_path
-    from mlipflow.state import RunState, StateStore
+    from mlipipe.config import Project
+    from mlipipe.services.contracts import _adapter_context
+    from mlipipe.services.paths import attempt_directory, state_path
+    from mlipipe.state import RunState, StateStore
 
     nodes = [
         {"id": "aimd", "uses": "dft-labeling", "backend": "ssh-slurm"},
@@ -492,7 +492,7 @@ def test_core_hands_only_final_ok_aimd_attempt_to_transport(tmp_path: Path) -> N
 
 
 def test_discovery_stitches_only_selected_collected_attempts(tmp_path: Path, runner) -> None:
-    node = tmp_path / ".mlipflow" / "runs" / "md"
+    node = tmp_path / ".mlipipe" / "runs" / "md"
     for attempt_number in (1, 2, 3):
         attempt = node / f"attempt-{attempt_number}"
         attempt.mkdir(parents=True)

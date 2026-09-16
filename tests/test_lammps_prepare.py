@@ -10,7 +10,7 @@ import pytest
 from ase.io import read
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "mlipflow" / "plugins" / "lammps_md"
+PLUGIN = ROOT / "mlipipe" / "plugins" / "lammps_md"
 
 
 def _load(name: str, path: Path):
@@ -74,7 +74,7 @@ def _context(tmp_path: Path, framework: str, ensemble: str = "nvt") -> dict:
     _write_json(inputs / "lammps.json", _config(ensemble))
     return {
         "project_root": str(tmp_path),
-        "attempt_dir": str(tmp_path / ".mlipflow" / "runs" / "lammps" / "attempt-1"),
+        "attempt_dir": str(tmp_path / ".mlipipe" / "runs" / "lammps" / "attempt-1"),
         "backend": "local",
         "inputs": {
             "structure": "inputs/start.extxyz",
@@ -106,7 +106,7 @@ def test_prepare_plan_is_ready_for_supported_frameworks(tmp_path: Path, framewor
     manifest_path = output / "lammps-input-manifest.json"
     manifest = json.loads(manifest_path.read_text())
     assert manifest["preparation_contract"] == "lammps-md-input-v2"
-    marker = f"MLIPFLOW_LAMMPS_COMPLETED step={manifest['md']['steps']}"
+    marker = f"MLIPIPE_LAMMPS_COMPLETED step={manifest['md']['steps']}"
     assert manifest["completion_marker"] == marker
     for target in manifest["md"]["targets"]:
         deck = (output / f"in.{target}.lammps").read_text()
@@ -257,13 +257,13 @@ def test_nvt_converts_femtoseconds_to_metal_picoseconds() -> None:
     module = _load("lammps_prepare_nvt_units", PLUGIN / "lammps_prepare.py")
     deck = module._deck("mace", "cpu", _config("nvt"))
     assert "timestep        0.001" in deck
-    assert "fix             mlipflow all nvt temp 900 900 0.1" in deck
+    assert "fix             mlipipe all nvt temp 900 900 0.1" in deck
 
 
 def test_npt_converts_gpa_to_metal_bar_and_damping_to_ps() -> None:
     module = _load("lammps_prepare_npt_units", PLUGIN / "lammps_prepare.py")
     deck = module._deck("m3gnet", "gpu", _config("npt-isotropic"))
-    assert "fix             mlipflow all npt temp 900 900 0.1 iso 5000 5000 1" in deck
+    assert "fix             mlipipe all npt temp 900 900 0.1 iso 5000 5000 1" in deck
 
 
 def test_model_path_is_runtime_variable_not_registry_path() -> None:

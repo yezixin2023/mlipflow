@@ -1,6 +1,6 @@
 """Contract tests for scheduled DeepMD fresh training over ssh-slurm.
 
-These exercise READY plans through to a final MLIPFlow state: a BLOCKED plan
+These exercise READY plans through to a final MLIPipe state: a BLOCKED plan
 proves nothing about staging, fetching, or the checks that decide whether a
 training node may reach OK.  The cluster is simulated by writing exactly the
 layout the bundled training runner is contracted to produce.
@@ -22,16 +22,16 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from mlipflow.backends import ExecutionResult
-from mlipflow.config import load_project
-from mlipflow.services.commands import (
+from mlipipe.backends import ExecutionResult
+from mlipipe.config import load_project
+from mlipipe.services.commands import (
     advance,
     initialize,
     make_advance_plan,
     make_run_plan,
     run_node,
 )
-from mlipflow.services.contracts import _scheduled_contract
+from mlipipe.services.contracts import _scheduled_contract
 
 from .helpers import project_config, write_json
 from .test_scheduled_dft import PLUGINS, FakeTemplateLibrary, write_site
@@ -231,9 +231,9 @@ class TrainingLifecycle:
             return remote_dir
 
         with patch(
-            "mlipflow.backends.SshSlurmBackend.stage_workspace", side_effect=stage
+            "mlipipe.backends.SshSlurmBackend.stage_workspace", side_effect=stage
         ), patch(
-            "mlipflow.backends.SshSlurmBackend.submit",
+            "mlipipe.backends.SshSlurmBackend.submit",
             return_value=ExecutionResult(0, "Submitted batch job 71\n", "", "71"),
         ):
             run_node(
@@ -342,23 +342,23 @@ class TrainingLifecycle:
     def finish(self) -> dict[str, Any]:
         inspect, fetch = self._hooks()
         with patch(
-            "mlipflow.backends.SshSlurmBackend.status",
+            "mlipipe.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.backends.SshSlurmBackend.inspect_file",
+            "mlipipe.backends.SshSlurmBackend.inspect_file",
             autospec=True,
             side_effect=inspect,
         ):
             make_advance_plan(self.project)
         with patch(
-            "mlipflow.backends.SshSlurmBackend.status",
+            "mlipipe.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.backends.SshSlurmBackend.inspect_file",
+            "mlipipe.backends.SshSlurmBackend.inspect_file",
             autospec=True,
             side_effect=inspect,
         ), patch(
-            "mlipflow.backends.SshSlurmBackend.fetch_from",
+            "mlipipe.backends.SshSlurmBackend.fetch_from",
             autospec=True,
             side_effect=fetch,
         ):
@@ -371,7 +371,7 @@ class TrainingLifecycle:
 
     @property
     def attempt(self) -> Path:
-        return self.root / ".mlipflow" / "runs" / "train-deepmd" / "attempt-1"
+        return self.root / ".mlipipe" / "runs" / "train-deepmd" / "attempt-1"
 
     def result(self) -> dict[str, Any]:
         return json.loads(

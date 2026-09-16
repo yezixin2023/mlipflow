@@ -14,8 +14,8 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "ionic_transport" / "adapter.py"
-RUNNER_PATH = ROOT / "mlipflow" / "plugins" / "ionic_transport" / "ionic_conductivity.py"
+ADAPTER_PATH = ROOT / "mlipipe" / "plugins" / "ionic_transport" / "adapter.py"
+RUNNER_PATH = ROOT / "mlipipe" / "plugins" / "ionic_transport" / "ionic_conductivity.py"
 
 
 def load_adapter():
@@ -155,7 +155,7 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
             mlip = project / "mlip"
             write_aimd_rdf_run(aimd)
             write_mlip_rdf_run(mlip)
-            attempt = project / ".mlipflow" / "runs" / "compare" / "attempt-1"
+            attempt = project / ".mlipipe" / "runs" / "compare" / "attempt-1"
             context = {
                 "project_root": str(project),
                 "attempt_dir": str(attempt),
@@ -256,9 +256,9 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
                 all("relative_error" in item for item in comparison["transport_errors"])
             )
 
-            benchmark_path = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "adapter.py"
+            benchmark_path = ROOT / "mlipipe" / "plugins" / "mlip_benchmark" / "adapter.py"
             benchmark_module = load_module(benchmark_path, 'aimd_comparison_benchmark_adapter')
-            benchmark_attempt = project / ".mlipflow" / "runs" / "benchmark" / "attempt-1"
+            benchmark_attempt = project / ".mlipipe" / "runs" / "benchmark" / "attempt-1"
             benchmark_attempt.mkdir(parents=True)
             benchmark_context = {
                 "project_root": str(project),
@@ -302,7 +302,7 @@ class IonicTransportTrajectoryRegressionTests(unittest.TestCase):
             trajectories = project / "trajectories"
             for temperature, displacement in ((400, 0.10), (600, 0.16), (800, 0.23)):
                 write_lammps_run(trajectories, temperature, displacement)
-            attempt = project / ".mlipflow" / "runs" / "transport" / "attempt-0001"
+            attempt = project / ".mlipipe" / "runs" / "transport" / "attempt-0001"
             context = {
                 "project_root": str(project),
                 "attempt_dir": str(attempt),
@@ -703,7 +703,7 @@ class IonicTransportArrheniusBreakpointTests(unittest.TestCase):
             (output_dir / "analysis_manifest.json").write_text(
                 json.dumps({"parameters": vars(args)}), encoding="utf-8"
             )
-            from mlipflow.plugins.ionic_transport import analysis as adapter_module
+            from mlipipe.plugins.ionic_transport import analysis as adapter_module
             rows = frame.to_dict(orient="records")
             self.assertEqual(
                 [],
@@ -801,7 +801,7 @@ class IonicTransportMsdOnlyRegressionTests(unittest.TestCase):
         self.assertEqual("pymatgen-get-conversion-factor", result["conductivity_method"])
 
     def test_missing_formal_dependency_has_actionable_error_without_breaking_core_import(self) -> None:
-        import mlipflow
+        import mlipipe
 
         original_import = __import__
 
@@ -813,10 +813,10 @@ class IonicTransportMsdOnlyRegressionTests(unittest.TestCase):
         with mock.patch("builtins.__import__", side_effect=blocked_import):
             with self.assertRaisesRegex(
                 ImportError,
-                r"Formal ionic transport requires pymatgen-analysis-diffusion.*mlipflow\[transport\]",
+                r"Formal ionic transport requires pymatgen-analysis-diffusion.*mlipipe\[transport\]",
             ):
                 self.runner.require_formal_diffusion_api()
-        self.assertIsNotNone(mlipflow)
+        self.assertIsNotNone(mlipipe)
 
 
 if __name__ == "__main__":

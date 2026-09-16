@@ -4,15 +4,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mlipflow.errors import ConfigError
-from mlipflow.hpc import (
+from mlipipe.errors import ConfigError
+from mlipipe.hpc import (
     resolve_hpc_execution_plan,
     remote_attempt_workspace,
     render_template,
     validate_hpc_resources,
     validate_slurm_cpu_semantics,
 )
-from mlipflow.site import load_site_config
+from mlipipe.site import load_site_config
 
 from .helpers import write_json
 

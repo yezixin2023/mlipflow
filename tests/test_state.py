@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mlipflow.errors import StateError
-from mlipflow.state import ALLOWED_TRANSITIONS, RunState, StateStore, validate_transition
+from mlipipe.errors import StateError
+from mlipipe.state import ALLOWED_TRANSITIONS, RunState, StateStore, validate_transition
 
 
 class TransitionTests(unittest.TestCase):

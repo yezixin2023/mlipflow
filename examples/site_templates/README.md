@@ -1,7 +1,7 @@
 # Site template entry point
 
-This directory is the public starting point for one MLIPFlow site's private
-configuration. Copy `site.yaml.example` to `~/.mlipflow/site.yaml`, then install
+This directory is the public starting point for one MLIPipe site's private
+configuration. Copy `site.yaml.example` to `~/.mlipipe/site.yaml`, then install
 only the template families supported by that site's scientific software below one
 canonical `remote_template_root`.
 

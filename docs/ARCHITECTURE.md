@@ -1,6 +1,6 @@
-# MLIPFlow architecture
+# MLIPipe architecture
 
-MLIPFlow is a small workflow controller for its built-in AI-for-materials capabilities. It is not a third-party plugin platform, a workflow database, or a portable plan interchange format.
+MLIPipe is a small workflow controller for its built-in AI-for-materials capabilities. It is not a third-party plugin platform, a workflow database, or a portable plan interchange format.
 
 ```text
 Agent Skills
@@ -16,7 +16,7 @@ scientific result
 
 ## Sources of truth
 
-MLIPFlow deliberately keeps each kind of information in one place:
+MLIPipe deliberately keeps each kind of information in one place:
 
 | Information | Authoritative source |
 |---|---|
@@ -29,7 +29,7 @@ SQLite does not copy workflow nodes or dependency edges. It has no artifact inde
 
 ## Built-in capabilities
 
-`mlipflow/plugins/__init__.py` contains a literal `BUILTIN_CAPABILITIES` mapping. Core uses only the adapter module, supported execution backends, operation names, approval-operation list, and a short description.
+`mlipipe/plugins/__init__.py` contains a literal `BUILTIN_CAPABILITIES` mapping. Core uses only the adapter module, supported execution backends, operation names, approval-operation list, and a short description.
 
 There is no filesystem discovery, manifest loading, semantic-version selection, plugin API version, or user-supplied plugin path. A project names a capability directly:
 
@@ -63,9 +63,9 @@ Missing framework or external-program dependencies are reported by the relevant 
 
 ## Source organization
 
-The top-level `mlipflow` package contains all executable Python code. Core modules
+The top-level `mlipipe` package contains all executable Python code. Core modules
 and `services` own state and execution. Built-in capabilities live in flat
-`mlipflow/plugins/<underscored_id>/` packages, each exposing `adapter.Adapter`.
+`mlipipe/plugins/<underscored_id>/` packages, each exposing `adapter.Adapter`.
 The registry imports these modules lazily with normal Python imports; it neither
 scans plugin directories nor searches installation data directories for code.
 
@@ -74,7 +74,7 @@ Operation modules own validation, planning and scientific completion checks;
 runners own computation. PES uses one operation dispatch table. MD restart modules
 extend the plan and verify checkpoint metadata; they do not wrap another Adapter.
 Shared helpers stay inside that capability. The sole shared model runtime lives in
-`mlipflow/plugins/model_runtime.py` and imports MLIP frameworks only on demand.
+`mlipipe/plugins/model_runtime.py` and imports MLIP frameworks only on demand.
 Historical transport formulas remain isolated from formal diffusion analysis.
 
 Specialist Agent Skills live in their capability's `skill/` subdirectory, alongside
@@ -87,7 +87,7 @@ registration do not depend on Skill discovery.
 
 Scheduled and standalone runners explicitly load the files distributed with their
 execution bundle. This boundary permits scientific environments without a full
-MLIPFlow installation.
+MLIPipe installation.
 
 ## Commands and mutation boundaries
 
@@ -132,7 +132,7 @@ READY ──submit──> SUBMITTED ──queue──> PENDING ──scheduler�
 Attempts live at:
 
 ```text
-.mlipflow/runs/<node-id>/attempt-<N>/
+.mlipipe/runs/<node-id>/attempt-<N>/
 ```
 
 The directory is created fresh and is never reused. A failed or stopped node may be retried; retry inserts attempt `N + 1` and leaves all earlier directories and state rows intact.

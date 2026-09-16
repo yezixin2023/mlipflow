@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
-from mlipflow.backends import ExecutionResult
-from mlipflow.services import commands
+from mlipipe.backends import ExecutionResult
+from mlipipe.services import commands
 from .helpers import project_config, run_cli, write_json
 from .test_adapter_execution import FixtureAdapter
 
@@ -42,10 +42,10 @@ class ResultAdapter(FixtureAdapter):
 def test_run_plans_once_and_exposes_results_and_saved_status(task):
     adapter = ResultAdapter([sys.executable, "-c", "pass"])
     original_plan = commands.make_run_plan
-    with patch("mlipflow.services.commands.load_adapter", return_value=adapter), patch(
-        "mlipflow.services.execution.load_adapter", return_value=adapter
+    with patch("mlipipe.services.commands.load_adapter", return_value=adapter), patch(
+        "mlipipe.services.execution.load_adapter", return_value=adapter
     ), patch.object(commands, "make_run_plan", wraps=original_plan) as planner, patch(
-        "mlipflow.cli.make_run_plan", wraps=original_plan
+        "mlipipe.cli.make_run_plan", wraps=original_plan
     ) as cli_planner:
         code, envelope = invoke(task, "run", "rank")
     assert code == 0
@@ -72,9 +72,9 @@ def test_synchronous_failure_is_nonzero_but_status_query_succeeds(task, failure)
     if failure != "process":
         setattr(adapter, failure if failure == "check" else "collect",
                 lambda context: {"status": "FAIL", "diagnostics": [{"message": reason}]})
-    with patch("mlipflow.services.commands.load_adapter", return_value=adapter), patch(
-        "mlipflow.services.execution.load_adapter", return_value=adapter
-    ), patch("mlipflow.backends.LocalBackend.run",
+    with patch("mlipipe.services.commands.load_adapter", return_value=adapter), patch(
+        "mlipipe.services.execution.load_adapter", return_value=adapter
+    ), patch("mlipipe.backends.LocalBackend.run",
              return_value=ExecutionResult(7 if failure == "process" else 0, "", "")):
         code, envelope = invoke(task, "run", "rank")
     assert code == 1
@@ -89,10 +89,10 @@ def test_synchronous_failure_is_nonzero_but_status_query_succeeds(task, failure)
 
 
 def test_scheduled_submission_reports_pending_success(task):
-    with patch("mlipflow.cli.run_node", return_value={"step": {
+    with patch("mlipipe.cli.run_node", return_value={"step": {
         "node_id": "rank", "state": "PENDING", "attempt": 1,
         "backend": "ssh-slurm", "job_id": "123",
-    }}), patch("mlipflow.cli.make_run_plan", return_value={"approval_required": True}):
+    }}), patch("mlipipe.cli.make_run_plan", return_value={"approval_required": True}):
         code, envelope = invoke(task, "run", "rank", "--approve")
     assert code == 0 and envelope["ok"] is True
     assert envelope["data"]["state"] == "PENDING"
@@ -106,15 +106,15 @@ def test_json_dry_run_preserves_exact_argv_cwd_and_outputs(task):
         def plan(self, context):
             return {**super().plan(context), "expected_outputs": ["ranked.json"]}
 
-    with patch("mlipflow.services.commands.load_adapter", return_value=PlannedAdapter(argv)):
+    with patch("mlipipe.services.commands.load_adapter", return_value=PlannedAdapter(argv)):
         code, envelope = invoke(task, "run", "rank", "--dry-run")
     assert code == 0
     data = envelope["data"]
     assert data["attempt"] == 1
     assert data["adapter_plan"]["argv"] == argv
-    assert data["adapter_plan"]["cwd"] == str(task / ".mlipflow/runs/rank/attempt-1")
+    assert data["adapter_plan"]["cwd"] == str(task / ".mlipipe/runs/rank/attempt-1")
     assert data["adapter_plan"]["expected_outputs"] == ["ranked.json"]
-    assert not (task / ".mlipflow").exists()
+    assert not (task / ".mlipipe").exists()
 
 
 def test_scheduled_plan_and_collected_json_preserve_actionable_details(tmp_path):
@@ -122,7 +122,7 @@ def test_scheduled_plan_and_collected_json_preserve_actionable_details(tmp_path)
 
     lifecycle = TrainingLifecycle(tmp_path)
     plan = lifecycle.plan()
-    with patch("mlipflow.cli.make_run_plan", return_value=plan):
+    with patch("mlipipe.cli.make_run_plan", return_value=plan):
         code, envelope = invoke(tmp_path, "run", "train-deepmd", "--dry-run")
     assert code == 0
     data = envelope["data"]
@@ -139,10 +139,10 @@ def test_scheduled_plan_and_collected_json_preserve_actionable_details(tmp_path)
     assert pending["state"] == "PENDING" and pending["job_id"] == "71"
     lifecycle.write_remote_outputs()
     inspect, fetch = lifecycle._hooks()
-    with patch("mlipflow.backends.SshSlurmBackend.status", return_value={
+    with patch("mlipipe.backends.SshSlurmBackend.status", return_value={
         "state": "COMPLETED", "detail": None, "source": "fixture"
-    }), patch("mlipflow.backends.SshSlurmBackend.inspect_file", autospec=True,
-              side_effect=inspect), patch("mlipflow.backends.SshSlurmBackend.fetch_from",
+    }), patch("mlipipe.backends.SshSlurmBackend.inspect_file", autospec=True,
+              side_effect=inspect), patch("mlipipe.backends.SshSlurmBackend.fetch_from",
                                          autospec=True, side_effect=fetch):
         code, envelope = invoke(tmp_path, "advance")
     assert code == 0

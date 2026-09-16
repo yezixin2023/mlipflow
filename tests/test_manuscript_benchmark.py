@@ -19,8 +19,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WRAPPER_PATH = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "benchmark_wrapper.py"
-ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "adapter.py"
+WRAPPER_PATH = ROOT / "mlipipe" / "plugins" / "mlip_benchmark" / "benchmark_wrapper.py"
+ADAPTER_PATH = ROOT / "mlipipe" / "plugins" / "mlip_benchmark" / "adapter.py"
 
 
 def load_wrapper():

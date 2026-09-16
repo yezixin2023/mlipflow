@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "ionic_transport" / "adapter.py"
+ADAPTER_PATH = ROOT / "mlipipe" / "plugins" / "ionic_transport" / "adapter.py"
 
 
 def load_adapter():

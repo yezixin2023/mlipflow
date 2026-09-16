@@ -1,4 +1,4 @@
-# MLIPFlow Agent Operating Guidelines
+# MLIPipe Agent Operating Guidelines
 
 These instructions apply to this repository. The agent supervises scientific intent;
 MLIPFlow plugins and the named scientific programs calculate, execute and check results.
@@ -7,10 +7,10 @@ Prefer an existing suitable conda environment for development and execution.
 ## Normal use
 
 Use the task's specialist Skill, existing project configuration, input artifacts and
-CLI output. Start with `mlipflow json` when resuming a project. Reuse accepted outputs
-and the existing scientific settings. Use `mlipflow inspect NODE` for the installed
+CLI output. Start with `mlipipe json` when resuming a project. Reuse accepted outputs
+and the existing scientific settings. Use `mlipipe inspect NODE` for the installed
 operations, backend support and effective approval requirement; their definitions live
-in `mlipflow/plugins/__init__.py`, not a parallel documentation table.
+in `mlipipe/plugins/__init__.py`, not a parallel documentation table.
 
 A single task can run directly. Use the workflow Skill only when several stages or
 artifact handoffs need coordination. Examples and installation/Skill discovery are
@@ -40,7 +40,7 @@ in `README.md`. Source reading is for development or a concrete failure.
 
 `list/status/json/inspect/logs/route/doctor` are strictly read-only: they must not write
 state, create run files, contact schedulers to advance jobs, fetch, retry or submit.
-`init/run/advance/retry/stop` change state. Use MLIPFlow instead of direct `sbatch`,
+`init/run/advance/retry/stop` change state. Use MLIPipe instead of direct `sbatch`,
 `scancel`, directory deletion or model replacement. `retry` creates a fresh attempt
 and preserves previous results. An explicit `stop NODE` authorizes cancellation of
 that node's known jobs only.
@@ -75,8 +75,14 @@ adapters are trusted and dry-run may load them; never derive execution plans fro
 untrusted project code. Test observable behavior, including zero-write queries and
 scientific completion checks.
 
+When project code is defective, fix its canonical source and verify the affected
+workflow instead of patching only the current attempt. An outdated external runtime
+should be selected or updated appropriately, not supported through unnecessary source
+compatibility patches. Preserve failed attempts and distinguish program defects from
+environment, site configuration, and scientific failures.
+
 Specialist Skills have one maintained source at
-`mlipflow/plugins/<capability>/skill/`, discovered through `.agents/skills/` symlinks.
+`mlipipe/plugins/<capability>/skill/`, discovered through `.agents/skills/` symlinks.
 The cross-capability workflow Skill remains in `.agents/skills/mlip-workflow/`.
 Scientific algorithms belong in plugins, not Skills. Keep framework details under
 training/MD capabilities rather than adding top-level Skills for individual models,

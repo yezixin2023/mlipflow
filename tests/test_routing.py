@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from mlipflow.routing import route_models
+from mlipipe.routing import route_models
 
 
 class RoutingTests(unittest.TestCase):

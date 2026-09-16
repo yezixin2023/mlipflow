@@ -15,4 +15,4 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install '.[dev,local]'
       - run: pytest -q
-      - run: ruff check mlipflow tests examples
+      - run: ruff check mlipipe tests examples

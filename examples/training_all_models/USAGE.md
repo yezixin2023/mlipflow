@@ -21,12 +21,12 @@ up the site or using publication/fine-tuning. No data or model weights are stage
 from this example directory.
 
 ```bash
-mlipflow --project /PATH/TO/training-project init
-mlipflow --project /PATH/TO/training-project inspect train-mace
-mlipflow --project /PATH/TO/training-project --format json run train-mace --dry-run
-mlipflow --project /PATH/TO/training-project --format json run train-mace --approve
-mlipflow --project /PATH/TO/training-project --format json advance
-mlipflow --project /PATH/TO/training-project json train-mace
+mlipipe --project /PATH/TO/training-project init
+mlipipe --project /PATH/TO/training-project inspect train-mace
+mlipipe --project /PATH/TO/training-project --format json run train-mace --dry-run
+mlipipe --project /PATH/TO/training-project --format json run train-mace --approve
+mlipipe --project /PATH/TO/training-project --format json advance
+mlipipe --project /PATH/TO/training-project json train-mace
 ```
 
 Review the actual inputs and scale before the approved command. Submission returns

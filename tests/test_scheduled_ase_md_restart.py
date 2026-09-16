@@ -8,14 +8,14 @@ from pathlib import Path
 import pytest
 from unittest.mock import patch
 
-from mlipflow.plugins.ase_md import common, npt, nvt
-from mlipflow.plugins.ase_md.adapter import Adapter
+from mlipipe.plugins.ase_md import common, npt, nvt
+from mlipipe.plugins.ase_md.adapter import Adapter
 
-from mlipflow.errors import ConfigError
-from mlipflow.services.scheduled import _failure_salvage_outputs
+from mlipipe.errors import ConfigError
+from mlipipe.services.scheduled import _failure_salvage_outputs
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "mlipflow" / "plugins" / "ase_md"
+PLUGIN = ROOT / "mlipipe" / "plugins" / "ase_md"
 
 
 @pytest.mark.parametrize("ensemble", ["nvt-langevin", "npt-isotropic-mtk"])
@@ -118,7 +118,7 @@ def _context(tmp_path: Path, *, ensemble: str = "nvt-langevin", attempt: int = 1
     return {
         "project_root": str(tmp_path),
         "attempt_dir": str(
-            tmp_path / ".mlipflow" / "runs" / "md" / f"attempt-{attempt}"
+            tmp_path / ".mlipipe" / "runs" / "md" / f"attempt-{attempt}"
         ),
         "backend": "ssh-slurm",
         "inputs": node["inputs"],
@@ -208,7 +208,7 @@ def test_retry_stages_immediately_previous_salvaged_checkpoint(
     first = module.Adapter().plan(first_context)
     assert first["status"] == "READY", first.get("diagnostics")
     settings = first["md_parameters"]
-    previous_dir = tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1"
+    previous_dir = tmp_path / ".mlipipe" / "runs" / "md" / "attempt-1"
     checkpoint_path = previous_dir / "md-checkpoint.json"
     _write_json(checkpoint_path, _checkpoint(settings, completed_steps=400))
     _write_json(
@@ -241,7 +241,7 @@ def test_retry_does_not_resume_scientific_fail_after_completed_scheduler(tmp_pat
     module = _load("ase_md_restart_adapter_completed_fail", PLUGIN / "adapter.py")
     first = module.Adapter().plan(_context(tmp_path, attempt=1))
     assert first["status"] == "READY"
-    previous_dir = tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1"
+    previous_dir = tmp_path / ".mlipipe" / "runs" / "md" / "attempt-1"
     _write_json(
         previous_dir / "md-checkpoint.json",
         _checkpoint(first["md_parameters"], completed_steps=400),
@@ -258,7 +258,7 @@ def test_retry_does_not_resume_scientific_fail_after_completed_scheduler(tmp_pat
 def test_retry_requires_locally_salvaged_checkpoint(tmp_path: Path) -> None:
     module = _load("ase_md_restart_adapter_no_checkpoint", PLUGIN / "adapter.py")
     _context(tmp_path, attempt=1)
-    previous_dir = tmp_path / ".mlipflow" / "runs" / "md" / "attempt-1"
+    previous_dir = tmp_path / ".mlipipe" / "runs" / "md" / "attempt-1"
     _write_json(
         previous_dir / "run-manifest.final.json",
         {"state": "FAIL", "job": {"scheduler_state": "PREEMPTED"}},

@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT = ROOT / "tests" / "fixtures" / "mlip_benchmark_historical_audit.json"
-WRAPPER = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "benchmark_wrapper.py"
+WRAPPER = ROOT / "mlipipe" / "plugins" / "mlip_benchmark" / "benchmark_wrapper.py"
 
 
 def _wrapper():

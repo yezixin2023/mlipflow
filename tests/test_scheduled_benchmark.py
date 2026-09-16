@@ -6,10 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mlipflow.config import load_project
-from mlipflow.plugins import load_adapter
-from mlipflow.services.commands import initialize, make_run_plan
-from mlipflow.services.contracts import _scheduled_contract
+from mlipipe.config import load_project
+from mlipipe.plugins import load_adapter
+from mlipipe.services.commands import initialize, make_run_plan
+from mlipipe.services.contracts import _scheduled_contract
 
 from .helpers import project_config, write_json
 from .test_scheduled_dft import FakeTemplateLibrary, write_site
@@ -151,7 +151,7 @@ class ScheduledBenchmarkPlanTests(unittest.TestCase):
         context = {
             "project_root": str(self.root),
             "project_path": str(selected_project),
-            "attempt_dir": str(self.root / ".mlipflow/runs/benchmark-chgnet/attempt-1"),
+            "attempt_dir": str(self.root / ".mlipipe/runs/benchmark-chgnet/attempt-1"),
             "backend": "ssh-slurm",
             "inputs": {
                 "model_reference": str((self.root / "model-reference.json").resolve()),

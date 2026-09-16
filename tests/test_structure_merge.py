@@ -21,9 +21,9 @@ from pymatgen.io.vasp.inputs import Poscar
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = ROOT / "mlipflow" / "plugins" / "pes_sampling"
+PLUGIN_ROOT = ROOT / "mlipipe" / "plugins" / "pes_sampling"
 ADAPTER_PATH = PLUGIN_ROOT / "adapter.py"
-DFT_PREPARE_PATH = ROOT / "mlipflow" / "plugins" / "dft_labeling" / "vasp_prepare.py"
+DFT_PREPARE_PATH = ROOT / "mlipipe" / "plugins" / "dft_labeling" / "vasp_prepare.py"
 
 
 def load_module(name: str, path: Path) -> Any:
@@ -121,7 +121,7 @@ def context(root: Path) -> dict[str, Any]:
     direct, lasp_manifest, archive = write_fixture(root)
     return {
         "project_root": str(root),
-        "attempt_dir": str(root / ".mlipflow" / "runs" / "merge" / "attempt-1"),
+        "attempt_dir": str(root / ".mlipipe" / "runs" / "merge" / "attempt-1"),
         "inputs": {
             "direct_manifest": str(direct),
             "lasp_selected_manifest": str(lasp_manifest),
@@ -221,7 +221,7 @@ def test_lasp_input_prepare_converts_selected_ase_frame(tmp_path: Path) -> None:
         ),
     ]
     write(source, frames, format="extxyz")
-    attempt = tmp_path / ".mlipflow" / "runs" / "lasp-input" / "attempt-1"
+    attempt = tmp_path / ".mlipipe" / "runs" / "lasp-input" / "attempt-1"
     value = {
         "project_root": str(tmp_path),
         "attempt_dir": str(attempt),
@@ -289,7 +289,7 @@ def test_lasp_input_structure_path_runs_full_conversion_chain(
         ),
         format="extxyz",
     )
-    attempt = project / ".mlipflow" / "runs" / "lasp-input" / "attempt-1"
+    attempt = project / ".mlipipe" / "runs" / "lasp-input" / "attempt-1"
     context = {
         "project_root": str(project),
         "attempt_dir": str(attempt),
@@ -334,7 +334,7 @@ def test_lasp_input_missing_structure_path_is_blocked(
     value = "../shared/missing.extxyz" if path_kind == "parent-relative" else str(missing)
     context = {
         "project_root": str(project),
-        "attempt_dir": str(project / ".mlipflow" / "runs" / "lasp-input" / "attempt-1"),
+        "attempt_dir": str(project / ".mlipipe" / "runs" / "lasp-input" / "attempt-1"),
         "inputs": {"input_structure": value},
         "parameters": {"operation": "lasp-input-prepare"},
         "backend": "local",
@@ -402,7 +402,7 @@ def test_lasp_input_prepare_materializes_noncollectable_potcar(
     psp_root = tmp_path / "licensed-psp"
     psp_root.mkdir()
     monkeypatch.setenv("PMG_VASP_PSP_DIR", str(psp_root))
-    attempt = tmp_path / ".mlipflow" / "runs" / "lasp-input-potcar" / "attempt-1"
+    attempt = tmp_path / ".mlipipe" / "runs" / "lasp-input-potcar" / "attempt-1"
     value = {
         "project_root": str(tmp_path),
         "attempt_dir": str(attempt),

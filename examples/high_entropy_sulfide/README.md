@@ -1,6 +1,6 @@
 # 高熵硫化物离线 replay 示例
 
-这是一个**合成的接口 fixture**，用于演示 MLIPFlow 的完整 DAG、逐计划审批、结果采集和任务感知模型路由。所有数值、结构 ID 和“结果”均为虚构；它们不是来自真实材料计算，不能用于科学结论。
+这是一个**合成的接口 fixture**，用于演示 MLIPipe 的完整 DAG、逐计划审批、结果采集和任务感知模型路由。所有数值、结构 ID 和“结果”均为虚构；它们不是来自真实材料计算，不能用于科学结论。
 
 示例体系的 M 子晶格严格为 `Mn/Fe/Ni/Cu/Zn`，完整元素集合为 `Li/Mn/Fe/Ni/Cu/Zn/P/S`，不包含 Co。
 
@@ -38,15 +38,15 @@ structure-replay
 DEMO_ROOT="$(mktemp -d)"
 cp -R examples/high_entropy_sulfide "$DEMO_ROOT/"
 DEMO_PROJECT="$DEMO_ROOT/high_entropy_sulfide"
-mlipflow --project "$DEMO_PROJECT" init
+mlipipe --project "$DEMO_PROJECT" init
 ```
 
 这些节点只回放既有小型证据，不启动数值程序，因此可以直接运行。例如第一个节点：
 
 ```bash
-mlipflow --project "$DEMO_PROJECT" run structure-replay
+mlipipe --project "$DEMO_PROJECT" run structure-replay
 
-mlipflow --project "$DEMO_PROJECT" advance
+mlipipe --project "$DEMO_PROJECT" advance
 ```
 
 按相同方式依次执行：
@@ -62,7 +62,7 @@ mlipflow --project "$DEMO_PROJECT" advance
 每一层成功后再批准一次 `advance`；`advance` 只更新依赖状态，不执行节点。最终检查：
 
 ```bash
-mlipflow --project "$DEMO_PROJECT" status
+mlipipe --project "$DEMO_PROJECT" status
 ```
 
 预期九个节点全部为 `OK`。
@@ -70,15 +70,15 @@ mlipflow --project "$DEMO_PROJECT" status
 ## 路由验证
 
 ```bash
-mlipflow --project "$DEMO_PROJECT" route \
+mlipipe --project "$DEMO_PROJECT" route \
   --task ionic-transport \
   --elements Li Mn Fe Ni Cu Zn P S \
   --scenario synthetic-high-entropy-sulfide-v1
 
-mlipflow --project "$DEMO_PROJECT" route \
+mlipipe --project "$DEMO_PROJECT" route \
   --task electrochemical-voltage \
   --elements Li Mn Fe Ni Cu Zn P S \
   --scenario synthetic-high-entropy-sulfide-v1
 ```
 
-合成证据应分别选择 `deepmd-demo` 与 `chgnet-demo`。这是当前 fixture 指标和任务权重的结果，不是 MLIPFlow 核心中的全局模型偏好。
+合成证据应分别选择 `deepmd-demo` 与 `chgnet-demo`。这是当前 fixture 指标和任务权重的结果，不是 MLIPipe 核心中的全局模型偏好。

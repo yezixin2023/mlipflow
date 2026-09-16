@@ -14,8 +14,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REPLAY_PATH = ROOT / "mlipflow" / "plugins" / "electrochemical_voltage" / "manuscript_replay.py"
-ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "electrochemical_voltage" / "adapter.py"
+REPLAY_PATH = ROOT / "mlipipe" / "plugins" / "electrochemical_voltage" / "manuscript_replay.py"
+ADAPTER_PATH = ROOT / "mlipipe" / "plugins" / "electrochemical_voltage" / "adapter.py"
 def load_replay():
     module = load_module(REPLAY_PATH, 'test_manuscript_voltage_replay')
     return module

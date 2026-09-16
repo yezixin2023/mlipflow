@@ -12,7 +12,7 @@ Preparation success is not execution success. Scheduler `COMPLETED` is also not 
 
 A preparation node supplies one ASE-readable periodic structure, one LAMMPS-ready model-reference JSON, and one LAMMPS MD config JSON. It produces `structure.data`, `lammps-input-manifest.json`, and one or both of `in.cpu.lammps` / `in.gpu.lammps`.
 
-The preparation wrapper records `preparation_contract: lammps-md-input-v2` and an exact `MLIPFLOW_LAMMPS_COMPLETED step=<total>` marker. The marker appears only after `final.data` and `final.restart` are written.
+The preparation wrapper records `preparation_contract: lammps-md-input-v2` and an exact `MLIPIPE_LAMMPS_COMPLETED step=<total>` marker. The marker appears only after `final.data` and `final.restart` are written.
 
 ## Portable model binding
 
@@ -123,7 +123,7 @@ The retry input is a LAMMPS binary restart, not a structure-only continuation. T
 
 - uses `read_restart ${RESTART_FILE}`;
 - reissues the reviewed MLIP `pair_style` / `pair_coeff` because the model path is not treated as restart state;
-- reuses the exact generated `fix mlipflow all nvt ...` or `fix mlipflow all npt ...` command, preserving the same fix ID/style so LAMMPS can restore stored thermostat/barostat state;
+- reuses the exact generated `fix mlipipe all nvt ...` or `fix mlipipe all npt ...` command, preserving the same fix ID/style so LAMMPS can restore stored thermostat/barostat state;
 - does **not** execute the original `velocity create` line;
 - re-enables the same periodic checkpoint cadence;
 - uses `run <original-total-steps> upto`;
@@ -172,7 +172,7 @@ Install `run.sh.example` under every framework/target family you expose:
 - `<remote_template_root>/lammps-m3gnet-gnnp-cpu/run.sh`
 - `<remote_template_root>/lammps-m3gnet-legacy-cpu/run.sh`
 
-The example invokes the staged `lammps_cluster_restart.py` and passes the MLIPFlow attempt number. Each site template still owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, optional Python-bridge `INTERFACE_PATH`, modules/conda setup, and `LAMMPS_LAUNCHER_JSON`; none belong in the project file.
+The example invokes the staged `lammps_cluster_restart.py` and passes the MLIPipe attempt number. Each site template still owns `PYTHON_BIN`, `LAMMPS_BIN`, `MODEL_ROOT`, optional Python-bridge `INTERFACE_PATH`, modules/conda setup, and `LAMMPS_LAUNCHER_JSON`; none belong in the project file.
 
 ## Completion and scope
 

@@ -2,7 +2,7 @@
 
 Read this reference only for manuscript or historical reproduction, ambiguous legacy
 artifacts, or claim interpretation that spans several stages. Ordinary workflow
-routing should use the thin specialist Skill, `mlipflow inspect`, the effective
+routing should use the thin specialist Skill, `mlipipe inspect`, the effective
 dry-run, and Adapter results.
 
 ## Historical and manuscript reproduction

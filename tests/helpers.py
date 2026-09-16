@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
-from mlipflow.cli import main
+from mlipipe.cli import main
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -54,7 +54,7 @@ def load_module(path: Path, name: str = "test_script"):
     import importlib.util
     import sys
 
-    package = Path(__file__).resolve().parents[1] / "mlipflow"
+    package = Path(__file__).resolve().parents[1] / "mlipipe"
     try:
         relative = path.resolve().relative_to(package)
     except ValueError:
@@ -65,4 +65,4 @@ def load_module(path: Path, name: str = "test_script"):
         sys.modules[name] = module
         spec.loader.exec_module(module)
         return module
-    return importlib.import_module("mlipflow." + ".".join(relative.with_suffix("").parts))
+    return importlib.import_module("mlipipe." + ".".join(relative.with_suffix("").parts))

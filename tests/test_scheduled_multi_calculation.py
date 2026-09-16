@@ -3,7 +3,7 @@
 One node drives one attempt. Its 1..N VASP calculations run sequentially by
 default or as explicitly approved independent scheduler jobs.
 These tests exercise READY plans all the way to a
-final MLIPFlow state, because a BLOCKED plan proves nothing about staging,
+final MLIPipe state, because a BLOCKED plan proves nothing about staging,
 fetching, or the scientific checks that decide whether a node may reach OK.
 
 The remote side is simulated by writing the layout the site template produces
@@ -21,16 +21,16 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from mlipflow.backends import ExecutionResult
-from mlipflow.config import load_project
-from mlipflow.services.commands import (
+from mlipipe.backends import ExecutionResult
+from mlipipe.config import load_project
+from mlipipe.services.commands import (
     advance,
     initialize,
     make_advance_plan,
     make_run_plan,
     run_node,
 )
-from mlipflow.services.queries import query_workflow
+from mlipipe.services.queries import query_workflow
 
 from .helpers import project_config, write_json
 from .test_scheduled_dft import (
@@ -222,9 +222,9 @@ class ScheduledLifecycle:
             for index in range(max(1, self.count if self.concurrency > 1 else 1))
         )
         with patch(
-            "mlipflow.backends.SshSlurmBackend.stage_workspace", side_effect=stage
+            "mlipipe.backends.SshSlurmBackend.stage_workspace", side_effect=stage
         ), patch(
-            "mlipflow.backends.SshSlurmBackend.submit",
+            "mlipipe.backends.SshSlurmBackend.submit",
             side_effect=lambda *_args, **_kwargs: next(submitted),
         ):
             run_node(
@@ -315,21 +315,21 @@ class ScheduledLifecycle:
     def finish(self) -> dict[str, Any]:
         inspect, fetch = self._hooks()
         with patch(
-            "mlipflow.backends.SshSlurmBackend.status",
+            "mlipipe.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.backends.SshSlurmBackend.inspect_file", autospec=True,
+            "mlipipe.backends.SshSlurmBackend.inspect_file", autospec=True,
             side_effect=inspect,
         ):
             make_advance_plan(self.project)
         with patch(
-            "mlipflow.backends.SshSlurmBackend.status",
+            "mlipipe.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.backends.SshSlurmBackend.inspect_file", autospec=True,
+            "mlipipe.backends.SshSlurmBackend.inspect_file", autospec=True,
             side_effect=inspect,
         ), patch(
-            "mlipflow.backends.SshSlurmBackend.fetch_from", autospec=True,
+            "mlipipe.backends.SshSlurmBackend.fetch_from", autospec=True,
             side_effect=fetch,
         ):
             return advance(self.project)
@@ -341,7 +341,7 @@ class ScheduledLifecycle:
 
     @property
     def attempt(self) -> Path:
-        return self.root / ".mlipflow" / "runs" / "label-li" / "attempt-1"
+        return self.root / ".mlipipe" / "runs" / "label-li" / "attempt-1"
 
     def result(self) -> dict[str, Any]:
         return json.loads(
@@ -449,7 +449,7 @@ class NestedPathTests(TemporaryProjectTest):
     def test_nested_fetch_paths_are_per_calculation(self) -> None:
         """The core turns each declared output into a bounded nested path."""
 
-        from mlipflow.services.contracts import _scheduled_contract
+        from mlipipe.services.contracts import _scheduled_contract
 
         lifecycle = self.lifecycle("static", 3)
         plan = lifecycle.plan()
@@ -465,7 +465,7 @@ class NestedPathTests(TemporaryProjectTest):
     def test_backend_creates_nested_parents_before_upload(self) -> None:
         """The adapter must never have to issue its own ssh/mkdir."""
 
-        from mlipflow.backends import SshSlurmBackend
+        from mlipipe.backends import SshSlurmBackend
 
         source = self.root / "payload"
         source.write_text("x", encoding="utf-8")
@@ -481,7 +481,7 @@ class NestedPathTests(TemporaryProjectTest):
             return Result()
 
         backend = SshSlurmBackend("alias")
-        with patch("mlipflow.backends.subprocess.run", side_effect=fake_run), patch.object(
+        with patch("mlipipe.backends.subprocess.run", side_effect=fake_run), patch.object(
             SshSlurmBackend,
             "inspect_file",
             return_value={"exists": True, "size_bytes": 1},
@@ -500,7 +500,7 @@ class NestedPathTests(TemporaryProjectTest):
     def test_unsafe_nested_names_are_rejected(self) -> None:
         """Nesting relaxed the name rule; it must not have relaxed the boundary."""
 
-        from mlipflow.services.contracts import _safe_remote_relative
+        from mlipipe.services.contracts import _safe_remote_relative
 
         for unsafe in (
             "../escape/POSCAR",
@@ -520,8 +520,8 @@ class NestedPathTests(TemporaryProjectTest):
                 self.assertTrue(_safe_remote_relative(safe))
 
     def test_duplicate_full_remote_path_is_still_rejected(self) -> None:
-        from mlipflow.errors import CapabilityError
-        from mlipflow.services.contracts import _scheduled_contract
+        from mlipipe.errors import CapabilityError
+        from mlipipe.services.contracts import _scheduled_contract
 
         lifecycle = self.lifecycle("static", 2)
         plan = lifecycle.plan()

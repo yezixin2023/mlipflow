@@ -1,7 +1,7 @@
 #!/bin/bash
-# MLIPFlow scheduled_execution v3: execution_model=mpi
+# MLIPipe scheduled_execution v3: execution_model=mpi
 # {{PROJECT_ID}} / {{NODE_ID}} / attempt {{ATTEMPT}}
-#SBATCH --job-name=mlipflow-{{NODE_ID}}
+#SBATCH --job-name=mlipipe-{{NODE_ID}}
 #SBATCH --ntasks={{CPUS}}
 #SBATCH --cpus-per-task=1
 #SBATCH --gpus={{GPUS}}

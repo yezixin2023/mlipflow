@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "mlipflow" / "plugins" / "pes_sampling"
+PLUGIN = ROOT / "mlipipe" / "plugins" / "pes_sampling"
 WRAPPER = PLUGIN / "lasp_ssw.py"
 ALIAS = PLUGIN / "lasp_random_walk.py"
 EXAMPLE = ROOT / "examples" / "lasp_random_walk" / "lasp.in"

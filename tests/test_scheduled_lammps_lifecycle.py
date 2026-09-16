@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from mlipflow.backends import ExecutionResult
-from mlipflow.config import load_project
-from mlipflow.services.commands import (
+from mlipipe.backends import ExecutionResult
+from mlipipe.config import load_project
+from mlipipe.services.commands import (
     advance,
     initialize,
     make_advance_plan,
@@ -41,7 +41,7 @@ def _prepared(root: Path) -> Path:
     structure = prepared / "structure.data"
     structure.write_text("LAMMPS data\n\n1 atoms\n1 atom types\n", encoding="utf-8")
     deck = prepared / "in.gpu.lammps"
-    marker = "MLIPFLOW_LAMMPS_COMPLETED step=1000"
+    marker = "MLIPIPE_LAMMPS_COMPLETED step=1000"
     deck.write_text(
         "units metal\nread_data structure.data\npair_style mace no_domain_decomposition\n"
         "pair_coeff * * ${MODEL_FILE} Li\nrun 1000\nwrite_data final.data\n"
@@ -233,8 +233,8 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
         def stage(remote_dir, files):
             return remote_dir
 
-        with patch("mlipflow.backends.SshSlurmBackend.stage_workspace", side_effect=stage), patch(
-            "mlipflow.backends.SshSlurmBackend.submit",
+        with patch("mlipipe.backends.SshSlurmBackend.stage_workspace", side_effect=stage), patch(
+            "mlipipe.backends.SshSlurmBackend.submit",
             return_value=ExecutionResult(0, "Submitted batch job 91\n", "", "91"),
         ):
             run_node(
@@ -245,14 +245,14 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
                 _library(),
             )
         self._write_remote_success(calculation)
-        attempt = self.root / ".mlipflow" / "runs" / "lammps-run" / "attempt-1"
+        attempt = self.root / ".mlipipe" / "runs" / "lammps-run" / "attempt-1"
         self.assertFalse((attempt / "lammps-execution-result.json").exists())
 
         with patch(
-            "mlipflow.backends.SshSlurmBackend.status",
+            "mlipipe.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.backends.SshSlurmBackend.inspect_file",
+            "mlipipe.backends.SshSlurmBackend.inspect_file",
             autospec=True,
             side_effect=self._inspect,
         ):
@@ -261,14 +261,14 @@ class ScheduledLammpsLifecycleTest(unittest.TestCase):
         self.assertFalse((attempt / "lammps-execution-result.json").exists())
 
         with patch(
-            "mlipflow.backends.SshSlurmBackend.status",
+            "mlipipe.backends.SshSlurmBackend.status",
             return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
         ), patch(
-            "mlipflow.backends.SshSlurmBackend.inspect_file",
+            "mlipipe.backends.SshSlurmBackend.inspect_file",
             autospec=True,
             side_effect=self._inspect,
         ), patch(
-            "mlipflow.backends.SshSlurmBackend.fetch_from",
+            "mlipipe.backends.SshSlurmBackend.fetch_from",
             autospec=True,
             side_effect=self._fetch,
         ):

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from mlipflow.plugins.active_learning.science import CANDIDATE_CONTRACT
+from mlipipe.plugins.active_learning.science import CANDIDATE_CONTRACT
 
 
 def test_validation_helper_uses_the_plugin_candidate_contract() -> None:
@@ -489,7 +489,7 @@ def test_split_seed_review_preserves_prior_training_and_new_queries(
     output = tmp_path / "review.json"
     module.split_seed_review(
         SimpleNamespace(
-            dataset_contract=str(root / "mlipflow/plugins/dft_labeling/dataset_contract.py"),
+            dataset_contract=str(root / "mlipipe/plugins/dft_labeling/dataset_contract.py"),
             canonical_source=[
                 write("initial.json", initial),
                 write("query-400k.json", query_400k),
@@ -549,7 +549,7 @@ def test_model_index_records_shared_training_inputs(tmp_path: Path) -> None:
     canonical_path.write_text(json.dumps(canonical), encoding="utf-8")
     dataset_contract = (
         Path(__file__).resolve().parents[1]
-        / "mlipflow" / "plugins" / "dft_labeling"
+        / "mlipipe" / "plugins" / "dft_labeling"
         / "dataset_contract.py"
     )
 

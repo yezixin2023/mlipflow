@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "mlipflow" / "plugins" / "lammps_md"
+PLUGIN = ROOT / "mlipipe" / "plugins" / "lammps_md"
 
 
 def _load(name: str, path: Path):
@@ -28,7 +28,7 @@ def _prepared(root: Path, framework: str = "mace", target: str = "gpu") -> Path:
     structure = prepared / "structure.data"
     structure.write_text("LAMMPS data\n\n1 atoms\n1 atom types\n", encoding="utf-8")
     steps = 1000
-    marker = f"MLIPFLOW_LAMMPS_COMPLETED step={steps}"
+    marker = f"MLIPIPE_LAMMPS_COMPLETED step={steps}"
     pair_style = {
         "deepmd": "pair_style      deepmd ${MODEL_FILE}",
         "mace": "pair_style      mace no_domain_decomposition" if target == "gpu" else "pair_style      mace",
@@ -54,9 +54,9 @@ def _prepared(root: Path, framework: str = "mace", target: str = "gpu") -> Path:
         "thermo          10\n"
         "thermo_style    custom step time temp pe ke etotal press vol lx ly lz\n"
         "velocity        all create 900 7 mom yes rot yes dist gaussian\n"
-        "dump            mlipflow all custom 10 trajectory.lammpstrj id type element x y z vx vy vz\n"
-        "dump_modify     mlipflow element Li sort id\n"
-        "fix             mlipflow all nvt temp 900 900 0.1\n"
+        "dump            mlipipe all custom 10 trajectory.lammpstrj id type element x y z vx vy vz\n"
+        "dump_modify     mlipipe element Li sort id\n"
+        "fix             mlipipe all nvt temp 900 900 0.1\n"
         f"run             {steps}\n"
         "write_data      final.data\n"
         "write_restart   final.restart\n"
@@ -148,7 +148,7 @@ def _context(root: Path, attempt: int = 1, policy: str = "auto-from-previous-att
     )
     return {
         "project_root": str(root),
-        "attempt_dir": str(root / ".mlipflow" / "runs" / "lammps-run" / f"attempt-{attempt}"),
+        "attempt_dir": str(root / ".mlipipe" / "runs" / "lammps-run" / f"attempt-{attempt}"),
         "backend": "ssh-slurm",
         "inputs": node["inputs"],
         "parameters": parameters,
@@ -283,20 +283,20 @@ def test_restart_deck_preserves_fix_and_does_not_reinitialize_velocity() -> None
         "thermo          10\n"
         "thermo_style    custom step temp pe\n"
         "velocity        all create 900 7 mom yes rot yes dist gaussian\n"
-        "dump            mlipflow all custom 10 trajectory.lammpstrj id type x y z\n"
-        "dump_modify     mlipflow sort id\n"
-        "fix             mlipflow all nvt temp 900 900 0.1\n"
+        "dump            mlipipe all custom 10 trajectory.lammpstrj id type x y z\n"
+        "dump_modify     mlipipe sort id\n"
+        "fix             mlipipe all nvt temp 900 900 0.1\n"
         "run             1000\n"
         "write_data      final.data\n"
         "write_restart   final.restart\n"
-        'print           "MLIPFLOW_LAMMPS_COMPLETED step=1000"\n'
+        'print           "MLIPIPE_LAMMPS_COMPLETED step=1000"\n'
     )
     instrumented = helper.instrument_fresh(fresh, 100, 1000)
     assert "restart         100 checkpoint.1.restart checkpoint.2.restart" in instrumented
     resume = helper.build_resume(fresh, 100, 1000)
     assert "read_restart    ${RESTART_FILE}" in resume
     assert "pair_coeff      * * ${MODEL_FILE} Li" in resume
-    assert "fix             mlipflow all nvt temp 900 900 0.1" in resume
+    assert "fix             mlipipe all nvt temp 900 900 0.1" in resume
     assert "velocity" not in resume
     assert "run             1000 upto" in resume
 
@@ -345,7 +345,7 @@ def test_restart_step_falls_back_to_read_restart_for_older_lammps(
             )
         return SimpleNamespace(
             returncode=0,
-            stdout=b"MLIPFLOW_RESTART_STEP=800\n",
+            stdout=b"MLIPIPE_RESTART_STEP=800\n",
             stderr=b"",
         )
 

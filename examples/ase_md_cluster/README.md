@@ -104,7 +104,7 @@ NPT intentionally has no `friction_per_fs`. The target pressure and both damping
 
 The initial structure must have a full-rank 3D periodic cell and no ASE constraints. The concrete loaded model must provide finite ASE stress. The compute-node runner performs a stress probe before fresh or restarted NPT dynamics and fails closed if the model cannot supply a finite 3x3 stress tensor.
 
-NPT checkpoint restart restores positions, momenta and cell plus ASE's MTK particle/cell state, thermostat-chain state and barostat-chain state. Because those extended variables currently live in implementation-private ASE attributes, the checkpoint's exact ASE version must match the environment used for the restart. MLIPFlow refuses a version mismatch instead of degrading to a geometry-only restart.
+NPT checkpoint restart restores positions, momenta and cell plus ASE's MTK particle/cell state, thermostat-chain state and barostat-chain state. Because those extended variables currently live in implementation-private ASE attributes, the checkpoint's exact ASE version must match the environment used for the restart. MLIPipe refuses a version mismatch instead of degrading to a geometry-only restart.
 
 ## What the checkpoint contains
 
@@ -137,7 +137,7 @@ There is no project parameter for an arbitrary restart path. This prevents an Ag
 
 A normal scientific `FAIL` after scheduler `COMPLETED` is deliberately not auto-resumable. Fix the scientific/configuration problem and make an explicit new plan instead.
 
-An explicit MLIPFlow `stop` can transition a node immediately and therefore may not provide the same salvage window as observing a scheduler-side terminal cancellation. Do not rely on manual stop for restart unless the checkpoint has already been safely brought local through an approved salvage path.
+An explicit MLIPipe `stop` can transition a node immediately and therefore may not provide the same salvage window as observing a scheduler-side terminal cancellation. Do not rely on manual stop for restart unless the checkpoint has already been safely brought local through an approved salvage path.
 
 ## Segment semantics
 
@@ -151,6 +151,6 @@ The producer does not concatenate segments into a replacement file. Keep all att
 
 The submission approval summary exposes total simulated time, current segment start/remaining steps, exact output schedules, checkpoint path, structure/model paths, device, abstract resources, and ensemble-specific settings. NPT additionally exposes target pressure, thermostat/barostat damping, stress requirement, isotropic cell mode, no-constraints requirement, and fixed chain configuration.
 
-After Slurm reports `COMPLETED`, run `advance` so MLIPFlow inventories and fetches the declared outputs and runs the scientific checker.
+After Slurm reports `COMPLETED`, run `advance` so MLIPipe inventories and fetches the declared outputs and runs the scientific checker.
 
 A successful checkpoint-enabled attempt fetches `trajectory.traj`, `trajectory-index.json`, `thermo.csv`, `md-checkpoint.json`, `final.extxyz`, `md-result.json`, and `cluster-run-report.json`. The checker verifies completed total steps, segment frame/thermo schedules, finite thermodynamic values, the recorded model/structure paths, and checkpoint scientific parameters. NPT thermo additionally checks `pressure_GPa`, positive volume, and positive cell lengths. Scheduler exit code alone is never accepted as scientific success.

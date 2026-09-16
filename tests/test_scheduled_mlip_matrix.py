@@ -15,7 +15,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "mlipflow" / "plugins" / "mlip_training"
+PLUGIN = ROOT / "mlipipe" / "plugins" / "mlip_training"
 
 
 def _load(name: str, path: Path):
@@ -73,7 +73,7 @@ def _context(tmp_path: Path, framework: str, operation: str) -> dict:
         inputs["foundation_model_reference"] = str(foundation.relative_to(tmp_path))
     return {
         "project_root": str(tmp_path),
-        "attempt_dir": str(tmp_path / ".mlipflow" / "runs" / "node" / "attempt-1"),
+        "attempt_dir": str(tmp_path / ".mlipipe" / "runs" / "node" / "attempt-1"),
         "backend": "ssh-slurm",
         "inputs": inputs,
         "parameters": parameters,
@@ -116,9 +116,9 @@ def test_generic_scheduler_matrix_is_ready(
 
 @pytest.mark.parametrize("profile", [None, "deepmd-curve"])
 def test_deepmd_curve_is_staged_only_when_requested(tmp_path, profile):
-    from mlipflow.config import load_project
-    from mlipflow.plugins.mlip_training.adapter import Adapter
-    from mlipflow.services.contracts import _adapter_context
+    from mlipipe.config import load_project
+    from mlipipe.plugins.mlip_training.adapter import Adapter
+    from mlipipe.services.contracts import _adapter_context
     from .test_scheduled_training import build_project
 
     build_project(tmp_path, parameters={"validation_profile": profile})
@@ -131,7 +131,7 @@ def test_deepmd_curve_is_staged_only_when_requested(tmp_path, profile):
 
 @pytest.mark.parametrize("execution_mode", ["package", "bundle"])
 def test_training_wrapper_loads_only_the_selected_framework(tmp_path, execution_mode):
-    from mlipflow.plugins.mlip_training.adapter import Adapter
+    from mlipipe.plugins.mlip_training.adapter import Adapter
 
     context = _context(tmp_path, "mace", "train")
     plan = Adapter().plan(context)
@@ -161,12 +161,12 @@ class SelectedFrameworkOnly(importlib.abc.MetaPathFinder):
             "mlip_deepmd", "mlip_m3gnet", "mlip_chgnet", "deepmd_curve"
         }:
             raise AssertionError("unselected training module imported: " + fullname)
-        if mode == "bundle" and (fullname == "mlipflow" or fullname.startswith("mlipflow.")):
+        if mode == "bundle" and (fullname == "mlipipe" or fullname.startswith("mlipipe.")):
             raise AssertionError("bundle imported controller: " + fullname)
 
 sys.meta_path.insert(0, SelectedFrameworkOnly())
 sys.path.insert(0, module_root)
-module_name = "mlipflow.plugins.mlip_training.training_wrapper" if mode == "package" else "training_wrapper"
+module_name = "mlipipe.plugins.mlip_training.training_wrapper" if mode == "package" else "training_wrapper"
 wrapper = importlib.import_module(module_name)
 assert not any(name.rsplit(".", 1)[-1] == "mlip_mace" for name in sys.modules)
 assert wrapper.main(sys.argv[3:]) == 0
@@ -360,7 +360,7 @@ def test_cluster_runner_accepts_separate_foundation_and_publication_roots() -> N
 
 @pytest.mark.parametrize('content', [None, '{invalid json', '[]'])
 def test_bad_deepmd_reference_is_reported_without_legacy_fallback(tmp_path, content):
-    from mlipflow.plugins.mlip_training.adapter import Adapter
+    from mlipipe.plugins.mlip_training.adapter import Adapter
     context = _context(tmp_path, 'deepmd', 'train')
     reference = tmp_path / context['inputs']['dataset_reference']
     if content is None:
@@ -376,7 +376,7 @@ def test_bad_deepmd_reference_is_reported_without_legacy_fallback(tmp_path, cont
 
 
 def test_id_only_dataset_uses_the_same_bundled_training_contract(tmp_path):
-    from mlipflow.plugins.mlip_training.adapter import Adapter
+    from mlipipe.plugins.mlip_training.adapter import Adapter
     context = _context(tmp_path, 'deepmd', 'train')
     _write_json(tmp_path / context['inputs']['dataset_reference'],
                 {'schema_version': 1, 'dataset_id': 'existing-data'})

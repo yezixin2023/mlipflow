@@ -1,10 +1,10 @@
 cff-version: 1.2.0
-message: "If you use MLIPFlow, please cite the software release and the scientific methods wrapped by the plugins you execute."
-title: "MLIPFlow"
+message: "If you use MLIPipe, please cite the software release and the scientific methods wrapped by the plugins you execute."
+title: "MLIPipe"
 type: software
 version: 0.1.0
 date-released: 2026-08-10
 authors:
-  - name: "MLIPFlow contributors"
+  - name: "MLIPipe contributors"
 license: Apache-2.0
 abstract: "Reproducible workflow orchestration for machine-learned interatomic-potential research across local and HPC environments."

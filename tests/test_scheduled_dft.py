@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from mlipflow.backends import ExecutionResult
-from mlipflow.config import load_project
-from mlipflow.services.commands import (
+from mlipipe.backends import ExecutionResult
+from mlipipe.config import load_project
+from mlipipe.services.commands import (
     advance,
     initialize,
     make_advance_plan,
@@ -20,13 +20,13 @@ from mlipflow.services.commands import (
     retry,
     run_node,
 )
-from mlipflow.state import RunState, StateStore
+from mlipipe.state import RunState, StateStore
 
 from .helpers import project_config, write_json
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "mlipflow" / "plugins"
+PLUGINS = ROOT / "mlipipe" / "plugins"
 MPI_SUBMIT_TEMPLATE = """#!/bin/bash
 # {{PROJECT_ID}} {{NODE_ID}} attempt {{ATTEMPT}}
 #SBATCH --ntasks={{CPUS}}
@@ -463,7 +463,7 @@ class ScheduledDftTests(unittest.TestCase):
                 }
 
             with patch(
-                "mlipflow.services.commands.SshSlurmBackend.select_partition",
+                "mlipipe.services.commands.SshSlurmBackend.select_partition",
                 autospec=True,
                 side_effect=observed,
             ):
@@ -503,7 +503,7 @@ class ScheduledDftTests(unittest.TestCase):
             write_json(site, site_value)
 
             with patch(
-                "mlipflow.services.commands._automatic_cluster",
+                "mlipipe.services.commands._automatic_cluster",
                 side_effect=AssertionError("automatic selection must not run"),
             ):
                 plan = make_run_plan(
@@ -527,10 +527,10 @@ class ScheduledDftTests(unittest.TestCase):
         plan = make_run_plan(project, "label-li", site, library)
         remote_dir = plan["hpc_execution"]["workspace"]["run_dir"]
         with patch(
-            "mlipflow.backends.SshSlurmBackend.stage_workspace",
+            "mlipipe.backends.SshSlurmBackend.stage_workspace",
             return_value=remote_dir,
         ) as staged, patch(
-            "mlipflow.backends.SshSlurmBackend.submit",
+            "mlipipe.backends.SshSlurmBackend.submit",
             return_value=ExecutionResult(0, "Submitted batch job 77\n", "", "77"),
         ):
             run_node(project, "label-li", True, site, library)
@@ -611,10 +611,10 @@ class ScheduledDftTests(unittest.TestCase):
                 ),
             }
             with patch(
-                "mlipflow.backends.SshSlurmBackend.stage_workspace",
+                "mlipipe.backends.SshSlurmBackend.stage_workspace",
                 return_value=remote_dir,
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.submit",
+                "mlipipe.backends.SshSlurmBackend.submit",
                 return_value=ExecutionResult(
                     0,
                     "Submitted batch job 77\n",
@@ -634,7 +634,7 @@ class ScheduledDftTests(unittest.TestCase):
             manifest = json.loads(
                 (
                     root
-                    / ".mlipflow/runs/label-li/attempt-1/run-manifest.json"
+                    / ".mlipipe/runs/label-li/attempt-1/run-manifest.json"
                 ).read_text(encoding="utf-8")
             )
             self.assertEqual("gpu3", manifest["job"]["partition"])
@@ -665,10 +665,10 @@ class ScheduledDftTests(unittest.TestCase):
             plan = make_run_plan(project, "label-li", site, library)
             remote_dir = plan["hpc_execution"]["workspace"]["run_dir"]
             with patch(
-                "mlipflow.backends.SshSlurmBackend.stage_workspace",
+                "mlipipe.backends.SshSlurmBackend.stage_workspace",
                 return_value=remote_dir,
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.submit",
+                "mlipipe.backends.SshSlurmBackend.submit",
                 return_value=ExecutionResult(0, "Submitted batch job 78\n", "", "78"),
             ) as submitted:
                 run_node(
@@ -700,10 +700,10 @@ class ScheduledDftTests(unittest.TestCase):
             write_completion(remote, project.project_id, "label-li", 1)
             inspect, fetch = self._inventory_hooks(remote)
             with patch(
-                "mlipflow.backends.SshSlurmBackend.status",
+                "mlipipe.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.inspect_file",
+                "mlipipe.backends.SshSlurmBackend.inspect_file",
                 autospec=True,
                 side_effect=inspect,
             ):
@@ -712,20 +712,20 @@ class ScheduledDftTests(unittest.TestCase):
                 "adapter-finalize", approved["details"]["transitions"][0]["action"]
             )
             with patch(
-                "mlipflow.backends.SshSlurmBackend.status",
+                "mlipipe.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.inspect_file",
+                "mlipipe.backends.SshSlurmBackend.inspect_file",
                 autospec=True,
                 side_effect=inspect,
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.fetch_from",
+                "mlipipe.backends.SshSlurmBackend.fetch_from",
                 autospec=True,
                 side_effect=fetch,
             ):
                 finished = advance(project)
             self.assertEqual("OK", finished["changed"][0]["state"])
-            attempt = root / ".mlipflow/runs/label-li/attempt-1"
+            attempt = root / ".mlipipe/runs/label-li/attempt-1"
             self.assertTrue((attempt / "dft-labeling-result.json").is_file())
             self.assertTrue((attempt / "labels.json").is_file())
             self.assertFalse((attempt / "calc-0001" / "POTCAR").is_file())
@@ -734,7 +734,7 @@ class ScheduledDftTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project, _, _, _ = self._submit(root)
-            attempt = root / ".mlipflow/runs/label-li/attempt-1"
+            attempt = root / ".mlipipe/runs/label-li/attempt-1"
             approved_path = attempt / "approved-plan.json"
             approved = json.loads(approved_path.read_text())
             staged = approved["adapter_plan"]["scheduled_execution"]["staged_files"]
@@ -750,13 +750,13 @@ class ScheduledDftTests(unittest.TestCase):
             write_completion(remote, project.project_id, "label-li", 1)
             inspect, fetch = self._inventory_hooks(remote)
             with patch(
-                "mlipflow.backends.SshSlurmBackend.status",
+                "mlipipe.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.inspect_file",
+                "mlipipe.backends.SshSlurmBackend.inspect_file",
                 autospec=True, side_effect=inspect,
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.fetch_from",
+                "mlipipe.backends.SshSlurmBackend.fetch_from",
                 autospec=True, side_effect=fetch,
             ):
                 finished = advance(project)
@@ -774,11 +774,11 @@ class ScheduledDftTests(unittest.TestCase):
             inspect, fetch = self._inventory_hooks(remote)
             patches = (
                 patch(
-                    "mlipflow.backends.SshSlurmBackend.status",
+                    "mlipipe.backends.SshSlurmBackend.status",
                     return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
                 ),
                 patch(
-                    "mlipflow.backends.SshSlurmBackend.inspect_file",
+                    "mlipipe.backends.SshSlurmBackend.inspect_file",
                     autospec=True,
                     side_effect=inspect,
                 ),
@@ -786,14 +786,14 @@ class ScheduledDftTests(unittest.TestCase):
             with patches[0], patches[1]:
                 make_advance_plan(project)
             with patch(
-                "mlipflow.backends.SshSlurmBackend.status",
+                "mlipipe.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.inspect_file",
+                "mlipipe.backends.SshSlurmBackend.inspect_file",
                 autospec=True,
                 side_effect=inspect,
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.fetch_from",
+                "mlipipe.backends.SshSlurmBackend.fetch_from",
                 autospec=True,
                 side_effect=fetch,
             ):
@@ -805,7 +805,7 @@ class ScheduledDftTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project, _, site, library = self._submit(root)
-            with StateStore(root / ".mlipflow/state.sqlite3", readonly=False) as store:
+            with StateStore(root / ".mlipipe/state.sqlite3", readonly=False) as store:
                 submitted = store.latest_step(project.project_id, "label-li")
                 store.transition(submitted.run_id, RunState.FAIL, diagnostic="synthetic failure")
             retry_plan = make_retry_plan(project, "label-li")
@@ -827,30 +827,30 @@ class ScheduledDftTests(unittest.TestCase):
             write_completion(remote, project.project_id, "label-li", 999)
             inspect, fetch = self._inventory_hooks(remote)
             with patch(
-                "mlipflow.backends.SshSlurmBackend.status",
+                "mlipipe.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.inspect_file",
+                "mlipipe.backends.SshSlurmBackend.inspect_file",
                 autospec=True,
                 side_effect=inspect,
             ):
                 make_advance_plan(project)
             with patch(
-                "mlipflow.backends.SshSlurmBackend.status",
+                "mlipipe.backends.SshSlurmBackend.status",
                 return_value={"state": "COMPLETED", "detail": None, "source": "fake"},
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.inspect_file",
+                "mlipipe.backends.SshSlurmBackend.inspect_file",
                 autospec=True,
                 side_effect=inspect,
             ), patch(
-                "mlipflow.backends.SshSlurmBackend.fetch_from",
+                "mlipipe.backends.SshSlurmBackend.fetch_from",
                 autospec=True,
                 side_effect=fetch,
             ):
                 finished = advance(project)
             self.assertEqual("FAIL", finished["changed"][0]["state"])
             self.assertIn("field attempt", finished["changed"][0]["diagnostic"])
-            attempt = root / ".mlipflow/runs/label-li/attempt-1"
+            attempt = root / ".mlipipe/runs/label-li/attempt-1"
             self.assertFalse((attempt / "labels.json").exists())
 
     def test_stop_plan_uses_current_cluster_target(self) -> None:

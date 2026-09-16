@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = ROOT / "mlipflow" / "plugins" / "dft_labeling"
+PLUGIN_ROOT = ROOT / "mlipipe" / "plugins" / "dft_labeling"
 PYTHON_EXECUTABLE = str(Path(sys.executable).resolve())
 
 

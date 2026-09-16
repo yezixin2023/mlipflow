@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mlipflow.services.commands import initialize
-from mlipflow.config import load_project
-from mlipflow.services.paths import state_path
-from mlipflow.services import queries
-from mlipflow.state import StateStore, RunState
+from mlipipe.services.commands import initialize
+from mlipipe.config import load_project
+from mlipipe.services.paths import state_path
+from mlipipe.services import queries
+from mlipipe.state import StateStore, RunState
 from .helpers import project_config, run_cli, snapshot, write_json
 
 
@@ -71,7 +71,7 @@ class ReadOnlyCliTests(unittest.TestCase):
             ["route", "--task", "ionic-transport", "--elements", "Li", "P", "S", "--scenario", "fixture"],
             ["doctor"],
         ]
-        with patch("mlipflow.backends.subprocess.run", side_effect=AssertionError("backend invoked")):
+        with patch("mlipipe.backends.subprocess.run", side_effect=AssertionError("backend invoked")):
             for command in commands:
                 code, _, stderr = run_cli(
                     [
@@ -84,7 +84,7 @@ class ReadOnlyCliTests(unittest.TestCase):
                 )
                 self.assertIn(code, {0, 1}, stderr)
         self.assertEqual(snapshot(self.root), before)
-        self.assertFalse((self.root / ".mlipflow").exists())
+        self.assertFalse((self.root / ".mlipipe").exists())
 
     def test_single_node_queries_read_only_its_attempt(self) -> None:
         node = load_project(self.root).nodes[0]
@@ -106,7 +106,7 @@ class ReadOnlyCliTests(unittest.TestCase):
 
     def test_initialized_queries_and_logs_are_zero_write(self) -> None:
         initialize(self.root)
-        log_dir = self.root / ".mlipflow" / "runs" / "benchmark" / "attempt-1"
+        log_dir = self.root / ".mlipipe" / "runs" / "benchmark" / "attempt-1"
         log_dir.mkdir(parents=True)
         (log_dir / "stdout.log").write_text("one\ntwo\n", encoding="utf-8")
         before = snapshot(self.root)
@@ -173,7 +173,7 @@ class ReadOnlyCliTests(unittest.TestCase):
                     store.transition(step.run_id, RunState.FAIL, diagnostic="fixture failure")
             before = snapshot(self.root)
             mtimes = {p: p.stat().st_mtime_ns for p in self.root.rglob("*")}
-            with patch("mlipflow.backends.subprocess.run", side_effect=AssertionError("backend invoked")), patch.object(
+            with patch("mlipipe.backends.subprocess.run", side_effect=AssertionError("backend invoked")), patch.object(
                 StateStore, "transition", side_effect=AssertionError("state mutation")
             ), patch.object(StateStore, "initialize_project", side_effect=AssertionError("initialization")):
                 for command in commands:

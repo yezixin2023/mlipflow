@@ -45,7 +45,7 @@ class ReplayCliTests(unittest.TestCase):
             result = json.loads(stdout)["data"]
             self.assertEqual(result["state"], "OK")
             self.assertNotIn("step", result)
-            manifest = root / ".mlipflow/runs/benchmark/attempt-1/run-manifest.json"
+            manifest = root / ".mlipipe/runs/benchmark/attempt-1/run-manifest.json"
             self.assertTrue(manifest.is_file())
             manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertTrue(

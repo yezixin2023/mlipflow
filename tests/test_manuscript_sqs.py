@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "mlipflow" / "plugins" / "high_entropy_structure"
+PLUGIN = ROOT / "mlipipe" / "plugins" / "high_entropy_structure"
 
 
 def _module(filename: str):

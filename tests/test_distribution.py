@@ -44,7 +44,7 @@ def assert_public_members(members):
 
 
 def agent_skill_sources():
-    directories = sorted((ROOT / "mlipflow" / "plugins").glob("*/skill"))
+    directories = sorted((ROOT / "mlipipe" / "plugins").glob("*/skill"))
     directories.append(ROOT / ".agents" / "skills" / "mlip-workflow")
     for directory in directories:
         frontmatter = (directory / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[1]
@@ -63,20 +63,21 @@ def test_wheel_and_sdist_install_outside_checkout(tmp_path):
         names = archive.namelist()
         metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
         metadata = Parser().parsestr(archive.read(metadata_name).decode("utf-8"))
+        assert metadata["Name"] == "mlipipe"
         supported_python = SpecifierSet(metadata["Requires-Python"])
         assert "3.12" in supported_python
         assert all(version not in supported_python for version in ("3.9", "3.10", "3.11"))
-        assert "mlipflow/plugins/dft_labeling/adapter.py" in names
+        assert "mlipipe/plugins/dft_labeling/adapter.py" in names
         sources = list(agent_skill_sources())
         assert sum(name.endswith("/SKILL.md") for name in names) == len(sources)
         expected_resources = set()
         for directory, skill_name, files in sources:
             for path in files:
                 relative = path.relative_to(directory).as_posix()
-                if directory.is_relative_to(ROOT / "mlipflow"):
+                if directory.is_relative_to(ROOT / "mlipipe"):
                     packaged = path.relative_to(ROOT).as_posix()
                 else:
-                    export = f"/share/mlipflow/agent-skills/{skill_name}/{relative}"
+                    export = f"/share/mlipipe/agent-skills/{skill_name}/{relative}"
                     matches = [name for name in names if name.endswith(export)]
                     assert len(matches) == 1, export
                     packaged = matches[0]
@@ -85,14 +86,14 @@ def test_wheel_and_sdist_install_outside_checkout(tmp_path):
         # Only Python code, one copy of each Skill, and wheel metadata belong here.
         actual_resources = {
             name for name in names
-            if not (name.startswith("mlipflow/") and name.endswith(".py"))
+            if not (name.startswith("mlipipe/") and name.endswith(".py"))
             and ".dist-info/" not in name
         }
         assert actual_resources == expected_resources
     with tarfile.open(sdist) as archive:
         assert_public_members((item.name, item.size) for item in archive.getmembers() if item.isfile())
         names = archive.getnames()
-        assert any(name.endswith("mlipflow/plugins/dft_labeling/adapter.py") for name in names)
+        assert any(name.endswith("mlipipe/plugins/dft_labeling/adapter.py") for name in names)
         assert not any(Path(name).name == ".DS_Store" for name in names)
         sdist_root = names[0].split("/", 1)[0]
         assert not any(
@@ -133,19 +134,19 @@ class NoScientificImports(importlib.abc.MetaPathFinder):
             raise AssertionError("eager scientific import: " + fullname)
 
 sys.meta_path.insert(0, NoScientificImports())
-import mlipflow
-from mlipflow.cli import main
-from mlipflow.plugins import BUILTIN_CAPABILITIES, capability_directory, load_adapter
+import mlipipe
+from mlipipe.cli import main
+from mlipipe.plugins import BUILTIN_CAPABILITIES, capability_directory, load_adapter
 
 installed = Path(sys.prefix).resolve()
-assert Path(mlipflow.__file__).resolve().is_relative_to(installed)
+assert Path(mlipipe.__file__).resolve().is_relative_to(installed)
 assert len(BUILTIN_CAPABILITIES) == 11
 for name in BUILTIN_CAPABILITIES:
     assert capability_directory(name).is_relative_to(installed)
     adapter = load_adapter(name)
     assert all(callable(getattr(adapter, method)) for method in ("operation", "validate", "plan", "check", "collect"))
     adapter.operation({"parameters": {}})
-data = Path(sysconfig.get_path("data")) / "share" / "mlipflow"
+data = Path(sysconfig.get_path("data")) / "share" / "mlipipe"
 for name in BUILTIN_CAPABILITIES:
     skill = capability_directory(name) / "skill"
     if name == "electrochemical-voltage":
@@ -164,15 +165,19 @@ assert (workflow / "references/workflow-contract.md").is_file()
 example = Path.cwd() / "replay"
 for command in (["init"], ["list"], ["run", "structure-replay", "--dry-run"], ["run", "structure-replay"], ["status"]):
     assert main(["--project", str(example), *command]) == 0
-records = list((example / ".mlipflow" / "runs").rglob("run-manifest.json"))
+records = list((example / ".mlipipe" / "runs").rglob("run-manifest.json"))
 assert len(records) == 1
 assert json.loads(records[0].read_text())["state"] == "OK"
 ranking = Path.cwd() / "local-ranking"
 for command in (["init"], ["run", "rank", "--dry-run"], ["run", "rank"], ["json", "rank"]):
     assert main(["--project", str(ranking), "--format", "json", *command]) == 0
-result = json.loads((ranking / ".mlipflow/runs/rank/attempt-1/ranking-result.json").read_text())
+result = json.loads((ranking / ".mlipipe/runs/rank/attempt-1/ranking-result.json").read_text())
 assert [item["candidate_id"] for item in result["ranked_candidates"]] == ["b", "c"]
 assert result["excluded_missing"] == ["missing"]
 """
-    run([python, "-I", "-m", "mlipflow", "--version"], cwd=tmp_path)
+    expected_version = f"mlipipe {metadata['Version']}"
+    cli = environment / ("Scripts/mlipipe.exe" if os.name == "nt" else "bin/mlipipe")
+    assert run([cli, "--version"], cwd=tmp_path).stdout.strip() == expected_version
+    assert "usage: mlipipe " in run([cli, "--help"], cwd=tmp_path).stdout
+    assert run([python, "-I", "-m", "mlipipe", "--version"], cwd=tmp_path).stdout.strip() == expected_version
     run([python, "-I", "-c", script], cwd=tmp_path)

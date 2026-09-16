@@ -1,0 +1,652 @@
+"""Deterministic pymatgen VASP-input preparation for ``dft-labeling``.
+
+This executable never launches VASP or a scheduler.  It materializes inputs in a
+fresh MLIPipe attempt, records exact provenance, and deliberately excludes
+POTCAR content from the result manifest.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.metadata
+import json
+import math
+import os
+import platform
+import re
+import sys
+from pathlib import Path
+from typing import Any, Iterable, Mapping, NamedTuple
+
+
+PLUGIN_ID = "dft-labeling"
+OPERATION = "vasp-prepare"
+MAX_STRUCTURES = 10000
+SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+SAFE_POTCAR_SYMBOL = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+
+MANUSCRIPT_STATIC_PRESET = "manuscript-static-v1"
+MANUSCRIPT_STATIC_INCAR: dict[str, Any] = {
+    "ISTART": 0,
+    "ICHARG": 2,
+    "LCHARG": False,
+    "LWAVE": False,
+    "LREAL": "Auto",
+    "IALGO": 38,
+    "EDIFF": 5e-6,
+    "ISMEAR": 0,
+    "SIGMA": 0.1,
+    "PREC": "Normal",
+    "NELM": 700,
+    "NELMIN": 4,
+    "ENCUT": 450,
+    "IVDW": 12,
+    "NSW": 0,
+    "IBRION": -1,
+    "ISIF": 2,
+    "ISPIN": 2,
+}
+MANUSCRIPT_STATIC_KPOINTS = {
+    "mode": "monkhorst",
+    "grid": [1, 1, 1],
+    "shift": [0, 0, 0],
+}
+MANUSCRIPT_STATIC_PROVENANCE = {
+    "paper": {
+        "locator": "manuscript-supplement://SI_0510zdl.docx#page=2&figure=S3",
+        "declared_parameters": {"ENCUT": 450, "EDIFF": 5e-6, "IALGO": 38},
+        "note": (
+            "Figure S3 labels EDIFF as eV/atom; VASP INCAR EDIFF is an absolute "
+            "electronic stopping threshold, so the numerical value is preserved without "
+            "silently converting units."
+        ),
+    },
+    "historical_template": {
+        "incar_locator": "remote-mlp://4-Element/Li8/scf/single/INCAR",
+        "kpoints_locator": "remote-mlp://4-Element/Li8/scf/single/KPOINTS",
+        "excluded_runtime_parameter": {
+            "NPAR": 4,
+            "reason": "hardware- and VASP-version-dependent parallelization setting",
+        },
+    },
+}
+
+
+class ContractError(ValueError):
+    """Raised when input preparation would violate the reviewed contract."""
+
+
+class PymatgenApi(NamedTuple):
+    Structure: Any
+    Incar: Any
+    Kpoints: Any
+    Poscar: Any
+    Potcar: Any
+    version: str
+    configured_psp_root: str | None
+
+
+def _within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _ordinary_file(path: Path, label: str) -> Path:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file() or resolved.stat().st_size < 1:
+        raise ContractError(f"{label} must be a non-empty file")
+    return resolved
+
+
+def _read_json(path: Path, label: str) -> dict[str, Any]:
+    path = _ordinary_file(path, label)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ContractError(f"{label} must be valid UTF-8 JSON") from exc
+    if not isinstance(value, dict):
+        raise ContractError(f"{label} must be a JSON object")
+    return value
+
+
+def _write_json(path: Path, value: Mapping[str, Any]) -> None:
+    payload = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    path.write_text(payload, encoding="utf-8")
+
+
+def _safe_relative(value: Any, label: str) -> Path:
+    if not isinstance(value, str) or not value.strip() or any(c in value for c in "\x00\r\n"):
+        raise ContractError(f"{label} must be a non-empty relative path")
+    path = Path(value)
+    if path.is_absolute() or path == Path(".") or ".." in path.parts:
+        raise ContractError(f"{label} must be a confined relative path")
+    return path
+
+
+def _safe_id(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not SAFE_ID.fullmatch(value):
+        raise ContractError(f"{label} must match {SAFE_ID.pattern}")
+    return value
+
+
+def _json_incar_value(value: Any, key: str) -> Any:
+    if value is None or isinstance(value, Mapping):
+        raise ContractError(f"INCAR {key} must be a JSON scalar or flat list")
+    if isinstance(value, list):
+        if not value or any(item is None or isinstance(item, (list, Mapping)) for item in value):
+            raise ContractError(f"INCAR {key} must be a non-empty flat list")
+        return [_json_incar_value(item, key) for item in value]
+    if not isinstance(value, (str, int, float, bool)):
+        raise ContractError(f"INCAR {key} has an unsupported value type")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ContractError(f"INCAR {key} must be finite")
+    return value
+
+
+def _incar_mapping(value: Any, label: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ContractError(f"{label} must be an object")
+    result: dict[str, Any] = {}
+    for raw_key, raw_value in value.items():
+        if not isinstance(raw_key, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", raw_key):
+            raise ContractError(f"{label} contains an invalid INCAR key")
+        key = raw_key.upper()
+        if key in result:
+            raise ContractError(f"{label} contains a duplicate normalized key: {key}")
+        result[key] = _json_incar_value(raw_value, key)
+    return result
+
+
+def _positive_int(value: Any, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ContractError(f"{label} must be a positive integer")
+    return value
+
+
+def _validate_calculation_incar(calculation_type: str, incar: Mapping[str, Any]) -> None:
+    if calculation_type == "static":
+        if incar.get("NSW") != 0 or incar.get("IBRION") != -1:
+            raise ContractError("static inputs require NSW=0 and IBRION=-1")
+        return
+    if calculation_type == "relax":
+        if not isinstance(incar.get("NSW"), int) or int(incar["NSW"]) < 1:
+            raise ContractError("relax inputs require positive NSW")
+        if incar.get("IBRION") not in {1, 2, 3}:
+            raise ContractError("relax inputs require IBRION=1, 2, or 3")
+        for key in ("EDIFFG", "ISIF"):
+            if key not in incar:
+                raise ContractError(f"relax inputs require explicit {key}")
+        return
+    if calculation_type == "aimd":
+        if incar.get("IBRION") != 0:
+            raise ContractError("aimd inputs require IBRION=0")
+        for key in ("NSW", "POTIM"):
+            value = incar.get(key)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or float(value) <= 0:
+                raise ContractError(f"aimd inputs require positive {key}")
+        for key in ("TEBEG", "TEEND", "MDALGO"):
+            if key not in incar:
+                raise ContractError(f"aimd inputs require explicit {key}")
+        return
+    raise ContractError("calculation_type must be static, relax, or aimd")
+
+
+def _kpoints_config(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ContractError("kpoints must be an object with an explicit grid")
+    unknown = set(value) - {"mode", "grid", "shift"}
+    if unknown:
+        raise ContractError("unsupported kpoints field(s): " + ", ".join(sorted(unknown)))
+    mode = value.get("mode")
+    if mode not in {"gamma", "monkhorst"}:
+        raise ContractError("kpoints.mode must be gamma or monkhorst")
+    grid = value.get("grid")
+    if (
+        not isinstance(grid, list)
+        or len(grid) != 3
+        or any(not isinstance(item, int) or isinstance(item, bool) or item < 1 for item in grid)
+    ):
+        raise ContractError("kpoints.grid must contain three positive integers")
+    shift = value.get("shift", [0, 0, 0])
+    if (
+        not isinstance(shift, list)
+        or len(shift) != 3
+        or any(
+            not isinstance(item, (int, float))
+            or isinstance(item, bool)
+            or not math.isfinite(float(item))
+            for item in shift
+        )
+    ):
+        raise ContractError("kpoints.shift must contain three finite numbers")
+    return {"mode": mode, "grid": list(grid), "shift": list(shift)}
+
+
+def _labeling_config(value: Mapping[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "schema_version",
+        "engine",
+        "calculation_type",
+        "preset",
+        "incar",
+        "kpoints",
+        "sort_structure",
+    }
+    unknown = set(value) - allowed
+    if unknown:
+        raise ContractError("unsupported labeling_config field(s): " + ", ".join(sorted(unknown)))
+    if value.get("schema_version") != 1 or value.get("engine") != "vasp":
+        raise ContractError("labeling_config requires schema_version=1 and engine=vasp")
+    calculation_type = value.get("calculation_type")
+    if calculation_type not in {"static", "relax", "aimd"}:
+        raise ContractError("calculation_type must be static, relax, or aimd")
+    preset = value.get("preset")
+    if preset is not None and preset != MANUSCRIPT_STATIC_PRESET:
+        raise ContractError(f"unsupported preset: {preset}")
+    if preset == MANUSCRIPT_STATIC_PRESET and calculation_type != "static":
+        raise ContractError(f"{MANUSCRIPT_STATIC_PRESET} is valid only for static calculations")
+    provided_incar = _incar_mapping(value.get("incar", {}), "incar")
+    if preset == MANUSCRIPT_STATIC_PRESET:
+        effective_incar = dict(MANUSCRIPT_STATIC_INCAR)
+        effective_incar.update(provided_incar)
+        kpoints = _kpoints_config(value.get("kpoints", MANUSCRIPT_STATIC_KPOINTS))
+    else:
+        if not provided_incar:
+            raise ContractError("an explicit non-empty incar object is required without a preset")
+        effective_incar = provided_incar
+        kpoints = _kpoints_config(value.get("kpoints"))
+    _validate_calculation_incar(str(calculation_type), effective_incar)
+    sort_structure = value.get("sort_structure", True)
+    if not isinstance(sort_structure, bool):
+        raise ContractError("sort_structure must be boolean")
+    return {
+        "calculation_type": calculation_type,
+        "preset": preset,
+        "incar_overrides": provided_incar if preset else {},
+        "effective_incar": effective_incar,
+        "kpoints": kpoints,
+        "sort_structure": sort_structure,
+    }
+
+
+def _pseudopotential_reference(value: Mapping[str, Any]) -> dict[str, Any]:
+    allowed = {
+        "schema_version",
+        "reference_id",
+        "source_env",
+        "license_acknowledged",
+        "functional",
+        "symbols",
+    }
+    unknown = set(value) - allowed
+    if unknown:
+        raise ContractError(
+            "unsupported pseudopotential_reference field(s): " + ", ".join(sorted(unknown))
+        )
+    if value.get("schema_version") != 1:
+        raise ContractError("pseudopotential_reference schema_version must be 1")
+    reference_id = value.get("reference_id")
+    if (
+        not isinstance(reference_id, str)
+        or not reference_id.strip()
+        or reference_id.startswith("/")
+        or ".." in Path(reference_id.replace("://", "/")).parts
+    ):
+        raise ContractError("reference_id must be portable and must not contain an absolute path")
+    if value.get("source_env") != "PMG_VASP_PSP_DIR":
+        raise ContractError("source_env must be PMG_VASP_PSP_DIR")
+    if value.get("license_acknowledged") is not True:
+        raise ContractError("license_acknowledged must be true")
+    functional = value.get("functional")
+    if not isinstance(functional, str) or not functional.strip():
+        raise ContractError("functional must be an explicit pymatgen POTCAR functional")
+    raw_symbols = value.get("symbols")
+    if not isinstance(raw_symbols, Mapping) or not raw_symbols:
+        raise ContractError("symbols must explicitly map every element to a POTCAR symbol")
+    symbols: dict[str, str] = {}
+    for element, symbol in raw_symbols.items():
+        if (
+            not isinstance(element, str)
+            or not re.fullmatch(r"[A-Z][a-z]?", element)
+            or not isinstance(symbol, str)
+            or not SAFE_POTCAR_SYMBOL.fullmatch(symbol)
+        ):
+            raise ContractError("symbols contains an invalid element or POTCAR symbol")
+        symbols[element] = symbol
+    return {
+        "reference_id": reference_id,
+        "functional": functional,
+        "symbols": symbols,
+    }
+
+
+def _structure_records(
+    manifest: Mapping[str, Any], manifest_path: Path, _project_root: Path, max_structures: int
+) -> list[dict[str, Any]]:
+    raw = manifest.get("structures")
+    if manifest.get("schema_version") != 1 or not isinstance(raw, list):
+        raise ContractError("structures_manifest requires schema_version=1 and a structures list")
+    if not 1 <= len(raw) <= max_structures:
+        raise ContractError(f"structures count must be 1..{max_structures}")
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw, 1):
+        if not isinstance(item, Mapping):
+            raise ContractError(f"structure record {index} must be an object")
+        structure_id = item.get("id", item.get("structure_id"))
+        structure_id = _safe_id(structure_id, f"structure record {index} id")
+        if structure_id in seen:
+            raise ContractError(f"duplicate structure id: {structure_id}")
+        seen.add(structure_id)
+        value = item.get("path", item.get("output_file"))
+        if not isinstance(value, str) or not value.strip() or any(
+            character in value for character in "\x00\r\n"
+        ):
+            raise ContractError(f"structure {structure_id} path must be a non-empty path")
+        raw = Path(value).expanduser()
+        source = raw if raw.is_absolute() else manifest_path.parent / raw
+        source = source.resolve()
+        if not source.exists():
+            raise ContractError(f"structure {structure_id} file does not exist: {source}")
+        source = _ordinary_file(source, f"structure {structure_id}")
+        if not os.access(source, os.R_OK):
+            raise ContractError(f"structure {structure_id} must be readable")
+        records.append(
+            {
+                "id": structure_id,
+                "manifest_path": value,
+                "source_path": source,
+            }
+        )
+    return records
+
+
+def _load_pymatgen() -> PymatgenApi:
+    try:
+        from pymatgen.core import SETTINGS, Structure
+        from pymatgen.io.vasp.inputs import Incar, Kpoints, Poscar, Potcar
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise ContractError("pymatgen with VASP input support is required") from exc
+    try:
+        version = importlib.metadata.version("pymatgen")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise ContractError("installed pymatgen distribution version is required") from exc
+    configured_root = SETTINGS.get("PMG_VASP_PSP_DIR")
+    return PymatgenApi(Structure, Incar, Kpoints, Poscar, Potcar, version, configured_root)
+
+
+def _runtime_psp_configuration(api: PymatgenApi) -> str:
+    configured_root = os.environ.get("PMG_VASP_PSP_DIR")
+    source = "environment"
+    if not isinstance(configured_root, str) or not configured_root.strip():
+        configured_root = api.configured_psp_root
+        source = "pymatgen-settings"
+    if not isinstance(configured_root, str) or not configured_root.strip():
+        raise ContractError(
+            "PMG_VASP_PSP_DIR must be configured by environment or pymatgen settings"
+        )
+    root = Path(configured_root).expanduser()
+    if not root.is_absolute() or not root.resolve().is_dir():
+        raise ContractError("configured PMG_VASP_PSP_DIR must resolve to an existing directory")
+    return source
+
+
+def _potcar_component_records(potcar: Iterable[Any], symbols: list[str]) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    for symbol, _ in zip(symbols, potcar):
+        records.append(
+            {"symbol": symbol}
+        )
+    if len(records) != len(symbols):
+        raise ContractError("pymatgen POTCAR component count differs from POSCAR species count")
+    return records
+
+
+def _file_record(
+    relative_path: Path, media_type: str, collectable: bool
+) -> dict[str, Any]:
+    return {
+        "path": relative_path.as_posix(),
+        "media_type": media_type,
+        "collectable": collectable,
+    }
+
+
+def prepare_inputs(args: argparse.Namespace, api: PymatgenApi | None = None) -> dict[str, Any]:
+    project_root = Path(args.project_root).expanduser().absolute().resolve()
+    attempt_dir = Path(args.attempt_dir).expanduser().absolute()
+    if not attempt_dir.is_dir():
+        raise ContractError("attempt_dir must be an existing directory")
+    attempt_dir = attempt_dir.resolve()
+    if not _within(attempt_dir, project_root):
+        raise ContractError("attempt_dir must remain inside project_root")
+    output_relative = _safe_relative(args.output_subdir, "output_subdir")
+    output_dir = (attempt_dir / output_relative).absolute()
+    if not _within(output_dir.parent.resolve(), attempt_dir):
+        raise ContractError("output_subdir must remain inside attempt_dir")
+    result_path = Path(args.result_manifest).expanduser().absolute()
+    if (
+        not _within(result_path.parent.resolve(), attempt_dir)
+        or result_path.parent.resolve() != attempt_dir
+    ):
+        raise ContractError("result_manifest must be a direct child of attempt_dir")
+    if result_path == output_dir or result_path in output_dir.parents:
+        raise ContractError("output_subdir must not overlap result_manifest")
+    if output_dir.exists() or result_path.exists():
+        raise ContractError("vasp-prepare requires fresh output and result paths")
+    max_structures = _positive_int(args.max_structures, "max_structures")
+    if max_structures > MAX_STRUCTURES:
+        raise ContractError(f"max_structures must not exceed {MAX_STRUCTURES}")
+
+    structures_path = _ordinary_file(Path(args.structures_manifest), "structures_manifest")
+    labeling_path = _ordinary_file(Path(args.labeling_config), "labeling_config")
+    pseudopotential_path = _ordinary_file(
+        Path(args.pseudopotential_reference), "pseudopotential_reference"
+    )
+    for path, label in (
+        (structures_path, "structures_manifest"),
+        (labeling_path, "labeling_config"),
+        (pseudopotential_path, "pseudopotential_reference"),
+    ):
+        if not _within(path, project_root):
+            raise ContractError(f"{label} must remain inside project_root")
+
+    structures_manifest = _read_json(structures_path, "structures_manifest")
+    labeling_value = _read_json(labeling_path, "labeling_config")
+    pseudopotential_value = _read_json(
+        pseudopotential_path, "pseudopotential_reference"
+    )
+    config = _labeling_config(labeling_value)
+    reference = _pseudopotential_reference(pseudopotential_value)
+    records = _structure_records(
+        structures_manifest, structures_path, project_root, max_structures
+    )
+    api = api or _load_pymatgen()
+    psp_configuration_source = _runtime_psp_configuration(api)
+
+    output_dir.mkdir(parents=True)
+    incomplete = output_dir / "INCOMPLETE.json"
+    _write_json(
+        incomplete,
+        {
+            "schema_version": 1,
+            "plugin_id": PLUGIN_ID,
+            "operation": OPERATION,
+            "status": "INCOMPLETE",
+        },
+    )
+    calculations: list[dict[str, Any]] = []
+    for order, record in enumerate(records, 1):
+        structure_id = record["id"]
+        directory_name = f"{order:06d}-{structure_id}"
+        calculation_dir = output_dir / directory_name
+        calculation_dir.mkdir()
+        try:
+            structure = api.Structure.from_file(str(record["source_path"]))
+            poscar = api.Poscar(structure, sort_structure=config["sort_structure"])
+            poscar_path = calculation_dir / "POSCAR"
+            incar_path = calculation_dir / "INCAR"
+            kpoints_path = calculation_dir / "KPOINTS"
+            potcar_path = calculation_dir / "POTCAR"
+            poscar.write_file(str(poscar_path))
+            api.Incar(config["effective_incar"]).write_file(str(incar_path))
+            kpoints_config = config["kpoints"]
+            if kpoints_config["mode"] == "gamma":
+                kpoints = api.Kpoints.gamma_automatic(
+                    kpts=tuple(kpoints_config["grid"]),
+                    shift=tuple(kpoints_config["shift"]),
+                )
+            else:
+                kpoints = api.Kpoints.monkhorst_automatic(
+                    kpts=tuple(kpoints_config["grid"]),
+                    shift=tuple(kpoints_config["shift"]),
+                )
+            kpoints.write_file(str(kpoints_path))
+            elements = list(poscar.site_symbols)
+            missing = [element for element in elements if element not in reference["symbols"]]
+            if missing:
+                raise ContractError(
+                    "pseudopotential_reference lacks element mapping(s): "
+                    + ", ".join(sorted(set(missing)))
+                )
+            potcar_symbols = [reference["symbols"][element] for element in elements]
+            try:
+                potcar = api.Potcar(potcar_symbols, functional=reference["functional"])
+                potcar.write_file(str(potcar_path))
+            except ContractError:
+                raise
+            except Exception as exc:
+                raise ContractError(
+                    "pymatgen could not assemble POTCAR from the configured PMG_VASP_PSP_DIR"
+                ) from exc
+            component_records = _potcar_component_records(potcar, potcar_symbols)
+        except ContractError:
+            raise
+        except Exception as exc:
+            raise ContractError(f"pymatgen failed to prepare structure {structure_id}") from exc
+
+        relative_directory = (output_relative / directory_name).as_posix()
+        files = {
+            "POSCAR": _file_record(
+                Path(relative_directory) / "POSCAR",
+                "chemical/x-vasp-poscar",
+                True,
+            ),
+            "INCAR": _file_record(
+                Path(relative_directory) / "INCAR", "text/plain", True
+            ),
+            "KPOINTS": _file_record(
+                Path(relative_directory) / "KPOINTS", "text/plain", True
+            ),
+            "POTCAR": _file_record(
+                Path(relative_directory) / "POTCAR",
+                "application/x-vasp-potcar",
+                False,
+            ),
+        }
+        calculations.append(
+            {
+                "order": order,
+                "structure_id": structure_id,
+                "source": {"path": record["manifest_path"]},
+                "directory": relative_directory,
+                "formula": str(structure.composition.reduced_formula),
+                "atom_count": len(structure),
+                "files": files,
+                "potcar": {
+                    "reference_id": reference["reference_id"],
+                    "source_env": "PMG_VASP_PSP_DIR",
+                    "functional": reference["functional"],
+                    "elements": elements,
+                    "symbols": potcar_symbols,
+                    "components": component_records,
+                    "portable_artifact": False,
+                },
+            }
+        )
+
+    manifest: dict[str, Any] = {
+        "schema_version": 1,
+        "plugin_id": PLUGIN_ID,
+        "operation": OPERATION,
+        "status": "OK",
+        "engine": "vasp",
+        "generator": {"name": "pymatgen", "version": api.version},
+        "runtime": {
+            "python_executable": str(Path(sys.executable).expanduser().absolute().resolve()),
+            "python_version": platform.python_version(),
+            "pymatgen_version": api.version,
+        },
+        "calculation_type": config["calculation_type"],
+        "preset": config["preset"],
+        "parameter_provenance": (
+            MANUSCRIPT_STATIC_PROVENANCE if config["preset"] == MANUSCRIPT_STATIC_PRESET else {}
+        ),
+        "incar": {
+            "effective": config["effective_incar"],
+            "overrides": config["incar_overrides"],
+        },
+        "kpoints": config["kpoints"],
+        "sort_structure": config["sort_structure"],
+        "input_paths": {
+            "structures_manifest": str(structures_path.relative_to(project_root)),
+            "labeling_config": str(labeling_path.relative_to(project_root)),
+            "pseudopotential_reference": str(
+                pseudopotential_path.relative_to(project_root)
+            ),
+        },
+        "structure_count": len(calculations),
+        "execution_ready": True,
+        "potcar_policy": {
+            "source_env": "PMG_VASP_PSP_DIR",
+            "configuration_source": psp_configuration_source,
+            "materialized_in_attempt": True,
+            "portable_or_collectable": False,
+        },
+        "calculations": calculations,
+    }
+    _write_json(result_path, manifest)
+    incomplete.unlink()
+    return manifest
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Prepare deterministic VASP inputs with pymatgen")
+    parser.add_argument("--project-root", required=True)
+    parser.add_argument("--attempt-dir", required=True)
+    parser.add_argument("--structures-manifest", required=True)
+    parser.add_argument("--labeling-config", required=True)
+    parser.add_argument("--pseudopotential-reference", required=True)
+    parser.add_argument("--result-manifest", required=True)
+    parser.add_argument("--output-subdir", required=True)
+    parser.add_argument("--max-structures", type=int, required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        prepare_inputs(args)
+    except ContractError as exc:
+        print(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "plugin_id": PLUGIN_ID,
+                    "operation": OPERATION,
+                    "status": "FAIL",
+                    "error": str(exc),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

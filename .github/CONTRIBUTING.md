@@ -1,4 +1,4 @@
-# Contributing to MLIPFlow
+# Contributing to MLIPipe
 
 ## Development setup
 
@@ -8,7 +8,7 @@ development and local scientific dependencies, then run the tests and lint check
 ```bash
 python -m pip install -e ".[dev,local]"
 python -m pytest
-python -m ruff check mlipflow tests examples
+python -m ruff check mlipipe tests examples
 ```
 
 ## Contribution rules
@@ -23,8 +23,8 @@ python -m ruff check mlipflow tests examples
 
 ## Public interface
 
-The supported user interfaces are the `mlipflow` CLI, documented configuration formats, CLI/result formats, and Agent Skills. Internal Python modules are not a stable public SDK.
+The supported user interfaces are the `mlipipe` CLI, documented configuration formats, CLI/result formats, and Agent Skills. Internal Python modules are not a stable public SDK.
 
 ## License
 
-Contributions submitted for inclusion in MLIPFlow are licensed under [Apache-2.0](../LICENSE).
+Contributions submitted for inclusion in MLIPipe are licensed under [Apache-2.0](../LICENSE).

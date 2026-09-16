@@ -15,8 +15,8 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FRESH_PATH = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "fresh_benchmark.py"
-ADAPTER_PATH = ROOT / "mlipflow" / "plugins" / "mlip_benchmark" / "adapter.py"
+FRESH_PATH = ROOT / "mlipipe" / "plugins" / "mlip_benchmark" / "fresh_benchmark.py"
+ADAPTER_PATH = ROOT / "mlipipe" / "plugins" / "mlip_benchmark" / "adapter.py"
 
 
 def _load(path: Path, name: str):

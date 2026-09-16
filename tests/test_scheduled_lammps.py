@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "mlipflow" / "plugins" / "lammps_md"
+PLUGIN = ROOT / "mlipipe" / "plugins" / "lammps_md"
 
 
 def _load(name: str, path: Path):
@@ -47,7 +47,7 @@ def _prepared(tmp_path: Path, framework: str, targets: list[str] | None = None) 
     structure = prepared / "structure.data"
     structure.write_text("LAMMPS data file\n\n1 atoms\n1 atom types\n", encoding="utf-8")
     steps = 1000
-    marker = f"MLIPFLOW_LAMMPS_COMPLETED step={steps}"
+    marker = f"MLIPIPE_LAMMPS_COMPLETED step={steps}"
     generated = [{"name": "structure.data"}]
     launchers = []
     for target in targets:
@@ -131,7 +131,7 @@ def _context(tmp_path: Path, framework: str, target: str, gpus: int | None = Non
     )
     return {
         "project_root": str(tmp_path),
-        "attempt_dir": str(tmp_path / ".mlipflow" / "runs" / "lammps-run" / "attempt-1"),
+        "attempt_dir": str(tmp_path / ".mlipipe" / "runs" / "lammps-run" / "attempt-1"),
         "backend": "ssh-slurm",
         "inputs": node["inputs"],
         "parameters": parameters,
@@ -369,7 +369,7 @@ def test_execution_checker_rebinds_outputs(tmp_path: Path) -> None:
     module = _load("lammps_checker", PLUGIN / "execute.py")
     attempt = tmp_path / "attempt"
     attempt.mkdir()
-    marker = "MLIPFLOW_LAMMPS_COMPLETED step=1000"
+    marker = "MLIPIPE_LAMMPS_COMPLETED step=1000"
     calculation = {
         "framework": "mace",
         "target": "gpu",

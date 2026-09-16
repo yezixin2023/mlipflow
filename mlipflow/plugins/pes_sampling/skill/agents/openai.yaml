@@ -1,4 +1,0 @@
-interface:
-  display_name: "PES sampling"
-  short_description: "Supervise DIRECT and LASP/SSW sampling safely"
-  default_prompt: "$pes-sampling Supervise a DIRECT selection, LASP SSW execution, or historical ARC normalization through the current MLIPFlow approval and verification contracts."

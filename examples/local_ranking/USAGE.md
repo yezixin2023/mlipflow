@@ -2,21 +2,21 @@
 
 This example executes the bundled candidate-ranking program and checks its result.
 The scores are dimensionless demonstration inputs, not material properties.
-It needs only MLIPFlow's base installation (Python and PyYAML), no model or cluster.
+It needs only MLIPipe's base installation (Python and PyYAML), no model or cluster.
 
 From a checkout, use a fresh work directory:
 
 ```bash
-cp -R examples/local_ranking /tmp/mlipflow-ranking-demo
-mlipflow --project /tmp/mlipflow-ranking-demo init
-mlipflow --project /tmp/mlipflow-ranking-demo --format json run rank --dry-run
-mlipflow --project /tmp/mlipflow-ranking-demo --format json run rank
-mlipflow --project /tmp/mlipflow-ranking-demo json rank
+cp -R examples/local_ranking /tmp/mlipipe-ranking-demo
+mlipipe --project /tmp/mlipipe-ranking-demo init
+mlipipe --project /tmp/mlipipe-ranking-demo --format json run rank --dry-run
+mlipipe --project /tmp/mlipipe-ranking-demo --format json run rank
+mlipipe --project /tmp/mlipipe-ranking-demo json rank
 ```
 
 With a pip installation, obtain these input files from the
-[repository example](https://github.com/yezixin2023/mlipflow/tree/public/examples/local_ranking).
-Choose a fresh work destination if `/tmp/mlipflow-ranking-demo` already exists.
+[repository example](https://github.com/yezixin2023/mlipipe/tree/public/examples/local_ranking).
+Choose a fresh work destination if `/tmp/mlipipe-ranking-demo` already exists.
 
 Expected run output: exit code `0`, `ok: true`, `data.state: OK`,
 `data.metrics.selected_count: 2`, and `data.summary.ranked_candidates` containing
@@ -24,7 +24,7 @@ Expected run output: exit code `0`, `ok: true`, `data.state: OK`,
 These values come from the declared input rule, not a saved replay result.
 
 `data.artifacts` contains role `ranking-result` and its absolute `path`:
-`/tmp/mlipflow-ranking-demo/.mlipflow/runs/rank/attempt-1/ranking-result.json`.
+`/tmp/mlipipe-ranking-demo/.mlipipe/runs/rank/attempt-1/ranking-result.json`.
 Use the returned path for a downstream task. `manifest_path`, `logs`, `check`, and
 `collection` explain how the result was obtained. On failure, read `reason` and
-`mlipflow --project /tmp/mlipflow-ranking-demo logs rank` before deciding on a retry.
+`mlipipe --project /tmp/mlipipe-ranking-demo logs rank` before deciding on a retry.

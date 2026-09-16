@@ -16,12 +16,12 @@ The site needs ASE and the selected MLIP framework in its calculator environment
 models can be reused; the model is not downloaded by this example.
 
 ```bash
-mlipflow --project /PATH/TO/md-project init
-mlipflow --project /PATH/TO/md-project inspect md-900k-nvt
-mlipflow --project /PATH/TO/md-project --format json run md-900k-nvt --dry-run
-mlipflow --project /PATH/TO/md-project --format json run md-900k-nvt --approve
-mlipflow --project /PATH/TO/md-project --format json advance
-mlipflow --project /PATH/TO/md-project json md-900k-nvt
+mlipipe --project /PATH/TO/md-project init
+mlipipe --project /PATH/TO/md-project inspect md-900k-nvt
+mlipipe --project /PATH/TO/md-project --format json run md-900k-nvt --dry-run
+mlipipe --project /PATH/TO/md-project --format json run md-900k-nvt --approve
+mlipipe --project /PATH/TO/md-project --format json advance
+mlipipe --project /PATH/TO/md-project json md-900k-nvt
 ```
 
 Submission returns `PENDING`; `advance` later fetches and checks the declared

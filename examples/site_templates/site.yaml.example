@@ -3,8 +3,8 @@ clusters:
   cluster-a:
     backend: ssh-slurm
     ssh_profile: cluster-a
-    remote_template_root: /ABS/PATH/TO/MLIPFLOW/templates
-    work_root: /ABS/PATH/TO/MLIPFLOW/work
+    remote_template_root: /ABS/PATH/TO/MLIPIPE/templates
+    work_root: /ABS/PATH/TO/MLIPIPE/work
     scheduler:
       partition_candidates: [cpu]
       memory_constraint: reported

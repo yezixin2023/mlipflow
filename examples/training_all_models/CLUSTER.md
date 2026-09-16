@@ -21,7 +21,7 @@ dpdata/NumPy for DeepMD and ASE for MACE; M3GNet and CHGNet JSON serialization a
 no framework import. The repository's `dft` extra declares these conversion packages.
 All five templates must resolve the same canonical cluster data
 root. Each training family may activate a different framework environment. The generic
-runners themselves are staged by MLIPFlow.
+runners themselves are staged by MLIPipe.
 
 ## DFT dataset assembly
 
@@ -35,7 +35,7 @@ collected canonical artifact and declare the shared split:
   backend: ssh-slurm
   backend_profile: cluster-a
   inputs:
-    canonical_dataset: .mlipflow/runs/label-dft/attempt-1/canonical-labeled-dataset.json
+    canonical_dataset: .mlipipe/runs/label-dft/attempt-1/canonical-labeled-dataset.json
   parameters:
     operation: dataset-assemble
     frameworks: [deepmd, m3gnet, chgnet, mace]
@@ -101,7 +101,7 @@ The same outer contract works for `deepmd`, `m3gnet`, `chgnet`, and `mace`, and 
 
 ## Scheduler lifecycle
 
-The scheduled path emits `scheduled_execution schema_version=3` with `execution_model: single-python`. MLIPFlow core stages the small approved files and bundled runner, renders the site-owned `slurm/single-python/{cpu,gpu}.sbatch` plus `mlip-<framework>/run.sh`, submits, polls, then fetches and verifies the declared remote outputs as a continuation of the approved run.
+The scheduled path emits `scheduled_execution schema_version=3` with `execution_model: single-python`. MLIPipe core stages the small approved files and bundled runner, renders the site-owned `slurm/single-python/{cpu,gpu}.sbatch` plus `mlip-<framework>/run.sh`, submits, polls, then fetches and verifies the declared remote outputs as a continuation of the approved run.
 
 Training is one Python process. `resources.cpus` is its thread budget, so the Slurm template must use `--ntasks=1` and `--cpus-per-task={{CPUS}}`. Mapping `CPUS` to `--ntasks` is rejected before staging.
 

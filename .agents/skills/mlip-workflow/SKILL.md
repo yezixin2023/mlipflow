@@ -1,23 +1,23 @@
 ---
 name: mlip-workflow
-description: Orchestrate auditable end-to-end MLIP research workflows by identifying the user's final goal, inventorying existing artifacts and workflow state, selecting the earliest missing necessary stage, and handing each stage to the current MLIPFlow specialist Skill or plugin. Use for multi-stage planning, resuming partial workflows, manuscript replay, avoiding redundant expensive work, or coordinating structure generation, PES sampling, DFT labeling, MLIP training/benchmarking, offline active learning, MD, ionic transport, candidate ranking, and voltage analysis; do not implement scientific algorithms or bypass specialist contracts.
+description: Orchestrate auditable end-to-end MLIP research workflows by identifying the user's final goal, inventorying existing artifacts and workflow state, selecting the earliest missing necessary stage, and handing each stage to the current MLIPipe specialist Skill or plugin. Use for multi-stage planning, resuming partial workflows, manuscript replay, avoiding redundant expensive work, or coordinating structure generation, PES sampling, DFT labeling, MLIP training/benchmarking, offline active learning, MD, ionic transport, candidate ranking, and voltage analysis; do not implement scientific algorithms or bypass specialist contracts.
 ---
 
 # MLIP workflow
 
-Act as a lightweight orchestrator for existing MLIPFlow capabilities. Do not impose a
+Act as a lightweight orchestrator for existing MLIPipe capabilities. Do not impose a
 canonical pipeline, implement scientific calculations, or duplicate specialist and
 Adapter contracts.
 
 ## Select the next necessary stage
 
 1. State the user's final scientific objective.
-2. Inspect persistent MLIPFlow state and inventory the supplied and collected artifacts.
+2. Inspect persistent MLIPipe state and inventory the supplied and collected artifacts.
 3. Reuse artifacts accepted by the producing Adapter; validate or replay unverified
    evidence instead of repeating an expensive upstream stage.
 4. Skip irrelevant or already completed stages and select the earliest missing
    prerequisite for the objective.
-5. Load the current specialist Skill for that stage, then use `mlipflow inspect` and the
+5. Load the current specialist Skill for that stage, then use `mlipipe inspect` and the
    dry-run as the executable contract.
 6. After final plugin `OK`, pass collected artifacts downstream and reconsider the next
    necessary stage.
@@ -49,13 +49,13 @@ Keep replay, smoke, fresh execution, scheduler completion, and final scientific 
 distinct. PES coverage does not establish transport convergence, and a generated or
 ranked candidate is not thereby a validated material.
 
-## Execute through MLIPFlow
+## Execute through MLIPipe
 
 ```bash
-mlipflow --project PROJECT json
-mlipflow --project PROJECT inspect NODE
-mlipflow --project PROJECT --format json run NODE --dry-run
-mlipflow --project PROJECT --format json run NODE --approve
+mlipipe --project PROJECT json
+mlipipe --project PROJECT inspect NODE
+mlipipe --project PROJECT --format json run NODE --dry-run
+mlipipe --project PROJECT --format json run NODE --approve
 ```
 
 Use `--approve` for the effective `approval_required` task after its inputs, scale and
@@ -68,7 +68,7 @@ next input as `{from_node: NODE, role: ROLE}`. `metrics`, `check`, `collection`,
 `manifest_path` and `logs` expose the next decision without scanning attempt folders.
 Do not continue from a failed node. For a complete multi-stage configuration see
 `examples/training_all_models/dft-to-all-training.yaml`; single-task recipes are in
-the [repository examples](https://github.com/yezixin2023/mlipflow/tree/public/examples).
+the [repository examples](https://github.com/yezixin2023/mlipipe/tree/public/examples).
 
 ## Report
 

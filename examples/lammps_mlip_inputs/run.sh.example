@@ -12,7 +12,7 @@ MODEL_ROOT=/ABS/PATH/TO/site/model-registry
 # Keep these launcher arguments stable across binary-restart attempts.
 LAMMPS_LAUNCHER_JSON='["srun","--ntasks=1"]'
 
-# Standard MLIPFlow template variables are deliberately visible here:
+# Standard MLIPipe template variables are deliberately visible here:
 # project={{PROJECT_ID}} node={{NODE_ID}} attempt={{ATTEMPT}}
 # run={{RUN_DIR}} input={{INPUT_DIR}} output={{OUTPUT_DIR}} logs={{LOG_DIR}}
 # resources cpus={{CPUS}} gpus={{GPUS}} memory={{MEMORY}} walltime={{WALLTIME}}

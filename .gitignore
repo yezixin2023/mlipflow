@@ -1,3 +1,5 @@
+.mlipipe/
+# Keep existing local run archives ignored.
 .mlipflow/
 __pycache__/
 *.py[cod]

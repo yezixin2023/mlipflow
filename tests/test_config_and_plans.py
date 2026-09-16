@@ -4,11 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mlipflow.config import load_project
-from mlipflow.errors import ConfigError, StateError
-from mlipflow.services.commands import initialize, make_run_plan, run_node
-from mlipflow.services.paths import state_path
-from mlipflow.state import StateStore
+from mlipipe.config import load_project
+from mlipipe.errors import ConfigError, StateError
+from mlipipe.services.commands import initialize, make_run_plan, run_node
+from mlipipe.services.paths import state_path
+from mlipipe.state import StateStore
 
 from .helpers import project_config, write_json
 
@@ -18,11 +18,11 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config = project_config([])
-            config["state"] = {"database_path": ".mlipflow/alternate.sqlite3"}
+            config["state"] = {"database_path": ".mlipipe/alternate.sqlite3"}
             write_json(root / "project.yaml", config)
             initialized = initialize(root)
             self.assertEqual(
-                str((root / ".mlipflow/alternate.sqlite3").resolve()),
+                str((root / ".mlipipe/alternate.sqlite3").resolve()),
                 initialized["state_database"],
             )
 

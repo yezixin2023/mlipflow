@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mlipflow.plugins import BUILTIN_CAPABILITIES, capability_directory, load_adapter
+from mlipipe.plugins import BUILTIN_CAPABILITIES, capability_directory, load_adapter
 
 
 EXPECTED_OPERATIONS = {

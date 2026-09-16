@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_adapter(plugin_id: str) -> Any:
-    path = ROOT / "mlipflow" / "plugins" / plugin_id.replace("-", "_") / "adapter.py"
+    path = ROOT / "mlipipe" / "plugins" / plugin_id.replace("-", "_") / "adapter.py"
     module = load_module(path, 'test_%s_adapter' % plugin_id.replace('-', '_'))
     return module.Adapter()
 
@@ -37,7 +37,7 @@ class DirectAdapterTests(unittest.TestCase):
         self.inputs = self.root / "structures"
         self.inputs.mkdir()
         (self.inputs / "POSCAR").write_text("fixture\n", encoding="utf-8")
-        self.attempt = self.root / ".mlipflow" / "runs" / "sample" / "attempt-1"
+        self.attempt = self.root / ".mlipipe" / "runs" / "sample" / "attempt-1"
         self.adapter = load_adapter("pes-sampling")
 
     def tearDown(self) -> None:
@@ -84,7 +84,7 @@ class DirectAdapterTests(unittest.TestCase):
         self.assertTrue(all(isinstance(value, str) for value in plan["argv"]))
         self.assertEqual("python3", plan["argv"][0])
         self.assertEqual(
-            str(ROOT / "mlipflow" / "plugins" / "pes_sampling" / "direct_select.py"),
+            str(ROOT / "mlipipe" / "plugins" / "pes_sampling" / "direct_select.py"),
             plan["argv"][1],
         )
         self.assertIn("--no-recursive", plan["argv"])
@@ -95,7 +95,7 @@ class DirectAdapterTests(unittest.TestCase):
             plan["assumptions"]["seed_control"],
         )
         self.assertEqual(
-            str(ROOT / "mlipflow" / "plugins" / "pes_sampling" / "direct_select.py"),
+            str(ROOT / "mlipipe" / "plugins" / "pes_sampling" / "direct_select.py"),
             plan["input_paths"]["direct_wrapper"],
         )
 
@@ -213,7 +213,7 @@ class IonicTransportAdapterTests(unittest.TestCase):
             + "".join(f"{time},{0.6 * time + 2.0}\n" for time in range(0, 101, 10)),
             encoding="utf-8",
         )
-        self.attempt = self.root / ".mlipflow" / "runs" / "transport" / "attempt-1"
+        self.attempt = self.root / ".mlipipe" / "runs" / "transport" / "attempt-1"
         self.adapter = load_adapter("ionic-transport")
 
     def tearDown(self) -> None:
@@ -273,7 +273,7 @@ class IonicTransportAdapterTests(unittest.TestCase):
         self.assertFalse(plan["shell"])
         self.assertIsInstance(plan["argv"], list)
         self.assertEqual(
-            ROOT / "mlipflow" / "plugins" / "ionic_transport" / "ionic_conductivity.py",
+            ROOT / "mlipipe" / "plugins" / "ionic_transport" / "ionic_conductivity.py",
             Path(plan["argv"][1]),
         )
         self.assertNotIn("--fit-start-ps", plan["argv"])
@@ -366,13 +366,13 @@ class IonicTransportAdapterTests(unittest.TestCase):
     def test_missing_pymatgen_diffusion_dependency_blocks_formal_plan(self) -> None:
         context = self.context()
         with mock.patch(
-            "mlipflow.plugins.ionic_transport.contracts._formal_runtime_probe",
+            "mlipipe.plugins.ionic_transport.contracts._formal_runtime_probe",
             return_value=(None, "Formal ionic transport requires pymatgen-analysis-diffusion"),
         ):
             plan = self.adapter.plan(context)
         self.assertEqual("BLOCKED", plan["status"])
         self.assertIn("dependency.pymatgen_analysis_diffusion", diagnostic_codes(plan))
-        self.assertIn("mlipflow[transport]", json.dumps(plan["diagnostics"]))
+        self.assertIn("mlipipe[transport]", json.dumps(plan["diagnostics"]))
 
     def test_existing_output_blocks_without_overwrite(self) -> None:
         output = self.attempt / "ionic-transport-postprocess"
