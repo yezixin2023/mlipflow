@@ -513,6 +513,8 @@ def test_mace_fresh_plan_uses_dataset_energy_key_without_finetune_arguments(tmp_
                 "E0s": "average",
                 "batch_size": 8,
                 "energy_key": "energy",
+                "forces_key": "custom_forces",
+                "stress_key": "custom_stress",
                 "max_num_epochs": 1,
                 "r_max": 5.0,
             },
@@ -523,6 +525,8 @@ def test_mace_fresh_plan_uses_dataset_energy_key_without_finetune_arguments(tmp_
 
     assert argv[argv.index("--E0s") + 1] == "average"
     assert argv[argv.index("--energy_key") + 1] == "energy"
+    assert argv[argv.index("--forces_key") + 1] == "custom_forces"
+    assert argv[argv.index("--stress_key") + 1] == "custom_stress"
     assert "--foundation_model" not in argv
     assert "--multiheads_finetuning" not in argv
     assert "--lora" not in argv

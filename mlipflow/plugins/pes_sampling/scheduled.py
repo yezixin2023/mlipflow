@@ -714,10 +714,16 @@ def check(context: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("LASP version differs from approved plan")
         if report.get("potential") != calculation.get("potential"):
             raise ValueError("LASP potential differs from approved plan")
-        if _pseudopotential_settings(report.get("pseudopotential")) != (
-            _pseudopotential_settings(calculation.get("pseudopotential"))
+        if calculation.get("potential") == "vasp":
+            if _pseudopotential_settings(report.get("pseudopotential")) != (
+                _pseudopotential_settings(calculation.get("pseudopotential"))
+            ):
+                raise ValueError("LASP pseudopotential settings differ from approved plan")
+        elif (
+            report.get("pseudopotential") is not None
+            or calculation.get("pseudopotential") is not None
         ):
-            raise ValueError("LASP pseudopotential settings differ from approved plan")
+            raise ValueError("non-VASP LASP potential must not have pseudopotential settings")
         input_structure = report.get("input_structure", {})
         if (
             not isinstance(input_structure.get("source_path"), str)

@@ -27,6 +27,8 @@ SAFE = {
     "weight_decay": "--weight_decay",
     "energy_weight": "--energy_weight",
     "energy_key": "--energy_key",
+    "forces_key": "--forces_key",
+    "stress_key": "--stress_key",
     "forces_weight": "--forces_weight",
     "stress_weight": "--stress_weight",
     "valid_fraction": "--valid_fraction",
@@ -84,6 +86,9 @@ def _argv(args, config, data_path, work):
         missing = [name for name, path in predefined.items() if not path.is_file()]
         if missing:
             raise TrainingError("predefined MACE split lacks: " + ", ".join(missing))
+        # The canonical ASE export uses these result names. Bind them explicitly
+        # so an upstream default change cannot silently discard training labels.
+        opts = {"energy_key": "energy", "forces_key": "forces", "stress_key": "stress", **opts}
     train_path = predefined["train"] if predefined else data_path
     argv = [
         "--name",

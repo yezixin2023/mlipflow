@@ -499,3 +499,11 @@ def test_training_runners_consume_predefined_split_directories(tmp_path: Path) -
     assert argv[argv.index("--train_file") + 1].endswith("train.extxyz")
     assert argv[argv.index("--valid_file") + 1].endswith("valid.extxyz")
     assert argv[argv.index("--test_file") + 1].endswith("test.extxyz")
+    # Match the actual labels emitted by the canonical dataset converter, rather
+    # than relying on the installed MACE version's default property names.
+    from ase.io import read
+    frame = read(root / "mace" / "train.extxyz", index=0)
+    for property_name in ("energy", "forces", "stress"):
+        label_key = argv[argv.index(f"--{property_name}_key") + 1]
+        assert label_key == property_name
+        assert label_key in frame.calc.results

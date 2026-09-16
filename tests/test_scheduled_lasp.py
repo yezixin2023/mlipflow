@@ -249,6 +249,22 @@ class LaspRemoteRunnerTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_fake_lasp_native_all_arc_is_canonicalized_and_packed(self) -> None:
+        self._check_native_arc_case("vasp")
+
+    def test_nn_run_passes_completion_without_pseudopotentials(self) -> None:
+        self._check_native_arc_case("nn")
+
+    def _check_native_arc_case(self, potential: str) -> None:
+        if potential == "nn":
+            config = json.loads((self.root / "project.yaml").read_text())
+            del config["workflow"]["nodes"][0]["inputs"]["lasp_input_manifest"]
+            for path in (self.root / "project.yaml", self.input_dir / "project.yaml"):
+                write_json(path, config)
+            for path in (self.root / "inputs" / "lasp.in", self.input_dir / "lasp.in"):
+                path.write_text(path.read_text().replace("potential vasp", "potential NN"))
+        initialize(self.root)
+        plan = make_run_plan(load_project(self.root), "lasp-walk", write_site(self.root), library())
+        self.assertEqual("READY", plan["adapter_plan"]["status"])
         fake = self.root / "lasp"
         fake.write_text(
             "#!/usr/bin/env python3\n"
@@ -273,13 +289,27 @@ class LaspRemoteRunnerTests(unittest.TestCase):
         self.assertEqual(0, code)
         report = json.loads((self.output_dir / "cluster-run-report.json").read_text(encoding="utf-8"))
         self.assertEqual("OK", report["status"])
-        self.assertEqual("vasp", report["potential"])
-        self.assertEqual("fixture-pbe54-plain-v1", report["pseudopotential"]["reference_id"])
-        self.assertEqual("pseudopotentials.json", report["pseudopotential"]["reference_path"])
-        self.assertEqual(
-            "lasp-input-manifest.json", report["pseudopotential"]["manifest_path"]
-        )
-        self.assertEqual("POTCAR", report["pseudopotential"]["potcar_path"])
+        self.assertEqual(potential, report["potential"])
+        if potential == "vasp":
+            self.assertEqual("fixture-pbe54-plain-v1", report["pseudopotential"]["reference_id"])
+            self.assertEqual("pseudopotentials.json", report["pseudopotential"]["reference_path"])
+            self.assertEqual("lasp-input-manifest.json", report["pseudopotential"]["manifest_path"])
+            self.assertEqual("POTCAR", report["pseudopotential"]["potcar_path"])
+        else:
+            self.assertIsNone(report["pseudopotential"])
+        # Reproduce the core fetch layout before checking the actual runner outputs.
+        for name in ("cluster-run-report.json", "selected-structures.tar.gz"):
+            shutil.copy2(self.output_dir / name, self.output_dir / "lasp-ssw" / name)
+        from mlipflow.plugins.pes_sampling import scheduled
+        context = {"attempt_dir": str(self.output_dir), "execution": {"plan": plan["adapter_plan"]}}
+        checked = scheduled.check(context)
+        self.assertEqual("OK", checked["status"], checked)
+        if potential == "vasp":
+            report["pseudopotential"] = None
+        else:
+            report["pseudopotential"] = {"unexpected": True}
+        write_json(self.output_dir / "lasp-ssw" / "cluster-run-report.json", report)
+        self.assertEqual("FAIL", scheduled.check(context)["status"])
         self.assertEqual(2, report["counts"]["selected_structure_count"])
         canonical = self.output_dir / "lasp-ssw" / "raw-run" / "allstr.arc"
         self.assertEqual(
